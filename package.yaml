@@ -24,10 +24,14 @@ dependencies:
 - containers
 - bytestring
 - ixset-typed
+- async
 - stm
 - text
+- time
 - x509
 - x509-validation
+- validation
+- text-short
 
 library:
   source-dirs: src
