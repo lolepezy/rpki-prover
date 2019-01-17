@@ -126,14 +126,15 @@ data AddrFamily = Ipv4Family | Ipv6Family
 -- parseIpExt addrBlocks = let 
 --       do
   -- let x = (flip runParseASN1) a $ let 
-  --   z                = onNextContainer Sequence (getMany addrFamily)
-  --   addrFamily       = onNextContainer Sequence (familyType >>= addresses)
-  --   familyType       = getNext >>= \(OctetString bs) -> return bs
-  --   -- addresses family = getNextContainerMaybe Sequence
-  --   addresses family = onNextContainer Sequence (getMany (address family))
-  --   address family   = getNext >>= \(BitString (BitArray n bs)) -> return (family, bs)  
---         getNextContainerMaybe Sequence >>= \case                   
---         addFamily    <- getNextContainerMaybe Sequence
+    -- z                = onNextContainer Sequence (getMany addrFamily)
+    -- addrFamily       = onNextContainer Sequence $ do
+    --   (OctetString familyType) <- getNext
+    --   let addressParser = case familyType of 
+    --               _ | familyType == "\NUL\SOH" -> ipv4Address
+    --                 | familyType == "\NUL\STX" -> ipv6Address
+    --   onNextContainer Sequence (getMany addressParser)
+    -- ipv4Address = getNext >>= \(BitString (BitArray n bs)) -> return ("v4", bs)
+    -- ipv6Address = getNext >>= \(BitString (BitArray n bs)) -> return ("v6", bs)
 
 --     in 
 --       S.empty

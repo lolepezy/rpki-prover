@@ -24,8 +24,7 @@ newtype ASN = ASN Int
 data Resource = IpR !IpPrefix | AS !ASN
     deriving (Show, Eq, Ord, Data, Typeable)
 
-
-data MFTEntry = MFTEntry B.ByteString 
+data MFTEntry = MFTEntry B.ByteString
     deriving (Show, Eq, Ord, Data, Typeable)
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Data, Typeable)
@@ -44,9 +43,9 @@ data RealMft = RealMft deriving (Show, Eq, Ord, Data, Typeable)
 
 data SignedObj = SignedObj {
     locations :: ![URI]
-  , hash      :: !Hash 
-  , aki       :: !AKI 
-  , serial    :: !Serial 
+  , hash      :: !Hash
+  , aki       :: !AKI
+  , serial    :: !Serial
 } deriving (Show, Eq, Ord, Data, Typeable)
 
 data Cert = Cert !RealCert !SKI !(S.Set Resource)
@@ -65,7 +64,7 @@ data RpkiObj = RpkiObj !SignedObj !RpkiUnit
     deriving (Show, Eq, Ord, Data, Typeable)
 
 -- Subject Public Key Info
-newtype SPKI = SPKI B.ByteString    
+newtype SPKI = SPKI B.ByteString
 
 data TA = TA {
     name        :: !T.Text

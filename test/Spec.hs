@@ -1,5 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import qualified Data.ByteString as B
 
@@ -46,13 +47,14 @@ testCertParsing = do
 
   let x = (flip runParseASN1) a $ let 
               z                = onNextContainer Sequence (getMany addrFamily)
-              addrFamily       = onNextContainer Sequence (familyType >>= addresses)
-              familyType       = getNext >>= \(OctetString bs) -> pure Ipv4Family
-              addresses = \case 
-                Ipv4Family -> onNextContainer Sequence (getMany ipv4Addres)
-                Ipv6Family -> onNextContainer Sequence (getMany ipv6Addres)
-              ipv4Addres = getNext >>= \(BitString (BitArray n bs)) -> return ("v4", bs)
-              ipv6Addres = getNext >>= \(BitString (BitArray n bs)) -> return ("v6", bs)
+              addrFamily       = onNextContainer Sequence $ do
+                (OctetString familyType) <- getNext
+                let addressParser = case familyType of 
+                            _ | familyType == "\NUL\SOH" -> ipv4Address
+                              | familyType == "\NUL\STX" -> ipv6Address
+                onNextContainer Sequence (getMany addressParser)
+              ipv4Address = getNext >>= \(BitString (BitArray n bs)) -> return ("v4", bs)
+              ipv6Address = getNext >>= \(BitString (BitArray n bs)) -> return ("v6", bs)
             in z   
     
   
