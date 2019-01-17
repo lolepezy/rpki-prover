@@ -14,7 +14,7 @@ import           Data.Proxy
 
 import           Data.IxSet.Typed
 
-import           RPKI.Types
+import           RPKI.Domain
 
 
 type EntryIxs = '[ AKI, Hash, URI ]

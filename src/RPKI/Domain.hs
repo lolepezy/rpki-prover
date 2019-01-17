@@ -1,8 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module RPKI.Types where
+module RPKI.Domain where
 
 import qualified Data.Set as S
+import qualified Data.Map as M
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Short as TS
@@ -23,6 +24,9 @@ newtype ASN = ASN Int
 data Resource = IpR !IpPrefix | AS !ASN
     deriving (Show, Eq, Ord, Data, Typeable)
 
+
+data MFTEntry = MFTEntry B.ByteString 
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Data, Typeable)
 newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Data, Typeable)
@@ -78,3 +82,7 @@ data Repository = Repository {
 newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
 
 data Invalid = Error | Warning
+
+mftEntries :: MFT -> M.Map String MFTEntry
+-- TODO Implement
+mftEntries _ = M.empty

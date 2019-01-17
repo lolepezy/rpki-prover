@@ -10,7 +10,7 @@ import Data.Validation
 import qualified Data.List as L
 
 import RPKI.Store
-import RPKI.Types
+import RPKI.Domain
 
 type ValidationResult = Validation Invalid () 
 
@@ -34,17 +34,17 @@ validateTA TA { certificate = cert } s =
             let Cert _ (SKI ki) _ = cert
             children <- getByAKI s (AKI ki)
             let mfts  = [ (s, mft) | RpkiObj s (Mu  mft) <- children ]
-            let crls  = [ (s, crl) | RpkiObj s (Cru crl) <- children ]
             let certs = [ (s, cer) | RpkiObj s (Cu cer)  <- children ]
 
-            let (mft, crl) = recent_MFT_and_CRL mfts crls
+            let (mft, crl) = recent_MFT_and_CRL mfts
             -- mapM (go) children
             pure ()
             where
-                recent_MFT_and_CRL :: [(SignedObj, MFT)] -> [(SignedObj, CRL)] -> (Maybe MFT, Maybe CRL)
-                recent_MFT_and_CRL mfts crls = 
+                recent_MFT_and_CRL :: [(SignedObj, MFT)] -> (Maybe MFT, Maybe CRL)
+                recent_MFT_and_CRL mfts =                     
+                    -- let mftEntries MFT
                     -- let mftsRecentFirst = L.sortOn () [a] 
                     (Nothing, Nothing)
-                    
+
 
 

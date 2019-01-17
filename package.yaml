@@ -29,7 +29,12 @@ dependencies:
 - text
 - time
 - x509
+- x509-store
 - x509-validation
+- pem
+- asn1-encoding
+- asn1-parse
+- asn1-types
 - validation
 - text-short
 
