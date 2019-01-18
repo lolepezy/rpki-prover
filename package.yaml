@@ -23,6 +23,7 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - bytestring
+- bytestring-conversion
 - ixset-typed
 - async
 - stm
@@ -37,6 +38,7 @@ dependencies:
 - asn1-types
 - validation
 - text-short
+- hw-ip
 
 library:
   source-dirs: src
