@@ -12,6 +12,8 @@ import qualified Data.List as L
 
 import Data.Bifunctor
 import Data.Maybe
+import Data.Word
+import Data.Bits
 
 import Data.ASN1.Types
 import Data.ASN1.BitArray
@@ -99,6 +101,8 @@ extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 data AddrFamily = Ipv4Family | Ipv6Family
 
 {-
+  Parse IP address extension
+
   https://tools.ietf.org/html/rfc3779
 
    IPAddrBlocks        ::= SEQUENCE OF IPAddressFamily
@@ -120,21 +124,75 @@ data AddrFamily = Ipv4Family | Ipv6Family
       max                  IPAddress }
 
    IPAddress           ::= BIT STRING
-
 -}
--- parseIpExt :: [ASN1] -> (S.Set Resource)
--- parseIpExt addrBlocks = let 
+parseIpExt :: [ASN1] -> ParseResult (S.Set Resource)
+parseIpExt addrBlocks = first (ParseError . T.pack) $
+    (flip runParseASN1) addrBlocks $ do
+    addressFamilies <- onNextContainer Sequence (getMany addrFamily)
+    pure $ S.unions (S.fromList <$> addressFamilies)
+    where 
+      addrFamily = onNextContainer Sequence $ do
+        (OctetString familyType) <- getNext
+        let addressParser = case familyType of 
+                "\NUL\SOH" -> ipv4Address
+                "\NUL\STX" -> ipv6Address
+        onNextContainer Sequence (getMany addressParser)
+      ipv4Address = do
+        (BitString (BitArray nonZeroBits bs)) <- getNext
+        let w32 = fourW8sToW32 (B.unpack bs)
+        pure $ IpR $ Ipv4 $ mkIpv4Block w32 (fromIntegral nonZeroBits)
+      ipv6Address = do
+        (BitString (BitArray nonZeroBits bs)) <- getNext                
+        let unpacked = rightPad 16 0 (B.unpack bs)
+            w128 = (fourW8sToW32 (take 4 unpacked),
+                    fourW8sToW32 (take 4 (drop 4 unpacked)),
+                    fourW8sToW32 (take 4 (drop 8 unpacked)),
+                    fourW8sToW32 (take 4 (drop 12 unpacked)))   
+        pure $ IpR $ Ipv6 $ mkIpv6Block w128 (fromIntegral nonZeroBits)             
+      fourW8sToW32 s = let 
+        foldW8toW32 (w32, shift) w8 =  (w32 + (fromIntegral w8 :: Word32) `shiftL` shift, shift - 8)
+        (w32, _) = L.foldl' foldW8toW32 (0 :: Word32, 24) s
+          in w32                                  
+      rightPad :: Int -> a -> [a] -> [a]
+      rightPad n a as = go 0 as
+        where
+          go acc [] | acc < n  = a : go (acc + 1) []
+                    | otherwise = []  
+          go acc (x : as) = x : go (acc + 1) as    
+
 --       do
   -- let x = (flip runParseASN1) a $ let 
     -- z                = onNextContainer Sequence (getMany addrFamily)
     -- addrFamily       = onNextContainer Sequence $ do
     --   (OctetString familyType) <- getNext
     --   let addressParser = case familyType of 
-    --               _ | familyType == "\NUL\SOH" -> ipv4Address
-    --                 | familyType == "\NUL\STX" -> ipv6Address
+    --           "\NUL\SOH" -> ipv4Address
+    --           "\NUL\STX" -> ipv6Address
     --   onNextContainer Sequence (getMany addressParser)
-    -- ipv4Address = getNext >>= \(BitString (BitArray n bs)) -> return ("v4", bs)
-    -- ipv6Address = getNext >>= \(BitString (BitArray n bs)) -> return ("v6", bs)
+    -- ipv4Address = do
+    --   (BitString (BitArray nonZeroBits bs)) <- getNext
+    --   let w32 = fourW8sToW32 (B.unpack bs)
+    --       r   = IpR $ Ipv4 $ mkIpv4Block w32 (fromIntegral nonZeroBits)
+    --   pure (r, (0,0,0,0))               
+    -- ipv6Address = do
+    --   (BitString (BitArray nonZeroBits bs)) <- getNext                
+    --   let unpacked = rightPad 16 0 (B.unpack bs)
+    --       w128 = (fourW8sToW32 (take 4 unpacked),
+    --               fourW8sToW32 (take 4 (drop 4 unpacked)),
+    --               fourW8sToW32 (take 4 (drop 8 unpacked)),
+    --               fourW8sToW32 (take 4 (drop 12 unpacked)))   
+    --       r = IpR $ Ipv6 $ mkIpv6Block w128 (fromIntegral nonZeroBits)             
+    --   pure (r, w128)               
+    -- fourW8sToW32 s = let 
+    --   foldW8toW32 (w32, shift) w8 =  (w32 + (fromIntegral w8 :: Word32) `shiftL` shift, shift - 8)
+    --   (w32, _) = L.foldl' foldW8toW32 (0 :: Word32, 24) s
+    --     in w32                                  
+    -- rightPad :: Int -> a -> [a] -> [a]
+    -- rightPad n a as = go 0 as
+    --   where
+    --     go acc [] | acc < n  = a : go (acc + 1) []
+    --               | otherwise = []  
+    --     go acc (x : as) = x : go (acc + 1) as   
 
 --     in 
 --       S.empty

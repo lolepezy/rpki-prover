@@ -54,32 +54,31 @@ testCertParsing = do
               addrFamily       = onNextContainer Sequence $ do
                 (OctetString familyType) <- getNext
                 let addressParser = case familyType of 
-                            _ | familyType == "\NUL\SOH" -> ipv4Address
-                              | familyType == "\NUL\STX" -> ipv6Address
+                        "\NUL\SOH" -> ipv4Address
+                        "\NUL\STX" -> ipv6Address
                 onNextContainer Sequence (getMany addressParser)
               ipv4Address = do
-                (BitString (BitArray n bs)) <- getNext
-                let w32 = four28sToW32 (B.unpack bs)                
-                pure ("v4", B.unpack bs, w32)
+                (BitString (BitArray nonZeroBits bs)) <- getNext
+                let w32 = fourW8sToW32 (B.unpack bs)
+                pure $ IpR $ Ipv4 $ mkIpv4Block w32 (fromIntegral nonZeroBits)
               ipv6Address = do
-                (BitString (BitArray n bs)) <- getNext                
-                let upacked = rightPad 16 0 (B.unpack bs)
-                    w128 = (four28sToW32 (drop 12 upacked),
-                            four28sToW32 (drop 8 upacked),
-                            four28sToW32 (drop 4 upacked),
-                            four28sToW32 upacked)                
-                pure ("v6", B.unpack bs, 0)
-              four28sToW32 s = let 
+                (BitString (BitArray nonZeroBits bs)) <- getNext                
+                let unpacked = rightPad 16 0 (B.unpack bs)
+                    w128 = (fourW8sToW32 (take 4 unpacked),
+                            fourW8sToW32 (take 4 (drop 4 unpacked)),
+                            fourW8sToW32 (take 4 (drop 8 unpacked)),
+                            fourW8sToW32 (take 4 (drop 12 unpacked)))   
+                pure $ IpR $ Ipv6 $ mkIpv6Block w128 (fromIntegral nonZeroBits)             
+              fourW8sToW32 s = let 
                 foldW8toW32 (w32, shift) w8 =  (w32 + (fromIntegral w8 :: Word32) `shiftL` shift, shift - 8)
                 (w32, _) = L.foldl' foldW8toW32 (0 :: Word32, 24) s
                   in w32                                  
               rightPad :: Int -> a -> [a] -> [a]
               rightPad n a as = go 0 as
                 where
-                  go acc [] | acc <= n  = a : go (acc + 1) []
+                  go acc [] | acc < n  = a : go (acc + 1) []
                             | otherwise = []  
-                  go acc (x : as) = go (acc + 1) as
-                  
+                  go acc (x : as) = x : go (acc + 1) as                  
             in z   
     
 
