@@ -11,26 +11,30 @@ import qualified Data.Text.Short as TS
 
 import Data.Data (Typeable)
 
+import Data.Word
+
 import HaskellWorks.Data.Network.Ip.Range 
+import HaskellWorks.Data.Network.Ip.Validity
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
-
-data Ipv4Prefix = Ipv4P (Range V4.IpAddress)
+newtype Ipv4Prefix = Ipv4P (V4.IpBlock Canonical) 
     deriving (Show, Eq, Ord, Typeable)
-data Ipv6Prefix = Ipv6P (Range V6.IpAddress)
+newtype Ipv6Prefix = Ipv6P (V6.IpBlock Canonical) 
     deriving (Show, Eq, Ord, Typeable)
 
-data IpPrefix = Ipv4 !Ipv4Prefix | Ipv6 !Ipv6Prefix
+data IpPrefix = Ipv4 {-# UNPACK #-} !Ipv4Prefix 
+              | Ipv6 {-# UNPACK #-} !Ipv6Prefix
     deriving (Show, Eq, Ord, Typeable)
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable)
 
-data Resource = IpR !IpPrefix | AS !ASN
+data Resource = IpR {-# UNPACK #-} !IpPrefix 
+              | AS  {-# UNPACK #-} !ASN
     deriving (Show, Eq, Ord, Typeable)
 
-data MFTEntry = MFTEntry B.ByteString
+newtype MFTEntry = MFTEntry B.ByteString
     deriving (Show, Eq, Ord, Typeable)
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable)
@@ -91,3 +95,10 @@ data Invalid = Error | Warning
 mftEntries :: MFT -> M.Map String MFTEntry
 -- TODO Implement
 mftEntries _ = M.empty
+
+
+mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
+mkIpv4Block w32 nonZeroBits = Ipv4P (V4.IpBlock (V4.IpAddress w32) (V4.IpNetMask nonZeroBits))
+
+mkIpv6Block :: (Word32, Word32, Word32, Word32) -> Word8 -> Ipv6Prefix
+mkIpv6Block w128 nonZeroBits = Ipv6P (V6.IpBlock (V6.IpAddress w128) (V6.IpNetMask nonZeroBits))
