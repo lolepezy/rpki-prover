@@ -50,6 +50,7 @@ executables:
     ghc-options:
     - -threaded
     - -rtsopts
+    - -Wall
     - -with-rtsopts=-N
     dependencies:
     - rpki-prover
