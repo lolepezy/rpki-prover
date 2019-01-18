@@ -13,7 +13,6 @@ import Data.Data (Typeable)
 
 import Data.Word
 
-import HaskellWorks.Data.Network.Ip.Range 
 import HaskellWorks.Data.Network.Ip.Validity
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
@@ -46,7 +45,8 @@ newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
 newtype Serial  = Serial Integer deriving (Show, Eq, Ord, Typeable)
 
 -- don't know yet
-data RealCert = RealCert deriving (Show, Eq, Ord, Typeable)
+data RealCert = RealCert B.ByteString 
+    deriving (Show, Eq, Ord, Typeable)
 data RealRoa = RealRoa deriving (Show, Eq, Ord, Typeable)
 data RealCrl = RealCrl deriving (Show, Eq, Ord, Typeable)
 data RealMft = RealMft deriving (Show, Eq, Ord, Typeable)
