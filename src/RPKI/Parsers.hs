@@ -110,28 +110,53 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
               "\NUL\STX" -> ipv6Address
               af         -> throwParseError $ "Unsupported address family " ++ show af
         onNextContainer Sequence (getMany addressParser)       
-      ipv4Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block
-      ipv6Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block   
-      ipvVxAddress wToAddr mkIpVx range prefix mkBlock = 
+      ipv4Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block 32
+      ipv6Address = ipvVxAddress someW8ToW128 mkIpv6 Ipv6R Ipv6P mkIpv6Block 128
+
+      ipvVxAddress wToAddr mkIpVx range prefix mkBlock fullLength =
+        -- try range first 
         getNextContainerMaybe Sequence >>= \case
           Just [
               (BitString (BitArray nonZeroBits1 bs1)), 
               (BitString (BitArray nonZeroBits2 bs2))
             ] -> do
-              let w1 = wToAddr (B.unpack bs1)
-              let w2 = wToAddr (B.unpack bs2)
+              let w1 = wToAddr $ B.unpack bs1
+              let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2) 
+                        (fromIntegral nonZeroBits2) fullLength 
               pure $ case mkIpVx w1 w2 of
                 Left  r -> IpR $ range r
                 Right p -> IpP $ prefix p
+          -- now try prefix      
           Nothing -> getNext >>= \case
             (BitString (BitArray nonZeroBits bs)) -> do
               let w = wToAddr (B.unpack bs)
               pure $ IpP $ prefix $ mkBlock w (fromIntegral nonZeroBits)
-            s -> throwParseError ("weird " ++ show s)                
-      fourW8sToW32 s = let 
-        foldW8toW32 (w32, shift) w8 =  (w32 + (fromIntegral w8 :: Word32) `shiftL` shift, shift - 8)
-        (w32, _) = L.foldl' foldW8toW32 (0 :: Word32, 24) s
-          in w32                                  
+
+            s -> throwParseError ("weird " ++ show s)        
+
+      setLowerBitsToOne ws setBitsNum allBitsNum =
+        rightPad (allBitsNum `div` 8) (0xFF :: Word8) $ 
+          map setBits $ L.zip ws (map (*8) [0..])
+        where
+          setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. (extra (i + 8 - setBitsNum))
+                          | i < setBitsNum = w8
+                          | otherwise = 0xFF :: Word8  
+          extra lastBitsNum = 
+            L.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
+                    
+      fourW8sToW32 ws = fst $ L.foldl' foldW8toW32 (0 :: Word32, 24) ws
+        where
+          foldW8toW32 (w32, shift) w8 = (
+              w32 + (fromIntegral w8 :: Word32) `shiftL` shift, 
+              shift - 8)        
+      someW8ToW128 ws = (
+            fourW8sToW32 (take 4 unpacked),
+            fourW8sToW32 (take 4 (drop 4 unpacked)),
+            fourW8sToW32 (take 4 (drop 8 unpacked)),
+            fourW8sToW32 (take 4 (drop 12 unpacked))
+          ) 
+        where unpacked = rightPad 16 0 ws
+                         
       rightPad :: Int -> a -> [a] -> [a]
       rightPad n a as = go 0 as
         where
