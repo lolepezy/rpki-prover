@@ -50,10 +50,10 @@ parseCert b = do
         existingExts = maybe [] id exts 
           in case (extVal existingExts oid_ip, extVal existingExts oid_asn) of
             (Nothing,  Nothing)   -> Left (ParseError (T.pack "No IP or ASN extensions in the certificate"))
-            (Just ips, Nothing)   -> parseResources b parseIpExt
-            (Nothing,  Just asns) -> parseResources b parseAsnExt
-            (Just ips, Just asns) -> S.union <$> parseResources b parseIpExt
-                                              <*> parseResources b parseAsnExt
+            (Just ips, Nothing)   -> parseResources ips parseIpExt
+            (Nothing,  Just asns) -> parseResources asns parseAsnExt
+            (Just ips, Just asns) -> S.union <$> parseResources ips parseIpExt
+                                             <*> parseResources asns parseAsnExt
 
       parseResources :: B.ByteString -> ([ASN1] -> ParseResult a) -> ParseResult a
       parseResources b f = do
@@ -106,21 +106,28 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
       addrFamily = onNextContainer Sequence $ do
         (OctetString familyType) <- getNext
         let addressParser = case familyType of 
-                "\NUL\SOH" -> ipv4Address
-                "\NUL\STX" -> ipv6Address
-        onNextContainer Sequence (getMany addressParser)
-      ipv4Address = do
-        (BitString (BitArray nonZeroBits bs)) <- getNext
-        let w32 = fourW8sToW32 (B.unpack bs)
-        pure $ IpR $ Ipv4 $ mkIpv4Block w32 (fromIntegral nonZeroBits)
-      ipv6Address = do
-        (BitString (BitArray nonZeroBits bs)) <- getNext                
-        let unpacked = rightPad 16 0 (B.unpack bs)
-            w128 = (fourW8sToW32 (take 4 unpacked),
-                    fourW8sToW32 (take 4 (drop 4 unpacked)),
-                    fourW8sToW32 (take 4 (drop 8 unpacked)),
-                    fourW8sToW32 (take 4 (drop 12 unpacked)))   
-        pure $ IpR $ Ipv6 $ mkIpv6Block w128 (fromIntegral nonZeroBits)             
+              "\NUL\SOH" -> ipv4Address
+              "\NUL\STX" -> ipv6Address
+              af         -> throwParseError $ "Unsupported address family " ++ show af
+        onNextContainer Sequence (getMany addressParser)       
+      ipv4Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block
+      ipv6Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block   
+      ipvVxAddress wToAddr mkIpVx range prefix mkBlock = 
+        getNextContainerMaybe Sequence >>= \case
+          Just [
+              (BitString (BitArray nonZeroBits1 bs1)), 
+              (BitString (BitArray nonZeroBits2 bs2))
+            ] -> do
+              let w1 = wToAddr (B.unpack bs1)
+              let w2 = wToAddr (B.unpack bs2)
+              pure $ case mkIpVx w1 w2 of
+                Left  r -> IpR $ range r
+                Right p -> IpP $ prefix p
+          Nothing -> getNext >>= \case
+            (BitString (BitArray nonZeroBits bs)) -> do
+              let w = wToAddr (B.unpack bs)
+              pure $ IpP $ prefix $ mkBlock w (fromIntegral nonZeroBits)
+            s -> throwParseError ("weird " ++ show s)                
       fourW8sToW32 s = let 
         foldW8toW32 (w32, shift) w8 =  (w32 + (fromIntegral w8 :: Word32) `shiftL` shift, shift - 8)
         (w32, _) = L.foldl' foldW8toW32 (0 :: Word32, 24) s
@@ -134,4 +141,21 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
 
 
 parseAsnExt :: [ASN1] -> ParseResult (S.Set Resource)
-parseAsnExt _ = Left (ParseError "")
+parseAsnExt asnBlocks = first (ParseError . T.pack) $
+  (flip runParseASN1) asnBlocks $ do
+  -- asIds <- onNextContainer Sequence (asIdentifiers)
+  -- pure $ S.unions (S.fromList <$> asIds)
+    throwParseError $ "bla"
+    -- pure $ Left $ ParseError $ T.pack ""
+  -- where     
+  --   addrFamily = onNextContainer Sequence $ do
+  --     (OctetString familyType) <- getNext
+  --     let addressParser = case familyType of 
+  --           "\NUL\SOH" -> ipv4Address
+  --           "\NUL\STX" -> ipv6Address
+  --           af         -> throwParseError $ "Unsupported address family " ++ show af
+  --     onNextContainer Sequence (getMany addressParser)          
+  --   ipv4Address = do
+  --     (BitString (BitArray nonZeroBits bs)) <- getNext
+  --     let w32 = fourW8sToW32 (B.unpack bs)
+  --     pure $ IpR $ Ipv4 $ mkIpv4Block w32 (fromIntegral nonZeroBits)
