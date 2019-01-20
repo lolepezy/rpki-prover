@@ -41,7 +41,9 @@ newtype ASN = ASN Int
 data Resource = IpP !IpPrefix 
               | IpR !IpRange 
               | AS  !ASN
-              | ASRange !ASN !ASN
+              | ASRange 
+                {-# UNPACK #-} !ASN 
+                {-# UNPACK #-} !ASN
     deriving (Show, Eq, Ord, Typeable)
 
 newtype MFTEntry = MFTEntry B.ByteString
