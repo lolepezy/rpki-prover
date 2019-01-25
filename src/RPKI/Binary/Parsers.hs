@@ -3,7 +3,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveFunctor #-}
 
-module RPKI.Parsers where
+module RPKI.Binary.Parsers where
+
+import Control.Applicative
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T
@@ -24,13 +26,15 @@ import Data.ASN1.Parse
 
 import Data.X509
 
-import RPKI.Domain
+import RPKI.Domain 
+import RPKI.Binary.Const 
+import RPKI.Binary.ASN1Util 
 
 newtype ParseError s = ParseError s
   deriving (Eq, Show, Functor)
 
 type ParseResult a = Either (ParseError T.Text) a
-
+	
 
 parseMft :: B.ByteString -> ParseResult MFT
 parseMft _ = Left (ParseError "Not implemented")
@@ -41,32 +45,33 @@ parseCrl _ = Left (ParseError "Not implemented")
 parseCert :: B.ByteString -> ParseResult Cert
 parseCert b = do
       let certificate :: Either String (SignedExact Certificate) = decodeSignedObject b
-      resourceSet <- parseResourceExtensions =<< first (ParseError . T.pack) certificate
-      pure $ Cert (RealCert b) (SKI (KI B.empty)) resourceSet
-    where
-      parseResourceExtensions :: SignedExact Certificate -> ParseResult (S.Set Resource)
-      parseResourceExtensions = getExts . certExtensions . signedObject . getSigned            
-      getExts (Extensions exts) = let 
-        existingExts = maybe [] id exts 
-          in case (extVal existingExts oid_ip, extVal existingExts oid_asn) of
-            (Nothing,  Nothing)   -> Left (ParseError (T.pack "No IP or ASN extensions in the certificate"))
-            (Just ips, Nothing)   -> parseResources ips parseIpExt
-            (Nothing,  Just asns) -> parseResources asns parseAsnExt
-            (Just ips, Just asns) -> S.union <$> parseResources ips parseIpExt
-                                             <*> parseResources asns parseAsnExt
+      let getExtensions = certExtensions . signedObject . getSigned
+      extensions <- getExtensions <$> mapParseErr certificate
+      ipStrict   <- parseResourceExt extensions id_pe_ipAddrBlocks
+      asStrict   <- parseResourceExt extensions id_pe_autonomousSysIds
+      ipReconsidered <- parseResourceExt extensions id_pe_ipAddrBlocks_v2
+      asReconsidered <- parseResourceExt extensions id_pe_autonomousSysIds_v2
+      pure $ Cert (RealCert b) (SKI (KI B.empty)) ipStrict asStrict ipReconsidered asReconsidered
+    where      
+      -- getExts (Extensions exts) = let 
+      --   existingExts = maybe [] id exts 
+      --     in case (extVal existingExts id_pe_ipAddrBlocks, extVal existingExts id_pe_autonomousSysIds) of
+      --       (Nothing,  Nothing)   -> Left (ParseError (T.pack "No IP or ASN extensions in the certificate"))
+      --       (Just ips, Nothing)   -> parseResources ips parseIpExt
+      --       (Nothing,  Just asns) -> parseResources asns parseAsnExt
+      --       (Just ips, Just asns) -> S.union <$> parseResources ips parseIpExt
+      --                                        <*> parseResources asns parseAsnExt
+
+      parseResourceExt :: Extensions -> OID -> ParseResult (ResourceSet r rfc)
+      parseResourceExt (Extensions exts) oid = do
+        let existingExts = maybe [] id exts
+        pure $ Inherit
 
       parseResources :: B.ByteString -> ([ASN1] -> ParseResult a) -> ParseResult a
       parseResources b f = do
         f =<< first fmt decoded
         where decoded = decodeASN1' BER b
-              fmt err = ParseError $ T.pack "Couldn't parse IP address extension:" `T.append` (T.pack (show err))
-
-
-oid_pkix, oid_pe, oid_ip, oid_asn :: [Integer]
-oid_pkix = [1, 3, 6, 1, 5, 5, 7]
-oid_pe  = oid_pkix ++ [1]
-oid_ip  = oid_pe ++ [7]
-oid_asn = oid_pe ++ [8]
+              fmt err = fmtErr $ "Couldn't parse IP address extension:" ++ show err
           
 extVal :: [ExtensionRaw] -> OID -> Maybe B.ByteString
 extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
@@ -75,7 +80,7 @@ extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 {-
   Parse IP address extension.
 
-  https://tools.ietf.org/html/rfc3779
+  https://tools.ietf.org/html/rfc3779#section-2.2.3
 
    IPAddrBlocks        ::= SEQUENCE OF IPAddressFamily
 
@@ -97,11 +102,11 @@ extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 
    IPAddress           ::= BIT STRING
 -}
-parseIpExt :: [ASN1] -> ParseResult (S.Set Resource)
-parseIpExt addrBlocks = first (ParseError . T.pack) $
+parseIpExt :: [ASN1] -> ParseResult (ResourceSet IpResource rfc)
+parseIpExt addrBlocks = mapParseErr $
     (flip runParseASN1) addrBlocks $ do
     addressFamilies <- onNextContainer Sequence (getMany addrFamily)
-    pure $ S.unions (S.fromList <$> addressFamilies)
+    pure $ RS $ S.unions (S.fromList <$> addressFamilies)
     where 
       addrFamily = onNextContainer Sequence $ do
         (OctetString familyType) <- getNext
@@ -121,7 +126,7 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
               (BitString (BitArray nonZeroBits2 bs2))
             ] -> do
               let w1 = wToAddr $ B.unpack bs1
-              let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2) 
+              let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
                         (fromIntegral nonZeroBits2) fullLength 
               pure $ case mkIpVx w1 w2 of
                 Left  r -> IpR $ range r
@@ -132,15 +137,15 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
               let w = wToAddr (B.unpack bs)
               pure $ IpP $ prefix $ mkBlock w (fromIntegral nonZeroBits)
 
-            s -> throwParseError ("weird " ++ show s)        
+            s -> throwParseError ("Unexpected address range type: " ++ show s)        
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
-        rightPad (allBitsNum `div` 8) (0xFF :: Word8) $ 
+        rightPad (allBitsNum `div` 8) 0xFF $ 
           map setBits $ L.zip ws (map (*8) [0..])
         where
           setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. (extra (i + 8 - setBitsNum))
                           | i < setBitsNum = w8
-                          | otherwise = 0xFF :: Word8  
+                          | otherwise = 0xFF  
           extra lastBitsNum = 
             L.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
                     
@@ -148,7 +153,8 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
         where
           foldW8toW32 (w32, shift) w8 = (
               w32 + (fromIntegral w8 :: Word32) `shiftL` shift, 
-              shift - 8)        
+              shift - 8)       
+ 
       someW8ToW128 ws = (
             fourW8sToW32 (take 4 unpacked),
             fourW8sToW32 (take 4 (drop 4 unpacked)),
@@ -164,23 +170,48 @@ parseIpExt addrBlocks = first (ParseError . T.pack) $
                     | otherwise = []  
           go acc (x : as) = x : go (acc + 1) as    
 
+{- 
+  https://tools.ietf.org/html/rfc3779#section-3.2.3
 
-parseAsnExt :: [ASN1] -> ParseResult (S.Set Resource)
-parseAsnExt asnBlocks = first (ParseError . T.pack) $
-  (flip runParseASN1) asnBlocks $ do
-  -- asIds <- onNextContainer Sequence (asIdentifiers)
-  -- pure $ S.unions (S.fromList <$> asIds)
-    throwParseError $ "bla"
-    -- pure $ Left $ ParseError $ T.pack ""
-  -- where     
-  --   addrFamily = onNextContainer Sequence $ do
-  --     (OctetString familyType) <- getNext
-  --     let addressParser = case familyType of 
-  --           "\NUL\SOH" -> ipv4Address
-  --           "\NUL\STX" -> ipv6Address
-  --           af         -> throwParseError $ "Unsupported address family " ++ show af
-  --     onNextContainer Sequence (getMany addressParser)          
-  --   ipv4Address = do
-  --     (BitString (BitArray nonZeroBits bs)) <- getNext
-  --     let w32 = fourW8sToW32 (B.unpack bs)
-  --     pure $ IpR $ Ipv4 $ mkIpv4Block w32 (fromIntegral nonZeroBits)
+  id-pe-autonomousSysIds  OBJECT IDENTIFIER ::= { id-pe 8 }
+
+   ASIdentifiers       ::= SEQUENCE {
+       asnum               [0] EXPLICIT ASIdentifierChoice OPTIONAL,
+       rdi                 [1] EXPLICIT ASIdentifierChoice OPTIONAL}
+
+   ASIdentifierChoice  ::= CHOICE {
+      inherit              NULL, -- inherit from issuer --
+      asIdsOrRanges        SEQUENCE OF ASIdOrRange }
+
+   ASIdOrRange         ::= CHOICE {
+       id                  ASId,
+       range               ASRange }
+
+   ASRange             ::= SEQUENCE {
+       min                 ASId,
+       max                 ASId }
+
+   ASId                ::= INTEGER
+-}
+parseAsnExt :: [ASN1] -> ParseResult (ResourceSet AsResource rfc)
+parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
+    onNextContainer Sequence $ 
+      -- we only want the first element of the sequence
+      onNextContainer (Container Context 0) $
+        (getNull (pure Inherit)) <|> 
+        (RS . S.fromList) <$> onNextContainer Sequence (getMany asOrRange)
+  where
+    asOrRange = getNextContainerMaybe Sequence >>= \case       
+        Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
+        Nothing -> getNext >>= \case
+          IntVal asn -> pure $ AS $ as' asn        
+          something  -> throwParseError $ "Unknown ASN specification " ++ show something
+      where 
+        as' = ASN . fromInteger    
+
+
+fmtErr :: String -> ParseError T.Text
+fmtErr = ParseError . T.pack
+
+mapParseErr :: Either String a -> ParseResult a       
+mapParseErr = first fmtErr

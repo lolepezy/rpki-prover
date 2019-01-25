@@ -20,18 +20,18 @@ validate :: RpkiObj -> ValidationResult
     Also, We would probably need ReaderT ValidationContext STM 
     where ValidationContext is a way of accessing the context.
 -}
-validate (RpkiObj _ (Cu (Cert _ _ _))) = Success ()
+validate (RpkiObj _ (Cu (Cert _ _ _ _ _ _))) = Success ()
 validate (RpkiObj _ (Mu (MFT _))) = Success ()
 validate (RpkiObj _ (Cru (CRL _))) = Success ()
 validate (RpkiObj _ (Ru (ROA _ _ _))) = Success ()
 
 validateTA :: TA -> Store -> STM ()
-validateTA TA { certificate = cert } s = 
+validateTA TA { taCertificate = cert } s = 
     go cert
     where
         go :: Cert -> STM ()
         go cert = do
-            let Cert _ (SKI ki) _ = cert
+            let Cert _ (SKI ki) _ _ _ _ = cert
             children <- getByAKI s (AKI ki)
             let mfts  = [ (s, mft) | RpkiObj s (Mu  mft) <- children ]
             let certs = [ (s, cer) | RpkiObj s (Cu cer)  <- children ]

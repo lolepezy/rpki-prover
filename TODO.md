@@ -1,0 +1,5 @@
+- parse ASN extension
+- support 'inherit' (check for ASN1 nulls)
+- parse MFTs
+- parse CRLs (or fix the X509's parser)
+- implement resource set

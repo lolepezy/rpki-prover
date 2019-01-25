@@ -29,11 +29,12 @@ import Data.X509.Memory
 import qualified Data.X509 as X509
 
 import RPKI.Domain
-import RPKI.Parsers
+import RPKI.Binary.Parsers
 import RPKI.Store
 
 testCertParsing = do
   let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
+  -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/smaller.cer"
 
   cert <- B.readFile path
   let (Right content :: Either String (X509.SignedExact X509.Certificate)) = X509.decodeSignedObject cert
@@ -45,9 +46,11 @@ testCertParsing = do
   let addr = [ X509.tryExtRawASN1 e | e@(X509.ExtensionRaw oid _ c) <- xt, oid == addrExt ]
   let asn = [ X509.tryExtRawASN1 e | e@(X509.ExtensionRaw oid _ c) <- xt, oid == asnExt ]  
 
-  let [Right a] = addr
+  let [Right ip] = addr
+  let [Right as] = asn
 
-  let x = parseIpExt a
+  let x = parseIpExt ip
+  let z = parseAsnExt as
   let xcert = parseCert cert
 
   -- putStrLn $ "a = " ++ show a
@@ -56,12 +59,12 @@ testCertParsing = do
   putStrLn ""
   putStrLn ""
 
-  putStrLn $ "IP = " ++ show x
+  -- putStrLn $ "IP = " ++ show x
   putStrLn ""
   putStrLn ""
   putStrLn ""
   putStrLn ""
-  -- putStrLn $ "ASN = " ++ show asn
+  putStrLn $ "ASN = " ++ show z
 
 testCrlParsing = do
   let path = "/Users/mpuzanov/ripe/tmp/rpki/validator-3/1/rpki-validator-3.0-DEV20190107133347/rsync/rpki.afrinic.net/873/repository/ripe/f3rBgIl5g-Kek3wKGHgDwHJ1VUU.crl"

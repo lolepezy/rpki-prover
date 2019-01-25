@@ -1,5 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeApplications #-}
 
 module RPKI.Domain where
 
@@ -32,19 +36,40 @@ newtype Ipv6Range = Ipv6Range (Range V6.IpAddress)
 data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
     deriving (Show, Eq, Ord, Typeable)
 
+-- data AddrFamily = Ipv4F | Ipv6F
+-- data AddrType = PrefixT | RangeT
+
+-- data IpvX (f :: AddrFamily) (t :: AddrType) where
+--     V4P :: Ipv4Prefix -> IpvX 'Ipv4F 'PrefixT
+--     V6P :: Ipv6Prefix -> IpvX 'Ipv6F 'PrefixT
+--     V4R :: Ipv4Range  -> IpvX 'Ipv4F 'RangeT
+--     V6R :: Ipv6Range  -> IpvX 'Ipv6F 'RangeT
+
+
 data IpRange = Ipv4R !Ipv4Range | Ipv6R !Ipv6Range
     deriving (Show, Eq, Ord, Typeable)
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable)
 
-data Resource = IpP !IpPrefix 
-              | IpR !IpRange 
-              | AS  !ASN
-              | ASRange 
-                {-# UNPACK #-} !ASN 
-                {-# UNPACK #-} !ASN
+data IpResource = IpP !IpPrefix 
+                | IpR !IpRange 
     deriving (Show, Eq, Ord, Typeable)
+
+data AsResource =  AS !ASN
+                 | ASRange  
+                    {-# UNPACK #-} !ASN 
+                    {-# UNPACK #-} !ASN
+    deriving (Show, Eq, Ord, Typeable)                    
+
+data ValidationRFC = Strict | Reconsidered
+
+data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
+    deriving (Show, Eq, Ord, Typeable)
+
+
+    
+-- | Objects
 
 newtype MFTEntry = MFTEntry B.ByteString
     deriving (Show, Eq, Ord, Typeable)
@@ -71,7 +96,14 @@ data SignedObj = SignedObj {
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
-data Cert = Cert !RealCert !SKI !(S.Set Resource)
+data Cert = Cert {
+    certX509          :: !RealCert 
+  , ski               :: !SKI 
+  , ipResourcesStrict :: !(ResourceSet IpResource 'Strict)
+  , asResourcesStrict :: !(ResourceSet AsResource 'Strict)
+  , ipResourcesReconsidered :: !(ResourceSet IpResource 'Reconsidered)
+  , asResourcesReconsidered :: !(ResourceSet AsResource 'Reconsidered)  
+}
     deriving (Show, Eq, Ord, Typeable)
 data ROA = ROA !RealRoa !IpPrefix !ASN
     deriving (Show, Eq, Ord, Typeable)
@@ -90,15 +122,15 @@ data RpkiObj = RpkiObj !SignedObj !RpkiUnit
 newtype SPKI = SPKI B.ByteString
 
 data TA = TA {
-    name        :: !T.Text
-  , certificate :: !Cert
-  , uri         :: !URI
-  , spki        :: !SPKI
+    taName        :: !T.Text
+  , taCertificate :: !Cert
+  , taUri         :: !URI
+  , taSpki        :: !SPKI
 }
 
 data Repository = Repository {
-    rsyncUrl :: !URI
-  , rrdpUrl  :: !URI
+    repoRsyncUrl :: !URI
+  , repoRrdpUrl  :: !URI
 }
 
 newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
