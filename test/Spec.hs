@@ -55,7 +55,7 @@ testCertParsing = do
   let z = parseAsnExt as
   let xcert = parseCert cert
 
-  -- putStrLn $ "a = " ++ show a
+  -- putStrLn $ "xt = " ++ show xt
   putStrLn $ "xcert = " ++ show xcert
   putStrLn ""
   putStrLn ""

@@ -48,20 +48,24 @@ parseCert b = do
       let getExtensions = certExtensions . signedObject . getSigned
       Extensions extensions <- getExtensions <$> mapParseErr certificate
       let ext' = extVal $ maybe [] id extensions
-      case (ext' id_pe_ipAddrBlocks, 
-            ext' id_pe_ipAddrBlocks_v2, 
-            ext' id_pe_autonomousSysIds, 
-            ext' id_pe_autonomousSysIds_v2) of
-        (Nothing, Nothing, _, _) -> Left $ fmtErr $ "No IP extension"
-        (Just _, Just _, _, _)   -> Left $ fmtErr $ "Both IP extensions"
-        (_, _, Nothing, Nothing) -> Left $ fmtErr $ "No ASN extension"
-        (_, _, Just _, Just _)   -> Left $ fmtErr $ "Both ASN extensions"
-        (Just _, _, _, Just _)   -> Left $ fmtErr $ "There is both IP V1 and ASN V2 extensions"
-        (_, Just _, Just _, _)   -> Left $ fmtErr $ "There is both IP V2 and ASN V1 extensions"                
-        (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ips asns
-        (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ips asns          
+      case ext' id_subjectKeyId of 
+        Nothing  -> broken "No SKI"
+        Just ski -> do
+          case (ext' id_pe_ipAddrBlocks, 
+                ext' id_pe_ipAddrBlocks_v2, 
+                ext' id_pe_autonomousSysIds, 
+                ext' id_pe_autonomousSysIds_v2) of
+            (Nothing, Nothing, _, _) -> broken "No IP extension"
+            (Just _, Just _, _, _)   -> broken "Both IP extensions"
+            (_, _, Nothing, Nothing) -> broken "No ASN extension"
+            (_, _, Just _, Just _)   -> broken "Both ASN extensions"
+            (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
+            (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
+            (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ski ips asns
+            (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ski ips asns          
     where
-      cert' ips asns = (Cert (RealCert b) (SKI (KI B.empty))) <$> 
+      broken = Left . fmtErr
+      cert' ski ips asns = (Cert (RealCert b) (SKI (KI ski))) <$> 
           (parseResources parseIpExt ips) <*> 
           (parseResources parseAsnExt asns)
 
