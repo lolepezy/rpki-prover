@@ -47,20 +47,17 @@ parseCert b = do
       let certificate :: Either String (SignedExact Certificate) = decodeSignedObject b
       let getExtensions = certExtensions . signedObject . getSigned
       Extensions extensions <- getExtensions <$> mapParseErr certificate
-      let existingExts = maybe [] id extensions
-
-      let ipAddr    = extVal existingExts id_pe_ipAddrBlocks
-      let ipAddr_v2 = extVal existingExts id_pe_ipAddrBlocks_v2
-      let asns      = extVal existingExts id_pe_autonomousSysIds
-      let asns_v2   = extVal existingExts id_pe_autonomousSysIds_v2      
-
-      case (ipAddr, ipAddr_v2, asns, asns_v2) of
+      let ext' = extVal $ maybe [] id extensions
+      case (ext' id_pe_ipAddrBlocks, 
+            ext' id_pe_ipAddrBlocks_v2, 
+            ext' id_pe_autonomousSysIds, 
+            ext' id_pe_autonomousSysIds_v2) of
         (Nothing, Nothing, _, _) -> Left $ fmtErr $ "No IP extension"
-        (_, _, Nothing, Nothing) -> Left $ fmtErr $ "No ASN extension"
-        (Just _, _, _, Just _)   -> Left $ fmtErr $ "There is both IP V1 and ASN V2 extensions"
-        (_, Just _, Just _, _)   -> Left $ fmtErr $ "There is both IP V2 and ASN V1 extensions"
         (Just _, Just _, _, _)   -> Left $ fmtErr $ "Both IP extensions"
+        (_, _, Nothing, Nothing) -> Left $ fmtErr $ "No ASN extension"
         (_, _, Just _, Just _)   -> Left $ fmtErr $ "Both ASN extensions"
+        (Just _, _, _, Just _)   -> Left $ fmtErr $ "There is both IP V1 and ASN V2 extensions"
+        (_, Just _, Just _, _)   -> Left $ fmtErr $ "There is both IP V2 and ASN V1 extensions"                
         (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ips asns
         (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ips asns          
     where
@@ -69,9 +66,9 @@ parseCert b = do
           (parseResources parseAsnExt asns)
 
       parseResources :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
-      parseResources f b = do
+      parseResources f ext = do
         f =<< first fmt decoded
-        where decoded = decodeASN1' BER b
+        where decoded = decodeASN1' BER ext
               fmt err = fmtErr $ "Couldn't parse IP address extension:" ++ show err
           
 extVal :: [ExtensionRaw] -> OID -> Maybe B.ByteString
@@ -152,9 +149,9 @@ parseIpExt addrBlocks = mapParseErr $
                     
       fourW8sToW32 ws = fst $ L.foldl' foldW8toW32 (0 :: Word32, 24) ws
         where
-          foldW8toW32 (w32, shift) w8 = (
-              w32 + (fromIntegral w8 :: Word32) `shiftL` shift, 
-              shift - 8)       
+          foldW8toW32 (w32, shift') w8 = (
+              w32 + (fromIntegral w8 :: Word32) `shiftL` shift', 
+              shift' - 8)       
  
       someW8ToW128 ws = (
             fourW8sToW32 (take 4 unpacked),
@@ -169,7 +166,7 @@ parseIpExt addrBlocks = mapParseErr $
         where
           go acc [] | acc < n  = a : go (acc + 1) []
                     | otherwise = []  
-          go acc (x : as) = x : go (acc + 1) as    
+          go acc (x : xs) = x : go (acc + 1) xs    
 
 {- 
   https://tools.ietf.org/html/rfc3779#section-3.2.3
@@ -203,10 +200,11 @@ parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
         (RS . S.fromList) <$> onNextContainer Sequence (getMany asOrRange)
   where
     asOrRange = getNextContainerMaybe Sequence >>= \case       
-        Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
         Nothing -> getNext >>= \case
           IntVal asn -> pure $ AS $ as' asn        
           something  -> throwParseError $ "Unknown ASN specification " ++ show something
+        Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
+        Just something -> throwParseError $ "Unknown ASN specification " ++ show something
       where 
         as' = ASN . fromInteger    
 

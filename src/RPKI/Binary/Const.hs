@@ -1,6 +1,11 @@
 module RPKI.Binary.Const where
   
-oid_pkix, oid_pe, id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: [Integer]
+import Data.ASN1.OID
+
+oid_pkix, oid_pe :: OID
+id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
+id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
+
 oid_pkix = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix ++ [1]
 id_pe_ipAddrBlocks        = oid_pe ++ [ 7 ]
