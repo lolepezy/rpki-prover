@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DataKinds #-}
 
 module RPKI.Binary.Parsers where
 
@@ -34,7 +35,6 @@ newtype ParseError s = ParseError s
   deriving (Eq, Show, Functor)
 
 type ParseResult a = Either (ParseError T.Text) a
-	
 
 parseMft :: B.ByteString -> ParseResult MFT
 parseMft _ = Left (ParseError "Not implemented")
@@ -42,33 +42,34 @@ parseMft _ = Left (ParseError "Not implemented")
 parseCrl :: B.ByteString -> ParseResult MFT
 parseCrl _ = Left (ParseError "Not implemented")
 
-parseCert :: B.ByteString -> ParseResult Cert
+parseCert :: B.ByteString -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
 parseCert b = do
       let certificate :: Either String (SignedExact Certificate) = decodeSignedObject b
       let getExtensions = certExtensions . signedObject . getSigned
-      extensions <- getExtensions <$> mapParseErr certificate
-      ipStrict   <- parseResourceExt extensions id_pe_ipAddrBlocks
-      asStrict   <- parseResourceExt extensions id_pe_autonomousSysIds
-      ipReconsidered <- parseResourceExt extensions id_pe_ipAddrBlocks_v2
-      asReconsidered <- parseResourceExt extensions id_pe_autonomousSysIds_v2
-      pure $ Cert (RealCert b) (SKI (KI B.empty)) ipStrict asStrict ipReconsidered asReconsidered
-    where      
-      -- getExts (Extensions exts) = let 
-      --   existingExts = maybe [] id exts 
-      --     in case (extVal existingExts id_pe_ipAddrBlocks, extVal existingExts id_pe_autonomousSysIds) of
-      --       (Nothing,  Nothing)   -> Left (ParseError (T.pack "No IP or ASN extensions in the certificate"))
-      --       (Just ips, Nothing)   -> parseResources ips parseIpExt
-      --       (Nothing,  Just asns) -> parseResources asns parseAsnExt
-      --       (Just ips, Just asns) -> S.union <$> parseResources ips parseIpExt
-      --                                        <*> parseResources asns parseAsnExt
+      Extensions extensions <- getExtensions <$> mapParseErr certificate
+      let existingExts = maybe [] id extensions
 
-      parseResourceExt :: Extensions -> OID -> ParseResult (ResourceSet r rfc)
-      parseResourceExt (Extensions exts) oid = do
-        let existingExts = maybe [] id exts
-        pure $ Inherit
+      let ipAddr    = extVal existingExts id_pe_ipAddrBlocks
+      let ipAddr_v2 = extVal existingExts id_pe_ipAddrBlocks_v2
+      let asns      = extVal existingExts id_pe_autonomousSysIds
+      let asns_v2   = extVal existingExts id_pe_autonomousSysIds_v2      
 
-      parseResources :: B.ByteString -> ([ASN1] -> ParseResult a) -> ParseResult a
-      parseResources b f = do
+      case (ipAddr, ipAddr_v2, asns, asns_v2) of
+        (Nothing, Nothing, _, _) -> Left $ fmtErr $ "No IP extension"
+        (_, _, Nothing, Nothing) -> Left $ fmtErr $ "No ASN extension"
+        (Just _, _, _, Just _)   -> Left $ fmtErr $ "There is both IP V1 and ASN V2 extensions"
+        (_, Just _, Just _, _)   -> Left $ fmtErr $ "There is both IP V2 and ASN V1 extensions"
+        (Just _, Just _, _, _)   -> Left $ fmtErr $ "Both IP extensions"
+        (_, _, Just _, Just _)   -> Left $ fmtErr $ "Both ASN extensions"
+        (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ips asns
+        (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ips asns          
+    where
+      cert' ips asns = (Cert (RealCert b) (SKI (KI B.empty))) <$> 
+          (parseResources parseIpExt ips) <*> 
+          (parseResources parseAsnExt asns)
+
+      parseResources :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
+      parseResources f b = do
         f =<< first fmt decoded
         where decoded = decodeASN1' BER b
               fmt err = fmtErr $ "Couldn't parse IP address extension:" ++ show err

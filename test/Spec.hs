@@ -33,8 +33,10 @@ import RPKI.Binary.Parsers
 import RPKI.Store
 
 testCertParsing = do
-  let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
+  -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
   -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/smaller.cer"
+  let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.afrinic.net/873/repository/afrinic/imnjE5vX78CApC4WBIM5j6bHW7Y.cer"
+
 
   cert <- B.readFile path
   let (Right content :: Either String (X509.SignedExact X509.Certificate)) = X509.decodeSignedObject cert
@@ -54,7 +56,7 @@ testCertParsing = do
   let xcert = parseCert cert
 
   -- putStrLn $ "a = " ++ show a
-  -- putStrLn $ "xcert = " ++ show xcert
+  putStrLn $ "xcert = " ++ show xcert
   putStrLn ""
   putStrLn ""
   putStrLn ""
@@ -64,7 +66,7 @@ testCertParsing = do
   putStrLn ""
   putStrLn ""
   putStrLn ""
-  putStrLn $ "ASN = " ++ show z
+  -- putStrLn $ "ASN = " ++ show z
 
 testCrlParsing = do
   let path = "/Users/mpuzanov/ripe/tmp/rpki/validator-3/1/rpki-validator-3.0-DEV20190107133347/rsync/rpki.afrinic.net/873/repository/ripe/f3rBgIl5g-Kek3wKGHgDwHJ1VUU.crl"

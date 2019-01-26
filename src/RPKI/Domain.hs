@@ -67,7 +67,6 @@ data ValidationRFC = Strict | Reconsidered
 data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
     deriving (Show, Eq, Ord, Typeable)
 
-
     
 -- | Objects
 
@@ -96,15 +95,14 @@ data SignedObj = SignedObj {
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
-data Cert = Cert {
-    certX509          :: !RealCert 
-  , ski               :: !SKI 
-  , ipResourcesStrict :: !(ResourceSet IpResource 'Strict)
-  , asResourcesStrict :: !(ResourceSet AsResource 'Strict)
-  , ipResourcesReconsidered :: !(ResourceSet IpResource 'Reconsidered)
-  , asResourcesReconsidered :: !(ResourceSet AsResource 'Reconsidered)  
-}
-    deriving (Show, Eq, Ord, Typeable)
+data Cert (rfc :: ValidationRFC) = Cert {
+    certX509    :: !RealCert 
+  , ski         :: !SKI 
+  , ipResources :: !(ResourceSet IpResource rfc)
+  , asResources :: !(ResourceSet AsResource rfc)
+} deriving (Show, Eq, Ord, Typeable)
+
+
 data ROA = ROA !RealRoa !IpPrefix !ASN
     deriving (Show, Eq, Ord, Typeable)
 data CRL = CRL !RealCrl
@@ -112,7 +110,11 @@ data CRL = CRL !RealCrl
 data MFT = MFT !RealMft
     deriving (Show, Eq, Ord, Typeable)
 
-data RpkiUnit = Cu !Cert | Mu !MFT | Cru !CRL | Ru !ROA
+data RpkiUnit = Cu !(Cert 'Strict) 
+              | CuV2 (Cert 'Reconsidered) 
+              | Mu !MFT 
+              | Cru !CRL 
+              | Ru !ROA
     deriving (Show, Eq, Ord, Typeable)
 
 data RpkiObj = RpkiObj !SignedObj !RpkiUnit
@@ -123,7 +125,7 @@ newtype SPKI = SPKI B.ByteString
 
 data TA = TA {
     taName        :: !T.Text
-  , taCertificate :: !Cert
+  , taCertificate :: !(Either (Cert 'Strict) (Cert 'Reconsidered))
   , taUri         :: !URI
   , taSpki        :: !SPKI
 }
