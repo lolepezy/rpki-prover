@@ -4,6 +4,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module RPKI.Domain where
 
@@ -23,6 +24,9 @@ import HaskellWorks.Data.Network.Ip.Word128
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
+data AddrFamily = Ipv4F | Ipv6F
+    deriving (Show, Eq, Ord, Typeable)
+
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
     deriving (Show, Eq, Ord, Typeable)
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical) 
@@ -33,28 +37,37 @@ newtype Ipv4Range = Ipv4Range (Range V4.IpAddress)
 newtype Ipv6Range = Ipv6Range (Range V6.IpAddress) 
     deriving (Show, Eq, Ord, Typeable)
 
-data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
-    deriving (Show, Eq, Ord, Typeable)
+data IpPrefix (f :: AddrFamily) where
+    Ipv4P :: !Ipv4Prefix -> IpPrefix 'Ipv4F
+    Ipv6P :: !Ipv6Prefix -> IpPrefix 'Ipv6F
 
--- data AddrFamily = Ipv4F | Ipv6F
--- data AddrType = PrefixT | RangeT
+deriving instance Show (IpPrefix f)
+deriving instance Eq (IpPrefix f)
+deriving instance Ord (IpPrefix f)
+deriving instance Typeable (IpPrefix f)
 
--- data IpvX (f :: AddrFamily) (t :: AddrType) where
---     V4P :: Ipv4Prefix -> IpvX 'Ipv4F 'PrefixT
---     V6P :: Ipv6Prefix -> IpvX 'Ipv6F 'PrefixT
---     V4R :: Ipv4Range  -> IpvX 'Ipv4F 'RangeT
---     V6R :: Ipv6Range  -> IpvX 'Ipv6F 'RangeT
+data IpRange (f :: AddrFamily) where
+    Ipv4R :: !Ipv4Range -> IpRange 'Ipv4F
+    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F
 
-
-data IpRange = Ipv4R !Ipv4Range | Ipv6R !Ipv6Range
-    deriving (Show, Eq, Ord, Typeable)
+deriving instance Show (IpRange f)
+deriving instance Eq (IpRange f)
+deriving instance Ord (IpRange f)
+deriving instance Typeable (IpRange f)
+    
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable)
 
-data IpResource = IpP !IpPrefix 
-                | IpR !IpRange 
-    deriving (Show, Eq, Ord, Typeable)
+data IpResource (f :: AddrFamily) where
+    IpP :: !(IpPrefix f) -> IpResource f
+    IpR :: !(IpRange f ) -> IpResource f
+
+deriving instance Show (IpResource f)
+deriving instance Eq (IpResource f)
+deriving instance Ord (IpResource f)
+deriving instance Typeable (IpResource f)
+    
 
 data AsResource =  AS !ASN
                  | ASRange  
@@ -65,8 +78,17 @@ data AsResource =  AS !ASN
 data ValidationRFC = Strict | Reconsidered
 
 data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
-    deriving (Show, Eq, Ord, Typeable)
 
+deriving instance Show r => Show (ResourceSet r rfc)
+deriving instance Eq r => Eq (ResourceSet r rfc)
+deriving instance Ord r => Ord (ResourceSet r rfc)
+deriving instance Typeable r => Typeable (ResourceSet r rfc)
+
+
+data IpResourceSet (rfc :: ValidationRFC) = 
+    IpResourceSet !(ResourceSet (IpResource 'Ipv4F) rfc)
+                  !(ResourceSet (IpResource 'Ipv6F) rfc)
+    deriving (Show, Eq, Ord, Typeable)                    
     
 -- | Objects
 
@@ -98,12 +120,13 @@ data SignedObj = SignedObj {
 data Cert (rfc :: ValidationRFC) = Cert {
     certX509    :: !RealCert 
   , ski         :: !SKI 
-  , ipResources :: !(ResourceSet IpResource rfc)
+  , ipResources :: !(IpResourceSet rfc)
   , asResources :: !(ResourceSet AsResource rfc)
 } deriving (Show, Eq, Ord, Typeable)
 
+-- TODO Make ROA polymorphic by the address family
 
-data ROA = ROA !RealRoa !IpPrefix !ASN
+data ROA = ROA !RealRoa !(IpPrefix 'Ipv4F) !ASN
     deriving (Show, Eq, Ord, Typeable)
 data CRL = CRL !RealCrl
     deriving (Show, Eq, Ord, Typeable)
@@ -111,7 +134,7 @@ data MFT = MFT !RealMft
     deriving (Show, Eq, Ord, Typeable)
 
 data RpkiUnit = Cu !(Cert 'Strict) 
-              | CuV2 (Cert 'Reconsidered) 
+              | CuV2 !(Cert 'Reconsidered) 
               | Mu !MFT 
               | Cru !CRL 
               | Ru !ROA

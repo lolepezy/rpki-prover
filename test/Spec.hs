@@ -33,9 +33,9 @@ import RPKI.Binary.Parsers
 import RPKI.Store
 
 testCertParsing = do
-  -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
+  let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
   -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/smaller.cer"
-  let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.afrinic.net/873/repository/afrinic/imnjE5vX78CApC4WBIM5j6bHW7Y.cer"
+  -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.afrinic.net/873/repository/afrinic/imnjE5vX78CApC4WBIM5j6bHW7Y.cer"
 
 
   cert <- B.readFile path

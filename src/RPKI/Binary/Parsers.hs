@@ -3,6 +3,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE KindSignatures #-}
 
 module RPKI.Binary.Parsers where
 
@@ -50,7 +52,7 @@ parseCert b = do
       let ext' = extVal $ maybe [] id extensions
       case ext' id_subjectKeyId of 
         Nothing  -> broken "No SKI"
-        Just ski -> do
+        Just ski' -> do
           case (ext' id_pe_ipAddrBlocks, 
                 ext' id_pe_ipAddrBlocks_v2, 
                 ext' id_pe_autonomousSysIds, 
@@ -61,11 +63,11 @@ parseCert b = do
             (_, _, Just _, Just _)   -> broken "Both ASN extensions"
             (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
             (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
-            (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ski ips asns
-            (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ski ips asns          
+            (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ski' ips asns
+            (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ski' ips asns          
     where
       broken = Left . fmtErr
-      cert' ski ips asns = (Cert (RealCert b) (SKI (KI ski))) <$> 
+      cert' ski' ips asns = (Cert (RealCert b) (SKI (KI ski'))) <$> 
           (parseResources parseIpExt ips) <*> 
           (parseResources parseAsnExt asns)
 
@@ -104,25 +106,36 @@ extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 
    IPAddress           ::= BIT STRING
 -}
-parseIpExt :: [ASN1] -> ParseResult (ResourceSet IpResource rfc)
+parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
 parseIpExt addrBlocks = mapParseErr $
     (flip runParseASN1) addrBlocks $ do
-    addressFamilies <- onNextContainer Sequence (getMany addrFamily)
-    pure $ RS $ S.unions (S.fromList <$> addressFamilies)
-    where 
+    afs <- onNextContainer Sequence (getMany addrFamily)
+    let ipv4family = head [ af | Left  af <- afs ]
+    let ipv6family = head [ af | Right af <- afs ]
+    pure $ IpResourceSet ipv4family ipv6family
+    where      
       addrFamily = onNextContainer Sequence $ do
         (OctetString familyType) <- getNext
-        let addressParser = case familyType of 
-              "\NUL\SOH" -> ipv4Address
-              "\NUL\STX" -> ipv6Address
+        case familyType of 
+              "\NUL\SOH" -> Left  <$> onNextContainer Sequence (ipResourceSet ipv4Address)
+              "\NUL\STX" -> Right <$> onNextContainer Sequence (ipResourceSet ipv6Address)       
               af         -> throwParseError $ "Unsupported address family " ++ show af
-        onNextContainer Sequence (getMany addressParser)       
+        where
+          ipResourceSet address = 
+            (getNull (pure Inherit)) <|> 
+            ((RS . S.fromList) <$> (getMany address))
+      
       ipv4Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block 32
       ipv6Address = ipvVxAddress someW8ToW128 mkIpv6 Ipv6R Ipv6P mkIpv6Block 128
 
-      ipvVxAddress wToAddr mkIpVx range prefix mkBlock fullLength =
-        -- try range first 
+      ipvVxAddress wToAddr mkIpVx range prefix mkBlock fullLength =        
         getNextContainerMaybe Sequence >>= \case
+          Nothing -> getNext >>= \case
+            (BitString (BitArray nonZeroBits bs)) -> do
+              let w = wToAddr (B.unpack bs)
+              pure $ IpP $ prefix $ mkBlock w (fromIntegral nonZeroBits)
+
+            s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
           Just [
               (BitString (BitArray nonZeroBits1 bs1)), 
               (BitString (BitArray nonZeroBits2 bs2))
@@ -132,14 +145,9 @@ parseIpExt addrBlocks = mapParseErr $
                         (fromIntegral nonZeroBits2) fullLength 
               pure $ case mkIpVx w1 w2 of
                 Left  r -> IpR $ range r
-                Right p -> IpP $ prefix p
-          -- now try prefix      
-          Nothing -> getNext >>= \case
-            (BitString (BitArray nonZeroBits bs)) -> do
-              let w = wToAddr (B.unpack bs)
-              pure $ IpP $ prefix $ mkBlock w (fromIntegral nonZeroBits)
+                Right p -> IpP $ prefix p          
 
-            s -> throwParseError ("Unexpected address range type: " ++ show s)        
+          s -> throwParseError ("Unexpected address representation: " ++ show s)
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
         rightPad (allBitsNum `div` 8) 0xFF $ 
