@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-module RPKI.Binary.ASN1Util where
+module RPKI.Parse.ASN1Util where
   
 import Data.ASN1.Types
 import Data.ASN1.Parse

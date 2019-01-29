@@ -6,7 +6,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE KindSignatures #-}
 
-module RPKI.Binary.Parsers where
+module RPKI.Parse.Parsers where
 
 import Control.Applicative
 
@@ -30,19 +30,9 @@ import Data.ASN1.Parse
 import Data.X509
 
 import RPKI.Domain 
-import RPKI.Binary.Const 
-import RPKI.Binary.ASN1Util 
-
-newtype ParseError s = ParseError s
-  deriving (Eq, Show, Functor)
-
-type ParseResult a = Either (ParseError T.Text) a
-
-parseMft :: B.ByteString -> ParseResult MFT
-parseMft _ = Left (ParseError "Not implemented")
-
-parseCrl :: B.ByteString -> ParseResult MFT
-parseCrl _ = Left (ParseError "Not implemented")
+import RPKI.Parse.Common 
+import RPKI.Parse.ASN1Util 
+import RPKI.Parse.MFT 
 
 parseCert :: B.ByteString -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
 parseCert b = do
@@ -110,9 +100,9 @@ parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
 parseIpExt addrBlocks = mapParseErr $
     (flip runParseASN1) addrBlocks $ do
     afs <- onNextContainer Sequence (getMany addrFamily)
-    let ipv4family = head [ af | Left  af <- afs ]
-    let ipv6family = head [ af | Right af <- afs ]
-    pure $ IpResourceSet ipv4family ipv6family
+    let ipv4 = head [ af | Left  af <- afs ]
+    let ipv6 = head [ af | Right af <- afs ]
+    pure $ IpResourceSet ipv4 ipv6
     where      
       addrFamily = onNextContainer Sequence $ do
         (OctetString familyType) <- getNext
@@ -137,7 +127,7 @@ parseIpExt addrBlocks = mapParseErr $
 
             s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
           Just [
-              (BitString (BitArray nonZeroBits1 bs1)), 
+              (BitString (BitArray _            bs1)), 
               (BitString (BitArray nonZeroBits2 bs2))
             ] -> do
               let w1 = wToAddr $ B.unpack bs1
@@ -220,6 +210,14 @@ parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
       where 
         as' = ASN . fromInteger    
 
+
+
+parseMft :: B.ByteString -> ParseResult MFT
+parseMft _ = Left (ParseError "Not implemented")
+
+parseCrl :: B.ByteString -> ParseResult MFT
+parseCrl _ = Left (ParseError "Not implemented")
+        
 
 fmtErr :: String -> ParseError T.Text
 fmtErr = ParseError . T.pack
