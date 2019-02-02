@@ -6,7 +6,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE KindSignatures #-}
 
-module RPKI.Parse.Parsers where
+module RPKI.Parse.Cert where
 
 import Control.Applicative
 
@@ -32,8 +32,10 @@ import Data.X509
 import RPKI.Domain 
 import RPKI.Parse.Common 
 import RPKI.Parse.ASN1Util 
-import RPKI.Parse.MFT 
 
+{- |
+  Parse RPKI certificate object with the IP and ASN resource extensions.
+-}
 parseCert :: B.ByteString -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
 parseCert b = do
       let certificate :: Either String (SignedExact Certificate) = decodeSignedObject b
@@ -209,14 +211,6 @@ parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
         Just something -> throwParseError $ "Unknown ASN specification " ++ show something
       where 
         as' = ASN . fromInteger    
-
-
-
-parseMft :: B.ByteString -> ParseResult MFT
-parseMft _ = Left (ParseError "Not implemented")
-
-parseCrl :: B.ByteString -> ParseResult MFT
-parseCrl _ = Left (ParseError "Not implemented")
         
 
 fmtErr :: String -> ParseError T.Text
