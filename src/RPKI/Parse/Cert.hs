@@ -31,13 +31,13 @@ import Data.X509
 
 import RPKI.Domain 
 import RPKI.Parse.Common 
-import RPKI.Parse.ASN1Util 
+import RPKI.Parse.ASN1Util
 
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseCert :: B.ByteString -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
-parseCert b = do
+parseResourceCertificate :: B.ByteString -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
+parseResourceCertificate b = do
       let certificate :: Either String (SignedExact Certificate) = decodeSignedObject b
       let getExtensions = certExtensions . signedObject . getSigned
       Extensions extensions <- getExtensions <$> mapParseErr certificate

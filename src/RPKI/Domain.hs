@@ -18,6 +18,8 @@ import Data.Data (Typeable)
 
 import Data.Word
 
+import Data.Hourglass
+
 import HaskellWorks.Data.Network.Ip.Validity
 import HaskellWorks.Data.Network.Ip.Range
 import HaskellWorks.Data.Network.Ip.Word128

@@ -14,6 +14,8 @@ import qualified Data.Text as T
 
 import qualified Data.Set as S
 
+import Data.Hourglass
+
 import Data.ASN1.OID
 import Data.ASN1.Types
 import Data.ASN1.Parse
@@ -61,7 +63,7 @@ data SignerInfos = SignerInfos {
     siVersion          :: CMSVersion
   , siSid              :: SignerIdentifier
   , digestAlgorithm    :: DigestAlgorithmIdentifier
-  , signedAttrs        :: Maybe SignedAttributes
+  , signedAttrs        :: SignedAttributes
   , signatureAlgorithm :: SignatureAlgorithmIdentifier
   , signature          :: SignatureValue
 } deriving (Eq, Ord, Show)
@@ -81,7 +83,7 @@ newtype SignedAttributes = SignedAttributes [Attribute] deriving (Eq, Ord, Show)
 
 data Attribute = ContentTypeAttr ContentType 
                | MessageDigest B.ByteString
-               | SigningTime ASN1TimeType
+               | SigningTime DateTime (Maybe TimezoneOffset)
                | BinarySigningTime Integer              
   deriving (Eq, Ord, Show)  
 
@@ -107,7 +109,7 @@ newtype SignatureValue = SignatureValue B.ByteString deriving (Eq, Ord, Show)
 
       ContentType ::= OBJECT IDENTIFIER           
 -}
-parseSignedObject :: ASN1Object a => (B.ByteString -> ParseASN1 a) -> ParseASN1 (SignedObject a)
+parseSignedObject :: ASN1Object a => (ContentType -> B.ByteString -> ParseASN1 a) -> ParseASN1 (SignedObject a)
 parseSignedObject eContentParse = 
   SignedObject <$> parseContentType <*> parseContent  
   where  
@@ -131,8 +133,10 @@ parseSignedObject eContentParse =
 
     parseEncapContentInfo = onNextContainer Sequence $ do
       eContentType <- parseContentType
-      eContent     <- eContentParse eContentType
-      pure $ EncapsulatedContentInfo eContentType eContent
+      getNext >>= \case
+        OctetString bs -> EncapsulatedContentInfo eContentType <$> eContentParse eContentType bs
+        s              -> throwParseError $ "Unexpected eContent " ++ show s      
+      
 
     parseEECertificate = getObject  
 
@@ -145,20 +149,36 @@ parseSignedObject eContentParse =
       parseSignature
       where 
         parseSid = getNext >>= \case 
-          OctetString sid -> pure $ SignerIdentifier $ SKI $ KI sid
-          s               -> throwParseError $ "Unknown SID : " ++ show s
+          OctetString ki -> pure $ SignerIdentifier $ SKI $ KI ki
+          s              -> throwParseError $ "Unknown SID : " ++ show s
 
-        parseSignedAttributes = onNextContainer Set $ getMany $ do
-          onNextContainer Sequence $ do
-            OID attrId <- getNext
-            case attrId of 
-              id_contentType   -> ContentTypeAttr <$> parseContentType
-              id_messageDigest -> getNext >>= \case
-                  OctetString md -> pure $ MessageDigest md
-                  s              -> throwParseError $ "Unknown SID : " ++ show s
-              id_signingTime   -> getNext >>= \case                             
-                  ASN1Time time dateTime tz ->
-                  s              -> throwParseError $ "Unknown SigningTime : " ++ show s
+        parseSignedAttributes = onNextContainer Set $ SignedAttributes <$> attributes
+          where attributes = getMany $ do
+                onNextContainer Sequence $ getNext >>= \case
+                    OID id_contentType   -> ContentTypeAttr <$> parseContentType
+                    OID id_messageDigest -> getNextContainer Set >>= \case
+                        [Start Set, OctetString md, End Set] -> pure $ MessageDigest md
+                        s -> throwParseError $ "Unknown SID : " ++ show s
+                    OID id_signingTime   -> getNextContainer Set >>= \case                             
+                        [Start Set, ASN1Time TimeUTC dt tz, End Set] -> pure $ SigningTime dt tz
+                        s -> throwParseError $ "Unknown Signing Time : " ++ show s
+                    OID id_binarySigningTime -> getNextContainer Set >>= \case                             
+                        [Start Set, IntVal i, End Set] -> pure $ BinarySigningTime i
+                        s -> throwParseError $ "Unknown Binary Signing Time : " ++ show s
+
+        parseSignatureAlgorithm = onNextContainer Sequence $ do
+          getNext >>= \case
+            OID oid -> do
+              getNext -- TODO There can be parameters, so use them
+              pure $ SignatureAlgorithmIdentifier oid
+
+        parseSignature = getNext >>= \case
+          OctetString sig -> pure $ SignatureValue sig
+          s               -> throwParseError $ "Unknown signature value : " ++ show s 
+            
+        
+
+              
 
 
 

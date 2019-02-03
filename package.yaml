@@ -39,6 +39,7 @@ dependencies:
 - validation
 - text-short
 - hw-ip
+- hourglass
 
 library:
   source-dirs: src
