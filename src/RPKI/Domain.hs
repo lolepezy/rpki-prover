@@ -26,6 +26,8 @@ import HaskellWorks.Data.Network.Ip.Word128
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
+import qualified Data.X509 as X509
+
 data AddrFamily = Ipv4F | Ipv6F
     deriving (Show, Eq, Ord, Typeable)
 
@@ -105,45 +107,59 @@ newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
 
 newtype Serial  = Serial Integer deriving (Show, Eq, Ord, Typeable)
 
--- don't know yet
-data RealCert = RealCert B.ByteString 
-    deriving (Show, Eq, Ord, Typeable)
-data RealRoa = RealRoa deriving (Show, Eq, Ord, Typeable)
-data RealCrl = RealCrl deriving (Show, Eq, Ord, Typeable)
-data RealMft = RealMft deriving (Show, Eq, Ord, Typeable)
-
-data SignedObj = SignedObj {
+data RpkiMeta = RpkiMeta {
     locations :: ![URI]
   , hash      :: !Hash
   , aki       :: !AKI
+  , ski       :: !SKI
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
 data Cert (rfc :: ValidationRFC) = Cert {
-    certX509    :: !RealCert 
-  , ski         :: !SKI 
+    certX509    :: !X509.Certificate 
   , ipResources :: !(IpResourceSet rfc)
   , asResources :: !(ResourceSet AsResource rfc)
-} deriving (Show, Eq, Ord, Typeable)
+} deriving (Show, Eq, Typeable)
 
--- TODO Make ROA polymorphic by the address family
+newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)
 
-data ROA = ROA !RealRoa !(IpPrefix 'Ipv4F) !ASN
-    deriving (Show, Eq, Ord, Typeable)
-data CRL = CRL !RealCrl
-    deriving (Show, Eq, Ord, Typeable)
-data MFT = MFT !RealMft
+data APrefix = AV4 !(IpPrefix 'Ipv4F) | AV6 !(IpPrefix 'Ipv6F)
     deriving (Show, Eq, Ord, Typeable)
 
-data RpkiUnit = Cu !(Cert 'Strict) 
-              | CuV2 !(Cert 'Reconsidered) 
-              | Mu !MFT 
-              | Cru !CRL 
-              | Ru !ROA
+-- TODO Probably make ROA polymorphic by the address family
+data ROA = ROA {-# UNPACK #-} !APrefix 
+               {-# UNPACK #-} !ASN 
+               {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 
-data RpkiObj = RpkiObj !SignedObj !RpkiUnit
+
+newtype MFTRef = MFTRef (Either Hash ObjId) deriving (Show, Eq, Ord, Typeable)
+
+newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
+
+data MFT = MFT {
+    mftMeta    :: !RpkiMeta
+  , mftEntries :: ![(T.Text, MFTRef)]
+} deriving (Show, Eq, Typeable)
+
+data CRL = CRL {
+    crlMeta    :: !RpkiMeta
+  , crlEntries :: [RpkiObj]
+} deriving (Show, Eq, Typeable)
+
+data RpkiStorable = Cu !(Cert 'Strict) 
+                  | CuV2 !(Cert 'Reconsidered) 
+                  | Mu !MFT
+                  | Cru !CRL 
+                  | Ru !ROA
+    deriving (Show, Eq, Typeable)
+
+data RpkiObj = RpkiObj !ObjId !RpkiMeta
     deriving (Show, Eq, Ord, Typeable)
+
+-- Id of the object in the object store
+newtype ObjId = ObjId B.ByteString deriving (Show, Eq, Ord, Typeable)
+
 
 -- Subject Public Key Info
 newtype SPKI = SPKI B.ByteString
@@ -163,11 +179,6 @@ data Repository = Repository {
 newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
 
 data Invalid = Error | Warning
-
-mftEntries :: MFT -> M.Map String MFTEntry
--- TODO Implement
-mftEntries _ = M.empty
-
 
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
 mkIpv4Block w32 nonZeroBits = Ipv4Prefix (V4.IpBlock (V4.IpAddress w32) (V4.IpNetMask nonZeroBits))

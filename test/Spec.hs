@@ -34,7 +34,8 @@ import RPKI.Store
 
 testCertParsing = do
   -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
-  let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.apnic.net/873/member_repository/A917150D/2B63EBE6326811E4B59A4118C4F9AE02/L3M4gVlKnWpaICg9mMRk2VX_A3k.mft"
+  let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/smaller.cer"
+  -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.apnic.net/873/member_repository/A917150D/2B63EBE6326811E4B59A4118C4F9AE02/L3M4gVlKnWpaICg9mMRk2VX_A3k.mft"
   -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.afrinic.net/873/repository/afrinic/imnjE5vX78CApC4WBIM5j6bHW7Y.cer"
 
   cert <- B.readFile path  
@@ -56,7 +57,7 @@ testCertParsing = do
   let xcert = parseResourceCertificate cert
 
   -- putStrLn $ "xt = " ++ show xt
-  -- putStrLn $ "xcert = " ++ show xcert
+  putStrLn $ "xcert = " ++ show xcert
   --putStrLn "cert = " ++ show cert
   -- putStrLn $ "mft = " ++ show mft
   putStrLn ""
@@ -82,6 +83,6 @@ testCrlParsing = do
 
 main :: IO ()
 main = do 
-  -- testCertParsing
-  testCrlParsing
+  testCertParsing
+  -- testCrlParsing
   

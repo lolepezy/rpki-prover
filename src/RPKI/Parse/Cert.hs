@@ -30,36 +30,62 @@ import Data.ASN1.Parse
 import Data.X509
 
 import RPKI.Domain 
+import qualified RPKI.Util as U
 import RPKI.Parse.Common 
 import RPKI.Parse.ASN1Util
 
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseResourceCertificate :: B.ByteString -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
-parseResourceCertificate b = do
-      let certificate :: Either String (SignedExact Certificate) = decodeSignedObject b
-      let getExtensions = certExtensions . signedObject . getSigned
-      Extensions extensions <- getExtensions <$> mapParseErr certificate
-      let ext' = extVal $ maybe [] id extensions
-      case ext' id_subjectKeyId of 
-        Nothing  -> broken "No SKI"
-        Just ski' -> do
-          case (ext' id_pe_ipAddrBlocks, 
-                ext' id_pe_ipAddrBlocks_v2, 
-                ext' id_pe_autonomousSysIds, 
-                ext' id_pe_autonomousSysIds_v2) of
-            (Nothing, Nothing, _, _) -> broken "No IP extension"
-            (Just _, Just _, _, _)   -> broken "Both IP extensions"
-            (_, _, Nothing, Nothing) -> broken "No ASN extension"
-            (_, _, Just _, Just _)   -> broken "Both ASN extensions"
-            (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
-            (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
-            (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' ski' ips asns
-            (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' ski' ips asns          
+parseResourceCertificate :: B.ByteString -> 
+                            ParseResult (Either 
+                              (RpkiMeta, Cert 'Strict) 
+                              (RpkiMeta, Cert 'Reconsidered))
+parseResourceCertificate bs = do
+  let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
+  x509 <- (signedObject . getSigned) <$> certificate      
+  let (Extensions extensions) = certExtensions x509
+  let exts = maybe [] id extensions      
+  let ski = extVal exts id_subjectKeyId
+  let aki = extVal exts id_authorityKeyId
+  case (ski, aki) of
+    (Just s, Just a) -> let
+        r = parseResources x509
+        meta = RpkiMeta {
+            aki  = AKI (KI a)
+          , ski  = SKI (KI s)
+          , hash = Hash $ U.sha256 bs
+          -- TODO Do something about this
+          , locations = []
+          , serial = Serial $ certSerial x509
+          -- 
+          }
+        withMeta = first (meta,) . fmap (meta,)  
+        in withMeta <$> r
+    (_, Nothing)     -> (Left . fmtErr) "No AKI extension"
+    (Nothing, _)     -> (Left . fmtErr) "No SKI extension"  
+    
+
+
+parseResources :: Certificate -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
+parseResources x509cert = do      
+      let (Extensions extensions) = certExtensions x509cert
+      let ext' = extVal $ maybe [] id extensions      
+      case (ext' id_pe_ipAddrBlocks, 
+            ext' id_pe_ipAddrBlocks_v2, 
+            ext' id_pe_autonomousSysIds, 
+            ext' id_pe_autonomousSysIds_v2) of
+        (Nothing, Nothing, _, _) -> broken "No IP extension"
+        (Just _, Just _, _, _)   -> broken "Both IP extensions"
+        (_, _, Nothing, Nothing) -> broken "No ASN extension"
+        (_, _, Just _, Just _)   -> broken "Both ASN extensions"
+        (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
+        (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
+        (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' x509cert ips asns
+        (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' x509cert ips asns          
     where
       broken = Left . fmtErr
-      cert' ski' ips asns = (Cert (RealCert b) (SKI (KI ski'))) <$> 
+      cert' x509cert ips asns = (Cert x509cert) <$> 
           (parseResources parseIpExt ips) <*> 
           (parseResources parseAsnExt asns)
 

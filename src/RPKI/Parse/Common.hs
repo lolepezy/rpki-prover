@@ -30,8 +30,9 @@ id_pe_autonomousSysIds    = oid_pe ++ [ 8 ]
 id_pe_ipAddrBlocks_v2     = oid_pe ++ [ 28 ]
 id_pe_autonomousSysIds_v2 = oid_pe ++ [ 29 ]  
 
-id_subjectKeyId :: OID
-id_subjectKeyId = [2,5,29,14]
+id_subjectKeyId, id_authorityKeyId :: OID
+id_subjectKeyId   = [2, 5, 29, 14]
+id_authorityKeyId = [2, 5, 29, 35]
 
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
 id_pkcs9              = [1, 2, 840, 113549, 1, 9]

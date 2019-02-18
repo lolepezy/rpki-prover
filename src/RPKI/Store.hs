@@ -21,13 +21,13 @@ type EntryIxs = '[ AKI, Hash, URI ]
 type IxEntry  = IxSet EntryIxs RpkiObj
 
 byAKI :: RpkiObj -> [AKI]
-byAKI (RpkiObj SignedObj { aki = a } _) = [a]
+byAKI (RpkiObj _ (RpkiMeta { aki = a })) = [a]
 
 byHash :: RpkiObj -> [Hash]
-byHash (RpkiObj SignedObj { hash = h } _) = [h]
+byHash (RpkiObj _ (RpkiMeta { hash = h })) = [h]
 
 byLocation :: RpkiObj -> [URI]
-byLocation (RpkiObj SignedObj { locations = loc } _) = loc
+byLocation (RpkiObj _ (RpkiMeta { locations = loc })) = loc
 
 
 instance Indexable EntryIxs RpkiObj where
