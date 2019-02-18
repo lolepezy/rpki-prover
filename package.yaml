@@ -40,6 +40,7 @@ dependencies:
 - text-short
 - hw-ip
 - hourglass
+- cryptohash-sha256
 
 library:
   source-dirs: src
