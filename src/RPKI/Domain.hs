@@ -9,7 +9,6 @@
 module RPKI.Domain where
 
 import qualified Data.Set as S
-import qualified Data.Map as M
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Short as TS
@@ -27,6 +26,7 @@ import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
 import qualified Data.X509 as X509
+import qualified Data.ASN1.OID as O
 
 data AddrFamily = Ipv4F | Ipv6F
     deriving (Show, Eq, Ord, Typeable)
@@ -137,14 +137,19 @@ newtype MFTRef = MFTRef (Either Hash ObjId) deriving (Show, Eq, Ord, Typeable)
 
 newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
 
+
+data FileHashAlg = SHA256 deriving (Show, Eq, Ord, Typeable)
+
 data MFT = MFT {
-    mftMeta    :: !RpkiMeta
-  , mftEntries :: ![(T.Text, MFTRef)]
+    mftnumber   :: !Int  
+  , fileHashAlg :: !FileHashAlg
+  , thisTime    :: !DateTime
+  , nextTime    :: !DateTime 
+  , mftEntries  :: ![(T.Text, MFTRef)]
 } deriving (Show, Eq, Typeable)
 
 data CRL = CRL {
-    crlMeta    :: !RpkiMeta
-  , crlEntries :: [RpkiObj]
+    crlEntries :: [RpkiObj]
 } deriving (Show, Eq, Typeable)
 
 data RpkiStorable = Cu !(Cert 'Strict) 
@@ -200,3 +205,7 @@ mkIpv6 w1 w2 =
         [b]     -> Right $ Ipv6Prefix b
         b1 : bs -> Left $ Ipv6Range r
 
+-- TODO Make it better
+hashAlg :: O.OID -> FileHashAlg
+hashAlg _ = SHA256
+        

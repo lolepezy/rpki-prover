@@ -32,7 +32,6 @@ import Data.X509
 import RPKI.Domain 
 import qualified RPKI.Util as U
 import RPKI.Parse.Common 
-import RPKI.Parse.ASN1Util
 
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
@@ -140,7 +139,7 @@ parseIpExt addrBlocks = mapParseErr $
               af         -> throwParseError $ "Unsupported address family " ++ show af
         where
           ipResourceSet address = 
-            (getNull (pure Inherit)) <|> 
+            (getNull_ (pure Inherit)) <|> 
             ((RS . S.fromList) <$> (getMany address))
       
       ipv4Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block 32
@@ -155,8 +154,8 @@ parseIpExt addrBlocks = mapParseErr $
 
             s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
           Just [
-              (BitString (BitArray _            bs1)), 
-              (BitString (BitArray nonZeroBits2 bs2))
+              BitString (BitArray _            bs1), 
+              BitString (BitArray nonZeroBits2 bs2)
             ] -> do
               let w1 = wToAddr $ B.unpack bs1
               let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
@@ -226,7 +225,7 @@ parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
     onNextContainer Sequence $ 
       -- we only want the first element of the sequence
       onNextContainer (Container Context 0) $
-        (getNull (pure Inherit)) <|> 
+        (getNull_ (pure Inherit)) <|> 
         (RS . S.fromList) <$> onNextContainer Sequence (getMany asOrRange)
   where
     asOrRange = getNextContainerMaybe Sequence >>= \case       
@@ -238,9 +237,3 @@ parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
       where 
         as' = ASN . fromInteger    
         
-
-fmtErr :: String -> ParseError T.Text
-fmtErr = ParseError . T.pack
-
-mapParseErr :: Either String a -> ParseResult a       
-mapParseErr = first fmtErr

@@ -12,7 +12,7 @@ module RPKI.Parse.SignedObject where
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 
-import qualified Data.Set as S
+import Data.Bifunctor
 
 import Data.Hourglass
 
@@ -109,13 +109,11 @@ newtype SignatureValue = SignatureValue B.ByteString deriving (Eq, Ord, Show)
 
       ContentType ::= OBJECT IDENTIFIER           
 -}
-parseSignedObject :: ASN1Object a => (ContentType -> B.ByteString -> ParseASN1 a) -> ParseASN1 (SignedObject a)
+parseSignedObject :: ParseASN1 a -> ParseASN1 (SignedObject a)
 parseSignedObject eContentParse = 
   SignedObject <$> parseContentType <*> parseContent  
   where  
-    parseContentType = getNext >>= \case
-      OID oid -> pure $ ContentType oid
-      s       -> throwParseError $ "Unexpected contentType: " ++ show s    
+    parseContentType = getOID (pure . ContentType) "Wrong OID for contentType"
     parseContent = SignedContent <$> 
         parseVersion <*>
         parseDigestAlgorithms <*>
@@ -123,18 +121,16 @@ parseSignedObject eContentParse =
         parseEECertificate <*>
         parseSignerInfo
 
-    parseVersion = getNext >>= \case 
-      IntVal v -> pure $ CMSVersion $ fromInteger v
-      s        -> throwParseError $ "Wrong version " ++ show s
+    parseVersion = getInteger (pure . CMSVersion . fromInteger) "Wrong version"
 
     parseDigestAlgorithms = getNextContainerMaybe Set >>= \case
       Just [OID oid] -> pure $ DigestAlgorithmIdentifier oid
       s              -> throwParseError $ "DigestAlgorithms is wrong " ++ show s
 
     parseEncapContentInfo = onNextContainer Sequence $ do
-      eContentType <- parseContentType
+      contentType <- parseContentType
       getNext >>= \case
-        OctetString bs -> EncapsulatedContentInfo eContentType <$> eContentParse eContentType bs
+        OctetString _  -> EncapsulatedContentInfo contentType <$> eContentParse
         s              -> throwParseError $ "Unexpected eContent " ++ show s      
       
 
