@@ -9,7 +9,6 @@
 module RPKI.Parse.ROA where
 
 import qualified Data.ByteString as B  
-import qualified Data.Text as T 
 
 import Data.Word
 
@@ -38,24 +37,21 @@ parseRoa bs =
           getAddressFamily "Expected an address family here" >>= \case 
               Right Ipv4F -> getRoa asId ipv4
               Right Ipv6F -> getRoa asId ipv6
-              Left af     -> throwParseError $ "Unsupported address family"
+              Left af     -> throwParseError $ "Unsupported address family: " ++ show af
 
     getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 ROA
     getRoa asId mkPrefix = getNextContainerMaybe Sequence >>= \case       
-      Just [BitString (BitArray nonZeroBits bs)] -> 
-        pure $ ROA 
-          (ASN asId) 
-          (mkPrefix bs nonZeroBits) 
-          (fromIntegral nonZeroBits)
-      Just [BitString (BitArray nonZeroBits bs), IntVal maxLength] -> 
-        pure $ ROA 
-          (ASN asId) 
-          (mkPrefix bs nonZeroBits) 
-          (fromInteger maxLength)
+      Just [BitString (BitArray nzBits bs)] -> 
+        pure $ roa' bs nzBits (fromIntegral nzBits) 
+      Just [BitString (BitArray nzBits bs), IntVal maxLength] -> 
+        pure $ roa' bs nzBits (fromInteger maxLength)           
+      Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
       Nothing -> throwParseError $ "Unexpected ROA content"
+      where 
+        roa' bs nz maxL = ROA (ASN asId) (mkPrefix bs nz) maxL
 
-    ipv4 bs nonZeroBits = AV4 $ Ipv4P $ mkV4Prefix bs (fromIntegral nonZeroBits)
-    ipv6 bs nonZeroBits = AV6 $ Ipv6P $ mkV6Prefix bs (fromIntegral nonZeroBits)
+    ipv4 bs nzBits = AV4 $ Ipv4P $ mkV4Prefix bs (fromIntegral nzBits)
+    ipv6 bs nzBits = AV6 $ Ipv6P $ mkV6Prefix bs (fromIntegral nzBits)
 
 
           

@@ -12,8 +12,6 @@ module RPKI.Parse.SignedObject where
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 
-import Data.Bifunctor
-
 import Data.Hourglass
 
 import Data.ASN1.OID

@@ -8,14 +8,10 @@
 {-# LANGUAGE ConstraintKinds #-}
 
 module RPKI.IP where
-  
-import Data.Bifunctor
+
 
 import qualified Data.ByteString as B  
-import qualified Data.Text as T  
 import qualified Data.List as L
-import qualified Data.Set as S
-import qualified Data.Text.Short as TS
 
 import Data.Data (Typeable)
 
@@ -27,8 +23,6 @@ import HaskellWorks.Data.Network.Ip.Range
 import HaskellWorks.Data.Network.Ip.Word128
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
-
-import Data.Char (chr)
 
 data AddrFamily = Ipv4F | Ipv6F
     deriving (Show, Eq, Ord, Typeable)
@@ -42,6 +36,7 @@ newtype Ipv4Range = Ipv4Range (Range V4.IpAddress)
     deriving (Show, Eq, Ord, Typeable)
 newtype Ipv6Range = Ipv6Range (Range V6.IpAddress) 
     deriving (Show, Eq, Ord, Typeable)
+
 
 data IpPrefix (f :: AddrFamily) where
     Ipv4P :: !Ipv4Prefix -> IpPrefix 'Ipv4F

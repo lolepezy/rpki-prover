@@ -13,10 +13,6 @@ import Data.Bifunctor
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
-import qualified Data.List as L
-
-import Data.Word
-import Data.Bits
 
 import Data.Char (chr)
 
@@ -25,9 +21,6 @@ import Data.ASN1.Types
 import Data.ASN1.Parse
 import Data.ASN1.BitArray
 
-import Data.Hourglass
-
-import RPKI.Domain
 import RPKI.IP
 
 newtype ParseError s = ParseError s
@@ -64,6 +57,7 @@ fmtErr = ParseError . T.pack
 mapParseErr :: Either String a -> ParseResult a       
 mapParseErr = first fmtErr
 
+parseError :: String -> ASN1 -> ParseASN1 a
 parseError m a = throwParseError $ case m of 
       [] -> show a
       m' -> m' ++ "(" ++ show a ++ ")"

@@ -18,7 +18,6 @@ import qualified Data.List as L
 
 import Data.Bifunctor
 import Data.Maybe
-import Data.Word
 import Data.Bits
 
 import Data.ASN1.Types
@@ -143,57 +142,33 @@ parseIpExt addrBlocks = mapParseErr $
             (getNull_ (pure Inherit)) <|> 
             ((RS . S.fromList) <$> (getMany address))
       
-      -- ipv4Address = ipvVxAddress IP.fourW8sToW32 IP.mkIpv4 IP.Ipv4P IP.Ipv4R IP.mkV4Prefix IP.mkV4Prefix 32
-      -- ipv6Address = ipvVxAddress IP.someW8ToW128 IP.mkIpv6 IP.Ipv6P IP.Ipv6R IP.mkV6Prefix IP.mkV6Prefix 128
-
-      ipv4Address = ipvVxAddress1 
-          IP.fourW8sToW32
+      ipv4Address = ipvVxAddress
+          IP.fourW8sToW32 32
           (\bs nz -> IpP $ IP.Ipv4P $ IP.mkV4Prefix bs (fromIntegral nz))
           (\w1 w2 -> case IP.mkIpv4 w1 w2 of
                       Left  r -> IpR $ IP.Ipv4R r
                       Right p -> IpP $ IP.Ipv4P p)
-          32            
 
-      ipv6Address = ipvVxAddress1 
-          IP.someW8ToW128  
+      ipv6Address = ipvVxAddress
+          IP.someW8ToW128 128
           (\bs nz -> IpP $ IP.Ipv6P $ IP.mkV6Prefix bs (fromIntegral nz))
           (\w1 w2 -> case IP.mkIpv6 w1 w2 of
                       Left  r -> IpR $ IP.Ipv6R r
-                      Right p -> IpP $ IP.Ipv6P p)                   
-          128            
+                      Right p -> IpP $ IP.Ipv6P p)
 
-      -- ipvVxAddress wToAddr mkIpVx range prefix mkPrefix mkBlock fullLength =        
-      --   getNextContainerMaybe Sequence >>= \case
-      --     Nothing -> getNext >>= \case
-      --       (BitString (BitArray nonZeroBits bs)) -> 
-      --         pure $ IpP $ mkPrefix bs (fromIntegral nonZeroBits)
-      --       s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
-      --     Just [
-      --         BitString (BitArray _            bs1), 
-      --         BitString (BitArray nonZeroBits2 bs2)
-      --       ] -> do
-      --         let w1 = wToAddr $ B.unpack bs1
-      --         let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
-      --                   (fromIntegral nonZeroBits2) fullLength 
-      --         pure $ case mkIpVx w1 w2 of
-      --           Left  r -> IpR $ range r
-      --           Right p -> IpP $ prefix p          
-
-      --     s -> throwParseError ("Unexpected address representation: " ++ show s)
-
-      ipvVxAddress1 wToAddr makePrefix makeRange fullLength =        
+      ipvVxAddress wToAddr fullLength makePrefix makeRange =        
         getNextContainerMaybe Sequence >>= \case
           Nothing -> getNext >>= \case
-            (BitString (BitArray nonZeroBits bs)) -> 
-              pure $ makePrefix bs nonZeroBits
+            (BitString (BitArray nzBits bs)) -> 
+              pure $ makePrefix bs nzBits
             s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
           Just [
               BitString (BitArray _            bs1), 
-              BitString (BitArray nonZeroBits2 bs2)
+              BitString (BitArray nzBits2 bs2)
             ] -> 
               let w1 = wToAddr $ B.unpack bs1
                   w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
-                        (fromIntegral nonZeroBits2) fullLength 
+                        (fromIntegral nzBits2) fullLength 
                 in pure $ makeRange w1 w2
 
           s -> throwParseError ("Unexpected address representation: " ++ show s)

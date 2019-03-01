@@ -16,8 +16,6 @@ import qualified Data.Text.Short as TS
 
 import Data.Data (Typeable)
 
-import Data.Word
-
 import Data.Hourglass
 
 import qualified Data.X509 as X509
