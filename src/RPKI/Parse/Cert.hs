@@ -31,6 +31,8 @@ import Data.X509
 
 import RPKI.Domain 
 import qualified RPKI.Util as U
+import qualified RPKI.IP as IP
+
 import RPKI.Parse.Common 
 
 {- |
@@ -53,13 +55,13 @@ parseResourceCertificate bs = do
         meta = RpkiMeta {
             aki  = AKI (KI a)
           , ski  = SKI (KI s)
-          , hash = Hash $ U.sha256 bs
+          , hash = U.sha256 bs
           -- TODO Do something about this
           , locations = []
-          , serial = Serial $ certSerial x509
+          , serial = Serial (certSerial x509)
           -- 
           }
-        withMeta = first (meta,) . fmap (meta,)  
+        withMeta = first (meta,) . fmap (meta,)
         in withMeta <$> r
     (_, Nothing)     -> (Left . fmtErr) "No AKI extension"
     (Nothing, _)     -> (Left . fmtErr) "No SKI extension"  
@@ -132,70 +134,81 @@ parseIpExt addrBlocks = mapParseErr $
     pure $ IpResourceSet ipv4 ipv6
     where      
       addrFamily = onNextContainer Sequence $ do
-        (OctetString familyType) <- getNext
-        case familyType of 
-              "\NUL\SOH" -> Left  <$> onNextContainer Sequence (ipResourceSet ipv4Address)
-              "\NUL\STX" -> Right <$> onNextContainer Sequence (ipResourceSet ipv6Address)       
-              af         -> throwParseError $ "Unsupported address family " ++ show af
+        getAddressFamily  "Expected an address family here" >>= \case 
+          Right IP.Ipv4F -> Left  <$> onNextContainer Sequence (ipResourceSet ipv4Address)
+          Right IP.Ipv6F -> Right <$> onNextContainer Sequence (ipResourceSet ipv6Address)       
+          Left af        -> throwParseError $ "Unsupported address family " ++ show af
         where
           ipResourceSet address = 
             (getNull_ (pure Inherit)) <|> 
             ((RS . S.fromList) <$> (getMany address))
       
-      ipv4Address = ipvVxAddress fourW8sToW32 mkIpv4 Ipv4R Ipv4P mkIpv4Block 32
-      ipv6Address = ipvVxAddress someW8ToW128 mkIpv6 Ipv6R Ipv6P mkIpv6Block 128
+      -- ipv4Address = ipvVxAddress IP.fourW8sToW32 IP.mkIpv4 IP.Ipv4P IP.Ipv4R IP.mkV4Prefix IP.mkV4Prefix 32
+      -- ipv6Address = ipvVxAddress IP.someW8ToW128 IP.mkIpv6 IP.Ipv6P IP.Ipv6R IP.mkV6Prefix IP.mkV6Prefix 128
 
-      ipvVxAddress wToAddr mkIpVx range prefix mkBlock fullLength =        
+      ipv4Address = ipvVxAddress1 
+          IP.fourW8sToW32
+          (\bs nz -> IpP $ IP.Ipv4P $ IP.mkV4Prefix bs (fromIntegral nz))
+          (\w1 w2 -> case IP.mkIpv4 w1 w2 of
+                      Left  r -> IpR $ IP.Ipv4R r
+                      Right p -> IpP $ IP.Ipv4P p)
+          32            
+
+      ipv6Address = ipvVxAddress1 
+          IP.someW8ToW128  
+          (\bs nz -> IpP $ IP.Ipv6P $ IP.mkV6Prefix bs (fromIntegral nz))
+          (\w1 w2 -> case IP.mkIpv6 w1 w2 of
+                      Left  r -> IpR $ IP.Ipv6R r
+                      Right p -> IpP $ IP.Ipv6P p)                   
+          128            
+
+      -- ipvVxAddress wToAddr mkIpVx range prefix mkPrefix mkBlock fullLength =        
+      --   getNextContainerMaybe Sequence >>= \case
+      --     Nothing -> getNext >>= \case
+      --       (BitString (BitArray nonZeroBits bs)) -> 
+      --         pure $ IpP $ mkPrefix bs (fromIntegral nonZeroBits)
+      --       s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
+      --     Just [
+      --         BitString (BitArray _            bs1), 
+      --         BitString (BitArray nonZeroBits2 bs2)
+      --       ] -> do
+      --         let w1 = wToAddr $ B.unpack bs1
+      --         let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
+      --                   (fromIntegral nonZeroBits2) fullLength 
+      --         pure $ case mkIpVx w1 w2 of
+      --           Left  r -> IpR $ range r
+      --           Right p -> IpP $ prefix p          
+
+      --     s -> throwParseError ("Unexpected address representation: " ++ show s)
+
+      ipvVxAddress1 wToAddr makePrefix makeRange fullLength =        
         getNextContainerMaybe Sequence >>= \case
           Nothing -> getNext >>= \case
-            (BitString (BitArray nonZeroBits bs)) -> do
-              let w = wToAddr (B.unpack bs)
-              pure $ IpP $ prefix $ mkBlock w (fromIntegral nonZeroBits)
-
+            (BitString (BitArray nonZeroBits bs)) -> 
+              pure $ makePrefix bs nonZeroBits
             s -> throwParseError ("Unexpected prefix representation: " ++ show s)  
           Just [
               BitString (BitArray _            bs1), 
               BitString (BitArray nonZeroBits2 bs2)
-            ] -> do
+            ] -> 
               let w1 = wToAddr $ B.unpack bs1
-              let w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
+                  w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
                         (fromIntegral nonZeroBits2) fullLength 
-              pure $ case mkIpVx w1 w2 of
-                Left  r -> IpR $ range r
-                Right p -> IpP $ prefix p          
+                in pure $ makeRange w1 w2
 
           s -> throwParseError ("Unexpected address representation: " ++ show s)
+    
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
-        rightPad (allBitsNum `div` 8) 0xFF $ 
+        IP.rightPad (allBitsNum `div` 8) 0xFF $ 
           map setBits $ L.zip ws (map (*8) [0..])
         where
           setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. (extra (i + 8 - setBitsNum))
                           | i < setBitsNum = w8
                           | otherwise = 0xFF  
           extra lastBitsNum = 
-            L.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
-                    
-      fourW8sToW32 ws = fst $ L.foldl' foldW8toW32 (0 :: Word32, 24) ws
-        where
-          foldW8toW32 (w32, shift') w8 = (
-              w32 + (fromIntegral w8 :: Word32) `shiftL` shift', 
-              shift' - 8)       
- 
-      someW8ToW128 ws = (
-            fourW8sToW32 (take 4 unpacked),
-            fourW8sToW32 (take 4 (drop 4 unpacked)),
-            fourW8sToW32 (take 4 (drop 8 unpacked)),
-            fourW8sToW32 (take 4 (drop 12 unpacked))
-          ) 
-        where unpacked = rightPad 16 0 ws
+            L.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]                          
                          
-      rightPad :: Int -> a -> [a] -> [a]
-      rightPad n a as = go 0 as
-        where
-          go acc [] | acc < n  = a : go (acc + 1) []
-                    | otherwise = []  
-          go acc (x : xs) = x : go (acc + 1) xs    
 
 {- 
   https://tools.ietf.org/html/rfc3779#section-3.2.3

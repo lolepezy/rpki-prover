@@ -28,15 +28,16 @@ parseMft bs = do
     Left e     -> (Left . fmtErr . show) e
     Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseManifest) asns  
   where 
-    parseManifest = onNextContainer Sequence $
-      MFT <$> getInteger (pure . fromInteger) "Wrong manifest number"
-          <*> getOID (pure . hashAlg) "Wrong OID for hash algorithm"
-          <*> getTime "No ThisUpdate time"
+    parseManifest = onNextContainer Sequence $ do
+      manifestNumber <- getInteger (pure . fromInteger) "Wrong manifest number"
+      fileHashAlg    <- getOID (pure . hashAlg) "Wrong OID for hash algorithm"
+      MFT manifestNumber fileHashAlg 
+          <$> getTime "No ThisUpdate time"
           <*> getTime "No NextUpdate time"
           <*> (onNextContainer Sequence $ 
                 getMany $ onNextContainer Sequence $ 
                    (,) <$> getIA5String (pure . T.pack) "Wrong file name"
-                       <*> getBitString (pure . MFTRef . Left . Hash) "Wrong hash"
+                       <*> getBitString (pure . MFTRef . Left . (Hash fileHashAlg)) "Wrong hash"
               )
 
     getTime message = getNext >>= \case 

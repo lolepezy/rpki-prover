@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module RPKI.Domain where
 
@@ -19,46 +20,10 @@ import Data.Word
 
 import Data.Hourglass
 
-import HaskellWorks.Data.Network.Ip.Validity
-import HaskellWorks.Data.Network.Ip.Range
-import HaskellWorks.Data.Network.Ip.Word128
-import HaskellWorks.Data.Network.Ip.Ipv4 as V4
-import HaskellWorks.Data.Network.Ip.Ipv6 as V6
-
 import qualified Data.X509 as X509
 import qualified Data.ASN1.OID as O
 
-data AddrFamily = Ipv4F | Ipv6F
-    deriving (Show, Eq, Ord, Typeable)
-
-newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
-    deriving (Show, Eq, Ord, Typeable)
-newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical) 
-    deriving (Show, Eq, Ord, Typeable)
-
-newtype Ipv4Range = Ipv4Range (Range V4.IpAddress) 
-    deriving (Show, Eq, Ord, Typeable)
-newtype Ipv6Range = Ipv6Range (Range V6.IpAddress) 
-    deriving (Show, Eq, Ord, Typeable)
-
-data IpPrefix (f :: AddrFamily) where
-    Ipv4P :: !Ipv4Prefix -> IpPrefix 'Ipv4F
-    Ipv6P :: !Ipv6Prefix -> IpPrefix 'Ipv6F
-
-deriving instance Show (IpPrefix f)
-deriving instance Eq (IpPrefix f)
-deriving instance Ord (IpPrefix f)
-deriving instance Typeable (IpPrefix f)
-
-data IpRange (f :: AddrFamily) where
-    Ipv4R :: !Ipv4Range -> IpRange 'Ipv4F
-    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F
-
-deriving instance Show (IpRange f)
-deriving instance Eq (IpRange f)
-deriving instance Ord (IpRange f)
-deriving instance Typeable (IpRange f)
-    
+import RPKI.IP    
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable)
@@ -96,16 +61,17 @@ data IpResourceSet (rfc :: ValidationRFC) =
     
 -- | Objects
 
-newtype MFTEntry = MFTEntry B.ByteString
-    deriving (Show, Eq, Ord, Typeable)
+data HashAlg = SHA256 | SHA512 
+    deriving (Show, Eq, Ord, Typeable)     
+
+data Hash = Hash HashAlg B.ByteString deriving (Show, Eq, Ord, Typeable)
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable)
-newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable)
 newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable)
 newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable)
 newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
 
-newtype Serial  = Serial Integer deriving (Show, Eq, Ord, Typeable)
+newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
 
 data RpkiMeta = RpkiMeta {
     locations :: ![URI]
@@ -126,10 +92,10 @@ newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)
 data APrefix = AV4 !(IpPrefix 'Ipv4F) | AV6 !(IpPrefix 'Ipv6F)
     deriving (Show, Eq, Ord, Typeable)
 
--- TODO Probably make ROA polymorphic by the address family
-data ROA = ROA {-# UNPACK #-} !APrefix 
-               {-# UNPACK #-} !ASN 
-               {-# UNPACK #-} !Int
+data ROA = ROA     
+    {-# UNPACK #-} !ASN 
+    {-# UNPACK #-} !APrefix    
+    {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 
 
@@ -138,11 +104,9 @@ newtype MFTRef = MFTRef (Either Hash ObjId) deriving (Show, Eq, Ord, Typeable)
 newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
 
 
-data FileHashAlg = SHA256 deriving (Show, Eq, Ord, Typeable)
-
 data MFT = MFT {
     mftnumber   :: !Int  
-  , fileHashAlg :: !FileHashAlg
+  , fileHashAlg :: !HashAlg
   , thisTime    :: !DateTime
   , nextTime    :: !DateTime 
   , mftEntries  :: ![(T.Text, MFTRef)]
@@ -185,27 +149,8 @@ newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
 
 data Invalid = Error | Warning
 
-mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
-mkIpv4Block w32 nonZeroBits = Ipv4Prefix (V4.IpBlock (V4.IpAddress w32) (V4.IpNetMask nonZeroBits))
-
-mkIpv4 :: Word32 -> Word32 -> Either Ipv4Range Ipv4Prefix
-mkIpv4 w1 w2 = 
-    let r = Range (V4.IpAddress w1) (V4.IpAddress w2) 
-    in case V4.rangeToBlocks r of
-        [b]     -> Right $ Ipv4Prefix b
-        b1 : bs -> Left $ Ipv4Range r        
-
-mkIpv6Block :: (Word32, Word32, Word32, Word32) -> Word8 -> Ipv6Prefix
-mkIpv6Block w128 nonZeroBits = Ipv6Prefix (V6.IpBlock (V6.IpAddress w128) (V6.IpNetMask nonZeroBits))
-
-mkIpv6 :: Word128 -> Word128 -> Either Ipv6Range Ipv6Prefix
-mkIpv6 w1 w2 = 
-    let r = Range (V6.IpAddress w1) (V6.IpAddress w2) 
-    in case V6.rangeToBlocks r of
-        [b]     -> Right $ Ipv6Prefix b
-        b1 : bs -> Left $ Ipv6Range r
 
 -- TODO Make it better
-hashAlg :: O.OID -> FileHashAlg
+hashAlg :: O.OID -> HashAlg
 hashAlg _ = SHA256
         

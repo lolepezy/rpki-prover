@@ -13,7 +13,11 @@ import Data.Bifunctor
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
-  
+import qualified Data.List as L
+
+import Data.Word
+import Data.Bits
+
 import Data.Char (chr)
 
 import Data.ASN1.OID
@@ -22,6 +26,9 @@ import Data.ASN1.Parse
 import Data.ASN1.BitArray
 
 import Data.Hourglass
+
+import RPKI.Domain
+import RPKI.IP
 
 newtype ParseError s = ParseError s
   deriving (Eq, Show, Functor)
@@ -88,4 +95,13 @@ getBitString :: (B.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
 getBitString f m = getNext >>= \case 
       BitString (BitArray _ bs) -> f bs
       a                         -> parseError m a
-      
+
+getAddressFamily :: String -> ParseASN1 (Either B.ByteString AddrFamily)
+getAddressFamily m = getNext >>= \case 
+  (OctetString familyType) -> 
+    case familyType of 
+      "\NUL\SOH" -> pure $ Right Ipv4F
+      "\NUL\STX" -> pure $ Right Ipv6F
+      af         -> pure $ Left af 
+  a              -> parseError m a      
+  
