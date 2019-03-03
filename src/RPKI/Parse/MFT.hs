@@ -28,18 +28,28 @@ parseMft bs = do
     Left e     -> (Left . fmtErr . show) e
     Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseManifest) asns  
   where 
+    parseManifest :: ParseASN1 MFT
     parseManifest = onNextContainer Sequence $ do
-      manifestNumber <- getInteger (pure . fromInteger) "Wrong manifest number"
-      fileHashAlg    <- getOID (pure . hashAlg) "Wrong OID for hash algorithm"
-      MFT manifestNumber fileHashAlg 
-          <$> getTime "No ThisUpdate time"
-          <*> getTime "No NextUpdate time"
-          <*> (onNextContainer Sequence $ 
-                getMany $ onNextContainer Sequence $ 
-                   (,) <$> getIA5String (pure . T.pack) "Wrong file name"
-                       <*> getBitString (pure . MFTRef . Left . (Hash fileHashAlg)) "Wrong hash"
-              )
-
+      (,,) <$> getNext <*> getNext <*> getNext >>= \case           
+        (IntVal manifestNumber, 
+         ASN1Time TimeGeneralized thisUpdateTime tz1, 
+         ASN1Time TimeGeneralized nextUpdateTime tz2) -> do
+            fileHashAlg <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
+            entries     <- getEntries fileHashAlg
+            pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+        (IntVal version, 
+         IntVal manifestNumber, 
+         ASN1Time TimeGeneralized thisUpdateTime tz) -> do
+          nextUpdateTime <- getTime "No NextUpdate time"
+          fileHashAlg    <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
+          entries        <- getEntries fileHashAlg
+          pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+    
+    getEntries fileHashAlg = onNextContainer Sequence $ 
+      getMany $ onNextContainer Sequence $ 
+        (,) <$> getIA5String (pure . T.pack) "Wrong file name"
+            <*> getBitString (pure . MFTRef . Left . (Hash fileHashAlg)) "Wrong hash"
+        
     getTime message = getNext >>= \case 
       ASN1Time TimeGeneralized dt tz -> pure dt
       s  -> throwParseError $ message ++ ", got " ++ show s

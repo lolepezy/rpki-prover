@@ -41,9 +41,9 @@ parseRoa bs =
 
     getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 ROA
     getRoa asId mkPrefix = getNextContainerMaybe Sequence >>= \case       
-      Just [BitString (BitArray nzBits bs)] -> 
+      Just [Start Sequence, BitString (BitArray nzBits bs), End Sequence] -> 
         pure $ roa' bs nzBits (fromIntegral nzBits) 
-      Just [BitString (BitArray nzBits bs), IntVal maxLength] -> 
+      Just [Start Sequence, BitString (BitArray nzBits bs), IntVal maxLength, End Sequence] -> 
         pure $ roa' bs nzBits (fromInteger maxLength)           
       Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
       Nothing -> throwParseError $ "Unexpected ROA content"
