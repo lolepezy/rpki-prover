@@ -34,9 +34,10 @@ parseMft bs = do
         (IntVal manifestNumber, 
          ASN1Time TimeGeneralized thisUpdateTime tz1, 
          ASN1Time TimeGeneralized nextUpdateTime tz2) -> do
-            fileHashAlg <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
-            entries     <- getEntries fileHashAlg
-            pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+          fileHashAlg <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
+          entries     <- getEntries fileHashAlg
+          pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+
         (IntVal version, 
          IntVal manifestNumber, 
          ASN1Time TimeGeneralized thisUpdateTime tz) -> do
@@ -44,6 +45,8 @@ parseMft bs = do
           fileHashAlg    <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
           entries        <- getEntries fileHashAlg
           pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+
+        s -> throwParseError $ "Unexpected ROA content: " ++ show s
     
     getEntries fileHashAlg = onNextContainer Sequence $ 
       getMany $ onNextContainer Sequence $ 

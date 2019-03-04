@@ -10,6 +10,8 @@ module RPKI.Parse.ROA where
 
 import qualified Data.ByteString as B  
 
+import Data.Monoid (mconcat)
+
 import Data.Word
 
 import Data.ASN1.Types
@@ -32,21 +34,22 @@ parseRoa bs =
   where 
     parseRoa' = onNextContainer Sequence $ do
       asId <- getInteger (pure . fromInteger) "Wrong ASID"
-      onNextContainer Sequence $ getMany $ 
+      mconcat <$> (onNextContainer Sequence $ getMany $ 
         onNextContainer Sequence $ 
           getAddressFamily "Expected an address family here" >>= \case 
               Right Ipv4F -> getRoa asId ipv4
               Right Ipv6F -> getRoa asId ipv6
-              Left af     -> throwParseError $ "Unsupported address family: " ++ show af
+              Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
-    getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 ROA
-    getRoa asId mkPrefix = getNextContainerMaybe Sequence >>= \case       
-      Just [Start Sequence, BitString (BitArray nzBits bs), End Sequence] -> 
-        pure $ roa' bs nzBits (fromIntegral nzBits) 
-      Just [Start Sequence, BitString (BitArray nzBits bs), IntVal maxLength, End Sequence] -> 
-        pure $ roa' bs nzBits (fromInteger maxLength)           
-      Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
-      Nothing -> throwParseError $ "Unexpected ROA content"
+    getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 [ROA]
+    getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
+      getNextContainerMaybe Sequence >>= \case       
+        Just [BitString (BitArray nzBits bs)] -> 
+          pure $ roa' bs nzBits (fromIntegral nzBits) 
+        Just [BitString (BitArray nzBits bs), IntVal maxLength] -> 
+          pure $ roa' bs nzBits (fromInteger maxLength)           
+        Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
+        Nothing -> throwParseError $ "Unexpected ROA content"
       where 
         roa' bs nz maxL = ROA (ASN asId) (mkPrefix bs nz) maxL
 

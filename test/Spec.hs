@@ -4,6 +4,8 @@
 
 import qualified Data.ByteString as B
 
+import Control.Monad
+
 import Data.ASN1.Types
 import Data.ASN1.BitArray
 import Data.ASN1.Encoding
@@ -18,6 +20,10 @@ import RPKI.Parse.Cert
 import RPKI.Parse.MFT
 import RPKI.Parse.ROA
 import RPKI.Store
+
+import System.Environment
+import System.Directory
+import System.FilePath.Find
 
 testCertParsing = do
   -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
@@ -62,6 +68,8 @@ testSignedObjectParsing = do
   let mftFile = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/repository.lacnic.net/rpki/lacnic/fe88c371-48d2-4980-b341-79bd4bd55a11/8a2ba27a87a82b04425116ea7339ee577b624203.mft"
   let roaFile = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/repository.lacnic.net/rpki/lacnic//51df2027-9b4f-4cfe-a657-b7d2463525ee/a4872e040ec749ede659ad3e7884c98f4a62515d.roa"
 
+  let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
+
   mft <- B.readFile mftFile
   roa <- B.readFile roaFile 
   let d = decodeASN1' BER mft
@@ -71,11 +79,31 @@ testSignedObjectParsing = do
   putStrLn $ "roa = " ++ show r
   
 
+testAllManifests = testAllObjects parseMft "mft"  
+testAllRoas      = testAllObjects parseRoa "roa" 
+
+testAllObjects parseIt t = do  
+  let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
+
+  mfts   <- find always (fileName ~~? ("*." ++ t)) repository
+  parsed <- forM mfts $ \mft -> do    
+      p <- parseIt <$> B.readFile mft
+      case p of
+        Left e  -> putStrLn $ mft ++ ", error = " ++ show e
+        Right _ -> pure ()
+      pure (mft, p)
+
+  let errors = [ (e, p) | (p, Left e) <- parsed ]  
+
+  putStrLn $ "errors = " ++ show (length errors)
+  
+
 
 
 
 main :: IO ()
 main = do 
   -- testCertParsing
-  testSignedObjectParsing
+  -- testSignedObjectParsing
+  testAllRoas
   

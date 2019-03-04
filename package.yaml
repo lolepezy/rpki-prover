@@ -41,6 +41,8 @@ dependencies:
 - hw-ip
 - hourglass
 - cryptohash-sha256
+- filemanip
+- directory
 
 library:
   source-dirs: src
