@@ -32,7 +32,7 @@ parseRoa bs =
     Left e     -> (Left . fmtErr . show) e
     Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseRoa') asns  
   where 
-    parseRoa' = onNextContainer Sequence $ do
+    parseRoa' = onNextContainer Sequence $ do      
       asId <- getInteger (pure . fromInteger) "Wrong ASID"
       mconcat <$> (onNextContainer Sequence $ getMany $ 
         onNextContainer Sequence $ 
