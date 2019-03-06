@@ -12,6 +12,7 @@ module RPKI.Parse.SignedObject where
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 
+import Control.Applicative
 import Data.Maybe
 
 import Data.Hourglass
@@ -120,8 +121,7 @@ parseSignedObject eContentParse =
     parseContent = onNextContainer (Container Context 0) $ 
       onNextContainer Sequence $
         SignedContent <$> 
-          parseVersion <*>
-          onNextContainer Set parseDigestAlgorithms <*>
+          parseVersion <*> onNextContainer Set parseDigestAlgorithms <*>
           parseEncapContentInfo <*>
           parseEECertificate <*>
           onNextContainer Set (onNextContainer Sequence parseSignerInfo)
@@ -136,19 +136,20 @@ parseSignedObject eContentParse =
               s       -> throwParseError $ "DigestAlgorithms is wrong " ++ show s)
 
     parseEncapContentInfo = onNextContainer Sequence $ do
-      contentType <- parseContentType
-      onNextContainer (Container Context 0) $ 
-        onNextContainer (Container Universal 4) $ 
-          getNext >>= \case
-            OctetString bs -> 
-              case decodeASN1' BER bs of
-                Left e     -> throwParseError $ "Couldn't decode embedded content: " ++ show e
-                Right asns ->  
-                  case runParseASN1 eContentParse asns of
-                    Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " ++ e
-                    Right a -> pure $ EncapsulatedContentInfo contentType a
-
-            s -> throwParseError $ "Unexpected eContent " ++ show s      
+      contentType <- parseContentType            
+      onNextContainer (Container Context 0) $                 
+          (onNextContainer (Container Universal 4) (eContent contentType)) <|> 
+          (eContent contentType)
+        where
+          eContent contentType = do 
+            fullContent <- getMany getNext
+            let bs = B.concat [ os | OctetString os <- fullContent ]
+            case decodeASN1' BER bs of
+              Left e     -> throwParseError $ "Couldn't decode embedded content: " ++ show e
+              Right asns ->  
+                case runParseASN1 eContentParse asns of
+                  Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " ++ e
+                  Right a -> pure $ EncapsulatedContentInfo contentType a    
         
 
     parseEECertificate = do
@@ -178,18 +179,21 @@ parseSignedObject eContentParse =
               attributes = getMany $ 
                 onNextContainer Sequence $ getNext >>= \case 
                   OID attrId 
-                    | attrId == id_contentType -> getNextContainer Set >>= \case 
-                            [OID ct] -> pure $ ContentTypeAttr $ ContentType ct
+                    | attrId == id_contentType -> getNextContainerMaybe Set >>= \case 
+                            Just [OID ct] -> pure $ ContentTypeAttr $ ContentType ct
                             s -> throwParseError $ "Unknown contentType: " ++ show s
-                    | attrId == id_messageDigest -> getNextContainer Set >>= \case
-                            [OctetString md] -> pure $ MessageDigest md
+                    | attrId == id_messageDigest -> getNextContainerMaybe Set >>= \case
+                            Just [OctetString md] -> pure $ MessageDigest md
                             s -> throwParseError $ "Unknown SID: " ++ show s
-                    | attrId == id_signingTime -> getNextContainer Set >>= \case
-                            [ASN1Time TimeUTC dt tz] -> pure $ SigningTime dt tz
+                    | attrId == id_signingTime -> getNextContainerMaybe Set >>= \case
+                            Just [ASN1Time TimeUTC dt tz] -> pure $ SigningTime dt tz
                             s -> throwParseError $ "Unknown Signing Time: " ++ show s
-                    | attrId == id_binarySigningTime -> getNextContainer Set >>= \case
-                            [IntVal i] -> pure $ BinarySigningTime i
+                    | attrId == id_binarySigningTime -> getNextContainerMaybe Set >>= \case
+                            Just [IntVal i] -> pure $ BinarySigningTime i
                             s -> throwParseError $ "Unknown Binary Signing Time: " ++ show s
+
+                  s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
+                            
         
         parseSignature = getNext >>= \case 
             OctetString sig -> pure $ SignatureValue sig

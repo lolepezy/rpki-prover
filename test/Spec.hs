@@ -66,21 +66,19 @@ testCertParsing = do
 testSignedObjectParsing = do
   -- let path = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/rpki.apnic.net/member_repository/A91362A0/8032CBF0E3A111E6BF3B0068C4F9AE02/gyAF3EXYwTKohRVcQx0zMZrPbY0.crl"
   let mftFile = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/repository.lacnic.net/rpki/lacnic/fe88c371-48d2-4980-b341-79bd4bd55a11/8a2ba27a87a82b04425116ea7339ee577b624203.mft"
-  let roaFile = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/repository.lacnic.net/rpki/lacnic//51df2027-9b4f-4cfe-a657-b7d2463525ee/a4872e040ec749ede659ad3e7884c98f4a62515d.roa"
+  let roaFile = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/rpki.afrinic.net/repository/member_repository/F361842C/06D149FC58F011E7A967243DF8AEA228/E91A0C4C6E5F11E8AE1A3342F8AEA228.roa"
 
   let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
 
-  mft <- B.readFile mftFile
   roa <- B.readFile roaFile 
-  let d = decodeASN1' BER mft
-  let m = parseMft mft
+  -- let d = decodeASN1' BER mft
   let r = parseRoa roa
-  putStrLn $ "mft = " ++ show m
   putStrLn $ "roa = " ++ show r
   
 
 testAllManifests = testAllObjects parseMft "mft"  
 testAllRoas      = testAllObjects parseRoa "roa" 
+testAllCerts     = testAllObjects parseResourceCertificate "cer" 
 
 testAllObjects parseIt t = do  
   let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
@@ -88,6 +86,7 @@ testAllObjects parseIt t = do
   mfts   <- find always (fileName ~~? ("*." ++ t)) repository
   parsed <- forM mfts $ \mft -> do    
       p <- parseIt <$> B.readFile mft
+      putStrLn $ "path = " ++ show mft
       case p of
         Left e  -> putStrLn $ mft ++ ", error = " ++ show e
         Right _ -> pure ()
@@ -105,5 +104,5 @@ main :: IO ()
 main = do 
   -- testCertParsing
   -- testSignedObjectParsing
-  testAllRoas
+  testAllCerts
   

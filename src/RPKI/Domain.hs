@@ -82,7 +82,7 @@ data RpkiMeta = RpkiMeta {
 data Cert (rfc :: ValidationRFC) = Cert {
     certX509    :: !X509.Certificate 
   , ipResources :: !(IpResourceSet rfc)
-  , asResources :: !(ResourceSet AsResource rfc)
+  , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
 
 newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)

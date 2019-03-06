@@ -77,17 +77,20 @@ parseResources x509cert = do
             ext' id_pe_autonomousSysIds_v2) of
         (Nothing, Nothing, _, _) -> broken "No IP extension"
         (Just _, Just _, _, _)   -> broken "Both IP extensions"
-        (_, _, Nothing, Nothing) -> broken "No ASN extension"
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
-        (Just ips, Nothing, Just asns, Nothing) -> Left  <$> cert' x509cert ips asns
-        (Nothing, Just ips, Nothing, Just asns) -> Right <$> cert' x509cert ips asns          
+        (Just ips, Nothing, asns, Nothing) -> Left  <$> cert' x509cert ips asns
+        (Nothing, Just ips, Nothing, asns) -> Right <$> cert' x509cert ips asns          
     where
       broken = Left . fmtErr
-      cert' x509cert ips asns = (Cert x509cert) <$> 
-          (parseResources parseIpExt ips) <*> 
-          (parseResources parseAsnExt asns)
+      cert' x509cert ips asns = do
+          ipR <- parseResources parseIpExt ips
+          case asns of
+            Nothing -> pure $ Cert x509cert ipR Nothing
+            Just as -> do
+              asR <- parseResources parseAsnExt as                
+              pure $ Cert x509cert ipR (Just asR)
 
       parseResources :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
       parseResources f ext = do
