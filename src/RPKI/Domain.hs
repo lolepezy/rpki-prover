@@ -74,14 +74,14 @@ newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
 data RpkiMeta = RpkiMeta {
     locations :: ![URI]
   , hash      :: !Hash
-  , aki       :: !AKI
+  , aki       :: !(Maybe AKI)
   , ski       :: !SKI
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
 data Cert (rfc :: ValidationRFC) = Cert {
     certX509    :: !X509.Certificate 
-  , ipResources :: !(IpResourceSet rfc)
+  , ipResources :: !(Maybe (IpResourceSet rfc))
   , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
 
@@ -91,8 +91,8 @@ data APrefix = AV4 !(IpPrefix 'Ipv4F) | AV6 !(IpPrefix 'Ipv6F)
     deriving (Show, Eq, Ord, Typeable)
 
 data ROA = ROA     
-    {-# UNPACK #-} !ASN 
-    {-# UNPACK #-} !APrefix    
+    !ASN 
+    !APrefix    
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 

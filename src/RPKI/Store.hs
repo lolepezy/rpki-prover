@@ -8,20 +8,21 @@ module RPKI.Store where
 import qualified Data.Set  as S
 import qualified Data.Map  as M
 
-import           Control.Concurrent.STM
+import Control.Concurrent.STM
 
-import           Data.Proxy
+import Data.Maybe
+import Data.Proxy
 
-import           Data.IxSet.Typed
+import Data.IxSet.Typed
 
-import           RPKI.Domain
+import RPKI.Domain
 
 
 type EntryIxs = '[ AKI, Hash, URI ]
 type IxEntry  = IxSet EntryIxs RpkiObj
 
 byAKI :: RpkiObj -> [AKI]
-byAKI (RpkiObj _ (RpkiMeta { aki = a })) = [a]
+byAKI (RpkiObj _ (RpkiMeta { aki = a })) = catMaybes [a]
 
 byHash :: RpkiObj -> [Hash]
 byHash (RpkiObj _ (RpkiMeta { hash = h })) = [h]

@@ -43,16 +43,14 @@ parseResourceCertificate :: B.ByteString ->
                               (RpkiMeta, Cert 'Reconsidered))
 parseResourceCertificate bs = do
   let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
-  x509 <- (signedObject . getSigned) <$> certificate      
+  x509 <- (signedObject . getSigned) <$> certificate        
   let (Extensions extensions) = certExtensions x509
   let exts = maybe [] id extensions      
-  let ski = extVal exts id_subjectKeyId
-  let aki = extVal exts id_authorityKeyId
-  case (ski, aki) of
-    (Just s, Just a) -> let
+  case extVal exts id_subjectKeyId of
+    Just s -> let
         r = parseResources x509
         meta = RpkiMeta {
-            aki  = AKI (KI a)
+            aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
           , ski  = SKI (KI s)
           , hash = U.sha256 bs
           -- TODO Do something about this
@@ -62,8 +60,7 @@ parseResourceCertificate bs = do
           }
         withMeta = first (meta,) . fmap (meta,)
         in withMeta <$> r
-    (_, Nothing)     -> (Left . fmtErr) "No AKI extension"
-    (Nothing, _)     -> (Left . fmtErr) "No SKI extension"  
+    Nothing -> (Left . fmtErr) "No SKI extension"  
     
 
 
@@ -75,22 +72,22 @@ parseResources x509cert = do
             ext' id_pe_ipAddrBlocks_v2, 
             ext' id_pe_autonomousSysIds, 
             ext' id_pe_autonomousSysIds_v2) of
-        (Nothing, Nothing, _, _) -> broken "No IP extension"
         (Just _, Just _, _, _)   -> broken "Both IP extensions"
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
-        (Just ips, Nothing, asns, Nothing) -> Left  <$> cert' x509cert ips asns
-        (Nothing, Just ips, Nothing, asns) -> Right <$> cert' x509cert ips asns          
+        (ips, Nothing, asns, Nothing) -> Left  <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> Right <$> cert' x509cert ips asns          
     where
       broken = Left . fmtErr
       cert' x509cert ips asns = do
-          ipR <- parseResources parseIpExt ips
-          case asns of
-            Nothing -> pure $ Cert x509cert ipR Nothing
-            Just as -> do
-              asR <- parseResources parseAsnExt as                
-              pure $ Cert x509cert ipR (Just asR)
+          ipR <- case ips of
+            Nothing -> pure Nothing
+            Just ip -> Just <$> parseResources parseIpExt ip
+          asR <- case asns of
+            Nothing -> pure Nothing
+            Just as -> Just <$> parseResources parseAsnExt as                
+          pure $ Cert x509cert ipR asR
 
       parseResources :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
       parseResources f ext = do
@@ -129,21 +126,21 @@ extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 -}
 parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
 parseIpExt addrBlocks = mapParseErr $
-    (flip runParseASN1) addrBlocks $ do
+    (flip runParseASN1) addrBlocks $ do     
     afs <- onNextContainer Sequence (getMany addrFamily)
     let ipv4 = head [ af | Left  af <- afs ]
     let ipv6 = head [ af | Right af <- afs ]
     pure $ IpResourceSet ipv4 ipv6
     where      
-      addrFamily = onNextContainer Sequence $ do
+      addrFamily = onNextContainer Sequence $ do        
         getAddressFamily  "Expected an address family here" >>= \case 
-          Right IP.Ipv4F -> Left  <$> onNextContainer Sequence (ipResourceSet ipv4Address)
-          Right IP.Ipv6F -> Right <$> onNextContainer Sequence (ipResourceSet ipv6Address)       
+          Right IP.Ipv4F -> Left  <$> ipResourceSet ipv4Address
+          Right IP.Ipv6F -> Right <$> ipResourceSet ipv6Address
           Left af        -> throwParseError $ "Unsupported address family " ++ show af
         where
           ipResourceSet address = 
             (getNull_ (pure Inherit)) <|> 
-            ((RS . S.fromList) <$> (getMany address))
+            onNextContainer Sequence ((RS . S.fromList) <$> (getMany address))
       
       ipv4Address = ipvVxAddress
           IP.fourW8sToW32 32
