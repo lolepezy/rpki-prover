@@ -44,17 +44,17 @@ parseRoa bs =
     getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 [ROA]
     getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
       getNextContainerMaybe Sequence >>= \case       
-        Just [BitString (BitArray nzBits bs)] -> 
-          pure $ roa' bs nzBits (fromIntegral nzBits) 
-        Just [BitString (BitArray nzBits bs), IntVal maxLength] -> 
-          pure $ roa' bs nzBits (fromInteger maxLength)           
+        Just [BitString (BitArray nzBits bs')] -> 
+          pure $ mkRoa bs' nzBits (fromIntegral nzBits) 
+        Just [BitString (BitArray nzBits bs'), IntVal maxLength] -> 
+          pure $ mkRoa bs' nzBits (fromInteger maxLength)           
         Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
         Nothing -> throwParseError $ "Unexpected ROA content"
       where 
-        roa' bs nz maxL = ROA (ASN asId) (mkPrefix bs nz) maxL
+        mkRoa bs' nz maxL = ROA (ASN asId) (mkPrefix bs' nz) maxL
 
-    ipv4 bs nzBits = AV4 $ Ipv4P $ mkV4Prefix bs (fromIntegral nzBits)
-    ipv6 bs nzBits = AV6 $ Ipv6P $ mkV6Prefix bs (fromIntegral nzBits)
+    ipv4 bs' nzBits = AV4 $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
+    ipv6 bs' nzBits = AV6 $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)
 
 
           

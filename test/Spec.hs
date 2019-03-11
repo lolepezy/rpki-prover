@@ -27,7 +27,7 @@ import System.FilePath.Find
 
 testCertParsing = do
   -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
-  let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/smaller.cer"
+  let path = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/repository.lacnic.net/rpki/lacnic/ff14e9055d5afaa37fbe20f4a26bd13c8f18d79a.cer"
   -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.apnic.net/873/member_repository/A917150D/2B63EBE6326811E4B59A4118C4F9AE02/L3M4gVlKnWpaICg9mMRk2VX_A3k.mft"
   -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.afrinic.net/873/repository/afrinic/imnjE5vX78CApC4WBIM5j6bHW7Y.cer"
 
@@ -50,8 +50,8 @@ testCertParsing = do
   let xcert = parseResourceCertificate cert
 
   -- putStrLn $ "xt = " ++ show xt
-  putStrLn $ "xcert = " ++ show xcert
-  --putStrLn "cert = " ++ show cert
+  -- putStrLn $ "xcert = " ++ show xcert
+  putStrLn $ "x = " ++ show x
   -- putStrLn $ "mft = " ++ show mft
   putStrLn ""
   putStrLn ""
