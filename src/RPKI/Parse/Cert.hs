@@ -80,14 +80,9 @@ parseResources x509cert = do
         (Nothing, ips, Nothing, asns) -> Right <$> cert' x509cert ips asns          
     where
       broken = Left . fmtErr
-      cert' x509cert ips asns = do
-          ipR <- case ips of
-            Nothing -> pure Nothing
-            Just ip -> Just <$> parseResources parseIpExt ip
-          asR <- case asns of
-            Nothing -> pure Nothing
-            Just as -> Just <$> parseResources parseAsnExt as                
-          pure $ Cert x509cert ipR asR
+      cert' x509cert ips asns = Cert x509cert <$>
+            (traverse (parseResources parseIpExt) ips) <*>
+            (traverse (parseResources parseAsnExt) asns)
 
       parseResources :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
       parseResources f ext = do
