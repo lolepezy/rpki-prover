@@ -69,7 +69,7 @@ data SignerInfos = SignerInfos {
   , signedAttrs        :: SignedAttributes
   , signatureAlgorithm :: SignatureAlgorithmIdentifier
   , signature          :: SignatureValue
-} deriving (Eq, Ord, Show)
+} deriving (Eq, Show)
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text deriving (Eq, Ord, Show)
 
@@ -82,13 +82,14 @@ newtype CMSVersion = CMSVersion Int deriving (Eq, Ord, Show)
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] deriving (Eq, Ord, Show)
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier OID  deriving (Eq, Ord, Show)
 
-newtype SignedAttributes = SignedAttributes [Attribute] deriving (Eq, Ord, Show)  
+newtype SignedAttributes = SignedAttributes [Attribute] deriving (Eq, Show)  
 
 data Attribute = ContentTypeAttr ContentType 
                | MessageDigest B.ByteString
                | SigningTime DateTime (Maybe TimezoneOffset)
-               | BinarySigningTime Integer              
-  deriving (Eq, Ord, Show)  
+               | BinarySigningTime Integer 
+               | UnknownAttribute OID [ASN1]
+  deriving (Eq, Show)  
 
 
 newtype SignatureValue = SignatureValue B.ByteString deriving (Eq, Ord, Show)  
@@ -191,6 +192,8 @@ parseSignedObject eContentParse =
                     | attrId == id_binarySigningTime -> getNextContainerMaybe Set >>= \case
                             Just [IntVal i] -> pure $ BinarySigningTime i
                             s -> throwParseError $ "Unknown Binary Signing Time: " ++ show s
+                    | otherwise -> getNextContainerMaybe Set >>= \case
+                            Just asn1 -> pure $ UnknownAttribute attrId asn1
 
                   s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
                             
