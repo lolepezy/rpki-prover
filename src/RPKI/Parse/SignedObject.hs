@@ -18,6 +18,7 @@ import Data.Maybe
 import Data.Hourglass
 
 import Data.ASN1.OID
+import Data.ASN1.BitArray
 import Data.ASN1.Types
 import Data.ASN1.Parse
 import Data.ASN1.Encoding
@@ -30,16 +31,22 @@ import RPKI.Parse.Common
 
 
 data SignedObject a = SignedObject {
-    soContentType :: ContentType
-  , soContent     :: SignedContent a
+    soContentType :: !ContentType
+  , soContent     :: !(SignedContent a)
 } deriving (Eq, Show)
 
+data CertificateWithSignature = CertificateWithSignature 
+  !X509.Certificate
+  !SignatureAlgorithmIdentifier
+  !SignatureValue
+  deriving (Eq, Show)
+
 data SignedContent a = SignedContent {
-    scVersion          :: CMSVersion
-  , scDigestAlgorithms :: DigestAlgorithmIdentifiers
-  , scEncapContentInfo :: EncapsulatedContentInfo a
-  , scCertificate      :: X509.Certificate
-  , scSignerInfos      :: SignerInfos
+    scVersion          :: !CMSVersion
+  , scDigestAlgorithms :: !DigestAlgorithmIdentifiers
+  , scEncapContentInfo :: !(EncapsulatedContentInfo a)
+  , scCertificate      :: !CertificateWithSignature
+  , scSignerInfos      :: !SignerInfos
 } deriving (Eq, Show)
 
 {- 
@@ -48,8 +55,8 @@ data SignedContent a = SignedContent {
         eContent [0] EXPLICIT OCTET STRING OPTIONAL }
 -}
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
-    eContentType :: ContentType
-  , cContent     :: a    
+    eContentType :: !ContentType
+  , cContent     :: !a    
 } deriving (Eq, Ord, Show)
 
 {-
@@ -63,12 +70,12 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
           unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
 -}
 data SignerInfos = SignerInfos {
-    siVersion          :: CMSVersion
-  , siSid              :: SignerIdentifier
-  , digestAlgorithm    :: DigestAlgorithmIdentifiers
-  , signedAttrs        :: SignedAttributes
-  , signatureAlgorithm :: SignatureAlgorithmIdentifier
-  , signature          :: SignatureValue
+    siVersion          :: !CMSVersion
+  , siSid              :: !SignerIdentifier
+  , digestAlgorithm    :: !DigestAlgorithmIdentifiers
+  , signedAttrs        :: !SignedAttributes
+  , signatureAlgorithm :: !SignatureAlgorithmIdentifier
+  , signature          :: !SignatureValue
 } deriving (Eq, Show)
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text deriving (Eq, Ord, Show)
@@ -153,14 +160,14 @@ parseSignedObject eContentParse =
                   Right a -> pure $ EncapsulatedContentInfo contentType a    
         
 
-    parseEECertificate = do
+    parseEECertificate = 
       onNextContainer (Container Context 0) $ 
-                            onNextContainer Sequence $ do
-                                -- TODO Parse signature separately ?
-                                x <- onNextContainer Sequence getObject                                  
-                                sig <- getNextContainerMaybe Sequence                                
-                                bits <- getNext                                                      
-                                pure x      
+        onNextContainer Sequence $
+            CertificateWithSignature <$> 
+              (onNextContainer Sequence getObject) <*>
+              parseSignatureAlgorithm <*>
+              parseSignature                                  
+                                
 
     parseSignerInfo = SignerInfos <$>
       parseVersion <*>
@@ -198,13 +205,14 @@ parseSignedObject eContentParse =
                   s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
                             
         
-        parseSignature = getNext >>= \case 
-            OctetString sig -> pure $ SignatureValue sig
-            s               -> throwParseError $ "Unknown signature value : " ++ show s
+    parseSignature = getNext >>= \case 
+        OctetString sig               -> pure $ SignatureValue sig
+        BitString (BitArray size sig) -> pure $ SignatureValue sig
+        s                             -> throwParseError $ "Unknown signature value : " ++ show s
 
-        parseSignatureAlgorithm = onNextContainer Sequence $
-            getNext >>= \case 
-              OID oid -> do
-                -- TODO Don't skip parameters, add them to the signature
-                _ <- getMany getNext
-                pure $ SignatureAlgorithmIdentifier oid
+    parseSignatureAlgorithm = onNextContainer Sequence $
+        getNext >>= \case 
+          OID oid -> do
+            -- TODO Don't skip parameters, add them to the signature
+            _ <- getMany getNext
+            pure $ SignatureAlgorithmIdentifier oid
