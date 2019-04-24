@@ -38,18 +38,16 @@ import RPKI.Parse.Common
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
 parseResourceCertificate :: B.ByteString -> 
-                            ParseResult (Either 
-                              (RpkiMeta, Cert 'Strict) 
-                              (RpkiMeta, Cert 'Reconsidered))
+                            ParseResult (RpkiMeta, ResourceCert)                              
 parseResourceCertificate bs = do
   let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
   x509 <- (signedObject . getSigned) <$> certificate        
   let (Extensions extensions) = certExtensions x509
   let exts = maybe [] id extensions      
   case extVal exts id_subjectKeyId of
-    Just s -> let
-        r = parseResources x509
-        meta = RpkiMeta {
+    Just s -> do
+        r <- parseResources x509
+        let meta = RpkiMeta {
             aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
           , ski  = SKI (KI s)
           , hash = U.sha256 bs
@@ -58,13 +56,12 @@ parseResourceCertificate bs = do
           , serial = Serial (certSerial x509)
           -- 
           }
-        withMeta = first (meta,) . fmap (meta,)
-        in withMeta <$> r
+        pure (meta, r)        
     Nothing -> (Left . fmtErr) "No SKI extension"  
     
 
 
-parseResources :: Certificate -> ParseResult (Either (Cert 'Strict) (Cert 'Reconsidered))
+parseResources :: Certificate -> ParseResult ResourceCert
 parseResources x509cert = do      
       let (Extensions extensions) = certExtensions x509cert
       let ext' = extVal $ maybe [] id extensions      
@@ -76,11 +73,11 @@ parseResources x509cert = do
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
-        (ips, Nothing, asns, Nothing) -> Left  <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> Right <$> cert' x509cert ips asns          
+        (ips, Nothing, asns, Nothing) -> StrictCert <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> LooseCert  <$> cert' x509cert ips asns          
     where
       broken = Left . fmtErr
-      cert' x509cert ips asns = Cert x509cert <$>
+      cert' x509cert ips asns = ResourceCertificate x509cert <$>
             (traverse (parseResources parseIpExt) ips) <*>
             (traverse (parseResources parseAsnExt) asns)
 

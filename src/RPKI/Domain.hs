@@ -4,8 +4,10 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 
 module RPKI.Domain where
 
@@ -79,8 +81,8 @@ data RpkiMeta = RpkiMeta {
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
-data Cert (rfc :: ValidationRFC) = Cert {
-    certX509    :: !X509.Certificate 
+data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
+    certX509    :: X509.Certificate 
   , ipResources :: !(Maybe (IpResourceSet rfc))
   , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
@@ -111,11 +113,11 @@ data MFT = MFT {
 } deriving (Show, Eq, Typeable)
 
 data CRL = CRL {
-    crlEntries :: [RpkiObj]
+    entries :: [RpkiObj]
 } deriving (Show, Eq, Typeable)
 
-data RpkiStorable = Cu !(Cert 'Strict) 
-                  | CuV2 !(Cert 'Reconsidered) 
+data RpkiStorable = Cu !(ResourceCertificate 'Strict) 
+                  | CuV2 !(ResourceCertificate 'Reconsidered)
                   | Mu !MFT
                   | Cru !CRL 
                   | Ru !ROA
@@ -131,9 +133,18 @@ newtype ObjId = ObjId B.ByteString deriving (Show, Eq, Ord, Typeable)
 -- Subject Public Key Info
 newtype SPKI = SPKI B.ByteString
 
+newtype TaName = TaName T.Text
+
+data ResourceCert = StrictCert (ResourceCertificate 'Strict) |
+                    LooseCert (ResourceCertificate 'Reconsidered)
+
+forCert :: ResourceCert -> (forall rfc . ResourceCertificate (rfc :: ValidationRFC) -> a) -> a
+forCert (StrictCert r) f = f r
+forCert (LooseCert r) f = f r
+
 data TA = TA {
-    taName        :: !T.Text
-  , taCertificate :: !(Either (Cert 'Strict) (Cert 'Reconsidered))
+    taName        :: !TaName
+  , taCertificate :: !ResourceCert
   , taUri         :: !URI
   , taSpki        :: !SPKI
 }
@@ -141,6 +152,12 @@ data TA = TA {
 data Repository = Repository {
     repoRsyncUrl :: !URI
   , repoRrdpUrl  :: !URI
+}
+
+
+data CA = CA {
+    caName :: T.Text
+  , caCertificate :: ResourceCert   
 }
 
 newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
