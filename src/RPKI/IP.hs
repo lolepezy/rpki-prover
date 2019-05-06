@@ -4,15 +4,21 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE UndecidableInstances #-}
+
 
 module RPKI.IP where
-
 
 import qualified Data.ByteString as B  
 import qualified Data.List as L
 
+import Data.Kind (Type)
 import Data.Data (Typeable)
 
 import Data.Word
@@ -37,24 +43,64 @@ newtype Ipv4Range = Ipv4Range (Range V4.IpAddress)
 newtype Ipv6Range = Ipv6Range (Range V6.IpAddress) 
     deriving (Show, Eq, Ord, Typeable)
 
-
 data IpPrefix (f :: AddrFamily) where
     Ipv4P :: !Ipv4Prefix -> IpPrefix 'Ipv4F
     Ipv6P :: !Ipv6Prefix -> IpPrefix 'Ipv6F
+
+data IpRange (f :: AddrFamily) where
+    Ipv4R :: !Ipv4Range -> IpRange 'Ipv4F
+    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F
+
+newtype WithAF (f :: AddrFamily) (r :: AddrFamily -> Type) = WithAF (r f)
+
+data AnAF (r :: AddrFamily -> Type) = 
+    V4AF (WithAF 'Ipv4F r)
+  | V6AF (WithAF 'Ipv6F r)  
+
+newtype APrefix = APrefix (AnAF IpPrefix)    
+  deriving (Show, Eq, Ord, Typeable)
+
+newtype ARange = ARange (AnAF IpRange)
+  deriving (Show, Eq, Ord, Typeable)
+
+data IpResource (rfc :: AddrFamily) where
+  IpP :: !(IpPrefix f) -> IpResource f
+  IpR :: !(IpRange f ) -> IpResource f
+  deriving (Show, Eq, Ord, Typeable)
 
 deriving instance Show (IpPrefix f)
 deriving instance Eq (IpPrefix f)
 deriving instance Ord (IpPrefix f)
 deriving instance Typeable (IpPrefix f)
 
-data IpRange (f :: AddrFamily) where
-    Ipv4R :: !Ipv4Range -> IpRange 'Ipv4F
-    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F
-
 deriving instance Show (IpRange f)
 deriving instance Eq (IpRange f)
 deriving instance Ord (IpRange f)
 deriving instance Typeable (IpRange f)
+
+deriving instance Show (r f) => Show (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
+deriving instance Eq (r f) => Eq (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
+deriving instance Ord (r f) => Ord (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
+deriving instance Typeable (r f) => Typeable (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
+
+deriving instance Show (r 'Ipv4F) => 
+                  Show (r 'Ipv6F) =>
+                  Show (AnAF (r :: AddrFamily -> Type))
+deriving instance Eq (r 'Ipv4F) => 
+                  Eq (r 'Ipv6F) => 
+                  Eq (AnAF (r :: AddrFamily -> Type))
+deriving instance Ord (r 'Ipv4F) => 
+                  Ord (r 'Ipv6F) => 
+                  Ord (AnAF (r :: AddrFamily -> Type))
+deriving instance Typeable (r 'Ipv4F) => 
+                  Typeable (r 'Ipv6F) => 
+                  Typeable (AnAF (r :: AddrFamily -> Type))
+
+
+withAF :: forall r a . AnAF r -> (forall f . WithAF (f :: AddrFamily) r -> a) -> a
+withAF (V4AF r) f = f r
+withAF (V6AF r) f = f r
+
 
 
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix

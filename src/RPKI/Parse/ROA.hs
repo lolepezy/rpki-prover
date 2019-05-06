@@ -53,8 +53,8 @@ parseRoa bs =
       where 
         mkRoa bs' nz maxL = ROA (ASN asId) (mkPrefix bs' nz) maxL
 
-    ipv4 bs' nzBits = AV4 $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
-    ipv6 bs' nzBits = AV6 $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)
+    ipv4 bs' nzBits = APrefix $ V4AF $ WithAF $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
+    ipv6 bs' nzBits = APrefix $ V6AF $ WithAF $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)
 
 
           

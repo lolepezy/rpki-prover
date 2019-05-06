@@ -8,6 +8,9 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Domain where
 
@@ -16,6 +19,7 @@ import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Short as TS
 
+import Data.Kind (Type)
 import Data.Data (Typeable)
 
 import Data.Hourglass
@@ -28,23 +32,52 @@ import RPKI.IP
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable)
 
-data IpResource (f :: AddrFamily) where
-    IpP :: !(IpPrefix f) -> IpResource f
-    IpR :: !(IpRange f ) -> IpResource f
-
-deriving instance Show (IpResource f)
-deriving instance Eq (IpResource f)
-deriving instance Ord (IpResource f)
-deriving instance Typeable (IpResource f)
-    
-
 data AsResource =  AS !ASN
                  | ASRange  
                     {-# UNPACK #-} !ASN 
                     {-# UNPACK #-} !ASN
-    deriving (Show, Eq, Ord, Typeable)                    
+    deriving (Show, Eq, Ord, Typeable)
 
 data ValidationRFC = Strict | Reconsidered
+    deriving (Show, Eq, Ord, Typeable)
+
+newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
+
+data AnRFC (r :: ValidationRFC -> Type) = 
+      LooseRFC (WithRFC 'Reconsidered r)
+    | StrictRFC (WithRFC 'Strict r)
+
+withRFC :: forall r a . AnRFC r -> (forall rfc . WithRFC (rfc :: ValidationRFC) r -> a) -> a
+withRFC (LooseRFC r) f = f r
+withRFC (StrictRFC r) f = f r
+
+deriving instance Show (r rfc) => Show (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
+deriving instance Eq (r rfc) => Eq (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
+deriving instance Ord (r rfc) => Ord (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
+deriving instance Typeable (r rfc) => Typeable (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
+    
+deriving instance Show (r 'Strict) => 
+                  Show (r 'Reconsidered) =>
+                  Show (AnRFC (r :: ValidationRFC -> Type))
+deriving instance Eq (r 'Strict) => 
+                  Eq (r 'Reconsidered) => 
+                  Eq (AnRFC (r :: ValidationRFC -> Type))
+deriving instance Ord (r 'Strict) => 
+                  Ord (r 'Reconsidered) => 
+                  Ord (AnRFC (r :: ValidationRFC -> Type))
+deriving instance Typeable (r 'Strict) => 
+                  Typeable (r 'Reconsidered) => 
+                  Typeable (AnRFC (r :: ValidationRFC -> Type))
+
+                  
+newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
+    deriving (Show, Eq, Typeable)
+
+newtype IpResources = IpResources (AnRFC IpResourceSet)    
+    deriving (Show, Eq, Typeable)
+
+newtype RSet r = RSet (AnRFC (ResourceSet r))
+    deriving (Show, Eq, Typeable)
 
 data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
 
@@ -87,10 +120,7 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
   , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
 
-newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)
-
-data APrefix = AV4 !(IpPrefix 'Ipv4F) | AV6 !(IpPrefix 'Ipv6F)
-    deriving (Show, Eq, Ord, Typeable)
+newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)    
 
 data ROA = ROA     
     !ASN 
@@ -98,6 +128,7 @@ data ROA = ROA
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 
+data GBR = GBR deriving (Show, Eq, Ord, Typeable)
 
 newtype MFTRef = MFTRef (Either Hash ObjId) deriving (Show, Eq, Ord, Typeable)
 
@@ -105,7 +136,7 @@ newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
 
 
 data MFT = MFT {
-    mftnumber   :: !Int  
+    mftNumber   :: !Int  
   , fileHashAlg :: !HashAlg
   , thisTime    :: !DateTime
   , nextTime    :: !DateTime 
@@ -135,13 +166,6 @@ newtype SPKI = SPKI B.ByteString
 
 newtype TaName = TaName T.Text
 
-data ResourceCert = StrictCert (ResourceCertificate 'Strict) |
-                    LooseCert (ResourceCertificate 'Reconsidered)
-
-forCert :: ResourceCert -> (forall rfc . ResourceCertificate (rfc :: ValidationRFC) -> a) -> a
-forCert (StrictCert r) f = f r
-forCert (LooseCert r) f = f r
-
 data TA = TA {
     taName        :: !TaName
   , taCertificate :: !ResourceCert
@@ -155,10 +179,10 @@ data Repository = Repository {
 }
 
 
-data CA = CA {
-    caName :: T.Text
-  , caCertificate :: ResourceCert   
-}
+-- data CA = CA {
+--     caName :: T.Text
+--   , caCertificate :: ResourceCert   
+-- }
 
 newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
 

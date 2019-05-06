@@ -28,6 +28,7 @@ import Data.ASN1.Parse
 
 import Data.X509
 
+import RPKI.IP
 import RPKI.Domain 
 import qualified RPKI.Util as U
 import qualified RPKI.IP as IP
@@ -73,8 +74,8 @@ parseResources x509cert = do
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"                
-        (ips, Nothing, asns, Nothing) -> StrictCert <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> LooseCert  <$> cert' x509cert ips asns          
+        (ips, Nothing, asns, Nothing) -> (ResourceCert . StrictRFC . WithRFC) <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> (ResourceCert . LooseRFC . WithRFC) <$> cert' x509cert ips asns          
     where
       broken = Left . fmtErr
       cert' x509cert ips asns = ResourceCertificate x509cert <$>

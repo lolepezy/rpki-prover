@@ -27,6 +27,7 @@ dependencies:
 - ixset-typed
 - async
 - stm
+- stm-containers
 - text
 - time
 - x509
