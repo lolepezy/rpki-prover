@@ -24,7 +24,7 @@ import qualified StmContainers.Map as SM
 
 import Control.Concurrent.STM.TQueue
 
-import RPKI.Domain (Hash, RpkiMeta, TaName, IpResources)
+import RPKI.Domain
 
 {-
 
@@ -61,30 +61,16 @@ data Change = Add | Update | Delete
 
 newtype ChildCAs = ChildCAs (SM.Map Hash ValidTree)
 
-data ObjectType = CER | MFT | CRL | ROA | GBR
-  deriving (Show, Eq, Typeable)
-
-data RpkiObject (t :: ObjectType) = RpkiObject
-  deriving (Show, Eq, Typeable)
-
-data Ref (t :: ObjectType) where
-   RHash :: !Hash           -> Ref t
-   RObj  :: !(RpkiObject t) -> Ref t
-   deriving (Show, Eq, Typeable)
-
 data CA = CA {
-       cer        :: RpkiObject 'CER
-    ,  mft        :: RpkiObject 'MFT
-    , ipResources :: !IpResources
-    , crl         :: RpkiObject 'CRL
+       cer        :: CerObject
+    ,  mft        :: MftObject
+    , ipResources :: IpResources
+    , crl         :: CrlObject
     , children    :: [ValidTree]
   } deriving (Show, Eq, Typeable)
 
-data Blob (t :: ObjectType) = Blob B.ByteString 
-  deriving (Show, Eq, Typeable)
-
-data ValidTree = CaNode  RpkiMeta CA        (Blob 'CER) 
-               | ROANode RpkiMeta (Ref ROA) (Blob 'RPKI.Core.ROA) 
+data ValidTree = CaNode  RpkiMeta CA  Blob
+               | ROANode RpkiMeta Ref Blob
                deriving (Show, Eq, Typeable)               
 
 data TATrees = TATrees {

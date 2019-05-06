@@ -30,6 +30,8 @@ import HaskellWorks.Data.Network.Ip.Word128
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
+import RPKI.Types
+
 data AddrFamily = Ipv4F | Ipv6F
     deriving (Show, Eq, Ord, Typeable)
 
@@ -45,11 +47,11 @@ newtype Ipv6Range = Ipv6Range (Range V6.IpAddress)
 
 data IpPrefix (f :: AddrFamily) where
     Ipv4P :: !Ipv4Prefix -> IpPrefix 'Ipv4F
-    Ipv6P :: !Ipv6Prefix -> IpPrefix 'Ipv6F
+    Ipv6P :: !Ipv6Prefix -> IpPrefix 'Ipv6F    
 
 data IpRange (f :: AddrFamily) where
     Ipv4R :: !Ipv4Range -> IpRange 'Ipv4F
-    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F
+    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F    
 
 newtype WithAF (f :: AddrFamily) (r :: AddrFamily -> Type) = WithAF (r f)
 
@@ -83,18 +85,12 @@ deriving instance Eq (r f) => Eq (WithAF (f :: AddrFamily) (r :: AddrFamily -> T
 deriving instance Ord (r f) => Ord (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
 deriving instance Typeable (r f) => Typeable (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
 
-deriving instance Show (r 'Ipv4F) => 
-                  Show (r 'Ipv6F) =>
-                  Show (AnAF (r :: AddrFamily -> Type))
-deriving instance Eq (r 'Ipv4F) => 
-                  Eq (r 'Ipv6F) => 
-                  Eq (AnAF (r :: AddrFamily -> Type))
-deriving instance Ord (r 'Ipv4F) => 
-                  Ord (r 'Ipv6F) => 
-                  Ord (AnAF (r :: AddrFamily -> Type))
-deriving instance Typeable (r 'Ipv4F) => 
-                  Typeable (r 'Ipv6F) => 
-                  Typeable (AnAF (r :: AddrFamily -> Type))
+type ForAllAFs c r = (AllF c r ['Ipv4F, 'Ipv6F]) 
+
+deriving instance (ForAllAFs Show r) => Show (AnAF (r :: AddrFamily -> Type))
+deriving instance (ForAllAFs Eq r)   => Eq (AnAF (r :: AddrFamily -> Type))
+deriving instance (ForAllAFs Ord r)  => Ord (AnAF (r :: AddrFamily -> Type))
+deriving instance (ForAllAFs Typeable r) => Typeable (AnAF (r :: AddrFamily -> Type))
 
 
 withAF :: forall r a . AnAF r -> (forall f . WithAF (f :: AddrFamily) r -> a) -> a

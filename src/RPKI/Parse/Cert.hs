@@ -15,6 +15,7 @@ import qualified Data.Text as T
 
 import qualified Data.Set as S
 import qualified Data.List as L
+import Data.List.NonEmpty (NonEmpty ((:|)))
 
 import Data.Bifunctor
 import Data.Maybe
@@ -38,9 +39,9 @@ import RPKI.Parse.Common
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseResourceCertificate :: B.ByteString -> 
+parseResourceCertificate :: URI -> B.ByteString ->
                             ParseResult (RpkiMeta, ResourceCert)                              
-parseResourceCertificate bs = do
+parseResourceCertificate location bs = do
   let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
   x509 <- (signedObject . getSigned) <$> certificate        
   let (Extensions extensions) = certExtensions x509
@@ -53,7 +54,7 @@ parseResourceCertificate bs = do
           , ski  = SKI (KI s)
           , hash = U.sha256 bs
           -- TODO Do something about this
-          , locations = []
+          , locations = location :| []
           , serial = Serial (certSerial x509)
           -- 
           }

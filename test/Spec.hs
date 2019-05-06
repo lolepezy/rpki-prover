@@ -5,6 +5,7 @@
 import qualified Data.ByteString as B
 
 import Control.Monad
+import Control.Concurrent.Async
 
 import Data.ASN1.Types
 import Data.ASN1.BitArray
@@ -47,7 +48,7 @@ testCertParsing = do
 
   let x = parseIpExt ip
   let z = parseAsnExt as
-  let xcert = parseResourceCertificate cert
+  let xcert = parseResourceCertificate (URI "blabla.cer") cert
 
   -- putStrLn $ "xt = " ++ show xt
   -- putStrLn $ "xcert = " ++ show xcert
@@ -78,19 +79,20 @@ testSignedObjectParsing = do
 
 testAllManifests = testAllObjects parseMft "mft"  
 testAllRoas      = testAllObjects parseRoa "roa" 
-testAllCerts     = testAllObjects parseResourceCertificate "cer" 
+testAllCerts     = testAllObjects (parseResourceCertificate (URI "something.cer")) "cer" 
 
 testAllObjects parseIt t = do  
   let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
 
-  mfts   <- find always (fileName ~~? ("*." ++ t)) repository
-  parsed <- forM mfts $ \mft -> do    
-      p <- parseIt <$> B.readFile mft
-      putStrLn $ "path = " ++ show mft
-      case p of
-        Left e  -> putStrLn $ mft ++ ", error = " ++ show e
-        Right _ -> pure ()
-      pure (mft, p)
+  objs   <- find always (fileName ~~? ("*." ++ t)) repository
+  asyncs <- forM objs $ \obj -> async $ do    
+              p <- parseIt <$> B.readFile obj
+              putStrLn $ "path = " ++ show obj
+              case p of
+                Left e  -> putStrLn $ obj ++ ", error = " ++ show e
+                Right _ -> pure ()
+              pure (obj, p)
+  parsed <- mapM wait asyncs              
 
   let errors = [ (e, p) | (p, Left e) <- parsed ]  
 
@@ -105,4 +107,5 @@ main = do
   -- testCertParsing
   -- testSignedObjectParsing
   testAllCerts
-  
+  testAllRoas
+  testAllManifests

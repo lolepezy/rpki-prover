@@ -44,6 +44,7 @@ dependencies:
 - cryptohash-sha256
 - filemanip
 - directory
+- semigroups
 
 library:
   source-dirs: src

@@ -11,6 +11,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module RPKI.Domain where
 
@@ -22,11 +23,14 @@ import qualified Data.Text.Short as TS
 import Data.Kind (Type)
 import Data.Data (Typeable)
 
+import Data.List.NonEmpty
+
 import Data.Hourglass
 
 import qualified Data.X509 as X509
 import qualified Data.ASN1.OID as O
 
+import RPKI.Types
 import RPKI.IP    
 
 newtype ASN = ASN Int
@@ -51,6 +55,7 @@ withRFC :: forall r a . AnRFC r -> (forall rfc . WithRFC (rfc :: ValidationRFC) 
 withRFC (LooseRFC r) f = f r
 withRFC (StrictRFC r) f = f r
 
+-- Deriving machinery
 deriving instance Show (r rfc) => Show (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
 deriving instance Eq (r rfc) => Eq (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
 deriving instance Ord (r rfc) => Ord (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
@@ -69,7 +74,7 @@ deriving instance Typeable (r 'Strict) =>
                   Typeable (r 'Reconsidered) => 
                   Typeable (AnRFC (r :: ValidationRFC -> Type))
 
-                  
+
 newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
     deriving (Show, Eq, Typeable)
 
@@ -91,8 +96,8 @@ data IpResourceSet (rfc :: ValidationRFC) =
     IpResourceSet !(ResourceSet (IpResource 'Ipv4F) rfc)
                   !(ResourceSet (IpResource 'Ipv6F) rfc)
     deriving (Show, Eq, Ord, Typeable)                    
+
     
--- | Objects
 
 data HashAlg = SHA256 | SHA512 
     deriving (Show, Eq, Ord, Typeable)     
@@ -106,13 +111,59 @@ newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
 
 newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
 
+
+-- | Objects
+
+data ObjectType = CER | MFT | CRL | ROA | GBR
+  deriving (Show, Eq, Typeable)
+
+class RpkiObject a where
+    meta       :: a -> RpkiMeta 
+
+data CerObject = CerObject RpkiMeta ResourceCert
+    deriving (Show, Eq, Typeable)
+
+data MftObject = MftObject RpkiMeta Manifest
+    deriving (Show, Eq, Typeable)
+
+data CrlObject = CrlObject RpkiMeta Crl 
+    deriving (Show, Eq, Typeable)
+
+data RoaObject = RoaObject RpkiMeta Roa
+    deriving (Show, Eq, Typeable)
+
+data GbrObject = GbrObject RpkiMeta Gbr
+    deriving (Show, Eq, Typeable)
+
+instance RpkiObject CerObject where
+    meta (CerObject m _) = m
+
+instance RpkiObject MftObject where
+    meta (MftObject m _) = m    
+
+instance RpkiObject CrlObject where
+    meta (CrlObject m _) = m    
+    
+instance RpkiObject RoaObject where
+    meta (RoaObject m _) = m    
+    
+instance RpkiObject GbrObject where
+    meta (GbrObject m _) = m    
+    
+
 data RpkiMeta = RpkiMeta {
-    locations :: ![URI]
+    locations :: NonEmpty URI
   , hash      :: !Hash
   , aki       :: !(Maybe AKI)
   , ski       :: !SKI
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
+
+newtype Blob = Blob B.ByteString 
+  deriving (Show, Eq, Typeable)
+
+data Ref = RefHash !Hash | RefResolved
+    deriving (Show, Eq, Typeable)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: X509.Certificate 
@@ -122,37 +173,31 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
 
 newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)    
 
-data ROA = ROA     
+data Roa = Roa     
     !ASN 
     !APrefix    
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
-
-data GBR = GBR deriving (Show, Eq, Ord, Typeable)
 
 newtype MFTRef = MFTRef (Either Hash ObjId) deriving (Show, Eq, Ord, Typeable)
 
 newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
 
 
-data MFT = MFT {
+data Manifest = Manifest {
     mftNumber   :: !Int  
   , fileHashAlg :: !HashAlg
   , thisTime    :: !DateTime
   , nextTime    :: !DateTime 
-  , mftEntries  :: ![(T.Text, MFTRef)]
+  , mftEntries  :: ![(T.Text, Ref)]
 } deriving (Show, Eq, Typeable)
 
-data CRL = CRL {
+data Crl = Crl {
     entries :: [RpkiObj]
 } deriving (Show, Eq, Typeable)
 
-data RpkiStorable = Cu !(ResourceCertificate 'Strict) 
-                  | CuV2 !(ResourceCertificate 'Reconsidered)
-                  | Mu !MFT
-                  | Cru !CRL 
-                  | Ru !ROA
-    deriving (Show, Eq, Typeable)
+data Gbr = Gbr deriving (Show, Eq, Typeable)
+
 
 data RpkiObj = RpkiObj !ObjId !RpkiMeta
     deriving (Show, Eq, Ord, Typeable)

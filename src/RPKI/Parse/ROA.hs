@@ -26,7 +26,7 @@ import RPKI.Parse.Common
 import RPKI.Parse.SignedObject 
 
 
-parseRoa :: B.ByteString -> ParseResult (SignedObject [ROA])
+parseRoa :: B.ByteString -> ParseResult (SignedObject [Roa])
 parseRoa bs = 
   case decodeASN1' BER bs of
     Left e     -> (Left . fmtErr . show) e
@@ -41,7 +41,7 @@ parseRoa bs =
               Right Ipv6F -> getRoa asId ipv6
               Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
-    getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 [ROA]
+    getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 [Roa]
     getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
       getNextContainerMaybe Sequence >>= \case       
         Just [BitString (BitArray nzBits bs')] -> 
@@ -51,7 +51,7 @@ parseRoa bs =
         Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
         Nothing -> throwParseError $ "Unexpected ROA content"
       where 
-        mkRoa bs' nz maxL = ROA (ASN asId) (mkPrefix bs' nz) maxL
+        mkRoa bs' nz maxL = Roa (ASN asId) (mkPrefix bs' nz) maxL
 
     ipv4 bs' nzBits = APrefix $ V4AF $ WithAF $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
     ipv6 bs' nzBits = APrefix $ V6AF $ WithAF $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)

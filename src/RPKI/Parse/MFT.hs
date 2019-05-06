@@ -22,13 +22,13 @@ import RPKI.Parse.Common
 import RPKI.Parse.SignedObject 
 
 
-parseMft :: B.ByteString -> ParseResult (SignedObject MFT)
+parseMft :: B.ByteString -> ParseResult (SignedObject Manifest)
 parseMft bs = do
   case decodeASN1' BER bs of
     Left e     -> (Left . fmtErr . show) e
     Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseManifest) asns  
   where 
-    parseManifest :: ParseASN1 MFT
+    parseManifest :: ParseASN1 Manifest
     parseManifest = onNextContainer Sequence $ do
       (,,) <$> getNext <*> getNext <*> getNext >>= \case           
         (IntVal manifestNumber, 
@@ -36,7 +36,7 @@ parseMft bs = do
          ASN1Time TimeGeneralized nextUpdateTime tz2) -> do
           fileHashAlg <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
           entries     <- getEntries fileHashAlg
-          pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+          pure $ Manifest (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
 
         (IntVal version, 
          IntVal manifestNumber, 
@@ -44,14 +44,14 @@ parseMft bs = do
           nextUpdateTime <- getTime "No NextUpdate time"
           fileHashAlg    <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
           entries        <- getEntries fileHashAlg
-          pure $ MFT (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
+          pure $ Manifest (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
 
         s -> throwParseError $ "Unexpected ROA content: " ++ show s
     
     getEntries fileHashAlg = onNextContainer Sequence $ 
       getMany $ onNextContainer Sequence $ 
         (,) <$> getIA5String (pure . T.pack) "Wrong file name"
-            <*> getBitString (pure . MFTRef . Left . (Hash fileHashAlg)) "Wrong hash"
+            <*> getBitString (pure . RefHash . (Hash fileHashAlg)) "Wrong hash"        
         
     getTime message = getNext >>= \case 
       ASN1Time TimeGeneralized dt tz -> pure dt

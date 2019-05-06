@@ -7,6 +7,7 @@ module RPKI.Store where
 
 import qualified Data.Set  as S
 import qualified Data.Map  as M
+import qualified Data.List.NonEmpty as NE
 
 import Control.Concurrent.STM
 
@@ -28,7 +29,7 @@ byHash :: RpkiObj -> [Hash]
 byHash (RpkiObj _ (RpkiMeta { hash = h })) = [h]
 
 byLocation :: RpkiObj -> [URI]
-byLocation (RpkiObj _ (RpkiMeta { locations = loc })) = loc
+byLocation (RpkiObj _ (RpkiMeta { locations = loc })) = NE.toList loc
 
 
 instance Indexable EntryIxs RpkiObj where
