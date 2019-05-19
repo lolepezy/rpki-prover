@@ -76,13 +76,13 @@ deriving instance Typeable (r 'Strict) =>
 
 
 newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
-    deriving (Show, Eq, Typeable)
+    deriving (Show, Eq, Ord, Typeable)
 
 newtype IpResources = IpResources (AnRFC IpResourceSet)    
-    deriving (Show, Eq, Typeable)
+    deriving (Show, Eq, Ord, Typeable)
 
 newtype RSet r = RSet (AnRFC (ResourceSet r))
-    deriving (Show, Eq, Typeable)
+    deriving (Show, Eq, Ord, Typeable)
 
 data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
 
@@ -97,7 +97,6 @@ data IpResourceSet (rfc :: ValidationRFC) =
                   !(ResourceSet (IpResource 'Ipv6F) rfc)
     deriving (Show, Eq, Ord, Typeable)                    
 
-    
 
 data HashAlg = SHA256 | SHA512 
     deriving (Show, Eq, Ord, Typeable)     
@@ -117,28 +116,21 @@ newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
 data ObjectType = CER | MFT | CRL | ROA | GBR
   deriving (Show, Eq, Typeable)
 
-class RpkiObject a where
-    meta       :: a -> RpkiMeta 
+class (Show a, Eq a, Typeable a) => RpkiObject a where
+    meta :: a -> RpkiMeta 
 
-data CerObject = CerObject RpkiMeta ResourceCert
-    deriving (Show, Eq, Typeable)
-
-data MftObject = MftObject RpkiMeta Manifest
-    deriving (Show, Eq, Typeable)
-
-data CrlObject = CrlObject RpkiMeta Crl 
-    deriving (Show, Eq, Typeable)
-
-data RoaObject = RoaObject RpkiMeta Roa
-    deriving (Show, Eq, Typeable)
-
-data GbrObject = GbrObject RpkiMeta Gbr
-    deriving (Show, Eq, Typeable)
+data CerObject = CerObject RpkiMeta ResourceCert 
+    deriving (Show, Eq, Ord, Typeable)
+data MftObject ref = MftObject RpkiMeta (Manifest ref) 
+    deriving (Show, Eq, Ord, Typeable)
+data CrlObject = CrlObject RpkiMeta Crl deriving (Show, Eq, Ord, Typeable)
+data RoaObject = RoaObject RpkiMeta Roa deriving (Show, Eq, Ord, Typeable)
+data GbrObject = GbrObject RpkiMeta Gbr deriving (Show, Eq, Ord, Typeable)
 
 instance RpkiObject CerObject where
     meta (CerObject m _) = m
 
-instance RpkiObject MftObject where
+instance (Show r, Eq r, Typeable r) => RpkiObject (MftObject r) where
     meta (MftObject m _) = m    
 
 instance RpkiObject CrlObject where
@@ -160,16 +152,31 @@ data RpkiMeta = RpkiMeta {
 } deriving (Show, Eq, Ord, Typeable)
 
 newtype Blob = Blob B.ByteString 
-  deriving (Show, Eq, Typeable)
+  deriving (Show, Eq, Ord, Typeable)
 
-data Ref = RefHash !Hash | RefResolved
-    deriving (Show, Eq, Typeable)
+newtype RefHash = RefHash Hash
+    deriving (Show, Eq, Ord, Typeable)
+
+data RefResolved = RefMft (MftObject ARef)
+                 | RefCrl CrlObject
+                 | RefCer CerObject
+                 | RefRoa RoaObject
+                 | RefGbr GbrObject
+                 deriving (Show, Eq, Ord, Typeable)
+
+
+data ARef = RH RefHash | RR RefResolved
+    deriving (Show, Eq, Ord, Typeable)
+
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
-    certX509    :: X509.Certificate 
+    certX509    :: !X509.Certificate 
   , ipResources :: !(Maybe (IpResourceSet rfc))
   , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
+
+instance Ord (ResourceCertificate (rfc :: ValidationRFC)) where
+    compare c1 c2 = LT
 
 newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)    
 
@@ -179,24 +186,22 @@ data Roa = Roa
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 
-newtype MFTRef = MFTRef (Either Hash ObjId) deriving (Show, Eq, Ord, Typeable)
-
 newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
 
 
-data Manifest = Manifest {
+data Manifest r = Manifest {
     mftNumber   :: !Int  
   , fileHashAlg :: !HashAlg
   , thisTime    :: !DateTime
   , nextTime    :: !DateTime 
-  , mftEntries  :: ![(T.Text, Ref)]
-} deriving (Show, Eq, Typeable)
+  , mftEntries  :: ![(T.Text, r)]
+} deriving (Show, Eq, Ord, Typeable)
 
 data Crl = Crl {
     entries :: [RpkiObj]
-} deriving (Show, Eq, Typeable)
+} deriving (Show, Eq, Ord, Typeable)
 
-data Gbr = Gbr deriving (Show, Eq, Typeable)
+data Gbr = Gbr deriving (Show, Eq, Ord, Typeable)
 
 
 data RpkiObj = RpkiObj !ObjId !RpkiMeta
@@ -238,3 +243,11 @@ data Invalid = Error | Warning
 hashAlg :: O.OID -> HashAlg
 hashAlg _ = SHA256
         
+
+-- Validation errors
+
+data VError = InvalidCert T.Text |
+              ParentDoesntHaveResources |
+              NoAKIinManifest  
+    deriving (Show, Eq, Ord, Typeable)
+    

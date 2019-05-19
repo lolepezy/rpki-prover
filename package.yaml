@@ -24,6 +24,7 @@ dependencies:
 - containers
 - bytestring
 - bytestring-conversion
+- dlist
 - ixset-typed
 - async
 - stm
@@ -45,6 +46,7 @@ dependencies:
 - filemanip
 - directory
 - semigroups
+- transformers
 
 library:
   source-dirs: src

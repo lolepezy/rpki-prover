@@ -22,13 +22,13 @@ import RPKI.Parse.Common
 import RPKI.Parse.SignedObject 
 
 
-parseMft :: B.ByteString -> ParseResult (SignedObject Manifest)
+parseMft :: B.ByteString -> ParseResult (SignedObject (Manifest RefHash))
 parseMft bs = do
   case decodeASN1' BER bs of
     Left e     -> (Left . fmtErr . show) e
     Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseManifest) asns  
   where 
-    parseManifest :: ParseASN1 Manifest
+    parseManifest :: ParseASN1 (Manifest RefHash)
     parseManifest = onNextContainer Sequence $ do
       (,,) <$> getNext <*> getNext <*> getNext >>= \case           
         (IntVal manifestNumber, 
