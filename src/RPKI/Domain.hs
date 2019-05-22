@@ -20,6 +20,9 @@ import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Short as TS
 
+import Data.Ord (comparing)
+import Data.Function (on)
+
 import Data.Kind (Type)
 import Data.Data (Typeable)
 
@@ -121,8 +124,7 @@ class (Show a, Eq a, Typeable a) => RpkiObject a where
 
 data CerObject = CerObject RpkiMeta ResourceCert 
     deriving (Show, Eq, Ord, Typeable)
-data MftObject ref = MftObject RpkiMeta (Manifest ref) 
-    deriving (Show, Eq, Ord, Typeable)
+data MftObject = MftObject RpkiMeta Manifest deriving (Show, Eq, Ord, Typeable)
 data CrlObject = CrlObject RpkiMeta Crl deriving (Show, Eq, Ord, Typeable)
 data RoaObject = RoaObject RpkiMeta Roa deriving (Show, Eq, Ord, Typeable)
 data GbrObject = GbrObject RpkiMeta Gbr deriving (Show, Eq, Ord, Typeable)
@@ -130,7 +132,7 @@ data GbrObject = GbrObject RpkiMeta Gbr deriving (Show, Eq, Ord, Typeable)
 instance RpkiObject CerObject where
     meta (CerObject m _) = m
 
-instance (Show r, Eq r, Typeable r) => RpkiObject (MftObject r) where
+instance RpkiObject MftObject where
     meta (MftObject m _) = m    
 
 instance RpkiObject CrlObject where
@@ -157,7 +159,7 @@ newtype Blob = Blob B.ByteString
 newtype RefHash = RefHash Hash
     deriving (Show, Eq, Ord, Typeable)
 
-data RefResolved = RefMft (MftObject ARef)
+data RefResolved = RefMft MftObject
                  | RefCrl CrlObject
                  | RefCer CerObject
                  | RefRoa RoaObject
@@ -168,6 +170,13 @@ data RefResolved = RefMft (MftObject ARef)
 data ARef = RH RefHash | RR RefResolved
     deriving (Show, Eq, Ord, Typeable)
 
+getMeta :: RefResolved -> RpkiMeta
+getMeta (RefMft r) = meta r
+getMeta (RefCrl r) = meta r
+getMeta (RefCer r) = meta r
+getMeta (RefRoa r) = meta r
+getMeta (RefGbr r) = meta r
+
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: !X509.Certificate 
@@ -175,8 +184,9 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
   , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
 
+-- TODO Implement it properly
 instance Ord (ResourceCertificate (rfc :: ValidationRFC)) where
-    compare c1 c2 = LT
+    compare c1 c2 = LT -- (comparing `on` ipResources) <> (comparing `on` asResources)
 
 newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)    
 
@@ -189,12 +199,12 @@ data Roa = Roa
 newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
 
 
-data Manifest r = Manifest {
+data Manifest = Manifest {
     mftNumber   :: !Int  
   , fileHashAlg :: !HashAlg
   , thisTime    :: !DateTime
   , nextTime    :: !DateTime 
-  , mftEntries  :: ![(T.Text, r)]
+  , mftEntries  :: ![(T.Text, Hash)]
 } deriving (Show, Eq, Ord, Typeable)
 
 data Crl = Crl {
@@ -248,6 +258,6 @@ hashAlg _ = SHA256
 
 data VError = InvalidCert T.Text |
               ParentDoesntHaveResources |
-              NoAKIinManifest  
+              NoAKIinManifest
     deriving (Show, Eq, Ord, Typeable)
     
