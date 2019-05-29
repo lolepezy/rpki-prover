@@ -3,3 +3,4 @@ rpki-prover.cabal
 .vscode/settings.json
 .ghci
 rpki-prover.code-workspace
+rpki-prover-test.prof
