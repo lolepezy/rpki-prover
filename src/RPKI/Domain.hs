@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module RPKI.Domain where
 
@@ -21,7 +22,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Short as TS
 
 import Data.Ord (comparing)
-import Data.Function (on)
 
 import Data.Kind (Type)
 import Data.Data (Typeable)
@@ -33,7 +33,6 @@ import Data.Hourglass
 import qualified Data.X509 as X509
 import qualified Data.ASN1.OID as O
 
-import RPKI.Types
 import RPKI.IP    
 
 newtype ASN = ASN Int
@@ -111,6 +110,7 @@ newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable)
 newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable)
 newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
 
+newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable)
 newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
 
 
@@ -186,7 +186,7 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
 
 -- TODO Implement it properly
 instance Ord (ResourceCertificate (rfc :: ValidationRFC)) where
-    compare c1 c2 = LT -- (comparing `on` ipResources) <> (comparing `on` asResources)
+    compare = comparing ipResources <> comparing asResources
 
 newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)    
 
@@ -258,6 +258,19 @@ hashAlg _ = SHA256
 
 data VError = InvalidCert T.Text |
               ParentDoesntHaveResources |
-              NoAKIinManifest
+              NoAKIinManifest |
+              ROACannotBeAParent |
+              NoAKI | 
+              RrdpProblem RrdpError
     deriving (Show, Eq, Ord, Typeable)
     
+data RrdpError = BrokenSerial B.ByteString |
+                 NoSessionId |
+                 NoSerial | 
+                 NoSnapshotHash | 
+                 NoSnapshotURI | 
+                 NoDeltaSerial | 
+                 NoDeltaURI | 
+                 NoDeltaHash |
+                 BadHash B.ByteString
+    deriving (Show, Eq, Ord, Typeable)

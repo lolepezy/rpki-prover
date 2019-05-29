@@ -18,7 +18,6 @@
 module RPKI.Types where
 
 import Data.Kind (Type, Constraint)
-import Data.Data (Typeable)
 
 -- Some type-level magic used in other modules
 

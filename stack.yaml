@@ -18,7 +18,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-13.22
+resolver: lts-13.23
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -44,6 +44,8 @@ extra-deps:
  - stm-containers-1.1.0.4
  - stm-hamt-1.2.0.2
  - hw-ip-2.0.1.0
+ - streaming-utils-0.2.0.0
+ - json-stream-0.4.2.4
  - git: git@github.com:vincenthz/hs-asn1.git
    commit: 6ac0d32b5fa0023267c36cbb754d95ca23d7ec48
    subdirs:

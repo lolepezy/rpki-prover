@@ -21,32 +21,41 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
-- containers
-- bytestring
-- bytestring-conversion
-- dlist
-- ixset-typed
-- async
-- stm
-- stm-containers
-- text
-- time
-- x509
-- x509-store
-- x509-validation
-- pem
 - asn1-encoding
 - asn1-parse
 - asn1-types
-- validation
-- text-short
-- hw-ip
-- hourglass
+- async
+- base16-bytestring
+- base64-bytestring
+- bytestring
+- bytestring-conversion
+- containers
 - cryptohash-sha256
-- filemanip
 - directory
+- dlist
+- filemanip
+- hashable
+- hexstring
+- hourglass
+- hw-ip
+- ixset-typed
+- lens
+- mtl
+- pem
 - semigroups
+- stm
+- stm-containers
+- string-conversions
+- text
+- text-short
+- time
 - transformers
+- validation
+- wreq
+- x509
+- x509-store
+- x509-validation
+- xeno
 
 library:
   source-dirs: src
