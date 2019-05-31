@@ -112,6 +112,7 @@ newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
 
 newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable)
 newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
+newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable)
 
 
 -- | Objects
@@ -272,5 +273,9 @@ data RrdpError = BrokenSerial B.ByteString |
                  NoDeltaSerial | 
                  NoDeltaURI | 
                  NoDeltaHash |
-                 BadHash B.ByteString
+                 BadHash B.ByteString |
+                 NoVersion | 
+                 BadVersion B.ByteString | 
+                 NoPublishURI |
+                 BadBase64 B.ByteString
     deriving (Show, Eq, Ord, Typeable)

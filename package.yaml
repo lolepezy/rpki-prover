@@ -1,10 +1,10 @@
 name:                rpki-prover
 version:             0.1.0.0
-github:              "githubuser/rpki-prover"
+github:              "lolepezy/rpki-prover"
 license:             BSD3
-author:              "Author name here"
-maintainer:          "example@example.com"
-copyright:           "2019 Author name here"
+author:              "Mikhail Puzanov"
+maintainer:          "misha.puzanov@gmail.com"
+copyright:           "2019 Mikhail Puzanov"
 
 extra-source-files:
 - README.md
@@ -35,13 +35,15 @@ dependencies:
 - dlist
 - filemanip
 - hashable
-- hexstring
+- hex
 - hourglass
 - hw-ip
 - ixset-typed
 - lens
+- MissingH
 - mtl
 - pem
+- primitive
 - semigroups
 - stm
 - stm-containers
