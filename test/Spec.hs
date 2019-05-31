@@ -111,4 +111,5 @@ main = do
   -- testAllCerts
   -- testAllRoas
   -- testAllManifests
-  testParseSnapshot
+  -- testParseSnapshot
+  testParseDelta

@@ -263,7 +263,7 @@ hashAlg _ = SHA256
 
 -- Validation errors
 
-data VError = InvalidCert T.Text |
+data VError = InvalidCert !T.Text |
               ParentDoesntHaveResources |
               NoAKIinManifest |
               ROACannotBeAParent |
@@ -271,7 +271,7 @@ data VError = InvalidCert T.Text |
               RrdpProblem RrdpError
     deriving (Show, Eq, Ord, Typeable, Generic)
     
-data RrdpError = BrokenSerial B.ByteString |
+data RrdpError = BrokenSerial !B.ByteString |
                  NoSessionId |
                  NoSerial | 
                  NoSnapshotHash | 
@@ -279,12 +279,14 @@ data RrdpError = BrokenSerial B.ByteString |
                  NoDeltaSerial | 
                  NoDeltaURI | 
                  NoDeltaHash |
-                 BadHash B.ByteString |
+                 BadHash !B.ByteString |
                  NoVersion | 
-                 BadVersion B.ByteString | 
+                 BadVersion !B.ByteString | 
                  NoPublishURI |
-                 BadBase64 B.ByteString |
-                 BadPublish B.ByteString
+                 BadBase64 !B.ByteString |
+                 BadPublish !B.ByteString |
+                 NoHashInWithdraw |
+                 ContentInWithdraw !B.ByteString
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 instance NFData RrdpError

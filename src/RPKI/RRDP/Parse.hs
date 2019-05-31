@@ -110,11 +110,6 @@ parseNotification bs = runST $ do
     runExceptT (parse >> notification)
 
 
-{-
-    <snapshot version="1" session_id="4dcbcbf2-8f3e-4b1d-a626-7a5d3b39d0db" serial="181"
-    <publish uri="">text</publish>
--}
-
 parseSnapshot :: BL.ByteString -> Either RrdpError Snapshot
 parseSnapshot bs = runST $ do
     publishes <- newSTRef []
@@ -138,14 +133,14 @@ parseSnapshot bs = runST $ do
 
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    lift $ modifySTRef' publishes $ \ps -> (uri, Nothing) : ps
+                    lift $ modifySTRef' publishes $ \pubs -> (uri, Nothing) : pubs
             )
             (\base64 ->                                
                 (lift . readSTRef) publishes >>= \case
                     []             -> pure ()
-                    (uri, cs) : ps -> do
-                        let base64' = maybe (Just base64) (\existing -> Just $ B.concat [existing, trim base64]) cs                        
-                        lift $ writeSTRef publishes $ (uri, base64') : ps
+                    (uri, cs) : pubs -> do
+                        let base64' = appendBase64 base64 cs
+                        lift $ writeSTRef publishes $ (uri, base64') : pubs
             )
 
     let snapshotPublishes = do
@@ -165,6 +160,82 @@ parseSnapshot bs = runST $ do
 
     runExceptT (parse >> snapshot)
 
+
+parseDelta :: BL.ByteString -> Either RrdpError Delta
+parseDelta bs = runST $ do
+    items <- newSTRef []
+    sessionId <- newSTRef Nothing
+    serial    <- newSTRef Nothing
+    version   <- newSTRef Nothing
+
+    let parse = parseXml (BL.toStrict bs)
+            (\case
+                ("delta", attributes) -> do
+                    forAttribute attributes "session_id" NoSessionId $
+                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
+                    forAttribute attributes "serial" NoSerial $
+                        \v -> parseSerial v (lift . writeSTRef serial . Just)
+                    forAttribute attributes "version" NoSerial $
+                        \v -> case parseInteger v of
+                            Nothing -> throwE NoVersion
+                            Just v'
+                                | v' == 1    -> lift $ writeSTRef version  (Just $ Version v')
+                                | otherwise -> throwE $ BadVersion v
+
+                ("publish", attributes) -> do
+                    uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
+                    hash <- case M.lookup "hash" attributes of
+                        Nothing -> lift $ pure Nothing
+                        Just h -> case makeHash h of                    
+                            Nothing   -> throwE $ BadHash h
+                            Just hash -> lift $ pure $ Just hash
+                    lift $ modifySTRef' items $ \ps -> Right (uri, hash, Nothing) : ps
+
+                ("withdraw", attributes) -> do
+                    uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
+                    h <- forAttribute attributes "hash" NoHashInWithdraw (lift . pure)
+                    case makeHash h of                    
+                        Nothing   -> throwE $ BadHash h
+                        Just hash -> lift $ modifySTRef' items $ \ps -> Left (uri, hash) : ps
+            )
+            (\base64 ->                                
+                (lift . readSTRef) items >>= \case
+                    []        -> pure ()
+                    item : is -> 
+                        case item of
+                            Left  (uri, _)             -> throwE $ ContentInWithdraw uri
+                            Right (uri, hash, content) -> do                            
+                                let base64' = appendBase64 base64 content
+                                lift $ writeSTRef items $ Right (uri, hash, base64') : is                        
+            )
+
+    let deltaItems = do
+            is <- (lift . readSTRef) items
+            forM (reverse is) $ \case 
+                Left  (uri, hash)              -> pure $ DW $ DeltaWithdraw (URI $ convert uri) hash
+                Right (uri, hash, Nothing)     -> throwE $ BadPublish uri
+                Right (uri, hash, Just base64) ->                     
+                    case toContent base64 of 
+                        Left e        -> throwE $ BadBase64 $ convert e
+                        Right content -> pure $ DP $ DeltaPublish (URI $ convert uri) hash content
+
+    let delta = Delta <$>
+                    (valuesOrError version NoVersion) <*>
+                    (valuesOrError sessionId NoSessionId) <*>
+                    (valuesOrError serial NoSerial) <*>
+                    deltaItems
+
+    runExceptT (parse >> delta)
+
+
+appendBase64 base64 content = 
+    maybe (Just base64) (Just . newContent) content
+    where
+        trimmed = trim base64
+        newContent existing = case B.length trimmed of 
+                0 -> existing
+                _ -> B.concat [existing, trimmed]
+        base64' = maybe (Just base64) (Just . newContent) content
 
 parseInteger :: B.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs
@@ -193,8 +264,6 @@ valuesOrError v e =
         Nothing -> throwE e
         Just s  -> (lift . pure) s
 
-makeHash bs = (Hash SHA256 . toBytes) <$> hexString bs
-
 type Element = (B.ByteString, M.Map B.ByteString B.ByteString)
 
 parseXml :: (MonadTrans t, PrimMonad pm, Monad (t pm)) =>
@@ -207,13 +276,18 @@ parseXml bs onElement onText = do
     X.process
         (\elemName -> lift $ stToPrim $ modifySTRef' element (\(_, as) -> (elemName, as)))
         (\name value -> lift $ stToPrim $ modifySTRef' element (\(n, as) -> (n, M.insert name value as)))
-        (\elemName -> (lift $ stToPrim $ readSTRef element) >>= onElement)
+        (\elemName -> do
+            e <- lift $ stToPrim $ readSTRef element
+            lift $ stToPrim $ writeSTRef element (elemName, M.empty)
+            onElement e)
         onText
         nothing
         nothing
         bs
     where nothing = (\_ -> lift $ pure ())
 
+
+makeHash bs = (Hash SHA256 . toBytes) <$> hexString bs
 
 -- Parsing HEX stuff
 newtype HexString = HexString B.ByteString deriving ( Show, Eq, Ord )

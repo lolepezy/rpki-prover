@@ -29,10 +29,17 @@ testParseSnapshot = do
   snapshot <- B.readFile "./snapshot.xml"
   let x = parseSnapshot snapshot
   print $ x `deepseq` 1
+  print $ x `deepseq` 2
   -- print $ length x
   -- runIdentityT $ parseXml (B.toStrict snapshot)
   --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
   --     (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
 
-
+testParseDelta = do
+  delta <- B.readFile "./delta.xml"
+  let x = parseDelta delta
+  print $ x `deepseq` x    
+  runIdentityT $ parseXml (B.toStrict delta)
+      (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
+      (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
 

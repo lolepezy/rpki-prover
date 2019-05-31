@@ -34,7 +34,7 @@ data Snapshot = Snapshot !Version !SessionId !Serial [SnapshotPublish]
 data DeltaInfo = DeltaInfo !URI !Hash !Serial
   deriving (Show, Eq, Ord, Generic, NFData)
 
-data DeltaEntry = DP DeltaPublish | DW DeltaWithdraw
+data DeltaItem = DP DeltaPublish | DW DeltaWithdraw
   deriving (Show, Eq, Ord, Generic, NFData)
 
 data DeltaPublish = DeltaPublish !URI !(Maybe Hash) !Content
@@ -43,6 +43,6 @@ data DeltaPublish = DeltaPublish !URI !(Maybe Hash) !Content
 data DeltaWithdraw = DeltaWithdraw !URI !Hash
   deriving (Show, Eq, Ord, Generic, NFData)
 
-data Delta = Delta !DeltaInfo [DeltaEntry]
+data Delta = Delta !Version !SessionId !Serial [DeltaItem]
   deriving (Show, Eq, Ord, Generic, NFData)
 
