@@ -39,7 +39,7 @@ import qualified Data.ByteString            as B
 import qualified Data.ByteString.Base16     as B16
 import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as BL
-import           Data.Char                  (isSpace)
+import           Data.Char                  (isSpace, chr)
 import qualified Data.List                  as L
 import qualified Data.Map                   as M
 import           Data.String.Utils          (strip)
@@ -86,7 +86,7 @@ parseNotification bs = runST $ do
                         \v  -> case makeHash v of
                             Nothing   -> throwE $ BadHash v
                             Just hash -> lift $ writeSTRef snapshotHash $ Just hash
-                    forAttribute attributes "haurish" NoSnapshotURI $
+                    forAttribute attributes "uri" NoSnapshotURI $
                         \v  -> lift $ writeSTRef snapshotUri $ Just $ URI $ convert v
                 ("delta", attributes) -> do
                     uri    <- forAttribute attributes "uri" NoDeltaURI (lift . pure)
@@ -232,4 +232,7 @@ concatContent :: [Content] -> Content
 concatContent cs = Content $ B.concat $ map (\(Content c) -> c) cs
 
 trim :: B.ByteString -> B.ByteString
-trim = convert . strip . convert
+trim bs = B.takeWhile (not . isSpace_) $ B.dropWhile isSpace_ bs    
+    where 
+        isSpace_ = isSpace . chr . fromEnum
+        
