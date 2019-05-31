@@ -296,7 +296,7 @@ hexString :: B.ByteString -> Maybe HexString
 hexString bs = HexString <$> unhex bs
 
 toBytes :: HexString -> B.ByteString
-toBytes (HexString bs) = (fst . B16.decode) bs
+toBytes (HexString bs) = bs
 
 
 toContent :: B.ByteString -> Either String Content
