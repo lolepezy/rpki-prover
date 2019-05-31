@@ -91,3 +91,7 @@ tests:
     - -O2
     dependencies:
     - rpki-prover
+    - QuickCheck
+    - tasty
+    - tasty-hunit
+    - tasty-quickcheck    

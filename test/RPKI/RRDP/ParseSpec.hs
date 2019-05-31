@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module RrdpSpec where
+module RPKI.RRDP.ParseSpec where
 
 import qualified Data.ByteString.Lazy      as B
 

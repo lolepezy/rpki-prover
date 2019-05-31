@@ -227,7 +227,7 @@ parseDelta bs = runST $ do
 
     runExceptT (parse >> delta)
 
-
+appendBase64 :: B.ByteString -> Maybe B.ByteString -> Maybe B.ByteString
 appendBase64 base64 content = 
     maybe (Just base64) (Just . newContent) content
     where
