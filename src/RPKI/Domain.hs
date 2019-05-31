@@ -13,6 +13,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module RPKI.Domain where
 
@@ -20,6 +22,8 @@ import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Short as TS
+
+import Control.DeepSeq
 
 import Data.Ord (comparing)
 
@@ -30,22 +34,24 @@ import Data.List.NonEmpty
 
 import Data.Hourglass
 
+import GHC.Generics
+
 import qualified Data.X509 as X509
 import qualified Data.ASN1.OID as O
 
 import RPKI.IP    
 
 newtype ASN = ASN Int
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data AsResource =  AS !ASN
                  | ASRange  
                     {-# UNPACK #-} !ASN 
                     {-# UNPACK #-} !ASN
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data ValidationRFC = Strict | Reconsidered
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
 
@@ -101,18 +107,18 @@ data IpResourceSet (rfc :: ValidationRFC) =
 
 
 data HashAlg = SHA256 | SHA512 
-    deriving (Show, Eq, Ord, Typeable)     
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)     
 
-data Hash = Hash HashAlg B.ByteString deriving (Show, Eq, Ord, Typeable)
+data Hash = Hash HashAlg B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable)
-newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable)
-newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable)
-newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable)
+newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable)
-newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable)
-newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable)
+newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 
 -- | Objects
@@ -263,7 +269,7 @@ data VError = InvalidCert T.Text |
               ROACannotBeAParent |
               NoAKI | 
               RrdpProblem RrdpError
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RrdpError = BrokenSerial B.ByteString |
                  NoSessionId |
@@ -279,4 +285,6 @@ data RrdpError = BrokenSerial B.ByteString |
                  NoPublishURI |
                  BadBase64 B.ByteString |
                  BadPublish B.ByteString
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
+
+instance NFData RrdpError

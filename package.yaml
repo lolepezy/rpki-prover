@@ -31,6 +31,7 @@ dependencies:
 - bytestring-conversion
 - containers
 - cryptohash-sha256
+- deepseq
 - directory
 - dlist
 - filemanip
