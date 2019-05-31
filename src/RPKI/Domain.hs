@@ -277,5 +277,6 @@ data RrdpError = BrokenSerial B.ByteString |
                  NoVersion | 
                  BadVersion B.ByteString | 
                  NoPublishURI |
-                 BadBase64 B.ByteString
+                 BadBase64 B.ByteString |
+                 BadPublish B.ByteString
     deriving (Show, Eq, Ord, Typeable)

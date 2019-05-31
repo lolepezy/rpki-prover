@@ -124,7 +124,7 @@ parseSnapshot bs = runST $ do
 
     let parse = parseXml (BL.toStrict bs)
             (\case
-                ("snaphot", attributes) -> do
+                ("snapshot", attributes) -> do
                     forAttribute attributes "session_id" NoSessionId $
                         \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
                     forAttribute attributes "serial" NoSerial $
@@ -138,24 +138,30 @@ parseSnapshot bs = runST $ do
 
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    lift $ modifySTRef publishes $ \ps -> (uri, Nothing) : ps
+                    lift $ modifySTRef' publishes $ \ps -> (uri, Nothing) : ps
             )
-            (\base64 ->
-                case toContent base64 of
-                    Left e        -> throwE $ BadBase64 $ convert e
-                    Right content -> do
-                        (lift . readSTRef) publishes >>= \case
-                            []            -> throwE $ BadBase64 ""
-                            (uri, _) : ps -> lift $ writeSTRef publishes $ (uri, Just content) : ps
+            (\base64 ->                                
+                (lift . readSTRef) publishes >>= \case
+                    []             -> pure ()
+                    (uri, cs) : ps -> do
+                        let base64' = maybe (Just base64) (\existing -> Just $ B.concat [existing, trim base64]) cs                        
+                        lift $ writeSTRef publishes $ (uri, base64') : ps
             )
 
-    let snapshotPublishes ps =
-            [ SnapshotPublish (URI $ convert uri) content | (uri, Just content) <- reverse ps ]
+    let snapshotPublishes = do
+            ps <- (lift . readSTRef) publishes
+            forM (reverse ps) $ \case 
+                (uri, Nothing) -> throwE $ BadPublish uri
+                (uri, Just base64) ->
+                    case toContent base64 of 
+                        Left e    -> throwE $ BadBase64 $ convert e
+                        Right content -> pure $ SnapshotPublish (URI $ convert uri) content
+
     let snapshot = Snapshot <$>
                     (valuesOrError version NoVersion) <*>
                     (valuesOrError sessionId NoSessionId) <*>
                     (valuesOrError serial NoSerial) <*>
-                    (snapshotPublishes <$> (lift . readSTRef) publishes)
+                    snapshotPublishes
 
     runExceptT (parse >> snapshot)
 
@@ -218,7 +224,12 @@ hexString bs = HexString <$> unhex bs
 toBytes :: HexString -> B.ByteString
 toBytes (HexString bs) = (fst . B16.decode) bs
 
+
 toContent :: B.ByteString -> Either String Content
-toContent bs = Content <$> (B64.decode trimmed)
-    where
-        trimmed = convert $ strip $ convert bs
+toContent bs = Content <$> (B64.decode $ trim bs)    
+
+concatContent :: [Content] -> Content
+concatContent cs = Content $ B.concat $ map (\(Content c) -> c) cs
+
+trim :: B.ByteString -> B.ByteString
+trim = convert . strip . convert

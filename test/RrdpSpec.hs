@@ -4,7 +4,7 @@
 
 module RrdpSpec where
 
-import qualified Data.ByteString           as B
+import qualified Data.ByteString.Lazy           as B
 
 import           Control.Monad
 import           Control.Monad.ST
@@ -26,7 +26,10 @@ import           System.FilePath.Find
 
 testParseSnapshot = do
   snapshot <- B.readFile "./snapshot.xml"  
-  runIdentityT $ parseXml snapshot
-      (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
-      (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
+  print $ parseSnapshot snapshot
+  -- runIdentityT $ parseXml (B.toStrict snapshot)
+  --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
+  --     (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
+
+
 
