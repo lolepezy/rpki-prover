@@ -26,7 +26,8 @@ import           System.FilePath.Find
 
 testParseSnapshot = do
   snapshot <- B.readFile "./snapshot.xml"  
-  print $ parseSnapshot snapshot
+  let x = show $ parseSnapshot snapshot
+  print $ length x
   -- runIdentityT $ parseXml (B.toStrict snapshot)
   --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
   --     (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
