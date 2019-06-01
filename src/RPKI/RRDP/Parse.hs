@@ -58,14 +58,6 @@ import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Util                  (convert)
 
-
--- Download the notification
-getNotifications :: URI -> IO (Either RrdpError Notification)
-getNotifications (URI uri) = do
-    r <- WR.get $ T.unpack uri
-    pure $ parseNotification $ r ^. WR.responseBody
-
-
 parseNotification :: BL.ByteString -> Either RrdpError Notification
 parseNotification bs = runST $ do
     deltas       <- newSTRef []
@@ -109,8 +101,9 @@ parseNotification bs = runST $ do
                         (valuesOrError version NoVersion) <*>
                         (valuesOrError sessionId NoSessionId) <*>
                         (valuesOrError serial NoSerial ) <*>
-                        (valuesOrError snapshotUri NoSnapshotURI ) <*>
-                        (valuesOrError snapshotHash NoSnapshotHash ) <*>
+                        (SnapshotInfo <$> 
+                            (valuesOrError snapshotUri NoSnapshotURI) <*>
+                            (valuesOrError snapshotHash NoSnapshotHash)) <*>
                         (reverse <$> (lift . readSTRef) deltas)
 
     runExceptT (parse >> notification)

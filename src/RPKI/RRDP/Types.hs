@@ -15,8 +15,7 @@ data Notification = Notification {
   version      :: Version,  
   sessionId    :: !SessionId,
   serial       :: !Serial,
-  snapshotUri  :: !URI,
-  snapshotHash :: !Hash,
+  snapshotInfo :: !SnapshotInfo,
   deltas       :: [DeltaInfo]
 } deriving (Show, Eq, Ord, Generic, NFData)
 

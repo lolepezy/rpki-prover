@@ -126,8 +126,7 @@ notificationToXml :: Notification -> String
 notificationToXml Notification { 
       sessionId = SessionId sid,
       serial = Serial s,
-      snapshotUri = URI su,
-      snapshotHash = Hash _ sh,
+      snapshotInfo = SnapshotInfo (URI su) (Hash _ sh),
       version = Version v,
       ..
     } =

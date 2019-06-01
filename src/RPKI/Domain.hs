@@ -241,11 +241,11 @@ data TA = TA {
   , taSpki        :: !SPKI
 }
 
-data Repository = Repository {
-    repoRsyncUrl :: !URI
-  , repoRrdpUrl  :: !URI
-}
+data RepoType = Rsync | Rrdp
 
+data Repository (t :: RepoType) where
+    RsyncRepo :: URI -> Repository 'Rsync
+    RrdpRepo  :: URI -> SessionId -> Serial -> Repository 'Rrdp
 
 -- data CA = CA {
 --     caName :: T.Text
