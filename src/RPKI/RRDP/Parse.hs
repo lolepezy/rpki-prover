@@ -69,6 +69,7 @@ getNotifications (URI uri) = do
 parseNotification :: BL.ByteString -> Either RrdpError Notification
 parseNotification bs = runST $ do
     deltas       <- newSTRef []
+    version      <- newSTRef Nothing
     snapshotUri  <- newSTRef Nothing
     snapshotHash <- newSTRef Nothing
     serial       <- newSTRef Nothing
@@ -81,6 +82,10 @@ parseNotification bs = runST $ do
                         \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serial . Just)
+                    forAttribute attributes "version" NoVersion $
+                        \v -> case parseInteger v of
+                            Nothing -> throwE NoVersion
+                            Just v' -> lift $ writeSTRef version  (Just $ Version v')
                 ("snapshot", attributes) -> do
                     forAttribute attributes "hash" NoSnapshotHash $
                         \v  -> case makeHash v of
@@ -101,11 +106,12 @@ parseNotification bs = runST $ do
             (\_ -> pure ())
 
     let notification = Notification <$>
+                        (valuesOrError version NoVersion) <*>
                         (valuesOrError sessionId NoSessionId) <*>
                         (valuesOrError serial NoSerial ) <*>
                         (valuesOrError snapshotUri NoSnapshotURI ) <*>
                         (valuesOrError snapshotHash NoSnapshotHash ) <*>
-                        (lift . readSTRef) deltas
+                        (reverse <$> (lift . readSTRef) deltas)
 
     runExceptT (parse >> notification)
 
@@ -127,10 +133,7 @@ parseSnapshot bs = runST $ do
                     forAttribute attributes "version" NoSerial $
                         \v -> case parseInteger v of
                             Nothing -> throwE NoVersion
-                            Just v'
-                                | v' == 1    -> lift $ writeSTRef version  (Just $ Version v')
-                                | otherwise -> throwE $ BadVersion v
-
+                            Just v' -> lift $ writeSTRef version  (Just $ Version v')
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
                     lift $ modifySTRef' publishes $ \pubs -> (uri, Nothing) : pubs
@@ -178,9 +181,7 @@ parseDelta bs = runST $ do
                     forAttribute attributes "version" NoSerial $
                         \v -> case parseInteger v of
                             Nothing -> throwE NoVersion
-                            Just v'
-                                | v' == 1    -> lift $ writeSTRef version  (Just $ Version v')
-                                | otherwise -> throwE $ BadVersion v
+                            Just v' -> lift $ writeSTRef version  (Just $ Version v')
 
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)

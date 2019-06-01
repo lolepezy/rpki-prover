@@ -12,6 +12,7 @@ import           GHC.Generics
 import           RPKI.Domain
 
 data Notification = Notification {
+  version      :: Version,  
   sessionId    :: !SessionId,
   serial       :: !Serial,
   snapshotUri  :: !URI,
