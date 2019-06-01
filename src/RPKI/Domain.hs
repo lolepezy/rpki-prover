@@ -106,7 +106,7 @@ data IpResourceSet (rfc :: ValidationRFC) =
     deriving (Show, Eq, Ord, Typeable)                    
 
 
-data HashAlg = SHA256 | SHA512 
+data HashAlg = SHA256
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)     
 
 data Hash = Hash HashAlg B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -230,6 +230,7 @@ newtype ObjId = ObjId B.ByteString deriving (Show, Eq, Ord, Typeable)
 
 -- Subject Public Key Info
 newtype SPKI = SPKI B.ByteString
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype TaName = TaName T.Text
 
@@ -251,9 +252,11 @@ data Repository = Repository {
 --   , caCertificate :: ResourceCert   
 -- }
 
-newtype Message = Message TS.ShortText deriving (Show, Eq, Ord, Typeable)
+newtype Message = Message TS.ShortText 
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Invalid = Error | Warning
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 
 -- TODO Make it better

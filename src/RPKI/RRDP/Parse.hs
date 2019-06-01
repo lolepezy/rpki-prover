@@ -137,7 +137,7 @@ parseSnapshot bs = runST $ do
             )
             (\base64 ->                                
                 (lift . readSTRef) publishes >>= \case
-                    []             -> pure ()
+                    []               -> pure ()
                     (uri, cs) : pubs -> do
                         let base64' = appendBase64 base64 cs
                         lift $ writeSTRef publishes $ (uri, base64') : pubs
@@ -198,15 +198,18 @@ parseDelta bs = runST $ do
                         Nothing   -> throwE $ BadHash h
                         Just hash -> lift $ modifySTRef' items $ \ps -> Left (uri, hash) : ps
             )
-            (\base64 ->                                
-                (lift . readSTRef) items >>= \case
-                    []        -> pure ()
-                    item : is -> 
-                        case item of
-                            Left  (uri, _)             -> throwE $ ContentInWithdraw uri
-                            Right (uri, hash, content) -> do                            
-                                let base64' = appendBase64 base64 content
-                                lift $ writeSTRef items $ Right (uri, hash, base64') : is                        
+            (\base64 ->         
+                case B.all isSpace_ base64 of 
+                    True -> lift $ pure ()                       
+                    False -> 
+                        (lift . readSTRef) items >>= \case
+                            []        -> pure ()
+                            item : is ->
+                                case item of
+                                    Left  (uri, _)             -> throwE $ ContentInWithdraw $ B.concat [uri, ", c = " :: B.ByteString, base64]
+                                    Right (uri, hash, content) -> do                            
+                                        let base64' = appendBase64 base64 content
+                                        lift $ writeSTRef items $ Right (uri, hash, base64') : is                        
             )
 
     let deltaItems = do
@@ -307,6 +310,6 @@ concatContent cs = Content $ B.concat $ map (\(Content c) -> c) cs
 
 trim :: B.ByteString -> B.ByteString
 trim bs = B.takeWhile (not . isSpace_) $ B.dropWhile isSpace_ bs    
-    where 
-        isSpace_ = isSpace . chr . fromEnum
-        
+
+isSpace_ :: Word8 -> Bool
+isSpace_ = isSpace . chr . fromEnum
