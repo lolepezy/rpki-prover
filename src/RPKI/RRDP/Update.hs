@@ -25,6 +25,7 @@ module RPKI.RRDP.Update where
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
+import           Control.Exception
 import           Control.Monad
 import           Control.Monad.ST
 import           Data.STRef
@@ -63,19 +64,30 @@ import           RPKI.Util                  (convert)
 -- Download the notification
 getNotification :: URI -> IO (Either RrdpError Notification)
 getNotification (URI uri) = do
-    r <- WR.get $ T.unpack uri
-    pure $ parseNotification $ r ^. WR.responseBody
+    try (WR.get $ T.unpack uri) >>= \case 
+        Left (SomeException e) -> pure $ Left RrdpGeneralProblem
+        Right r -> pure $ parseNotification $ r ^. WR.responseBody
 
--- updateLocalState :: Repository 'Rrdp -> IO ()
--- updateLocalState (RrdpRepo uri sessionId serial) = do
---     getNotification uri >>= \case
---         Left e -> pure () -- complain
---         Right notification -> do            
---             if (sessionId notification <> sessionId) then
---                 processSnapshot notification
---             else do
---                 try (processDeltas notification) 
---                     `catch` 
---                     (\e -> processSnapshot notification) -- complain
-
---             pure ()
+-- TODO Replace RrdpGeneralProblem with something more concrete
+-- TODO Add logging
+-- TODO Add actual saving to the storage
+updateLocalState :: Repository 'Rrdp -> IO (Either RrdpError (Repository 'Rrdp))
+updateLocalState repo@(RrdpRepo uri sid serial) = do
+    getNotification uri >>= \case
+        Left e -> pure $ Left RrdpGeneralProblem -- complain
+        Right notification ->
+            if (sessionId notification /= sid) then
+                try (processSnapshot notification)  >>= \case 
+                    Left (SomeException e)  -> pure $ Left RrdpGeneralProblem -- complain
+                    Right _ -> pure $ Right repo
+            else 
+                try (processDeltas notification) >>= \case
+                    Left (SomeException e) -> do
+                        -- complain
+                        try (processSnapshot notification) >>= \case 
+                            Left (SomeException e)  -> pure $ Left RrdpGeneralProblem -- complain
+                            Right _ -> pure $ Right repo
+                    Right _ -> pure $ Right repo
+    where 
+        processSnapshot notification = pure repo
+        processDeltas notification = pure repo

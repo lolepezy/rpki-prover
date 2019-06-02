@@ -289,7 +289,8 @@ data RrdpError = BrokenSerial !B.ByteString |
                  BadBase64 !B.ByteString |
                  BadPublish !B.ByteString |
                  NoHashInWithdraw |
-                 ContentInWithdraw !B.ByteString
+                 ContentInWithdraw !B.ByteString |
+                 RrdpGeneralProblem
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 instance NFData RrdpError
