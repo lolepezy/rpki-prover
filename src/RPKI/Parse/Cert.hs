@@ -52,7 +52,7 @@ parseResourceCertificate location bs = do
         let meta = RpkiMeta {
             aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
           , ski  = SKI (KI s)
-          , hash = U.sha256 bs
+          , hash = U.sha256s bs
           -- TODO Do something about this
           , locations = location :| []
           , serial = Serial (certSerial x509)

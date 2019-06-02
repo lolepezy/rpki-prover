@@ -8,6 +8,7 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE KindSignatures        #-}
 {-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE PolyKinds             #-}
@@ -18,6 +19,7 @@
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
+
 
 
 module RPKI.RRDP.Update where
@@ -56,38 +58,69 @@ import           Text.Read                  (readMaybe)
 import           Xeno.SAX                   as X
 
 import           RPKI.Domain
-import           RPKI.RRDP.Types
 import           RPKI.RRDP.Parse
-import           RPKI.Util                  (convert)
+import           RPKI.RRDP.Types
+import qualified RPKI.Util                  as U
 
 
 -- Download the notification
 getNotification :: URI -> IO (Either RrdpError Notification)
 getNotification (URI uri) = do
-    try (WR.get $ T.unpack uri) >>= \case 
+    try (WR.get $ T.unpack uri) >>= \case
         Left (SomeException e) -> pure $ Left RrdpGeneralProblem
         Right r -> pure $ parseNotification $ r ^. WR.responseBody
+
 
 -- TODO Replace RrdpGeneralProblem with something more concrete
 -- TODO Add logging
 -- TODO Add actual saving to the storage
 updateLocalState :: Repository 'Rrdp -> IO (Either RrdpError (Repository 'Rrdp))
-updateLocalState repo@(RrdpRepo uri sid serial) = do
+updateLocalState repo@(RrdpRepo uri repoSessionId repoSerial) = do
     getNotification uri >>= \case
         Left e -> pure $ Left RrdpGeneralProblem -- complain
-        Right notification ->
-            if (sessionId notification /= sid) then
-                try (processSnapshot notification)  >>= \case 
-                    Left (SomeException e)  -> pure $ Left RrdpGeneralProblem -- complain
-                    Right _ -> pure $ Right repo
-            else 
-                try (processDeltas notification) >>= \case
-                    Left (SomeException e) -> do
-                        -- complain
-                        try (processSnapshot notification) >>= \case 
-                            Left (SomeException e)  -> pure $ Left RrdpGeneralProblem -- complain
-                            Right _ -> pure $ Right repo
-                    Right _ -> pure $ Right repo
-    where 
-        processSnapshot notification = pure repo
-        processDeltas notification = pure repo
+        Right notification@Notification{..} ->
+            if  | sessionId /= repoSessionId -> 
+                    try (processSnapshot notification)  >>= \case
+                        Left (SomeException e)  -> pure $ Left RrdpGeneralProblem -- complain
+                        Right _ -> pure $ Right repo
+                | repoSerial > serial ->
+                    pure $ Left RrdpGeneralProblem -- weird shit happened
+                | repoSerial == serial ->
+                    -- up to date - nothing to do here
+                    pure $ Right repo
+                | otherwise ->
+                    try (processDeltas notification) >>= \case
+                        Left (SomeException e) -> do
+                            -- complain
+                            try (processSnapshot notification) >>= \case
+                                Left (SomeException e)  -> pure $ Left RrdpGeneralProblem -- complain
+                                Right _ -> pure $ Right repo
+                        Right _ -> pure $ Right repo
+    where
+        processSnapshot Notification { snapshotInfo = SnapshotInfo (URI uri) hash } = do
+            try (WR.get $ T.unpack uri) >>= \case
+                Left (SomeException e) -> pure $ Left CantDownloadSnapshot
+                Right r -> do
+                    let body = r ^. WR.responseBody
+                    let realHash = U.sha256 body
+                    if realHash /= hash then
+                        pure $ Left $ SnapshotHashMismatch hash realHash
+                    else do
+                        snapshot <- pure (parseSnapshot body)
+                        saveSnapshot snapshot
+                        pure $ Right repo
+
+            pure repo
+            where
+                -- TODO Implement
+                saveSnapshot snapshot = pure ()
+
+        processDeltas Notification {..} = do
+            -- there have to be enough deltas to fill in
+            -- the data between notification's serial and repoSerial
+
+            -- validate delta serials
+            
+
+            pure repo
+

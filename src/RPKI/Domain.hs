@@ -5,7 +5,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE PolyKinds #-}
@@ -290,7 +289,9 @@ data RrdpError = BrokenSerial !B.ByteString |
                  BadPublish !B.ByteString |
                  NoHashInWithdraw |
                  ContentInWithdraw !B.ByteString |
-                 RrdpGeneralProblem
+                 RrdpGeneralProblem |
+                 CantDownloadSnapshot |
+                 SnapshotHashMismatch Hash Hash
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 instance NFData RrdpError
