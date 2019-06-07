@@ -290,8 +290,11 @@ data RrdpError = BrokenSerial !B.ByteString |
                  NoHashInWithdraw |
                  ContentInWithdraw !B.ByteString |
                  RrdpGeneralProblem |
-                 CantDownloadSnapshot |
-                 SnapshotHashMismatch Hash Hash
+                 CantDownloadNotification String |
+                 CantDownloadSnapshot String |
+                 CantDownloadDelta String |
+                 SnapshotHashMismatch Hash Hash |
+                 DeltaHashMismatch Hash Hash Serial
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 instance NFData RrdpError
