@@ -202,9 +202,6 @@ data Roa = Roa
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 
-newtype CRLRef = CRLRef (Serial, DateTime) deriving (Show, Eq, Ord, Typeable)
-
-
 data Manifest = Manifest {
     mftNumber   :: !Int  
   , fileHashAlg :: !HashAlg
@@ -246,11 +243,12 @@ data Repository (t :: RepoType) where
     RsyncRepo :: URI -> Repository 'Rsync
     RrdpRepo  :: URI -> SessionId -> Serial -> Repository 'Rrdp
 
--- data CA = CA {
---     caName :: T.Text
---   , caCertificate :: ResourceCert   
--- }
+deriving instance Show (Repository t)
+deriving instance Eq (Repository t1)
+deriving instance Ord (Repository t1)
+deriving instance Typeable (Repository t)
 
+    
 newtype Message = Message TS.ShortText 
     deriving (Show, Eq, Ord, Typeable, Generic)
 
@@ -289,7 +287,8 @@ data RrdpError = BrokenSerial !B.ByteString |
                  BadPublish !B.ByteString |
                  NoHashInWithdraw |
                  ContentInWithdraw !B.ByteString |
-                 RrdpGeneralProblem |
+                 LocalSerialBiggerThanRemote Serial Serial |
+                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
                  CantDownloadNotification String |
                  CantDownloadSnapshot String |
                  CantDownloadDelta String |

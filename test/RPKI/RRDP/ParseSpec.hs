@@ -133,7 +133,7 @@ notificationToXml Notification {
   [i|<notification version="#{v}" session_id="#{sid}" serial="#{s}">
       <snapshot uri="#{su}" hash="#{hex sh}"></snaphost>
       #{concatMap delta deltas}
-  </delta>|]
+  </notification>|]
   where
     delta (DeltaInfo (URI u) (Hash _ hash) (Serial s)) =
       [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{s}"></delta>|]  
