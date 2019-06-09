@@ -19,6 +19,14 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
+default-extensions: ViewPatterns, LambdaCase, ScopedTypeVariables, 
+                    AllowAmbiguousTypes, ConstraintKinds, DataKinds, 
+                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor, 
+                    DuplicateRecordFields, FlexibleContexts, GADTs, 
+                    KindSignatures, MultiWayIf, NoMonomorphismRestriction, 
+                    PatternSynonyms, PolyKinds, RankNTypes, StandaloneDeriving, 
+                    TupleSections, TypeApplications, TypeFamilies, TypeOperators
+
 dependencies:
 - base >= 4.7 && < 5
 - asn1-encoding
@@ -35,6 +43,7 @@ dependencies:
 - directory
 - dlist
 - filemanip
+- generic-lens
 - hashable
 - hex
 - hourglass

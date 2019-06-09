@@ -1,6 +1,4 @@
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 
 module RPKI.RRDP.Types where
 
@@ -12,7 +10,7 @@ import           GHC.Generics
 import           RPKI.Domain
 
 data Notification = Notification {
-  version      :: Version,  
+  version      :: Version,
   sessionId    :: !SessionId,
   serial       :: !Serial,
   snapshotInfo :: !SnapshotInfo,

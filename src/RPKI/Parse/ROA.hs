@@ -1,10 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE KindSignatures #-}
 
 module RPKI.Parse.ROA where
 

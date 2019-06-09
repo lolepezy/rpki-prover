@@ -1,10 +1,4 @@
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE DeriveFunctor       #-}
-{-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 
 module RPKI.Parse.Cert where
 
