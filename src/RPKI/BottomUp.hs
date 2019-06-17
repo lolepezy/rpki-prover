@@ -130,12 +130,12 @@ loadCA store aki CANode{..} = do
     manifests    :: [MftObject_] <- niceOnes findMftByDateDesc
     
     let n = atomically $ cellValue latestValidMft $ do
-        n <- for manifests $ \m -> do 
-              let n = atomically $ cellValue latestValidCrl $
-                        listToMaybe <$> (niceOnes $ findCrlByDateDesc m)
-              crls <- ioOrPure =<< n
-              pure $ const m <$> crls                                        
-        pure $ listToMaybe $ catMaybes n
+          n <- for manifests $ \m -> do
+                let n = atomically $ cellValue latestValidCrl $
+                          listToMaybe <$> (niceOnes $ findCrlByDateDesc m)
+                crls <- ioOrPure =<< n
+                pure $ const m <$> crls                                        
+          pure $ listToMaybe $ catMaybes n
     ioOrPure =<< n      
 
     pure $ listToMaybe certificates
