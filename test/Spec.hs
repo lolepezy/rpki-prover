@@ -13,6 +13,6 @@ import RPKI.Parse.ObjectParseSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
-    -- rrdpXmlParsingGroup,
+    rrdpXmlParsingGroup,
     rrdpUpdateSpec
   ]  

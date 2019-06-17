@@ -17,6 +17,10 @@
 
 module RPKI.Domain where
 
+import           Control.Lens
+import           Data.Generics.Product
+import           Data.Generics.Sum
+
 import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.Text as T
@@ -49,14 +53,14 @@ data AsResource =  AS !ASN
                     {-# UNPACK #-} !ASN
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-data ValidationRFC = Strict | Reconsidered
+data ValidationRFC = Strict_ | Reconsidered
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
 
 data AnRFC (r :: ValidationRFC -> Type) = 
       LooseRFC (WithRFC 'Reconsidered r)
-    | StrictRFC (WithRFC 'Strict r)
+    | StrictRFC (WithRFC 'Strict_ r)
 
 withRFC :: forall r a . AnRFC r -> (forall rfc . WithRFC (rfc :: ValidationRFC) r -> a) -> a
 withRFC (LooseRFC r) f = f r
@@ -68,16 +72,16 @@ deriving instance Eq (r rfc) => Eq (WithRFC (rfc :: ValidationRFC) (r :: Validat
 deriving instance Ord (r rfc) => Ord (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
 deriving instance Typeable (r rfc) => Typeable (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
     
-deriving instance Show (r 'Strict) => 
+deriving instance Show (r 'Strict_) => 
                   Show (r 'Reconsidered) =>
                   Show (AnRFC (r :: ValidationRFC -> Type))
-deriving instance Eq (r 'Strict) => 
+deriving instance Eq (r 'Strict_) => 
                   Eq (r 'Reconsidered) => 
                   Eq (AnRFC (r :: ValidationRFC -> Type))
-deriving instance Ord (r 'Strict) => 
+deriving instance Ord (r 'Strict_) => 
                   Ord (r 'Reconsidered) => 
                   Ord (AnRFC (r :: ValidationRFC -> Type))
-deriving instance Typeable (r 'Strict) => 
+deriving instance Typeable (r 'Strict_) => 
                   Typeable (r 'Reconsidered) => 
                   Typeable (AnRFC (r :: ValidationRFC -> Type))
 
@@ -125,32 +129,12 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 data ObjectType = CER | MFT | CRL | ROA | GBR
   deriving (Show, Eq, Typeable)
 
-class (Show a, Eq a, Typeable a) => RpkiObject a where
-    meta :: a -> RpkiMeta 
-
-data CerObject = CerObject RpkiMeta ResourceCert 
-    deriving (Show, Eq, Ord, Typeable)
-data MftObject = MftObject RpkiMeta Manifest deriving (Show, Eq, Ord, Typeable)
-data CrlObject = CrlObject RpkiMeta Crl deriving (Show, Eq, Ord, Typeable)
-data RoaObject = RoaObject RpkiMeta Roa deriving (Show, Eq, Ord, Typeable)
-data GbrObject = GbrObject RpkiMeta Gbr deriving (Show, Eq, Ord, Typeable)
-
-instance RpkiObject CerObject where
-    meta (CerObject m _) = m
-
-instance RpkiObject MftObject where
-    meta (MftObject m _) = m    
-
-instance RpkiObject CrlObject where
-    meta (CrlObject m _) = m    
+data CerObject = CerObject RpkiMeta ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
+data MftObject = MftObject RpkiMeta Manifest deriving (Show, Eq, Ord, Typeable, Generic)
+data CrlObject = CrlObject RpkiMeta Crl deriving (Show, Eq, Ord, Typeable, Generic)
+data RoaObject = RoaObject RpkiMeta Roa deriving (Show, Eq, Ord, Typeable, Generic)
+data GbrObject = GbrObject RpkiMeta Gbr deriving (Show, Eq, Ord, Typeable, Generic)
     
-instance RpkiObject RoaObject where
-    meta (RoaObject m _) = m    
-    
-instance RpkiObject GbrObject where
-    meta (GbrObject m _) = m    
-    
-
 data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI
   , hash      :: !Hash
@@ -159,29 +143,15 @@ data RpkiMeta = RpkiMeta {
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
-newtype Blob = Blob B.ByteString 
-  deriving (Show, Eq, Ord, Typeable)
+-- Do objects differently
 
-newtype RefHash = RefHash Hash
-    deriving (Show, Eq, Ord, Typeable)
+type RpkiObject_ ro = (RpkiMeta, ro)    
 
-data RefResolved = RefMft MftObject
-                 | RefCrl CrlObject
-                 | RefCer CerObject
-                 | RefRoa RoaObject
-                 | RefGbr GbrObject
-                 deriving (Show, Eq, Ord, Typeable)
-
-
-data ARef = RH RefHash | RR RefResolved
-    deriving (Show, Eq, Ord, Typeable)
-
-getMeta :: RefResolved -> RpkiMeta
-getMeta (RefMft r) = meta r
-getMeta (RefCrl r) = meta r
-getMeta (RefCer r) = meta r
-getMeta (RefRoa r) = meta r
-getMeta (RefGbr r) = meta r
+type CerObject_ = RpkiObject_ ResourceCert
+type MftObject_ = RpkiObject_ Manifest
+type CrlObject_ = RpkiObject_ Crl
+type RoaObject_ = RpkiObject_ Roa
+type GbrObject_ = RpkiObject_ Gbr
 
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
@@ -244,8 +214,8 @@ data Repository (t :: RepoType) where
     RrdpRepo  :: URI -> SessionId -> Serial -> Repository 'Rrdp
 
 deriving instance Show (Repository t)
-deriving instance Eq (Repository t1)
-deriving instance Ord (Repository t1)
+deriving instance Eq (Repository t)
+deriving instance Ord (Repository t)
 deriving instance Typeable (Repository t)
 
     

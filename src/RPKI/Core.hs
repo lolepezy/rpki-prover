@@ -44,6 +44,8 @@ import           RPKI.Domain
 
 {-
 
+THIS IS FROZEN AND WILL BE REMOVED
+
 Handling incoming changes:
     * An MFT added
         - replace current MFT
@@ -88,167 +90,167 @@ Handling incoming changes:
 
 
 
-data Change = Add RefResolved | Update RefHash RefResolved | Delete RefHash
+-- data Change = Add RefResolved | Update RefHash RefResolved | Delete RefHash
 
-data ResolveResult = NoParent | NoMFT | Attached
+-- data ResolveResult = NoParent | NoMFT | Attached
 
-newtype New o = New o deriving (Show, Eq, Typeable, Functor)
-newtype Validated o = Validated o deriving (Show, Eq, Typeable, Functor)
+-- newtype New o = New o deriving (Show, Eq, Typeable, Functor)
+-- newtype Validated o = Validated o deriving (Show, Eq, Typeable, Functor)
 
-data InState o  = SN (New o) | SV (Validated o)
-  deriving (Show, Eq, Typeable, Functor)
+-- data InState o  = SN (New o) | SV (Validated o)
+--   deriving (Show, Eq, Typeable, Functor)
 
-data SRef r = HashRef Hash | DirectRef r
-  deriving (Show, Eq, Ord, Typeable)
+-- data SRef r = HashRef Hash | DirectRef r
+--   deriving (Show, Eq, Ord, Typeable)
 
--- convenience pattern for objects
-pattern InSomeState s <- ((\case
-                    SN (New s) -> Just s
-                    SV (Validated s) -> Just s
-                    _ -> Nothing
-                  ) -> Just s)
+-- -- convenience pattern for objects
+-- pattern InSomeState s <- ((\case
+--                     SN (New s) -> Just s
+--                     SV (Validated s) -> Just s
+--                     _ -> Nothing
+--                   ) -> Just s)
 
-data MftEntry = MftEntry {
-    name  :: !T.Text
-  , child :: !(SRef StateTree)
-} deriving (Show, Eq, Typeable)
+-- data MftEntry = MftEntry {
+--     name  :: !T.Text
+--   , child :: !(SRef StateTree)
+-- } deriving (Show, Eq, Typeable)
 
-data CA = CA {
-    cer         :: InState CerObject
-  , mft         :: InState MftObject
-  , crl         :: InState CrlObject
-  , ipResources :: IpResources
-  , children    :: M.Map Hash MftEntry
-} deriving (Show, Eq, Typeable)
+-- data CA = CA {
+--     cer         :: InState CerObject
+--   , mft         :: InState MftObject
+--   , crl         :: InState CrlObject
+--   , ipResources :: IpResources
+--   , children    :: M.Map Hash MftEntry
+-- } deriving (Show, Eq, Typeable)
 
-data StateTree = CaNode CA
-               | ROANode (InState RoaObject)
-               deriving (Show, Eq, Typeable)
+-- data StateTree = CaNode CA
+--                | ROANode (InState RoaObject)
+--                deriving (Show, Eq, Typeable)
 
-data State = State {
-    treeRoot :: StateTree
-  , bySkiMap :: M.Map KI StateTree
-  , byAkiMap :: M.Map KI StateTree
-  , byHash   :: M.Map Hash StateTree
-  , orphans  :: [StateTree]
-} deriving (Show, Eq, Typeable)
+-- data State = State {
+--     treeRoot :: StateTree
+--   , bySkiMap :: M.Map KI StateTree
+--   , byAkiMap :: M.Map KI StateTree
+--   , byHash   :: M.Map Hash StateTree
+--   , orphans  :: [StateTree]
+-- } deriving (Show, Eq, Typeable)
 
-data TATrees = TATrees {
-    vts :: SM.Map TaName State
-}
+-- data TATrees = TATrees {
+--     vts :: SM.Map TaName State
+-- }
 
-bySKI :: State -> KI -> Maybe StateTree
-bySKI state ki = M.lookup ki (bySkiMap state)
-
-
-consumeChanges :: TQueue Change -> TVar (State) -> IO ()
-consumeChanges q tValids = forever $ atomically $ do
-  change <- readTQueue q
-  state <- readTVar tValids
-  let (validated, problems) = apply state change
-  writeTVar tValids validated
-  -- TODO do something with 'problems'
+-- bySKI :: State -> KI -> Maybe StateTree
+-- bySKI state ki = M.lookup ki (bySkiMap state)
 
 
-apply :: State -> Change -> (State, DL.DList VError)
-apply state = runWriter . go
-  where
-    go :: Change -> Writer (DL.DList VError) State
-    go = \case
-      Add (RefMft mft)  -> addMft state mft
-      Add (RefCrl crl)  -> addCrl state crl
-      Add (RefCer cer)  -> addCer state cer
-      Add (RefRoa roa)  -> addRoa state roa
-      Add (RefGbr gbr)  -> addGbr state gbr
-      Update (RefHash hash) (RefMft mft) -> pure state
-      Update (RefHash hash) (RefCer cer) -> pure state
-      Update (RefHash hash) (RefCrl crl) -> pure state
-      Update (RefHash hash) (RefRoa roa) -> pure state
-      Delete (RefHash hash) -> pure state
+-- consumeChanges :: TQueue Change -> TVar (State) -> IO ()
+-- consumeChanges q tValids = forever $ atomically $ do
+--   change <- readTQueue q
+--   state <- readTVar tValids
+--   let (validated, problems) = apply state change
+--   writeTVar tValids validated
+--   -- TODO do something with 'problems'
 
 
--- Add a CA certificate to the hierarchy
-addCer state newCert@ (CerObject meta cert) = pure state
-  -- case aki meta of
-  --   Nothing -> complain state NoAKI
-  --   Just (AKI ki) ->
-  --     case bySKI state ki of
-  --       Nothing -> pure $ state
-  --       Just (CaNode (ca@CA {..})) ->
-  --         pure $ withUpdatedCA state $ ca {
-  --           M.insert (hash meta) (DirectRef (CaNode )) children
-  --         }
+-- apply :: State -> Change -> (State, DL.DList VError)
+-- apply state = runWriter . go
+--   where
+--     go :: Change -> Writer (DL.DList VError) State
+--     go = \case
+--       Add (RefMft mft)  -> addMft state mft
+--       Add (RefCrl crl)  -> addCrl state crl
+--       Add (RefCer cer)  -> addCer state cer
+--       Add (RefRoa roa)  -> addRoa state roa
+--       Add (RefGbr gbr)  -> addGbr state gbr
+--       Update (RefHash hash) (RefMft mft) -> pure state
+--       Update (RefHash hash) (RefCer cer) -> pure state
+--       Update (RefHash hash) (RefCrl crl) -> pure state
+--       Update (RefHash hash) (RefRoa roa) -> pure state
+--       Delete (RefHash hash) -> pure state
 
 
--- Add new manifest to the hierarchy
-addMft :: State -> MftObject -> Writer (DL.DList VError) State
-addMft state newMftObject@ (MftObject meta newMft) =
-  case aki meta of
-    Nothing -> complain state NoAKIinManifest
-    Just (AKI ki) ->
-      case bySKI state ki of
-        Nothing     -> pure state -- TODO move it to orphanage
-        Just (CaNode (ca@CA {mft = InSomeState (MftObject _ oldMft), ..})) ->
-          pure $ withUpdatedCA state $ ca {
-            children = M.fromList $ map makeNewChild $ mftEntries newMft,
-            mft = SN (New newMftObject)
-          }
-          where
-            makeNewChild (name, hash) = (hash, child)
-              where
-                child = case M.lookup hash children of
-                  Nothing -> MftEntry name (HashRef hash)
-                  Just c  -> c
-        Just (ROANode _) -> complain state ROACannotBeAParent
+-- -- Add a CA certificate to the hierarchy
+-- addCer state newCert@ (CerObject meta cert) = pure state
+--   -- case aki meta of
+--   --   Nothing -> complain state NoAKI
+--   --   Just (AKI ki) ->
+--   --     case bySKI state ki of
+--   --       Nothing -> pure $ state
+--   --       Just (CaNode (ca@CA {..})) ->
+--   --         pure $ withUpdatedCA state $ ca {
+--   --           M.insert (hash meta) (DirectRef (CaNode )) children
+--   --         }
 
 
-addCrl :: State -> CrlObject -> Writer (DL.DList VError) State
-addCrl state (CrlObject meta crl) =
-  case aki meta of
-    Nothing   -> pure state -- complain!
-    Just (AKI ki) ->
-      case bySKI state ki of
-        Nothing     -> pure state -- complain!
-        Just parent -> pure state
-
-addRoa state roa = pure $ state
-addGbr state gbr = pure $ state
-
-
-class Monad (StoreM s) => Store s where
-  type StoreM s :: Type -> Type
-
-resolveRefs :: Store s => s -> [Change] -> (StoreM s) [Change]
-resolveRefs store changes = pure $ changes
-
--- Validate subtree starting from the nodes, identified by 'refs'
-validate :: State -> CA -> [ARef] -> Writer (DL.DList VError) State
-validate state parentCA refs = pure state
+-- -- Add new manifest to the hierarchy
+-- addMft :: State -> MftObject -> Writer (DL.DList VError) State
+-- addMft state newMftObject@ (MftObject meta newMft) =
+--   case aki meta of
+--     Nothing -> complain state NoAKIinManifest
+--     Just (AKI ki) ->
+--       case bySKI state ki of
+--         Nothing     -> pure state -- TODO move it to orphanage
+--         Just (CaNode (ca@CA {mft = InSomeState (MftObject _ oldMft), ..})) ->
+--           pure $ withUpdatedCA state $ ca {
+--             children = M.fromList $ map makeNewChild $ mftEntries newMft,
+--             mft = SN (New newMftObject)
+--           }
+--           where
+--             makeNewChild (name, hash) = (hash, child)
+--               where
+--                 child = case M.lookup hash children of
+--                   Nothing -> MftEntry name (HashRef hash)
+--                   Just c  -> c
+--         Just (ROANode _) -> complain state ROACannotBeAParent
 
 
--- | Replace the CA in the hierarchy, given that the hash of the certficate is not updated
-withUpdatedCA :: State -> CA -> State
-withUpdatedCA state ca@(CA { cer = InSomeState (CerObject meta _) }) =
-  case (aki meta) of
-    Nothing -> state { treeRoot = CaNode ca }
-    Just (AKI ki) ->
-      case bySKI state ki of
-        Just (CaNode parentCA) -> withUpdatedCA state $ parentCA {
-            children = M.update replaceMftEntry (hash meta) (children parentCA)
-          }
-          where
-            replaceMftEntry (MftEntry name ref) = Just $ MftEntry name $ DirectRef $ CaNode ca
-        Nothing -> state
+-- addCrl :: State -> CrlObject -> Writer (DL.DList VError) State
+-- addCrl state (CrlObject meta crl) =
+--   case aki meta of
+--     Nothing   -> pure state -- complain!
+--     Just (AKI ki) ->
+--       case bySKI state ki of
+--         Nothing     -> pure state -- complain!
+--         Just parent -> pure state
+
+-- addRoa state roa = pure $ state
+-- addGbr state gbr = pure $ state
 
 
----------------
--- Utilities
----------------
+-- class Monad (StoreM s) => Store s where
+--   type StoreM s :: Type -> Type
 
-getHash :: ARef -> Hash
-getHash (RH (RefHash h)) = h
-getHash (RR r)           = hash (getMeta r)
+-- resolveRefs :: Store s => s -> [Change] -> (StoreM s) [Change]
+-- resolveRefs store changes = pure $ changes
+
+-- -- Validate subtree starting from the nodes, identified by 'refs'
+-- validate :: State -> CA -> [ARef] -> Writer (DL.DList VError) State
+-- validate state parentCA refs = pure state
 
 
-complain :: a -> VError -> Writer (DL.DList VError) a
-complain a verror = tell (DL.singleton verror) >> pure a
+-- -- | Replace the CA in the hierarchy, given that the hash of the certficate is not updated
+-- withUpdatedCA :: State -> CA -> State
+-- withUpdatedCA state ca@(CA { cer = InSomeState (CerObject meta _) }) =
+--   case (aki meta) of
+--     Nothing -> state { treeRoot = CaNode ca }
+--     Just (AKI ki) ->
+--       case bySKI state ki of
+--         Just (CaNode parentCA) -> withUpdatedCA state $ parentCA {
+--             children = M.update replaceMftEntry (hash meta) (children parentCA)
+--           }
+--           where
+--             replaceMftEntry (MftEntry name ref) = Just $ MftEntry name $ DirectRef $ CaNode ca
+--         Nothing -> state
+
+
+-- ---------------
+-- -- Utilities
+-- ---------------
+
+-- getHash :: ARef -> Hash
+-- getHash (RH (RefHash h)) = h
+-- getHash (RR r)           = hash (getMeta r)
+
+
+-- complain :: a -> VError -> Writer (DL.DList VError) a
+-- complain a verror = tell (DL.singleton verror) >> pure a

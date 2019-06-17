@@ -38,8 +38,8 @@ import RPKI.Domain
 
 data Store = Store
 
-load :: RpkiObject r => Store -> AKI -> IO [r]
-load store aki = pure []
+load :: Store -> SKI -> IO [RpkiObject_ r]
+load store ski = pure []
 
 -- load :: (Eq k, Hashable k) =>
 --         Cache k v -> k -> (k -> IO (Maybe v)) -> IO (Maybe v)

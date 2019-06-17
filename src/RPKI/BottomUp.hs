@@ -1,21 +1,4 @@
-{-# LANGUAGE AllowAmbiguousTypes   #-}
-{-# LANGUAGE ConstraintKinds       #-}
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveDataTypeable    #-}
-{-# LANGUAGE DeriveFunctor         #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE KindSignatures        #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE PatternSynonyms       #-}
-{-# LANGUAGE PolyKinds             #-}
-{-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeOperators         #-}
 
 module RPKI.BottomUp where
 
@@ -23,6 +6,7 @@ import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Monad
+import           Control.Exception
 
 import qualified Data.ByteString                   as B
 import qualified Data.DList                        as DL
@@ -31,7 +15,10 @@ import qualified Data.Map                          as M
 import           Data.Maybe                        (maybe)
 import qualified Data.Text                         as T
 
+import Data.Traversable (for)
+
 import           Data.Data                         (Typeable)
+import           Data.Maybe (listToMaybe, catMaybes)
 import           Data.Kind                         (Type)
 
 import           Control.Monad.Trans.Writer.Strict
@@ -67,13 +54,13 @@ import           RPKI.Domain
 
 newtype CacheNode = CacheNode (Either CANode RoaNode)
 
-data Cell a = Hole | Loading | Something a
+data Cell a = Hole | Loading | Something a | DoNotExist | ShitHappened
   deriving (Show, Eq, Ord, Typeable)
 
 data CANode = CANode {
-  cer            :: !(TVar (Cell CerObject)),
-  latestValidMft :: !(TVar (Cell MftObject)),
-  latestValidCrl :: !(TVar (Cell CrlObject)),
+  latestValidCer :: !(TVar (Cell CerObject_)),
+  latestValidMft :: !(TVar (Cell MftObject_)),
+  latestValidCrl :: !(TVar (Cell CrlObject_)),
   chidlren       :: !(SM.Map SKI CacheNode),
   parent         :: !(TVar CANode)
 }
@@ -90,9 +77,6 @@ data TAState = TAState {
 }
 
 data Validity = Valid | Invalid
-
--- small thing to control where we do IO and where not
-data InM a b = InIO a | InSTM b
 
 -- validateRoa :: TAState -> RoaNode -> STM Validity
 -- validateRoa state r = do
@@ -114,29 +98,60 @@ data InM a b = InIO a | InSTM b
 --           pure Invalid
 
 --     parentCA (RoaNode{..}) = do
---       callValue parent (load store (aki meta)) >>= \case
+--       cellValue parent (load store (aki meta)) >>= \case
 --         InSTM Nothing -> pure Nothing
 --         InSTM certificates -> do
 --           Just ca
 --         InIO io -> pure $ InIO io
 
 
--- callValue :: TVar (Cell c) -> IO (Maybe c) -> STM (InM (IO (Maybe c)) (Maybe c))
--- callValue cell load = do
---   readTVar cell >>= \case
---     Loading     -> retry
---     Something v -> pure $ InSTM $ Just v
---     Hole        -> do
---       writeTVar cell Loading
---       pure $ InIO load
+cellValue :: TVar (Cell c) -> IO (Maybe c) -> STM (Either (IO (Maybe c)) (Maybe c))
+cellValue cell io = do
+  readTVar cell >>= \case
+    Loading     -> retry
+    Something v -> pure $ Right $ Just v
+    Hole        -> do
+      writeTVar cell Loading
+      pure $ Left $ try io >>= \case
+          Left (e :: SomeException) -> do
+            atomically $ writeTVar cell ShitHappened
+            pure Nothing
+          Right (Just v) -> do
+            atomically $ writeTVar cell $ Something v
+            pure $ Just v
+          Right Nothing -> do
+            atomically $ writeTVar cell DoNotExist
+            pure Nothing
+ 
+
+loadCA store aki CANode{..} = do
+  atomically $ cellValue latestValidCer $ do
+    certificates :: [CerObject_] <- niceOnes findCertByDateDesc
+    manifests    :: [MftObject_] <- niceOnes findMftByDateDesc
+    
+    let n = atomically $ cellValue latestValidMft $ do
+        n <- for manifests $ \m -> do 
+              let n = atomically $ cellValue latestValidCrl $
+                        listToMaybe <$> (niceOnes $ findCrlByDateDesc m)
+              crls <- ioOrPure =<< n
+              pure $ const m <$> crls                                        
+        pure $ listToMaybe $ catMaybes n
+    ioOrPure =<< n      
+
+    pure $ listToMaybe certificates
+
+  where
+    hasValidCrypto _ = True
+    findCertByDateDesc = pure $ Just []
+    findMftByDateDesc = pure $ Just []
+    findCrlByDateDesc _ = pure $ Just []
+    ioOrPure (Left io) = io    
+    ioOrPure (Right v) = pure v
+    
+    niceOnes :: IO (Maybe [a]) -> IO [a]
+    niceOnes x = filter hasValidCrypto <$> (concat <$> x)
 
 
--- -- TODO Add some composition to InM
--- loadCA store aki CANode{..} = do
---   cer' <- callValue cer $ findLatestValid <$> loadByAki
---   mft' <- callValue latestValidMft $ findLatestValidMft <$> loadByAki
---   crl' <- callValue latestValidCrl $ findLatestValidCrl mft <$> loadByAki
---   pure ()
---   where
---     loadByAki = loadLatest store aki
+
+  
 
