@@ -62,9 +62,11 @@ data AnRFC (r :: ValidationRFC -> Type) =
       LooseRFC (WithRFC 'Reconsidered r)
     | StrictRFC (WithRFC 'Strict_ r)
 
-withRFC :: forall r a . AnRFC r -> (forall rfc . WithRFC (rfc :: ValidationRFC) r -> a) -> a
-withRFC (LooseRFC r) f = f r
-withRFC (StrictRFC r) f = f r
+withRFC :: forall a (r :: ValidationRFC -> Type) . AnRFC r -> 
+           (forall (rfc :: ValidationRFC) . r rfc -> a) 
+            -> a
+withRFC (LooseRFC (WithRFC r)) f = f r
+withRFC (StrictRFC (WithRFC r)) f = f r
 
 -- Deriving machinery
 deriving instance Show (r rfc) => Show (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
@@ -155,7 +157,7 @@ type GbrObject_ = RpkiObject_ Gbr
 
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
-    certX509    :: !X509.Certificate 
+    certX509    :: !(X509.SignedExact X509.Certificate) 
   , ipResources :: !(Maybe (IpResourceSet rfc))
   , asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)

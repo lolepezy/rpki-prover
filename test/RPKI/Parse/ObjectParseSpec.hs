@@ -86,15 +86,18 @@ testAllCerts     = testAllObjects (parseResourceCertificate (URI "something.cer"
 testAllObjects parseIt t = do  
   let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
 
-  objs   <- find always (fileName ~~? ("*." ++ t)) repository
-  asyncs <- forM objs $ \obj -> async $ do    
-              p <- parseIt <$> B.readFile obj
-              putStrLn $ "path = " ++ show obj
+  let expr = (fileName ~~? "*.cer") ||? 
+             (fileName ~~? "*.roa") ||? 
+             (fileName ~~? "*.mft")
+  objs   <- find always expr repository
+  parsed <- forM objs $ \file -> do    
+              p <- parseIt <$> B.readFile file
+              putStrLn $ "path = " ++ show file
               case p of
-                Left e  -> putStrLn $ obj ++ ", error = " ++ show e
+                Left e  -> putStrLn $ file ++ ", error = " ++ show e
                 Right _ -> pure ()
-              pure (obj, p)
-  parsed <- mapM wait asyncs              
+              pure (file, p)
+  -- parsed <- mapM id asyncs              
 
   let errors = [ (e, p) | (p, Left e) <- parsed ]  
 

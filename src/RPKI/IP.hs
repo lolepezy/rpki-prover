@@ -30,7 +30,7 @@ import HaskellWorks.Data.Network.Ip.Word128
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
-import RPKI.Types
+import RPKI.GenTypes
 
 data AddrFamily = Ipv4F | Ipv6F
     deriving (Show, Eq, Ord, Typeable)

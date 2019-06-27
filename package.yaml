@@ -87,9 +87,10 @@ executables:
     - -threaded
     - -rtsopts
     - -Wall
-    - -with-rtsopts=-N
+    - -with-rtsopts=-N    
     dependencies:
-    - rpki-prover
+    - rpki-prover  
+
 
 tests:
   rpki-prover-test:
@@ -108,3 +109,14 @@ tests:
     - tasty-quickcheck    
     - generic-arbitrary
     - quickcheck-instances
+
+  only-parser:
+    main:                Parser.hs
+    source-dirs:         bench
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -Wall
+    - -with-rtsopts=-N
+    dependencies:
+    - rpki-prover  

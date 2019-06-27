@@ -17,6 +17,7 @@ import Data.ASN1.BitArray
 import RPKI.Domain  
 import RPKI.IP
 import RPKI.Parse.Common 
+import RPKI.SignTypes 
 import RPKI.Parse.SignedObject 
 
 

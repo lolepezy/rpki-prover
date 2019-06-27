@@ -82,8 +82,8 @@ parseNotification bs = runST $ do
                         (valuesOrError sessionId NoSessionId) <*>
                         (valuesOrError serial NoSerial ) <*>
                         (SnapshotInfo <$> 
-                            (valuesOrError snapshotUri NoSnapshotURI) <*>
-                            (valuesOrError snapshotHash NoSnapshotHash)) <*>
+                            valuesOrError snapshotUri NoSnapshotURI <*>
+                            valuesOrError snapshotHash NoSnapshotHash) <*>
                         (reverse <$> (lift . readSTRef) deltas)
 
     runExceptT (parse >> notification)
@@ -173,9 +173,9 @@ parseDelta bs = runST $ do
                         Just hash -> lift $ modifySTRef' items $ \ps -> Left (uri, hash) : ps
             )
             (\base64 ->         
-                case B.all isSpace_ base64 of 
-                    True -> lift $ pure ()                       
-                    False -> 
+                if B.all isSpace_ base64 then 
+                        lift $ pure ()                       
+                    else 
                         (lift . readSTRef) items >>= \case
                             []        -> pure ()
                             item : is ->
@@ -261,10 +261,10 @@ parseXml bs onElement onText = do
         nothing
         nothing
         bs
-    where nothing = (\_ -> lift $ pure ())
+    where nothing _ = lift $ pure ()
 
 
-makeHash bs = (Hash SHA256 . toBytes) <$> hexString bs
+makeHash bs = Hash SHA256 . toBytes <$> hexString bs
 
 -- Parsing HEX stuff
 newtype HexString = HexString B.ByteString deriving ( Show, Eq, Ord )

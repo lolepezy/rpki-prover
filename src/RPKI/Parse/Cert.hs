@@ -36,13 +36,13 @@ import           RPKI.Parse.Common
 parseResourceCertificate :: URI -> B.ByteString ->
                             ParseResult (RpkiMeta, ResourceCert)
 parseResourceCertificate location bs = do
-  let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
-  x509 <- (signedObject . getSigned) <$> certificate
-  let (Extensions extensions) = certExtensions x509
-  let exts = maybe [] id extensions
+  -- let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
+  certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
+  let x509 = signedObject $ getSigned certificate
+  let exts = getExts certificate  
   case extVal exts id_subjectKeyId of
     Just s -> do
-        r <- parseResources x509
+        r <- parseResources certificate
         let meta = RpkiMeta {
             aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
           , ski  = SKI (KI s)
@@ -57,10 +57,9 @@ parseResourceCertificate location bs = do
 
 
 
-parseResources :: Certificate -> ParseResult ResourceCert
-parseResources x509cert = do
-      let (Extensions extensions) = certExtensions x509cert
-      let ext' = extVal $ maybe [] id extensions
+parseResources :: SignedExact Certificate -> ParseResult ResourceCert
+parseResources x509cert = do    
+      let ext' = extVal $ getExts x509cert
       case (ext' id_pe_ipAddrBlocks,
             ext' id_pe_ipAddrBlocks_v2,
             ext' id_pe_autonomousSysIds,
@@ -73,13 +72,12 @@ parseResources x509cert = do
         (Nothing, ips, Nothing, asns) -> (ResourceCert . LooseRFC . WithRFC) <$> cert' x509cert ips asns
     where
       broken = Left . fmtErr
-      cert' x509cert ips asns = ResourceCertificate x509cert <$>
-            (traverse (parseResources parseIpExt) ips) <*>
-            (traverse (parseResources parseAsnExt) asns)
+      cert' x509c ips asns = ResourceCertificate x509c <$>
+            (traverse (parseR parseIpExt) ips) <*>
+            (traverse (parseR parseAsnExt) asns)
 
-      parseResources :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
-      parseResources f ext = do
-        f =<< first fmt decoded
+      parseR :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
+      parseR f ext = f =<< first fmt decoded
         where decoded = decodeASN1' BER ext
               fmt err = fmtErr $ "Couldn't parse IP address extension:" ++ show err
 
@@ -114,21 +112,21 @@ extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 -}
 parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
 parseIpExt addrBlocks = mapParseErr $
-    (flip runParseASN1) addrBlocks $ do
+  flip runParseASN1 addrBlocks $ do
     afs <- onNextContainer Sequence (getMany addrFamily)
     let ipv4 = head [ af | Left  af <- afs ]
     let ipv6 = head [ af | Right af <- afs ]
     pure $ IpResourceSet ipv4 ipv6
     where
-      addrFamily = onNextContainer Sequence $ do
+      addrFamily = onNextContainer Sequence $
         getAddressFamily  "Expected an address family here" >>= \case
           Right IP.Ipv4F -> Left  <$> ipResourceSet ipv4Address
           Right IP.Ipv6F -> Right <$> ipResourceSet ipv6Address
           Left af        -> throwParseError $ "Unsupported address family " ++ show af
         where
           ipResourceSet address =
-            (getNull_ (pure Inherit)) <|>
-            onNextContainer Sequence ((RS . S.fromList) <$> (getMany address))
+            getNull_ (pure Inherit) <|>
+            onNextContainer Sequence (RS . S.fromList <$> getMany address)
 
       ipv4Address = ipvVxAddress
           IP.fourW8sToW32 32
@@ -164,9 +162,9 @@ parseIpExt addrBlocks = mapParseErr $
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
         IP.rightPad (allBitsNum `div` 8) 0xFF $
-          map setBits $ L.zip ws (map (*8) [0..])
+          L.zipWith (curry setBits) ws (map (*8) [0..])
         where
-          setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. (extra (i + 8 - setBitsNum))
+          setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
                           | i < setBitsNum = w8
                           | otherwise = 0xFF
           extra lastBitsNum =
@@ -197,12 +195,12 @@ parseIpExt addrBlocks = mapParseErr $
    ASId                ::= INTEGER
 -}
 parseAsnExt :: [ASN1] -> ParseResult (ResourceSet AsResource rfc)
-parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
+parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
     onNextContainer Sequence $
       -- we only want the first element of the sequence
       onNextContainer (Container Context 0) $
-        (getNull_ (pure Inherit)) <|>
-        (RS . S.fromList) <$> onNextContainer Sequence (getMany asOrRange)
+        getNull_ (pure Inherit) <|>
+        RS . S.fromList <$> onNextContainer Sequence (getMany asOrRange)
   where
     asOrRange = getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
@@ -213,3 +211,7 @@ parseAsnExt asnBlocks = mapParseErr $ (flip runParseASN1) asnBlocks $
       where
         as' = ASN . fromInteger
 
+getExts :: SignedExact Certificate -> [ExtensionRaw]
+getExts certificate = fromMaybe [] extensions 
+  where
+    Extensions extensions = certExtensions $ signedObject $ getSigned certificate

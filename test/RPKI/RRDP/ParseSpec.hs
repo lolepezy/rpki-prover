@@ -48,7 +48,6 @@ testParseSnapshot = do
   snapshot <- BL.readFile "./snapshot.xml"
   let x = parseSnapshot snapshot
   print $ x `deepseq` 1
-  print $ x `deepseq` 2
   -- print $ length x
   -- runIdentityT $ parseXml (B.toStrict snapshot)
   --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
@@ -90,14 +89,14 @@ prop_generate_and_parse_delta_creates_same_object = monadicIO $ do
   delta :: Delta <- pick arbitrary
   let xml = deltaToXml delta
   let d = parseDelta (convert xml)
-  assert $ (Right delta) == d
+  assert $ Right delta == d
 
 prop_generate_and_parse_notification_creates_same_object :: QC.Property
 prop_generate_and_parse_notification_creates_same_object = monadicIO $ do
   notification :: Notification <- pick arbitrary  
   let xml = notificationToXml notification
   let n = parseNotification (convert xml)
-  assert $ (Right notification) == n
+  assert $ Right notification == n
 
 snaphostToXml :: Snapshot -> String
 snaphostToXml (Snapshot (Version v) (SessionId sid) (Serial s) publishes) =

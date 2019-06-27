@@ -4,7 +4,6 @@ module RPKI.RRDP.Types where
 
 import           Control.DeepSeq
 import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as BL
 import           GHC.Generics
 
 import           RPKI.Domain

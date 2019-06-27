@@ -9,18 +9,30 @@ import Data.Validation
 
 import qualified Data.List as L
 
+import Data.X509
+import Data.X509.Validation
+
 import RPKI.Store
 import RPKI.Domain
+import RPKI.SignTypes
+
 
 type ValidationResult = Validation Invalid () 
 
-validate :: RpkiObj -> ValidationResult
+    
+validateSignature :: ResourceCert -> ResourceCert -> SignatureVerification
+validateSignature (ResourceCert child) (ResourceCert parent) = 
+    verifySignedSignature childCert parentKey 
+    where
+        parentKey = certPubKey $ signedObject $ getSigned $ withRFC parent certX509
+        childCert = withRFC child certX509
 
 {- 
     TODO Implement the real validation of an individual object.
     Also, We would probably need ReaderT ValidationContext STM 
     where ValidationContext is a way of accessing the context.
 -}
+validate :: RpkiObj -> ValidationResult
 validate _ = Success ()
 
 -- validateTA :: TA -> Store -> STM ()

@@ -13,17 +13,17 @@ import           Data.ASN1.Parse
 
 import           RPKI.Domain
 import           RPKI.Parse.Common
+import           RPKI.SignTypes
 import           RPKI.Parse.SignedObject
 
 
 parseMft :: B.ByteString -> ParseResult (SignedObject Manifest)
-parseMft bs = do
-  case decodeASN1' BER bs of
+parseMft bs = case decodeASN1' BER bs of
     Left e     -> (Left . fmtErr . show) e
     Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseManifest) asns
   where
     parseManifest :: ParseASN1 Manifest
-    parseManifest = onNextContainer Sequence $ do
+    parseManifest = onNextContainer Sequence $
       (,,) <$> getNext <*> getNext <*> getNext >>= \case
         (IntVal manifestNumber,
          ASN1Time TimeGeneralized thisUpdateTime tz1,

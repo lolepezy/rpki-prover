@@ -84,7 +84,6 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
   ]
     
 
-
 makeNotification :: SessionId -> Serial -> Notification
 makeNotification sessionId serial = Notification {
     version = Version 1,

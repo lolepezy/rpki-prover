@@ -21,23 +21,13 @@ import           Control.Monad.Trans.Except
 import           Data.Bifunctor             (first, second)
 import qualified Data.ByteString            as B
 import qualified Data.ByteString.Base16     as B16
-import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as BL
-import           Data.Char                  (chr, isSpace)
 import qualified Data.DList                 as DL
 import qualified Data.List                  as L
-import qualified Data.Map                   as M
-import           Data.String.Utils          (strip)
 import qualified Data.Text                  as T
 import qualified Network.Wreq               as WR
 
-import           Data.Hex                   (unhex)
-import           Data.Word
-
 import           GHC.Generics
-
-import           Data.IORef
-import           Text.Read                  (readMaybe)
 
 import           RPKI.Domain
 import           RPKI.RRDP.Parse
@@ -56,8 +46,8 @@ tryDownload (URI uri) err = do
 -- TODO Replace RrdpGeneralProblem with something more concrete
 -- TODO Add logging
 makeUpdates :: Repository 'Rrdp -> IO (Either Problem UpdateResult)
-makeUpdates repo@(RrdpRepo uri repoSessionId repoSerial) = runExceptT $ do
-    notificationXml <- tryDownload uri (Fatal . CantDownloadNotification . show)
+makeUpdates repo@(RrdpRepo repoUri _ _) = runExceptT $ do
+    notificationXml <- tryDownload repoUri (Fatal . CantDownloadNotification . show)
     notification    <- except $ first Fatal $ parseNotification notificationXml
     nextStep        <- except $ first Fatal $ rrdpNextStep repo notification
     case nextStep of
@@ -81,17 +71,17 @@ makeUpdates repo@(RrdpRepo uri repoSessionId repoSerial) = runExceptT $ do
         extract deltas = second DL.toList $ go deltas DL.empty
             where
                 go [] accumulated = (Nothing, accumulated)
-                go (Left e : ds)  accumulated = (Just e, accumulated)
+                go (Left e :   _) accumulated = (Just e, accumulated)
                 go (Right d : ds) accumulated = go ds (accumulated `DL.snoc` d)
 
         repoFromDeltas :: [Delta] -> Notification -> Repository 'Rrdp
-        repoFromDeltas ds notification = RrdpRepo uri newSessionId newSerial
+        repoFromDeltas ds notification = RrdpRepo repoUri newSessionId newSerial
             where
                 newSessionId = sessionId notification
                 newSerial = L.maximum $ map (\(Delta _ _ s _) -> s) ds
 
         repoFromSnapshot :: Snapshot -> Repository 'Rrdp
-        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo uri sid s
+        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri sid s
 
 
 processSnapshot :: Monad m => BL.ByteString -> Hash -> ExceptT RrdpError m Snapshot
@@ -136,7 +126,7 @@ rrdpNextStep (RrdpRepo _ repoSessionId repoSerial) Notification{..} =
         | otherwise ->
             case (deltas, nonConsecutive) of
                 ([], _) -> Right $ UseSnapshot snapshotInfo
-                (_, []) | next repoSerial < (head $ map getSerial sortedDeltas) ->
+                (_, []) | next repoSerial < head (map getSerial sortedDeltas) ->
                            -- we are too far behind
                            Right $ UseSnapshot snapshotInfo
                         | otherwise ->
@@ -153,5 +143,6 @@ rrdpNextStep (RrdpRepo _ repoSessionId repoSerial) Notification{..} =
 getSerial :: DeltaInfo -> Serial
 getSerial (DeltaInfo _ _ s) = s
 
+next :: Serial -> Serial
 next (Serial s) = Serial $ s + 1
 

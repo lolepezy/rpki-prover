@@ -12,7 +12,6 @@ import qualified Data.ByteString                   as B
 import qualified Data.DList                        as DL
 import qualified Data.List                         as L
 import qualified Data.Map                          as M
-import           Data.Maybe                        (maybe)
 import qualified Data.Text                         as T
 
 import Data.Traversable (for)
@@ -52,7 +51,7 @@ import           RPKI.Domain
     as requiring revalidation
 -}
 
-newtype CacheNode = CacheNode (Either CANode RoaNode)
+newtype ANode = ANode (Either CANode RoaNode)
 
 data Cell a = Hole | Loading | Something a | DoNotExist | ShitHappened
   deriving (Show, Eq, Ord, Typeable)
@@ -61,12 +60,12 @@ data CANode = CANode {
   latestValidCer :: !(TVar (Cell CerObject_)),
   latestValidMft :: !(TVar (Cell MftObject_)),
   latestValidCrl :: !(TVar (Cell CrlObject_)),
-  chidlren       :: !(SM.Map SKI CacheNode),
+  chidlren       :: !(SM.Map SKI ANode),
   parent         :: !(TVar CANode)
 }
 
 data RoaNode = RoaNode {
-  roa    :: !(TVar (Cell RoaObject)),
+  roa    :: !(TVar (Cell RoaObject_)),
   parent :: !(TVar (Cell CANode))
 }
 
@@ -105,14 +104,14 @@ data Validity = Valid | Invalid
 --         InIO io -> pure $ InIO io
 
 
-cellValue :: TVar (Cell c) -> IO (Maybe c) -> STM (Either (IO (Maybe c)) (Maybe c))
-cellValue cell io = do
+cellValue :: TVar (Cell c) -> IO (Maybe c) -> IO (Maybe c)
+cellValue cell io = join $ atomically $ 
   readTVar cell >>= \case
     Loading     -> retry
-    Something v -> pure $ Right $ Just v
+    Something v -> pure $ pure $ Just v
     Hole        -> do
       writeTVar cell Loading
-      pure $ Left $ try io >>= \case
+      pure $ try io >>= \case
           Left (e :: SomeException) -> do
             atomically $ writeTVar cell ShitHappened
             pure Nothing
@@ -125,18 +124,17 @@ cellValue cell io = do
  
 
 loadCA store aki CANode{..} = do
-  atomically $ cellValue latestValidCer $ do
-    certificates :: [CerObject_] <- niceOnes findCertByDateDesc
-    manifests    :: [MftObject_] <- niceOnes findMftByDateDesc
+  cellValue latestValidCer $ do
+    certificates <- niceOnes findCertByDateDesc
+    manifests    <- niceOnes findMftByDateDesc
     
-    let n = atomically $ cellValue latestValidMft $ do
-          n <- for manifests $ \m -> do
-                let n = atomically $ cellValue latestValidCrl $
-                          listToMaybe <$> (niceOnes $ findCrlByDateDesc m)
-                crls <- ioOrPure =<< n
-                pure $ const m <$> crls                                        
+    -- find a the most recent pair of MFT and CRL that would be valid 
+    cellValue latestValidMft $ do
+          n <- for manifests $ \mft -> do
+                crls <- cellValue latestValidCrl $
+                          listToMaybe <$> (niceOnes $ findCrlByDateDesc mft)                
+                pure $ const mft <$> crls                                        
           pure $ listToMaybe $ catMaybes n
-    ioOrPure =<< n      
 
     pure $ listToMaybe certificates
 
@@ -145,12 +143,15 @@ loadCA store aki CANode{..} = do
     findCertByDateDesc = pure $ Just []
     findMftByDateDesc = pure $ Just []
     findCrlByDateDesc _ = pure $ Just []
-    ioOrPure (Left io) = io    
-    ioOrPure (Right v) = pure v
-    
+
     niceOnes :: IO (Maybe [a]) -> IO [a]
     niceOnes x = filter hasValidCrypto <$> (concat <$> x)
 
+
+-- getParent :: ANode -> IO CANode
+-- getParent ANode (Left CANode{..}) = do
+    
+-- getParent ANode (Left CANode{..}) = do
 
 
   
