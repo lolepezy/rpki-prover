@@ -1,5 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Parse.ObjectParseSpec where
@@ -7,15 +5,7 @@ module RPKI.Parse.ObjectParseSpec where
 import qualified Data.ByteString as B
 
 import Control.Monad
-import Control.Concurrent.Async
 
-import Data.ASN1.Types
-import Data.ASN1.BitArray
-import Data.ASN1.Encoding
-import Data.ASN1.BinaryEncoding
-import Data.ASN1.Parse
-
-import Data.X509.Memory
 import qualified Data.X509 as X509
 
 import RPKI.Domain

@@ -8,11 +8,14 @@ import qualified Data.ByteString as B
 import qualified Data.Text as T  
 
 import Data.Char (chr)
+import Data.Maybe
 
 import Data.ASN1.OID
 import Data.ASN1.Types
 import Data.ASN1.Parse
 import Data.ASN1.BitArray
+
+import Data.X509
 
 import RPKI.IP
 
@@ -92,3 +95,14 @@ getAddressFamily m = getNext >>= \case
       af         -> pure $ Left af 
   a              -> parseError m a      
   
+-- Certificate utilities
+extVal :: [ExtensionRaw] -> OID -> Maybe B.ByteString
+extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
+
+getExts :: Certificate -> [ExtensionRaw]
+getExts certificate = fromMaybe [] extensions 
+  where
+    Extensions extensions = certExtensions certificate
+
+getExtsSign :: SignedExact Certificate -> [ExtensionRaw]
+getExtsSign = getExts . signedObject . getSigned

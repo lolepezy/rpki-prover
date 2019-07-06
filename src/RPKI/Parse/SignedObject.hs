@@ -3,24 +3,25 @@
 module RPKI.Parse.SignedObject where
   
 import qualified Data.ByteString as B
-import qualified Data.Text as T
 
 import Control.Applicative
 import Data.Maybe
 
-import Data.Hourglass
-
-import Data.ASN1.OID
 import Data.ASN1.BitArray
 import Data.ASN1.Types
 import Data.ASN1.Parse
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
+import Data.List.NonEmpty       (NonEmpty ((:|)))
+
+import Data.X509
+
 import RPKI.Domain
 import RPKI.SignTypes
 import RPKI.Parse.Common
 
+import qualified RPKI.Util as U
 
 {- 
 
@@ -58,8 +59,8 @@ parseSignedObject eContentParse =
     parseVersion = getInteger (pure . CMSVersion . fromInteger) "Wrong version"
 
     parseDigestAlgorithms = onNextContainer Sequence $
-          DigestAlgorithmIdentifiers . catMaybes <$> (getMany $ 
-            getNext >>= \case
+          DigestAlgorithmIdentifiers . catMaybes <$> getMany
+            (getNext >>= \case
               OID oid -> pure $ Just  oid
               Null    -> pure Nothing
               s       -> throwParseError $ "DigestAlgorithms is wrong " ++ show s)
@@ -122,14 +123,15 @@ parseSignedObject eContentParse =
                             s -> throwParseError $ "Unknown Binary Signing Time: " ++ show s
                     | otherwise -> getNextContainerMaybe Set >>= \case
                             Just asn1 -> pure $ UnknownAttribute attrId asn1
+                            Nothing   -> pure $ UnknownAttribute attrId []
 
                   s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
                             
         
     parseSignature = getNext >>= \case 
-        OctetString sig               -> pure $ SignatureValue sig
-        BitString (BitArray size sig) -> pure $ SignatureValue sig
-        s                             -> throwParseError $ "Unknown signature value : " ++ show s
+        OctetString sig            -> pure $ SignatureValue sig
+        BitString (BitArray _ sig) -> pure $ SignatureValue sig
+        s                          -> throwParseError $ "Unknown signature value : " ++ show s
 
     parseSignatureAlgorithm = onNextContainer Sequence $
         getNext >>= \case 
@@ -137,3 +139,21 @@ parseSignedObject eContentParse =
             -- TODO Don't skip parameters, add them to the signature
             _ <- getMany getNext
             pure $ SignatureAlgorithmIdentifier oid
+
+
+getMeta :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
+getMeta obj bs = 
+  case extVal exts id_subjectKeyId of
+    Just s -> Right $ 
+              \location -> RpkiMeta {        
+                  aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
+                , ski  = SKI (KI s)
+                , hash = U.sha256s bs
+                , locations = location :| []
+                , serial = Serial (certSerial x509)    
+              }
+    Nothing -> Left . fmtErr $ "Bla" 
+  where
+    exts = getExts x509  
+    CertificateWithSignature x509 _ _ = scCertificate $ soContent obj
+    Extensions extensions = certExtensions x509

@@ -1,18 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
-
-
 module RPKI.IP where
 
 import qualified Data.ByteString as B  
@@ -96,7 +82,6 @@ deriving instance (ForAllAFs Typeable r) => Typeable (AnAF (r :: AddrFamily -> T
 withAF :: forall r a . AnAF r -> (forall f . WithAF (f :: AddrFamily) r -> a) -> a
 withAF (V4AF r) f = f r
 withAF (V6AF r) f = f r
-
 
 
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix

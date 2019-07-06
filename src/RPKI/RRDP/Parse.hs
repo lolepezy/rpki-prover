@@ -2,34 +2,21 @@
 
 module RPKI.RRDP.Parse where
 
-import           Control.Concurrent
-import           Control.Concurrent.Async
-import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.ST
 import           Data.STRef
-
-import           Control.Lens               ((^.))
 
 import           Control.Monad.Primitive    (PrimMonad (..), stToPrim)
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString            as B
-import qualified Data.ByteString.Base16     as B16
 import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Char                  (isSpace, chr)
-import qualified Data.List                  as L
 import qualified Data.Map                   as M
-import           Data.String.Utils          (strip)
-import qualified Data.Text                  as T
-import qualified Network.Wreq               as WR
-
 import           Data.Hex                   (unhex)
 import           Data.Word
-
-import           Data.IORef
 import           Text.Read                  (readMaybe)
 
 import           Xeno.SAX                   as X
@@ -74,6 +61,7 @@ parseNotification bs = runST $ do
                         Nothing   -> throwE $ BadHash h
                         Just hash -> lift $ modifySTRef deltas $ \ds ->
                                 DeltaInfo (URI (convert uri)) hash serial : ds
+                (_, _) -> pure ()
             )
             (\_ -> pure ())
 
@@ -110,6 +98,7 @@ parseSnapshot bs = runST $ do
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
                     lift $ modifySTRef' publishes $ \pubs -> (uri, Nothing) : pubs
+                (_, _) -> pure ()
             )
             (\base64 ->                                
                 (lift . readSTRef) publishes >>= \case
@@ -171,6 +160,7 @@ parseDelta bs = runST $ do
                     case makeHash h of                    
                         Nothing   -> throwE $ BadHash h
                         Just hash -> lift $ modifySTRef' items $ \ps -> Left (uri, hash) : ps
+                (_, _) -> pure ()
             )
             (\base64 ->         
                 if B.all isSpace_ base64 then 
@@ -197,9 +187,9 @@ parseDelta bs = runST $ do
                         Right content -> pure $ DP $ DeltaPublish (URI $ convert uri) hash content
 
     let delta = Delta <$>
-                    (valuesOrError version NoVersion) <*>
-                    (valuesOrError sessionId NoSessionId) <*>
-                    (valuesOrError serial NoSerial) <*>
+                    valuesOrError version NoVersion <*>
+                    valuesOrError sessionId NoSessionId <*>
+                    valuesOrError serial NoSerial <*>
                     deltaItems
 
     runExceptT (parse >> delta)
@@ -212,7 +202,7 @@ appendBase64 base64 content =
         newContent existing = case B.length trimmed of 
                 0 -> existing
                 _ -> B.concat [existing, trimmed]
-        base64' = maybe (Just base64) (Just . newContent) content
+        base64' = (Just . maybe base64 newContent) content
 
 parseInteger :: B.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs

@@ -5,7 +5,6 @@ module RPKI.Parse.Cert where
 import           Control.Applicative
 
 import qualified Data.ByteString          as B
-import qualified Data.Text                as T
 
 import qualified Data.List                as L
 import           Data.List.NonEmpty       (NonEmpty ((:|)))
@@ -39,7 +38,7 @@ parseResourceCertificate location bs = do
   -- let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
   certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
   let x509 = signedObject $ getSigned certificate
-  let exts = getExts certificate  
+  let exts = getExtsSign certificate  
   case extVal exts id_subjectKeyId of
     Just s -> do
         r <- parseResources certificate
@@ -49,8 +48,7 @@ parseResourceCertificate location bs = do
           , hash = U.sha256s bs
           -- TODO Do something about this
           , locations = location :| []
-          , serial = Serial (certSerial x509)
-          --
+          , serial = Serial (certSerial x509)          
           }
         pure (meta, r)
     Nothing -> (Left . fmtErr) "No SKI extension"
@@ -59,7 +57,7 @@ parseResourceCertificate location bs = do
 
 parseResources :: SignedExact Certificate -> ParseResult ResourceCert
 parseResources x509cert = do    
-      let ext' = extVal $ getExts x509cert
+      let ext' = extVal $ getExtsSign x509cert
       case (ext' id_pe_ipAddrBlocks,
             ext' id_pe_ipAddrBlocks_v2,
             ext' id_pe_autonomousSysIds,
@@ -68,8 +66,8 @@ parseResources x509cert = do
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns, Nothing) -> (ResourceCert . StrictRFC . WithRFC) <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> (ResourceCert . LooseRFC . WithRFC) <$> cert' x509cert ips asns
+        (ips, Nothing, asns, Nothing) -> (ResourceCert . Left . WithRFC) <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> (ResourceCert . Right . WithRFC) <$> cert' x509cert ips asns
     where
       broken = Left . fmtErr
       cert' x509c ips asns = ResourceCertificate x509c <$>
@@ -80,10 +78,6 @@ parseResources x509cert = do
       parseR f ext = f =<< first fmt decoded
         where decoded = decodeASN1' BER ext
               fmt err = fmtErr $ "Couldn't parse IP address extension:" ++ show err
-
-extVal :: [ExtensionRaw] -> OID -> Maybe B.ByteString
-extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
-
 
 {-
   Parse IP address extension.
@@ -114,10 +108,12 @@ parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
 parseIpExt addrBlocks = mapParseErr $
   flip runParseASN1 addrBlocks $ do
     afs <- onNextContainer Sequence (getMany addrFamily)
-    let ipv4 = head [ af | Left  af <- afs ]
-    let ipv6 = head [ af | Right af <- afs ]
+    let ipv4 = rs [ af | Left  af <- afs ]
+    let ipv6 = rs [ af | Right af <- afs ]
     pure $ IpResourceSet ipv4 ipv6
     where
+      rs []       = RS S.empty
+      rs (af : _) = af
       addrFamily = onNextContainer Sequence $
         getAddressFamily  "Expected an address family here" >>= \case
           Right IP.Ipv4F -> Left  <$> ipResourceSet ipv4Address
@@ -210,8 +206,3 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
         Just something -> throwParseError $ "Unknown ASN specification " ++ show something
       where
         as' = ASN . fromInteger
-
-getExts :: SignedExact Certificate -> [ExtensionRaw]
-getExts certificate = fromMaybe [] extensions 
-  where
-    Extensions extensions = certExtensions $ signedObject $ getSigned certificate

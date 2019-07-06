@@ -1,19 +1,5 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass       #-}
 
 module RPKI.Domain where
 
@@ -57,39 +43,13 @@ data ValidationRFC = Strict_ | Reconsidered
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
-data AnRFC (r :: ValidationRFC -> Type) = 
-      LooseRFC (WithRFC 'Reconsidered r)
-    | StrictRFC (WithRFC 'Strict_ r)
+type AnRFC r = Either (WithRFC 'Strict_ r) (WithRFC 'Reconsidered r)
 
-withRFC :: forall a (r :: ValidationRFC -> Type) . AnRFC r -> 
-           (forall (rfc :: ValidationRFC) . r rfc -> a) 
-            -> a
-withRFC (LooseRFC (WithRFC r)) f = f r
-withRFC (StrictRFC (WithRFC r)) f = f r
-
--- Deriving machinery
-deriving instance Show (r rfc) => Show (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
-deriving instance Eq (r rfc) => Eq (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
-deriving instance Ord (r rfc) => Ord (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
-deriving instance Typeable (r rfc) => Typeable (WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type))
-    
-deriving instance Show (r 'Strict_) => 
-                  Show (r 'Reconsidered) =>
-                  Show (AnRFC (r :: ValidationRFC -> Type))
-deriving instance Eq (r 'Strict_) => 
-                  Eq (r 'Reconsidered) => 
-                  Eq (AnRFC (r :: ValidationRFC -> Type))
-deriving instance Ord (r 'Strict_) => 
-                  Ord (r 'Reconsidered) => 
-                  Ord (AnRFC (r :: ValidationRFC -> Type))
-deriving instance Typeable (r 'Strict_) => 
-                  Typeable (r 'Reconsidered) => 
-                  Typeable (AnRFC (r :: ValidationRFC -> Type))
-
-
-newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
-    deriving (Show, Eq, Ord, Typeable)
+withRFC :: AnRFC r -> (forall rfc . (r rfc) -> a) -> a
+withRFC (Left (WithRFC a)) f = f a
+withRFC (Right (WithRFC a)) f = f a  
 
 newtype IpResources = IpResources (AnRFC IpResourceSet)    
     deriving (Show, Eq, Ord, Typeable)
@@ -166,7 +126,8 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
 instance Ord (ResourceCertificate (rfc :: ValidationRFC)) where
     compare = comparing ipResources <> comparing asResources
 
-newtype EECert = EECert X509.Certificate deriving (Show, Eq, Typeable)    
+newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
+    deriving (Show, Eq, Ord, Typeable)
 
 data Roa = Roa     
     !ASN 
@@ -266,6 +227,4 @@ data RrdpError = BrokenSerial !B.ByteString |
                  CantDownloadDelta String |
                  SnapshotHashMismatch Hash Hash |
                  DeltaHashMismatch Hash Hash Serial
-    deriving (Show, Eq, Ord, Typeable, Generic)
-
-instance NFData RrdpError
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)

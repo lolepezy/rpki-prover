@@ -16,9 +16,7 @@ import RPKI.Store
 import RPKI.Domain
 import RPKI.SignTypes
 
-
 type ValidationResult = Validation Invalid () 
-
     
 validateSignature :: ResourceCert -> ResourceCert -> SignatureVerification
 validateSignature (ResourceCert child) (ResourceCert parent) = 
