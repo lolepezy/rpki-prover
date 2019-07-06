@@ -26,11 +26,11 @@ testAllObjects1 = do
               let ext = L.drop (L.length file - 3) file
               let parsed = case ext of
                     "cer" -> 
-                        case parseResourceCertificate (URI (T.pack file)) content of
+                        case parseResourceCertificate content of
                           Left e  -> do
                             putStrLn $ file ++ ", error = " ++ show e
                             pure $ Left e
-                          Right c -> pure $ Right $ show c
+                          Right f -> pure $ Right $ show (f (URI (T.pack file)))
 
                     "mft" -> 
                         case parseMft content of

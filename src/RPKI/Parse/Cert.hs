@@ -32,9 +32,9 @@ import           RPKI.Parse.Common
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseResourceCertificate :: URI -> B.ByteString ->
-                            ParseResult (RpkiMeta, ResourceCert)
-parseResourceCertificate location bs = do
+parseResourceCertificate :: B.ByteString ->
+                            ParseResult (URI -> (RpkiMeta, ResourceCert))
+parseResourceCertificate bs = do
   -- let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
   certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
   let x509 = signedObject $ getSigned certificate
@@ -42,15 +42,14 @@ parseResourceCertificate location bs = do
   case extVal exts id_subjectKeyId of
     Just s -> do
         r <- parseResources certificate
-        let meta = RpkiMeta {
+        let meta location = RpkiMeta {
             aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
           , ski  = SKI (KI s)
           , hash = U.sha256s bs
-          -- TODO Do something about this
           , locations = location :| []
           , serial = Serial (certSerial x509)          
           }
-        pure (meta, r)
+        pure $ \location -> (meta location, r)
     Nothing -> (Left . fmtErr) "No SKI extension"
 
 

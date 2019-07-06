@@ -146,11 +146,11 @@ getMeta obj bs =
   case extVal exts id_subjectKeyId of
     Just s -> Right $ 
               \location -> RpkiMeta {        
-                  aki  = (AKI . KI) <$> extVal exts id_authorityKeyId
-                , ski  = SKI (KI s)
-                , hash = U.sha256s bs
-                , locations = location :| []
-                , serial = Serial (certSerial x509)    
+                  aki  = (AKI . KI) <$> extVal exts id_authorityKeyId,
+                  ski  = SKI (KI s),
+                  hash = U.sha256s bs,
+                  locations = location :| [],
+                  serial = Serial (certSerial x509)    
               }
     Nothing -> Left . fmtErr $ "SKI is absent" 
   where

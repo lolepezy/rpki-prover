@@ -91,11 +91,11 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 data ObjectType = CER | MFT | CRL | ROA | GBR
   deriving (Show, Eq, Typeable)
 
-data CerObject = CerObject RpkiMeta ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
-data MftObject = MftObject RpkiMeta Manifest deriving (Show, Eq, Ord, Typeable, Generic)
-data CrlObject = CrlObject RpkiMeta Crl deriving (Show, Eq, Ord, Typeable, Generic)
-data RoaObject = RoaObject RpkiMeta Roa deriving (Show, Eq, Ord, Typeable, Generic)
-data GbrObject = GbrObject RpkiMeta Gbr deriving (Show, Eq, Ord, Typeable, Generic)
+newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
+newtype MftObject = MftObject Manifest deriving (Show, Eq, Ord, Typeable, Generic)
+newtype CrlObject = CrlObject Crl deriving (Show, Eq, Ord, Typeable, Generic)
+newtype RoaObject = RoaObject Roa deriving (Show, Eq, Ord, Typeable, Generic)
+newtype GbrObject = GbrObject Gbr deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI
@@ -107,14 +107,15 @@ data RpkiMeta = RpkiMeta {
 
 -- Do objects differently
 
-type RpkiObject_ ro = (RpkiMeta, ro)    
+data RO = CerRO CerObject 
+        | MftRO MftObject
+        | CrlRO CrlObject
+        | RoaRO RoaObject
+        | GbrRO GbrObject
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
-type CerObject_ = RpkiObject_ ResourceCert
-type MftObject_ = RpkiObject_ Manifest
-type CrlObject_ = RpkiObject_ Crl
-type RoaObject_ = RpkiObject_ Roa
-type GbrObject_ = RpkiObject_ Gbr
-
+data RpkiObject = RpkiObject RpkiMeta RO
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: !(X509.SignedExact X509.Certificate) 

@@ -38,7 +38,7 @@ import RPKI.Domain
 
 data Store = Store
 
-load :: Store -> SKI -> IO [RpkiObject_ r]
+load :: Store -> SKI -> IO [RpkiObject]
 load store ski = pure []
 
 -- load :: (Eq k, Hashable k) =>

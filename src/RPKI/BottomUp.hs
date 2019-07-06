@@ -57,15 +57,15 @@ data Cell a = Hole | Loading | Something a | DoNotExist | ShitHappened
   deriving (Show, Eq, Ord, Typeable)
 
 data CANode = CANode {
-  latestValidCer :: !(TVar (Cell CerObject_)),
-  latestValidMft :: !(TVar (Cell MftObject_)),
-  latestValidCrl :: !(TVar (Cell CrlObject_)),
+  latestValidCer :: !(TVar (Cell CerObject)),
+  latestValidMft :: !(TVar (Cell MftObject)),
+  latestValidCrl :: !(TVar (Cell CrlObject)),
   chidlren       :: !(SM.Map SKI ANode),
   parent         :: !(TVar CANode)
 }
 
 data RoaNode = RoaNode {
-  roa    :: !(TVar (Cell RoaObject_)),
+  roa    :: !(TVar (Cell RoaObject)),
   parent :: !(TVar (Cell CANode))
 }
 

@@ -40,7 +40,7 @@ testCertParsing = do
 
   let x = parseIpExt ip
   let z = parseAsnExt as
-  let xcert = parseResourceCertificate (URI "blabla.cer") cert
+  let xcert = parseResourceCertificate cert
 
   -- putStrLn $ "xt = " ++ show xt
   -- putStrLn $ "xcert = " ++ show xcert
@@ -71,7 +71,9 @@ testSignedObjectParsing = do
 
 testAllManifests = testAllObjects parseMft "mft"  
 testAllRoas      = testAllObjects parseRoa "roa" 
-testAllCerts     = testAllObjects (parseResourceCertificate (URI "something.cer")) "cer" 
+-- testAllCerts     = testAllObjects (\bs -> 
+--                       parseResourceCertificate bs
+--                       (URI "something.cer")) "cer" 
 
 testAllObjects parseIt t = do  
   let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
