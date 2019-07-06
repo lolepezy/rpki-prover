@@ -152,8 +152,7 @@ getMeta obj bs =
                 , locations = location :| []
                 , serial = Serial (certSerial x509)    
               }
-    Nothing -> Left . fmtErr $ "Bla" 
+    Nothing -> Left . fmtErr $ "SKI is absent" 
   where
     exts = getExts x509  
     CertificateWithSignature x509 _ _ = scCertificate $ soContent obj
-    Extensions extensions = certExtensions x509
