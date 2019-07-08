@@ -9,7 +9,7 @@ import Data.Validation
 
 import qualified Data.List as L
 
-import Data.X509
+import Data.X509 hiding (getCertificate)
 import Data.X509.Validation
 
 import RPKI.Store
@@ -18,41 +18,32 @@ import RPKI.SignTypes
 
 type ValidationResult = Validation Invalid () 
     
-validateSignature :: ResourceCert -> ResourceCert -> SignatureVerification
-validateSignature (ResourceCert child) (ResourceCert parent) = 
-    verifySignedSignature childCert parentKey 
+validateSignature :: RO -> CerObject -> SignatureVerification
+validateSignature ro (CerObject (ResourceCert parentRC)) = 
+    verifySignature signAlgorithm parentKey signData signature
     where
-        parentKey = certPubKey $ signedObject $ getSigned $ withRFC parent certX509
-        childCert = withRFC child certX509
+        parentKey = certPubKey $ signedObject $ getSigned $ withRFC parentRC certX509
+        (signAlgorithm, signData, signature) = getSign ro
 
-{- 
-    TODO Implement the real validation of an individual object.
-    Also, We would probably need ReaderT ValidationContext STM 
-    where ValidationContext is a way of accessing the context.
--}
-validate :: RpkiObj -> ValidationResult
-validate _ = Success ()
+        getSign (CerRO (CerObject (ResourceCert rc))) = (signAlgorithm, signData, signature)
+            where    
+                signedExact = withRFC rc certX509
+                signAlgorithm = signedAlg $ getSigned signedExact 
+                signature = signedSignature $ getSigned signedExact 
+                signData = getSignedData signedExact
 
--- validateTA :: TA -> Store -> STM ()
--- validateTA TA { taCertificate = cert } s = 
---     either go go cert
---     where
---         go :: Cert rfc -> STM ()
---         go cert = do
---             let Cert _ (SKI ki) _ _ = cert
---             children <- getByAKI s (AKI ki)
---             let mfts  = [ (s, mft) | RpkiObj s (Mu  mft) <- children ]
---             let certs = [ (s, cer) | RpkiObj s (Cu cer)  <- children ]
+        getSign (MftRO (MftObject signObject)) = getSign' signObject
+        getSign (RoaRO (RoaObject signObject)) = getSign' signObject
+        getSign (GbrRO (GbrObject signObject)) = getSign' signObject
+        -- TODO Implement CRL as well
 
---             let (mft, crl) = recent_MFT_and_CRL mfts
---             -- mapM (go) children
---             pure ()
---             where
---                 recent_MFT_and_CRL :: [(RpkiMeta, MFT)] -> (Maybe MFT, Maybe CRL)
---                 recent_MFT_and_CRL mfts =                     
---                     -- let mftEntries MFT
---                     -- let mftsRecentFirst = L.sortOn () [a] 
---                     (Nothing, Nothing)
+        getSign' signObject = (signAlgorithm, rawContent signObject, sign)
+            where 
+                CertificateWithSignature 
+                    _ 
+                    (SignatureAlgorithmIdentifier signAlgorithm) 
+                    (SignatureValue sign) = scCertificate $ soContent signObject
+
 
 
 
