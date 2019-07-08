@@ -65,8 +65,9 @@ testSignedObjectParsing = do
 
   roa <- B.readFile roaFile 
   -- let d = decodeASN1' BER mft
-  let r = parseRoa roa
-  putStrLn $ "roa = " ++ show r
+  -- let r = parseRoa roa
+  -- putStrLn $ "roa = " ++ show r
+  pure ()
   
 
 testAllManifests = testAllObjects parseMft "mft"  

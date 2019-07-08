@@ -14,10 +14,13 @@ import Data.ASN1.OID
 import Data.ASN1.Types
 import Data.ASN1.Parse
 import Data.ASN1.BitArray
+import Data.ASN1.Encoding
+import Data.ASN1.BinaryEncoding
 
 import Data.X509
 
 import RPKI.IP
+import RPKI.Domain
 
 newtype ParseError s = ParseError s
   deriving (Eq, Show, Functor)
@@ -106,3 +109,11 @@ getExts certificate = fromMaybe [] extensions
 
 getExtsSign :: SignedExact Certificate -> [ExtensionRaw]
 getExtsSign = getExts . signedObject . getSigned
+
+parseKI :: B.ByteString -> ParseResult KI
+parseKI bs = case decodeASN1' BER bs of
+      Left e -> Left $ fmtErr $ "Error decoding key identifier: " ++ show e
+      Right [OctetString bytes] -> pure $ KI bytes
+      Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ KI bytes
+      Right s -> Left $ fmtErr $ "Unknown key identifier " ++ show s
+

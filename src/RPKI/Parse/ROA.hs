@@ -6,6 +6,9 @@ import qualified Data.ByteString as B
 
 import Data.Monoid (mconcat)
 
+import Control.Lens
+import Data.Generics.Product
+
 import Data.Word
 
 import Data.ASN1.Types
@@ -14,6 +17,8 @@ import Data.ASN1.BinaryEncoding
 import Data.ASN1.Parse
 import Data.ASN1.BitArray
 
+import Data.Bifunctor
+
 import RPKI.Domain  
 import RPKI.IP
 import RPKI.Parse.Common 
@@ -21,12 +26,23 @@ import RPKI.SignTypes
 import RPKI.Parse.SignedObject 
 
 
-parseRoa :: B.ByteString -> ParseResult (SignedObject [Roa])
-parseRoa bs = 
-  case decodeASN1' BER bs of
-    Left e     -> (Left . fmtErr . show) e
-    Right asns -> mapParseErr $ runParseASN1 (parseSignedObject parseRoa') asns  
+parseRoa :: B.ByteString -> ParseResult (URI -> [(RpkiMeta, RoaObject)])
+parseRoa bs = do    
+    asns <- first (fmtErr . show) $ decodeASN1' BER bs  
+    f    <- first fmtErr $ runParseASN1 (parseSignedObject parseRoa') asns
+    let signedRoa = f bs
+    meta <- getMeta signedRoa bs
+    let roaObjects = multiplySignedRoas signedRoa    
+    pure $ \location -> map (\ro -> (meta location, ro)) roaObjects
   where 
+    multiplySignedRoas :: SignedObject [Roa] -> [RoaObject]    
+    multiplySignedRoas signedRoas = map (\roa -> 
+        RoaObject (signedRoas & contentLens .~ roa)
+      ) roas
+      where
+        roas = signedRoas ^. contentLens
+        contentLens = field @"soContent" . field @"scEncapContentInfo" . field @"cContent"                 
+
     parseRoa' = onNextContainer Sequence $ do      
       asId <- getInteger (pure . fromInteger) "Wrong ASID"
       mconcat <$> (onNextContainer Sequence $ getMany $ 

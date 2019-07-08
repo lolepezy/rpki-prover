@@ -1,4 +1,8 @@
+{-# LANGUAGE DeriveAnyClass       #-}
+
 module RPKI.SignTypes where
+
+import Control.DeepSeq
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
@@ -6,24 +10,29 @@ import qualified Data.Text as T
 import Data.ASN1.OID
 import Data.ASN1.Types
 
+import Data.Data (Typeable)
+
 import Data.Hourglass
+import GHC.Generics
 
 import Data.X509 as X509
-import RPKI.Domain
+-- import RPKI.Domain
 
 newtype SignatureValue = SignatureValue B.ByteString 
-  deriving (Eq, Ord, Show)  
+  deriving (Show, Eq, Ord, Typeable, Generic)  
 
 data SignedObject a = SignedObject {
-    soContentType :: !ContentType
-  , soContent     :: !(SignedContent a)
-} deriving (Eq, Show)
+    soContentType :: !ContentType, 
+    soContent     :: !(SignedContent a),
+    rawContent    :: !B.ByteString
+} deriving (Show, Eq, Typeable, Generic)
 
 data CertificateWithSignature = CertificateWithSignature 
   !X509.Certificate
   !SignatureAlgorithmIdentifier
   !SignatureValue
-  deriving (Eq, Show)
+  deriving (Show, Eq, Typeable, Generic)
+
 
 data SignedContent a = SignedContent {
       scVersion          :: !CMSVersion
@@ -31,7 +40,7 @@ data SignedContent a = SignedContent {
     , scEncapContentInfo :: !(EncapsulatedContentInfo a)
     , scCertificate      :: !CertificateWithSignature
     , scSignerInfos      :: !SignerInfos
-  } deriving (Eq, Show)
+  } deriving (Show, Eq, Typeable, Generic)
   
   {- 
       EncapsulatedContentInfo ::= SEQUENCE {
@@ -41,7 +50,7 @@ data SignedContent a = SignedContent {
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
       eContentType :: !ContentType
     , cContent     :: !a    
-  } deriving (Eq, Ord, Show)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
   
   {-
       SignerInfo ::= SEQUENCE {
@@ -60,24 +69,31 @@ data SignerInfos = SignerInfos {
     , signedAttrs        :: !SignedAttributes
     , signatureAlgorithm :: !SignatureAlgorithmIdentifier
     , signature          :: !SignatureValue
-  } deriving (Eq, Show)
+  } deriving (Show, Eq, Typeable, Generic)
   
-newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text deriving (Eq, Ord, Show)
+newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text 
+  deriving (Eq, Ord, Show)
   
-newtype SignerIdentifier = SignerIdentifier SKI 
-    deriving (Eq, Ord, Show)
+newtype SignerIdentifier = SignerIdentifier B.ByteString 
+  deriving (Show, Eq, Ord, Typeable, Generic)
   
-newtype ContentType = ContentType OID deriving (Eq, Ord, Show)
-newtype CMSVersion = CMSVersion Int deriving (Eq, Ord, Show)
+newtype ContentType = ContentType OID 
+  deriving (Show, Eq, Ord, Typeable, Generic)
+newtype CMSVersion = CMSVersion Int 
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
-newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] deriving (Eq, Ord, Show)
-newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier OID  deriving (Eq, Ord, Show)
+newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
+  deriving (Show, Eq, Ord, Typeable, Generic)
+newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier SignatureALG  
+  deriving (Show, Eq, Typeable, Generic)
 
-newtype SignedAttributes = SignedAttributes [Attribute] deriving (Eq, Show)  
+newtype SignedAttributes = SignedAttributes [Attribute] 
+  deriving (Show, Eq, Typeable, Generic)
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest B.ByteString
             | SigningTime DateTime (Maybe TimezoneOffset)
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
-      deriving (Eq, Show)  
+      deriving (Show, Eq, Typeable, Generic)
+

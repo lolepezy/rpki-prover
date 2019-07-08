@@ -3,10 +3,6 @@
 
 module RPKI.Domain where
 
-import           Control.Lens
-import           Data.Generics.Product
-import           Data.Generics.Sum
-
 import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.Text as T
@@ -29,6 +25,7 @@ import qualified Data.X509 as X509
 import qualified Data.ASN1.OID as O
 
 import RPKI.IP    
+import RPKI.SignTypes
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -52,23 +49,18 @@ withRFC (Left (WithRFC a)) f = f a
 withRFC (Right (WithRFC a)) f = f a  
 
 newtype IpResources = IpResources (AnRFC IpResourceSet)    
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype RSet r = RSet (AnRFC (ResourceSet r))
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
-
-deriving instance Show r => Show (ResourceSet r rfc)
-deriving instance Eq r => Eq (ResourceSet r rfc)
-deriving instance Ord r => Ord (ResourceSet r rfc)
-deriving instance Typeable r => Typeable (ResourceSet r rfc)
-
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data IpResourceSet (rfc :: ValidationRFC) = 
     IpResourceSet !(ResourceSet (IpResource 'Ipv4F) rfc)
                   !(ResourceSet (IpResource 'Ipv6F) rfc)
-    deriving (Show, Eq, Ord, Typeable)                    
+    deriving (Show, Eq, Ord, Typeable, Generic)                    
 
 
 data HashAlg = SHA256
@@ -92,10 +84,10 @@ data ObjectType = CER | MFT | CRL | ROA | GBR
   deriving (Show, Eq, Typeable)
 
 newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
-newtype MftObject = MftObject Manifest deriving (Show, Eq, Ord, Typeable, Generic)
 newtype CrlObject = CrlObject Crl deriving (Show, Eq, Ord, Typeable, Generic)
-newtype RoaObject = RoaObject Roa deriving (Show, Eq, Ord, Typeable, Generic)
-newtype GbrObject = GbrObject Gbr deriving (Show, Eq, Ord, Typeable, Generic)
+newtype MftObject = MftObject (SignedObject Manifest) deriving (Show, Eq, Typeable, Generic)
+newtype RoaObject = RoaObject (SignedObject Roa) deriving (Show, Eq, Typeable, Generic)
+newtype GbrObject = GbrObject (SignedObject Gbr) deriving (Show, Eq, Typeable, Generic)
     
 data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI
@@ -105,17 +97,30 @@ data RpkiMeta = RpkiMeta {
   , serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
--- Do objects differently
-
 data RO = CerRO CerObject 
         | MftRO MftObject
         | CrlRO CrlObject
         | RoaRO RoaObject
         | GbrRO GbrObject
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Typeable, Generic)
 
 data RpkiObject = RpkiObject RpkiMeta RO
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Typeable, Generic)
+
+
+-- getCertificate :: RpkiObject -> X509.Certificate
+-- getCertificate (RpkiObject _ (CerRO (CerObject (ResourceCert rc)))) = X509.signedObject $ X509.getSigned $ withRFC rc certX509
+-- getCertificate (RpkiObject _ (MftRO (MftObject so))) = x509cert so
+-- getCertificate (RpkiObject _ (RoaRO (RoaObject so))) = x509cert so
+-- getCertificate (RpkiObject _ (GbrRO (GbrObject so))) = x509cert so
+-- -- TODO Implement CRL
+
+-- x509FromResourceCert (CerObject (ResourceCert rc)) = X509.signedObject $ X509.getSigned $ withRFC rc certX509
+
+-- x509cert so = x509
+--     where CertificateWithSignature x509 _ _ = scCertificate $ soContent so
+
+--- 
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: !(X509.SignedExact X509.Certificate) 

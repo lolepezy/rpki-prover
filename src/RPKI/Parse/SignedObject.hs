@@ -42,10 +42,12 @@ import qualified RPKI.Util as U
 
       ContentType ::= OBJECT IDENTIFIER           
 -}
-parseSignedObject :: ParseASN1 a -> ParseASN1 (SignedObject a)
+parseSignedObject :: ParseASN1 a -> ParseASN1 (B.ByteString -> SignedObject a)
 parseSignedObject eContentParse = 
-  onNextContainer Sequence $
-    SignedObject <$> parseContentType <*> parseContent  
+  onNextContainer Sequence $ do
+    contentType <- parseContentType
+    content     <- parseContent
+    pure $ \bs -> SignedObject contentType content bs
   where  
     parseContentType = getOID (pure . ContentType) "Wrong OID for contentType"
     parseContent = onNextContainer (Container Context 0) $ 
@@ -100,7 +102,7 @@ parseSignedObject eContentParse =
       parseSignature
       where 
         parseSid = getNext >>= \case 
-          Other Context 0 ki -> pure $ SignerIdentifier $ SKI $ KI ki
+          Other Context 0 si -> pure $ SignerIdentifier si
           s                  -> throwParseError $ "Unknown SID : " ++ show s
 
         parseSignedAttributes = onNextContainer (Container Context 0) $ 
@@ -133,25 +135,25 @@ parseSignedObject eContentParse =
         BitString (BitArray _ sig) -> pure $ SignatureValue sig
         s                          -> throwParseError $ "Unknown signature value : " ++ show s
 
-    parseSignatureAlgorithm = onNextContainer Sequence $
-        getNext >>= \case 
-          OID oid -> do
-            -- TODO Don't skip parameters, add them to the signature
-            _ <- getMany getNext
-            pure $ SignatureAlgorithmIdentifier oid
+    parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
 
 getMeta :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
 getMeta obj bs = 
   case extVal exts id_subjectKeyId of
-    Just s -> Right $ 
-              \location -> RpkiMeta {        
-                  aki  = (AKI . KI) <$> extVal exts id_authorityKeyId,
-                  ski  = SKI (KI s),
-                  hash = U.sha256s bs,
-                  locations = location :| [],
-                  serial = Serial (certSerial x509)    
-              }
+    Just s -> do
+        ki <- parseKI s
+        aki' <- case extVal exts id_authorityKeyId of
+                  Nothing -> pure $ Nothing
+                  Just a  -> Just . AKI <$> parseKI a        
+        pure $ 
+          \location -> RpkiMeta {        
+              aki  = aki',
+              ski  = SKI ki,
+              hash = U.sha256s bs,
+              locations = location :| [],
+              serial = Serial (certSerial x509)    
+                  }        
     Nothing -> Left . fmtErr $ "SKI is absent" 
   where
     exts = getExts x509  

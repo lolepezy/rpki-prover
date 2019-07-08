@@ -66,9 +66,9 @@ parseNotification bs = runST $ do
             (\_ -> pure ())
 
     let notification = Notification <$>
-                        (valuesOrError version NoVersion) <*>
-                        (valuesOrError sessionId NoSessionId) <*>
-                        (valuesOrError serial NoSerial ) <*>
+                        valuesOrError version NoVersion <*>
+                        valuesOrError sessionId NoSessionId <*>
+                        valuesOrError serial NoSerial <*>
                         (SnapshotInfo <$> 
                             valuesOrError snapshotUri NoSnapshotURI <*>
                             valuesOrError snapshotHash NoSnapshotHash) <*>
@@ -199,9 +199,9 @@ appendBase64 base64 content =
     maybe (Just base64) (Just . newContent) content
     where
         trimmed = trim base64
-        newContent existing = case B.length trimmed of 
-                0 -> existing
-                _ -> B.concat [existing, trimmed]
+        newContent existing = case B.null trimmed of 
+                True  -> existing
+                False -> B.concat [existing, trimmed]
         base64' = (Just . maybe base64 newContent) content
 
 parseInteger :: B.ByteString -> Maybe Integer
@@ -257,7 +257,8 @@ parseXml bs onElement onText = do
 makeHash bs = Hash SHA256 . toBytes <$> hexString bs
 
 -- Parsing HEX stuff
-newtype HexString = HexString B.ByteString deriving ( Show, Eq, Ord )
+newtype HexString = HexString B.ByteString 
+    deriving (Show, Eq, Ord)
 
 hexString :: B.ByteString -> Maybe HexString
 hexString bs = HexString <$> unhex bs

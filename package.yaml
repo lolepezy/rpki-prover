@@ -54,6 +54,7 @@ dependencies:
 - lens
 - MissingH
 - mtl
+- multimap
 - pem
 - primitive
 - semigroups
@@ -76,6 +77,7 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
+
 
 library:
   source-dirs: src
