@@ -18,11 +18,10 @@ import           RPKI.Parse.SignedObject
 
 parseMft :: B.ByteString -> ParseResult (URI -> (RpkiMeta, MftObject))
 parseMft bs = do
-  asns <- first (fmtErr . show) $ decodeASN1' BER bs
-  f    <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
-  let so = f bs
-  meta <- getMeta so bs
-  pure $ \location -> (meta location, MftObject so)
+  asns      <- first (fmtErr . show) $ decodeASN1' BER bs
+  signedMft <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
+  meta      <- getMeta signedMft bs
+  pure $ \location -> (meta location, MftObject signedMft)
   where    
     parseManifest :: ParseASN1 Manifest
     parseManifest = onNextContainer Sequence $

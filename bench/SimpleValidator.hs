@@ -35,7 +35,12 @@ testAllObjects1 = do
 
   let skis = S.fromList [ hex a | Right ros <- parsedObjects, 
                               RpkiObject (RpkiMeta { ski = SKI (KI a) }) _ <- ros ]
+
+  putStrLn $ "skis = " ++ show (length skis)
   forM_ skis $ \ski -> putStrLn $ show ski
+
+  putStrLn $ "akis = " ++ show (length akis)
+  forM_ akis $ \aki -> putStrLn $ show aki
 
   putStrLn $ "errors = " ++ show (length errors)
   putStrLn $ "n = " ++ show (length objects)  

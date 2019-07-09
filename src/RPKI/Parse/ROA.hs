@@ -28,10 +28,9 @@ import RPKI.Parse.SignedObject
 
 parseRoa :: B.ByteString -> ParseResult (URI -> [(RpkiMeta, RoaObject)])
 parseRoa bs = do    
-    asns <- first (fmtErr . show) $ decodeASN1' BER bs  
-    f    <- first fmtErr $ runParseASN1 (parseSignedObject parseRoa') asns
-    let signedRoa = f bs
-    meta <- getMeta signedRoa bs
+    asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
+    signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoa') asns
+    meta      <- getMeta signedRoa bs
     let roaObjects = multiplySignedRoas signedRoa    
     pure $ \location -> map (\ro -> (meta location, ro)) roaObjects
   where 
