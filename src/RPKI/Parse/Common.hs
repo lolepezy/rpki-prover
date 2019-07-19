@@ -18,6 +18,7 @@ import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
 import Data.X509
+import Crypto.Hash (SHA256)
 
 import RPKI.IP
 import RPKI.Domain
@@ -43,12 +44,14 @@ id_subjectKeyId, id_authorityKeyId :: OID
 id_subjectKeyId   = [2, 5, 29, 14]
 id_authorityKeyId = [2, 5, 29, 35]
 
-id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
+id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime, id_sha256 :: OID
 id_pkcs9              = [1, 2, 840, 113549, 1, 9]
 id_contentType        = id_pkcs9 ++ [3]
 id_messageDigest      = id_pkcs9 ++ [4]
 id_signingTime        = id_pkcs9 ++ [5]
 id_binarySigningTime  = id_pkcs9 ++ [16, 2, 46]
+
+id_sha256             = id_pkcs9 ++ [16, 1, 24]
 
 fmtErr :: String -> ParseError T.Text
 fmtErr = ParseError . T.pack
@@ -117,3 +120,7 @@ parseKI bs = case decodeASN1' BER bs of
       Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ KI bytes
       Right s -> Left $ fmtErr $ "Unknown key identifier " ++ show s
 
+oid2Hash :: OID -> ParseASN1 HashALG
+oid2Hash = \case
+      id_sha256 -> pure HashSHA256
+      s         -> throwParseError $ "Unknown hashing algorithm OID: " ++ show s

@@ -23,7 +23,7 @@ newtype SignatureValue = SignatureValue B.ByteString
 
 data SignedObject a = SignedObject {
     soContentType :: !ContentType, 
-    soContent     :: !(SignedContent a),
+    soContent     :: !(SignedData a),
     rawContent    :: !B.ByteString
 } deriving (Show, Eq, Typeable, Generic)
 
@@ -33,8 +33,20 @@ data CertificateWithSignature = CertificateWithSignature
   !SignatureValue
   deriving (Show, Eq, Typeable, Generic)
 
+{- 
+      SignedData ::= SEQUENCE {
+        version CMSVersion,
+        digestAlgorithms DigestAlgorithmIdentifiers,
+        encapContentInfo EncapsulatedContentInfo,
+        certificates [0] IMPLICIT CertificateSet OPTIONAL,
+        crls [1] IMPLICIT RevocationInfoChoices OPTIONAL,
+        signerInfos SignerInfos }
 
-data SignedContent a = SignedContent {
+      DigestAlgorithmIdentifiers ::= SET OF DigestAlgorithmIdentifier
+
+      SignerInfos ::= SET OF SignerInfo
+-}
+data SignedData a = SignedData {
       scVersion          :: !CMSVersion
     , scDigestAlgorithms :: !DigestAlgorithmIdentifiers
     , scEncapContentInfo :: !(EncapsulatedContentInfo a)

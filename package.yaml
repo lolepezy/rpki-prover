@@ -40,6 +40,8 @@ dependencies:
 - bytestring-conversion
 - containers
 - cryptohash-sha256
+- cryptostore
+- cryptonite
 - deepseq
 - directory
 - dlist
@@ -52,6 +54,7 @@ dependencies:
 - interpolate
 - ixset-typed
 - lens
+- memory
 - MissingH
 - mtl
 - multimap
@@ -60,6 +63,9 @@ dependencies:
 - semigroups
 - stm
 - stm-containers
+- streaming
+- streaming-bytestring
+- streamly
 - string-conversions
 - text
 - text-short
@@ -78,10 +84,13 @@ dependencies:
 - generic-arbitrary
 - quickcheck-instances
 
+# ghc-options:
+#   - -with-rtsopts=-N    
+#   - -O2
 
 library:
   source-dirs: src
-
+  
 executables:
   rpki-prover-exe:
     main:                Main.hs
@@ -91,6 +100,7 @@ executables:
     - -rtsopts
     - -Wall
     - -with-rtsopts=-N    
+    # - -O2    
     dependencies:
     - rpki-prover  
 
@@ -105,7 +115,7 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    - -O2
+    # - -O2
     dependencies:
     - rpki-prover
     - QuickCheck
@@ -115,7 +125,7 @@ tests:
     - generic-arbitrary
     - quickcheck-instances
 
-  only-parser:
+  simple-validator:
     main:                SimpleValidator.hs
     source-dirs:         
     - bench
@@ -124,7 +134,6 @@ tests:
     - -threaded
     - -rtsopts
     - -Wall
-    - -O2
-    - -with-rtsopts=-N +RTS -A64m -AL256m -qn6 -RTS
+    # - -O2
     dependencies:
     - rpki-prover  

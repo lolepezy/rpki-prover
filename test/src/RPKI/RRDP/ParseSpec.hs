@@ -9,20 +9,12 @@ module RPKI.RRDP.ParseSpec where
 import qualified Data.ByteString                      as B
 import qualified Data.ByteString.Lazy                 as BL
 
-import qualified Data.Text                            as T
-
-import           Control.Monad
-import           Control.Monad.ST
-import           Data.Hex                             (hex, unhex)
-import           Data.STRef
-import           Data.Word
+import           Data.Hex                             (hex)
 
 import           Control.DeepSeq
-import           Control.Lens                         ((^.))
 
 import           Control.Monad.Identity
-import           Control.Monad.Primitive              (PrimMonad (..), ioToPrim,
-                                                       stToPrim)
+import           Control.Monad.Primitive              (ioToPrim)
 import           Control.Monad.Trans.Class
 
 import qualified Data.ByteString.Base64               as B64
@@ -44,10 +36,11 @@ import           Data.String.Interpolate
 
 import           RPKI.Util                            (convert)
 
+testParseSnapshot :: IO ()
 testParseSnapshot = do
   snapshot <- BL.readFile "./snapshot.xml"
   let x = parseSnapshot snapshot
-  print $ x `deepseq` 1
+  print $ x `deepseq` (1 :: Integer)
   -- print $ length x
   -- runIdentityT $ parseXml (B.toStrict snapshot)
   --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
@@ -58,7 +51,7 @@ testParseDelta = do
   let x = parseDelta delta
   print $ x `deepseq` x
   runIdentityT $ parseXml (BL.toStrict delta)
-      (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
+      (\z -> lift $ ioToPrim $ print ("e = " ++ show z))
       (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
 
 
@@ -115,9 +108,9 @@ deltaToXml (Delta (Version v) (SessionId sess) (Serial s) items) =
   where
     item (DP (DeltaPublish (URI u) Nothing (Content c))) =
       [i|<publish uri="#{u}">#{B64.encode c}</publish>|]
-    item (DP (DeltaPublish (URI u) (Just (Hash _ hash)) (Content c))) =
+    item (DP (DeltaPublish (URI u) (Just (Hash hash)) (Content c))) =
       [i|<publish uri="#{u}" hash="#{hex hash}">#{B64.encode c}</publish>|]
-    item (DW (DeltaWithdraw (URI u) (Hash _ hash))) =
+    item (DW (DeltaWithdraw (URI u) (Hash hash))) =
       [i|<withdraw uri="#{u}" hash="#{hex hash}"></withdraw>|]
 
 
@@ -125,7 +118,7 @@ notificationToXml :: Notification -> String
 notificationToXml Notification { 
       sessionId = SessionId sid,
       serial = Serial s,
-      snapshotInfo = SnapshotInfo (URI su) (Hash _ sh),
+      snapshotInfo = SnapshotInfo (URI su) (Hash sh),
       version = Version v,
       ..
     } =
@@ -134,7 +127,7 @@ notificationToXml Notification {
       #{concatMap delta deltas}
   </notification>|]
   where
-    delta (DeltaInfo (URI u) (Hash _ hash) (Serial s)) =
+    delta (DeltaInfo (URI u) (Hash hash) (Serial s)) =
       [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{s}"></delta>|]  
 
 instance Arbitrary URI where
@@ -145,11 +138,7 @@ instance Arbitrary URI where
   shrink = genericShrink
 
 instance Arbitrary Hash where
-  arbitrary = Hash SHA256 <$> suchThat arbitrary (\b -> B.length b > 1)
-  shrink = genericShrink
-
-instance Arbitrary HashAlg where
-  arbitrary = genericArbitrary
+  arbitrary = Hash <$> suchThat arbitrary (\b -> B.length b > 1)
   shrink = genericShrink
 
 instance Arbitrary Serial where

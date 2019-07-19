@@ -42,21 +42,22 @@ import qualified RPKI.Util as U
 
       ContentType ::= OBJECT IDENTIFIER           
 -}
-parseSignedObject :: ParseASN1 a -> ParseASN1 (B.ByteString -> SignedObject a)
+parseSignedObject :: ParseASN1 a -> ParseASN1 (SignedObject a)
 parseSignedObject eContentParse = 
   onNextContainer Sequence $ do
-    contentType <- parseContentType
-    content     <- parseContent
-    pure $ \bs -> SignedObject contentType content bs
+    contentType    <- parseContentType
+    (content, raw) <- parseContent
+    pure $ SignedObject contentType content raw
   where  
     parseContentType = getOID (pure . ContentType) "Wrong OID for contentType"
     parseContent = onNextContainer (Container Context 0) $ 
-      onNextContainer Sequence $
-        SignedContent <$> 
-          parseVersion <*> onNextContainer Set parseDigestAlgorithms <*>
-          parseEncapContentInfo <*>
-          parseEECertificate <*>
-          onNextContainer Set (onNextContainer Sequence parseSignerInfo)
+      onNextContainer Sequence $ do
+        version       <- parseVersion
+        digestAlg     <- onNextContainer Set parseDigestAlgorithms
+        (info, raw)   <- parseEncapContentInfo
+        eeCertificate <- parseEECertificate
+        signerInfo    <- onNextContainer Set (onNextContainer Sequence parseSignerInfo)
+        pure (SignedData version digestAlg info eeCertificate signerInfo, raw)
 
     parseVersion = getInteger (pure . CMSVersion . fromInteger) "Wrong version"
 
@@ -75,13 +76,14 @@ parseSignedObject eContentParse =
         where
           eContent contentType = do 
             fullContent <- getMany getNext
+            -- _ <- throwParseError $ "fullContent =  " ++ show fullContent
             let bs = B.concat [ os | OctetString os <- fullContent ]
             case decodeASN1' BER bs of
               Left e     -> throwParseError $ "Couldn't decode embedded content: " ++ show e
               Right asns ->  
                 case runParseASN1 eContentParse asns of
                   Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " ++ e
-                  Right a -> pure $ EncapsulatedContentInfo contentType a    
+                  Right a -> pure (EncapsulatedContentInfo contentType a, bs)
         
 
     parseEECertificate = 

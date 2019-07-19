@@ -62,11 +62,9 @@ data IpResourceSet (rfc :: ValidationRFC) =
                   !(ResourceSet (IpResource 'Ipv6F) rfc)
     deriving (Show, Eq, Ord, Typeable, Generic)                    
 
+-- TODO Use library type?
+data Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-data HashAlg = SHA256
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)     
-
-data Hash = Hash HashAlg B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -83,11 +81,14 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 data ObjectType = CER | MFT | CRL | ROA | GBR
   deriving (Show, Eq, Typeable)
 
+newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
+
 newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
 newtype CrlObject = CrlObject Crl deriving (Show, Eq, Ord, Typeable, Generic)
-newtype MftObject = MftObject (SignedObject Manifest) deriving (Show, Eq, Typeable, Generic)
-newtype RoaObject = RoaObject (SignedObject Roa) deriving (Show, Eq, Typeable, Generic)
-newtype GbrObject = GbrObject (SignedObject Gbr) deriving (Show, Eq, Typeable, Generic)
+
+type MftObject = CMS Manifest
+type RoaObject = CMS [Roa]
+type GbrObject = CMS Gbr
     
 data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI
@@ -106,21 +107,6 @@ data RO = CerRO CerObject
 
 data RpkiObject = RpkiObject RpkiMeta RO
     deriving (Show, Eq, Typeable, Generic)
-
-
--- getCertificate :: RpkiObject -> X509.Certificate
--- getCertificate (RpkiObject _ (CerRO (CerObject (ResourceCert rc)))) = X509.signedObject $ X509.getSigned $ withRFC rc certX509
--- getCertificate (RpkiObject _ (MftRO (MftObject so))) = x509cert so
--- getCertificate (RpkiObject _ (RoaRO (RoaObject so))) = x509cert so
--- getCertificate (RpkiObject _ (GbrRO (GbrObject so))) = x509cert so
--- -- TODO Implement CRL
-
--- x509FromResourceCert (CerObject (ResourceCert rc)) = X509.signedObject $ X509.getSigned $ withRFC rc certX509
-
--- x509cert so = x509
---     where CertificateWithSignature x509 _ _ = scCertificate $ soContent so
-
---- 
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: !(X509.SignedExact X509.Certificate) 
@@ -143,11 +129,11 @@ data Roa = Roa
 
 data Manifest = Manifest {
     mftNumber   :: !Int  
-  , fileHashAlg :: !HashAlg
+  , fileHashAlg :: !X509.HashALG
   , thisTime    :: !DateTime
   , nextTime    :: !DateTime 
   , mftEntries  :: ![(T.Text, Hash)]
-} deriving (Show, Eq, Ord, Typeable)
+} deriving (Show, Eq, Typeable)
 
 data Crl = Crl {
     entries :: [RpkiObj]
@@ -194,12 +180,7 @@ newtype Message = Message TS.ShortText
 data Invalid = Error | Warning
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-
--- TODO Make it better
-hashAlg :: O.OID -> HashAlg
-hashAlg _ = SHA256
         
-
 -- Validation errors
 
 data VError = InvalidCert !T.Text |
@@ -234,3 +215,7 @@ data RrdpError = BrokenSerial !B.ByteString |
                  SnapshotHashMismatch Hash Hash |
                  DeltaHashMismatch Hash Hash Serial
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
+data CryptoValidation = CryptoOk |
+                        NoDigest |
+                        InvalidSignature

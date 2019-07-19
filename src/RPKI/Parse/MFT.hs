@@ -21,7 +21,7 @@ parseMft bs = do
   asns      <- first (fmtErr . show) $ decodeASN1' BER bs
   signedMft <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
   meta      <- getMeta signedMft bs
-  pure $ \location -> (meta location, MftObject signedMft)
+  pure $ \location -> (meta location, CMS signedMft)
   where    
     parseManifest :: ParseASN1 Manifest
     parseManifest = onNextContainer Sequence $
@@ -29,7 +29,7 @@ parseMft bs = do
         (IntVal manifestNumber,
          ASN1Time TimeGeneralized thisUpdateTime _,
          ASN1Time TimeGeneralized nextUpdateTime _) -> do
-          fileHashAlg <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
+          fileHashAlg <- getOID oid2Hash "Wrong hash algorithm OID"
           entries     <- getEntries fileHashAlg
           -- TODO translate to UTC
           pure $ Manifest (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
@@ -39,7 +39,7 @@ parseMft bs = do
          IntVal manifestNumber,
          ASN1Time TimeGeneralized thisUpdateTime tz) -> do
           nextUpdateTime <- getTime "No NextUpdate time"
-          fileHashAlg    <- getOID (pure . hashAlg) "Wrong hash algorithm OID"
+          fileHashAlg    <- getOID oid2Hash "Wrong hash algorithm OID"
           entries        <- getEntries fileHashAlg
           -- TODO translate to UTC
           pure $ Manifest (fromInteger manifestNumber) fileHashAlg thisUpdateTime nextUpdateTime entries
@@ -49,7 +49,7 @@ parseMft bs = do
     getEntries fileHashAlg = onNextContainer Sequence $
       getMany $ onNextContainer Sequence $
         (,) <$> getIA5String (pure . T.pack) "Wrong file name"
-            <*> getBitString (pure . (Hash fileHashAlg)) "Wrong hash"
+            <*> getBitString (pure . Hash) "Wrong hash"
 
     getTime message = getNext >>= \case
       ASN1Time TimeGeneralized dt tz -> pure dt

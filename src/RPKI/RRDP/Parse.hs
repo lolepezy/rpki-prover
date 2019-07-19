@@ -254,7 +254,7 @@ parseXml bs onElement onText = do
     where nothing _ = lift $ pure ()
 
 
-makeHash bs = Hash SHA256 . toBytes <$> hexString bs
+makeHash bs = Hash . toBytes <$> hexString bs
 
 -- Parsing HEX stuff
 newtype HexString = HexString B.ByteString 

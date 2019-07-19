@@ -26,23 +26,14 @@ import RPKI.SignTypes
 import RPKI.Parse.SignedObject 
 
 
-parseRoa :: B.ByteString -> ParseResult (URI -> [(RpkiMeta, RoaObject)])
+parseRoa :: B.ByteString -> ParseResult (URI -> (RpkiMeta, RoaObject))
 parseRoa bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
-    signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoa') asns
+    signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoas') asns
     meta      <- getMeta signedRoa bs
-    let roaObjects = multiplySignedRoas signedRoa    
-    pure $ \location -> map (\ro -> (meta location, ro)) roaObjects
-  where 
-    multiplySignedRoas :: SignedObject [Roa] -> [RoaObject]    
-    multiplySignedRoas signedRoas = map (\roa -> 
-        RoaObject (signedRoas & contentLens .~ roa)
-      ) roas
-      where
-        roas = signedRoas ^. contentLens
-        contentLens = field @"soContent" . field @"scEncapContentInfo" . field @"cContent"                 
-
-    parseRoa' = onNextContainer Sequence $ do      
+    pure $ \location -> (meta location, CMS signedRoa)
+  where     
+    parseRoas' = onNextContainer Sequence $ do      
       asId <- getInteger (pure . fromInteger) "Wrong ASID"
       mconcat <$> (onNextContainer Sequence $ getMany $ 
         onNextContainer Sequence $ 
