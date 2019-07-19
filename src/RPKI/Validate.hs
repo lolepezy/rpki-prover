@@ -1,13 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module RPKI.Validate where
 
-import Control.Concurrent.STM
-import Control.Concurrent.Async
-
-import Control.Applicative
 import Data.Validation
-
-import qualified Data.List as L
 
 import Data.X509 hiding (getCertificate)
 import Data.X509.Validation hiding (InvalidSignature)
@@ -52,18 +46,15 @@ validateSignature ro (CerObject (ResourceCert parentCert)) =
 validateCMSSignature :: CMS a -> CryptoValidation
 validateCMSSignature (CMS so) = 
     case [ d | MessageDigest d <- attrs ] of
-        []         -> NoDigest
-        digest : _ -> if RSA.verify (Nothing :: Maybe SHA256) pk digest sign 
-            then CryptoOk
-            else InvalidSignature            
+        []                           -> NoDigest
+        digest : _ | verified digest -> CryptoOk
+        _          | otherwise       -> InvalidSignature            
     where
+        verified digest = RSA.verify (Nothing :: Maybe SHA256) pk digest sign
         SignatureValue sign = signature $ scSignerInfos $ soContent so
         CertificateWithSignature
             eeCertificate
             (SignatureAlgorithmIdentifier signAlgorithm) 
             _ = scCertificate $ soContent so
         PubKeyRSA pk = certPubKey eeCertificate
-        SignedAttributes attrs = signedAttrs $ scSignerInfos $ soContent so
-        digest = case [ d | MessageDigest d <- attrs ] of
-            []    -> Left $ NoDigest
-            d : _ -> Right d
+        SignedAttributes attrs = signedAttrs $ scSignerInfos $ soContent so        
