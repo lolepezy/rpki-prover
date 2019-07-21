@@ -122,5 +122,5 @@ parseKI bs = case decodeASN1' BER bs of
 
 oid2Hash :: OID -> ParseASN1 HashALG
 oid2Hash = \case
-      id_sha256 -> pure HashSHA256
-      s         -> throwParseError $ "Unknown hashing algorithm OID: " ++ show s
+      oid | oid == id_sha256 -> pure HashSHA256
+          | otherwise        -> throwParseError $ "Unknown hashing algorithm OID: " ++ show oid

@@ -2,8 +2,6 @@
 
 module RPKI.SignTypes where
 
-import Control.DeepSeq
-
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
 
@@ -99,7 +97,9 @@ newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID]
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier SignatureALG  
   deriving (Show, Eq, Typeable, Generic)
 
-newtype SignedAttributes = SignedAttributes [Attribute] 
+-- Axccording to https://tools.ietf.org/html/rfc5652#page-16
+-- there has to be DER encoded signedAttribute set
+data SignedAttributes = SignedAttributes ![Attribute] B.ByteString
   deriving (Show, Eq, Typeable, Generic)
 
 data Attribute = ContentTypeAttr ContentType 

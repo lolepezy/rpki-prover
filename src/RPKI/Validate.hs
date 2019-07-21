@@ -43,18 +43,13 @@ validateSignature ro (CerObject (ResourceCert parentCert)) =
                 pubKey = certPubKey eeCertificate
 
 
-validateCMSSignature :: CMS a -> CryptoValidation
-validateCMSSignature (CMS so) = 
-    case [ d | MessageDigest d <- attrs ] of
-        []                           -> NoDigest
-        digest : _ | verified digest -> CryptoOk
-        _          | otherwise       -> InvalidSignature            
+validateCMSSignature :: CMS a -> SignatureVerification
+validateCMSSignature (CMS so) = verifySignature signAlgorithm pk signData sign    
     where
-        verified digest = RSA.verify (Nothing :: Maybe SHA256) pk digest sign
         SignatureValue sign = signature $ scSignerInfos $ soContent so
         CertificateWithSignature
             eeCertificate
             (SignatureAlgorithmIdentifier signAlgorithm) 
             _ = scCertificate $ soContent so
-        PubKeyRSA pk = certPubKey eeCertificate
-        SignedAttributes attrs = signedAttrs $ scSignerInfos $ soContent so        
+        pk = certPubKey eeCertificate
+        SignedAttributes _ signData = signedAttrs $ scSignerInfos $ soContent so        

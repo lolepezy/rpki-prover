@@ -7,6 +7,8 @@ import qualified Data.ByteString as B
 import Control.Applicative
 import Data.Maybe
 
+import Data.Bifunctor
+
 import Data.ASN1.BitArray
 import Data.ASN1.Types
 import Data.ASN1.Parse
@@ -107,30 +109,36 @@ parseSignedObject eContentParse =
           Other Context 0 si -> pure $ SignerIdentifier si
           s                  -> throwParseError $ "Unknown SID : " ++ show s
 
-        parseSignedAttributes = onNextContainer (Container Context 0) $ 
-          SignedAttributes <$> attributes
-            where 
-              attributes = getMany $ 
-                onNextContainer Sequence $ getNext >>= \case 
-                  OID attrId 
-                    | attrId == id_contentType -> getNextContainerMaybe Set >>= \case 
-                            Just [OID ct] -> pure $ ContentTypeAttr $ ContentType ct
-                            s -> throwParseError $ "Unknown contentType: " ++ show s
-                    | attrId == id_messageDigest -> getNextContainerMaybe Set >>= \case
-                            Just [OctetString md] -> pure $ MessageDigest md
-                            s -> throwParseError $ "Unknown SID: " ++ show s
-                    | attrId == id_signingTime -> getNextContainerMaybe Set >>= \case
-                            Just [ASN1Time TimeUTC dt tz] -> pure $ SigningTime dt tz
-                            s -> throwParseError $ "Unknown Signing Time: " ++ show s
-                    | attrId == id_binarySigningTime -> getNextContainerMaybe Set >>= \case
-                            Just [IntVal i] -> pure $ BinarySigningTime i
-                            s -> throwParseError $ "Unknown Binary Signing Time: " ++ show s
-                    | otherwise -> getNextContainerMaybe Set >>= \case
-                            Just asn1 -> pure $ UnknownAttribute attrId asn1
-                            Nothing   -> pure $ UnknownAttribute attrId []
+        parseSignedAttributes = 
+          getNextContainerMaybe (Container Context 0) >>= \case
+            Nothing -> throwParseError "No signedAttributes"
+            Just asns  -> do              
+              case runParseASN1 parseSA asns of
+                Left e -> throwParseError $ show e
+                Right attributes -> pure $ SignedAttributes attributes saEncoded
+                where 
+                  saEncoded = encodeASN1' DER $ [Start Set] ++ asns ++ [End Set]
+                  parseSA = getMany $ 
+                          onNextContainer Sequence $ getNext >>= \case 
+                            OID attrId 
+                              | attrId == id_contentType -> getNextContainerMaybe Set >>= \case 
+                                      Just [OID ct] -> pure $ ContentTypeAttr $ ContentType ct
+                                      s -> throwParseError $ "Unknown contentType: " ++ show s
+                              | attrId == id_messageDigest -> getNextContainerMaybe Set >>= \case
+                                      Just [OctetString md] -> pure $ MessageDigest md
+                                      s -> throwParseError $ "Unknown SID: " ++ show s
+                              | attrId == id_signingTime -> getNextContainerMaybe Set >>= \case
+                                      Just [ASN1Time TimeUTC dt tz] -> pure $ SigningTime dt tz
+                                      s -> throwParseError $ "Unknown Signing Time: " ++ show s
+                              | attrId == id_binarySigningTime -> getNextContainerMaybe Set >>= \case
+                                      Just [IntVal i] -> pure $ BinarySigningTime i
+                                      s -> throwParseError $ "Unknown Binary Signing Time: " ++ show s
+                              | otherwise -> getNextContainerMaybe Set >>= \case
+                                      Just asn1 -> pure $ UnknownAttribute attrId asn1
+                                      Nothing   -> pure $ UnknownAttribute attrId []
 
-                  s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
-                            
+                            s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
+                                      
         
     parseSignature = getNext >>= \case 
         OctetString sig            -> pure $ SignatureValue sig

@@ -45,8 +45,7 @@ extra-deps:
  - stm-hamt-1.2.0.2
  - hw-ip-2.0.1.0
  - streaming-utils-0.2.0.0
- - json-stream-0.4.2.4
- - cryptostore-0.2.0.0
+ - json-stream-0.4.2.4 
  - git: git@github.com:vincenthz/hs-asn1.git
    commit: 6ac0d32b5fa0023267c36cbb754d95ca23d7ec48
    subdirs:

@@ -40,7 +40,6 @@ dependencies:
 - bytestring-conversion
 - containers
 - cryptohash-sha256
-- cryptostore
 - cryptonite
 - deepseq
 - directory

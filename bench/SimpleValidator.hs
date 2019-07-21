@@ -12,16 +12,12 @@ import qualified Data.Set as Set
 import qualified Data.MultiMap as MultiMap
 import Data.MultiMap (MultiMap)
 
-import Data.Bifunctor
 import Data.Hex
-
-import Data.ASN1.Encoding
-import Data.ASN1.BinaryEncoding
 
 import Data.X509
 import Data.X509.Validation
 
-import RPKI.Domain hiding (SHA256)
+import RPKI.Domain
 import RPKI.SignTypes
 import RPKI.Validate
 import RPKI.Parse.Common
@@ -29,28 +25,15 @@ import RPKI.Parse.Cert
 import RPKI.Parse.MFT
 import RPKI.Parse.ROA
 
-import Streaming
-import qualified Streaming.Prelude as S
-
--- import Streamly
--- import qualified Streamly.Prelude as SLY
--- import Data.Function ((&))
+-- import Streaming
+-- import qualified Streaming.Prelude as S
 
 import System.FilePath.Find
 
--- import Crypto.Store.X509
--- import Crypto.Store.CMS
--- import Crypto.Store.ASN1.Parse
-
 import Crypto.Hash
-import Crypto.Random.Types
 import qualified Crypto.PubKey.RSA.PKCS15 as RSA
-import qualified Crypto.PubKey.RSA.Prim as RSAPrim
 import Crypto.PubKey.RSA.Types 
 import qualified Data.ByteArray as BA
-
--- import Crypto.Store.PEM
-
 
 runValidate = do  
   parsedObjects <- readRepo              
@@ -107,8 +90,9 @@ testSignature = do
   let roaFile = "/Users/mpuzanov/ripe/tmp/rpki/repo/repository/DEFAULT/5b/6ab497-16d9-4c09-94d9-1be4c416a09c/1/XY9rz4RATnJEwJxBpE7ExbD-Ubk.roa"  
   bs  <- B.readFile roaFile
   roa <- readObject roaFile bs
-  let len = B.length bs
-  let Right [RpkiObject _ (RoaRO (CMS so))] = roa
+  
+  putStrLn $ "roa = " ++ show roa
+  let Right [RpkiObject _ (RoaRO cms@(CMS so))] = roa
   let CertificateWithSignature 
         eeCertificate 
         (SignatureAlgorithmIdentifier signAlgorithm) 
@@ -122,32 +106,33 @@ testSignature = do
   -- signer.resultDigest == signedAttributes.MessageDigest
   -- 
 
+  -- 
   let digestEncoded = "010\r\ACK\t`\134H\SOHe\ETX\EOT\STX\SOH\ENQ\NUL\EOT \202\&2\213\195\143N\v}\158\203d\SI\227\246\136\244\ACK\164Sg>\ACKR\128\213R\198\249\194\&24l"
+
+  -- This is the hash of the serialised SignedAttributes set, i.e. the part of the blob 
+  -- corresponding to SignedAttributes
   let digestOriginal = "\202\&2\213\195\143N\v}\158\203d\SI\227\246\136\244\ACK\164Sg>\ACKR\128\213R\198\249\194\&24l"
 
-  let rr = RSA.verify (Nothing :: Maybe SHA256) pk digestEncoded sign
-
-
   ---- WORKS
-  let rr1 = RSA.verify (Nothing :: Maybe SHA256) pk digestOriginal sign
+  let rr = RSA.verify (Nothing :: Maybe SHA256) pk digestEncoded sign
   ---- WORKS!!!!!
 
+
+  let saContent = "1k0\SUB\ACK\t*\134H\134\247\r\SOH\t\ETX1\r\ACK\v*\134H\134\247\r\SOH\t\DLE\SOH\CAN0\FS\ACK\t*\134H\134\247\r\SOH\t\ENQ1\SI\ETB\r190101010413Z0/\ACK\t*\134H\134\247\r\SOH\t\EOT1\"\EOT \191M\161_C#\187\242\236f\198\163\246\132\178\222\131+\215\220\247\138\&7*\DC2\229)\ETX`<\203\175"
+  let rr1 = RSA.verify (Just SHA256) pk saContent sign
+  -- let rr1 = RSA.verify (Nothing :: Maybe SHA256) pk digestOriginal sign
+  
+
   let v = verifySignature signAlgorithm pubKey digestEncoded sign
-  let v1 = verifySignature signAlgorithm pubKey digestOriginal sign
+  let v1 = verifySignature signAlgorithm pubKey saContent sign
 
-  let sb :: B.ByteString = RSAPrim.ep pk digestEncoded
-  let ss :: B.ByteString = RSAPrim.ep pk sign
-
-  putStrLn $ "eeCertificate = " ++ show eeCertificate
   putStrLn $ "so = " ++ show so
   putStrLn $ "v = " ++ show v
   putStrLn $ "v1 = " ++ show v1
-  putStrLn $ "pk = " ++ show pk
-  putStrLn $ "sb = " ++ show (hex sb)
-  putStrLn $ "ss = " ++ show (hex ss)
-  putStrLn $ "unpad ss = " ++ show (hex <$> unpad' ss)
+  putStrLn $ "pk = " ++ show pk  
   putStrLn $ "sign = " ++ show (hex sign)  
   putStrLn $ "rr = " ++ show rr
+  putStrLn $ "validateCMSSignature = " ++ (show $ validateCMSSignature cms)
   putStrLn $ "rr1 = " ++ show rr1
   
 
@@ -200,9 +185,6 @@ bySKIMap ros = MultiMap.fromList [ (ski, ro) | ro@(RpkiObject (RpkiMeta {..}) _)
 byAKIMap :: [RpkiObject] -> MultiMap AKI RpkiObject
 byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject (RpkiMeta { aki = Just a }) _) <- ros ]
 
--- parseCMS :: B.ByteString -> Maybe ContentInfo
--- parseCMS bs = pemToContentInfo pem
---   where pem = PEM { pemName = "CMS", pemHeader = [], pemContent = bs}
   
 
 main :: IO ()
