@@ -16,9 +16,9 @@ import Data.MultiMap (MultiMap)
 import Data.X509
 import Data.X509.Validation
 
-import           Data.ASN1.Types
-import           Data.ASN1.BinaryEncoding
-import           Data.ASN1.Encoding
+import Data.ASN1.Types
+import Data.ASN1.BinaryEncoding
+import Data.ASN1.Encoding
 
 import RPKI.Domain
 import RPKI.SignTypes
@@ -27,6 +27,8 @@ import RPKI.Parse.Common
 import RPKI.Parse.Cert
 import RPKI.Parse.MFT
 import RPKI.Parse.ROA
+
+import RPKI.Util
 
 import System.FilePath.Find
 
@@ -38,7 +40,7 @@ runValidate = do
   let objects = [ o | Right os <- parsedObjects, o <- os ]
 
   putStrLn $ "errors = " <> show (length errors)
-  putStrLn $ "error 0 = " <> show (head errors)
+  -- putStrLn $ "error 0 = " <> show (head errors)
   putStrLn $ "objects = " <> show (length objects)  
   let Right signatureValidations = validateKeys objects
   putStrLn $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
@@ -58,8 +60,8 @@ readRepo = do
   -- SLY.toList $ SLY.fromFoldable fileNames 
   --            |& SLY.mapM (\f -> B.readFile f >>= readObject f)             
 
-  parallel 1 (\f -> B.readFile f >>= readObject f) fileNames 
-  -- mapConcurrently (\f -> B.readFile f >>= readObject f) fileNames
+  parallel 50 (\f -> B.readFile f >>= readObject f) fileNames 
+  -- mapM (\f -> B.readFile f >>= readObject f) fileNames
 
 
 testSignature :: IO ()
@@ -140,7 +142,7 @@ validateKeys objects =
     [RpkiObject meta ro] -> Right $ validateChildren meta ro
   where    
     validateChildren :: RpkiMeta -> RO -> [SignatureVerification]
-    validateChildren meta (CerRO cert) = signatureChecks ++ childSignatureChecks
+    validateChildren meta (CerRO cert) = signatureChecks <> childSignatureChecks
       where
         childSignatureChecks = L.concat [ validateChildren m cer | RpkiObject m cer@(CerRO _) <- children meta ]      
         signatureChecks = map (\(RpkiObject _ c) -> validateSignature c cert) $ children meta
@@ -152,14 +154,6 @@ validateKeys objects =
 
     akiMap = byAKIMap objects
     
-
-parallel :: Int -> (a -> IO b) -> [a] -> IO [b]
-parallel poolSize f as = do
-  (chanIn, chanOut) <- Chan.newChan $ max 1 (poolSize - 1)
-  snd <$> concurrently (pushAll chanIn) (readAll chanOut)
-  where
-    pushAll chanIn  = forM_ as $ \a -> async (f a) >>= Chan.writeChan chanIn
-    readAll chanOut = forM as $ \_ -> Chan.readChan chanOut >>= wait      
 
 
 bySKIMap :: [RpkiObject] -> MultiMap SKI RpkiObject
