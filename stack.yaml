@@ -46,6 +46,7 @@ extra-deps:
  - hw-ip-2.0.1.0
  - streaming-utils-0.2.0.0
  - json-stream-0.4.2.4 
+ - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653
  - git: git@github.com:vincenthz/hs-asn1.git
    commit: 6ac0d32b5fa0023267c36cbb754d95ca23d7ec48
    subdirs:

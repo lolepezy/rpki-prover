@@ -78,9 +78,6 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 
 -- | Objects
 
-data ObjectType = CER | MFT | CRL | ROA | GBR
-  deriving (Show, Eq, Typeable)
-
 newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
 
 newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)

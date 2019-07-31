@@ -1,21 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 
 import Control.Concurrent.Async
 import Control.Monad
+import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.List as L
-import qualified Data.Set as Set
 import qualified Data.MultiMap as MultiMap
 import Data.MultiMap (MultiMap)
 
-import Data.Hex
-
 import Data.X509
 import Data.X509.Validation
+
+import           Data.ASN1.Types
+import           Data.ASN1.BinaryEncoding
+import           Data.ASN1.Encoding
 
 import RPKI.Domain
 import RPKI.SignTypes
@@ -25,122 +28,94 @@ import RPKI.Parse.Cert
 import RPKI.Parse.MFT
 import RPKI.Parse.ROA
 
--- import Streaming
--- import qualified Streaming.Prelude as S
-
 import System.FilePath.Find
 
-import Crypto.Hash
-import qualified Crypto.PubKey.RSA.PKCS15 as RSA
-import Crypto.PubKey.RSA.Types 
-import qualified Data.ByteArray as BA
-
+runValidate :: IO ()
 runValidate = do  
   parsedObjects <- readRepo              
 
   let errors = [ e | Left e <- parsedObjects ]  
   let objects = [ o | Right os <- parsedObjects, o <- os ]
 
-  let akis = Set.fromList [ hex a | Right ros <- parsedObjects, 
-                              RpkiObject (RpkiMeta { aki = Just (AKI (KI a)) }) _ <- ros ]
-
-  let skis = Set.fromList [ hex a | Right ros <- parsedObjects, 
-                              RpkiObject (RpkiMeta { ski = SKI (KI a) }) _ <- ros ]
-
-  -- putStrLn $ "skis = " ++ show (length skis)
-  -- forM_ skis $ \ski -> putStrLn $ show ski
-
-  -- putStrLn $ "akis = " ++ show (length akis)
-  -- forM_ akis $ \aki -> putStrLn $ show aki
-
-  -- putStrLn $ "errors = " ++ show (length errors)
-  putStrLn $ "objects = " ++ show (length objects)  
+  putStrLn $ "errors = " <> show (length errors)
+  putStrLn $ "error 0 = " <> show (head errors)
+  putStrLn $ "objects = " <> show (length objects)  
   let Right signatureValidations = validateKeys objects
-  putStrLn $ "valid signature = " ++ show (length [s | s@SignaturePass <- signatureValidations])
-  putStrLn $ "invalid signature = " ++ show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
-  putStrLn $ "invalid pubkey mismatch = " ++ show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
-  putStrLn $ "invalid not implemented = " ++ show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
+  putStrLn $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
+  putStrLn $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
+  putStrLn $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
+  putStrLn $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
   
 
 readRepo :: IO [Either (ParseError T.Text) [RpkiObject]]
 readRepo = do
-  let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo"  
+  let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/"  
   let expr = (fileName ~~? "*.cer") ||? 
-             (fileName ~~? "*.roa") ||? 
-             (fileName ~~? "*.mft") -- add (fileName ~~? "*.crl")
+             (fileName ~~? "*.roa") ||?
+             (fileName ~~? "*.mft") 
+             -- add (fileName ~~? "*.crl")
   fileNames <- find always expr repository 
   -- SLY.toList $ SLY.fromFoldable fileNames 
   --            |& SLY.mapM (\f -> B.readFile f >>= readObject f)             
 
-  mapConcurrently (\f -> B.readFile f >>= readObject f) fileNames
-
-unpad' :: BA.ByteArray bytearray => bytearray -> Either Error bytearray
-unpad' packed
-    | paddingSuccess = Right m
-    | otherwise      = Left MessageNotRecognized
-  where
-        (zt, ps0m)   = BA.splitAt 2 packed
-        (ps, zm)     = BA.span (/= 0) ps0m
-        (z, m)       = BA.splitAt 1 zm
-        paddingSuccess = ((zt `BA.constEq` (BA.pack [0,2] :: BA.Bytes)) || (zt `BA.constEq` (BA.pack [0,1] :: BA.Bytes))) &&
-                           (z == BA.zero 1) && (BA.length ps >= 8)
+  parallel 1 (\f -> B.readFile f >>= readObject f) fileNames 
+  -- mapConcurrently (\f -> B.readFile f >>= readObject f) fileNames
 
 
+testSignature :: IO ()
 testSignature = do
-  let roaFile = "/Users/mpuzanov/ripe/tmp/rpki/repo/repository/DEFAULT/5b/6ab497-16d9-4c09-94d9-1be4c416a09c/1/XY9rz4RATnJEwJxBpE7ExbD-Ubk.roa"  
+  parsed <- readRepo
+  let objects = [ o | Right os <- parsed, o <- os ]
+
+  let roaFile = "/Users/mpuzanov/ripe/tmp//rpki/repo/ripe.net/repository/DEFAULT/5b/6ab497-16d9-4c09-94d9-1be4c416a09c/1/XY9rz4RATnJEwJxBpE7ExbD-Ubk.roa"  
   bs  <- B.readFile roaFile
   roa <- readObject roaFile bs
-  
-  putStrLn $ "roa = " ++ show roa
-  let Right [RpkiObject _ (RoaRO cms@(CMS so))] = roa
+
+  putStrLn $ "roa blob = " ++ show bs
+
+  let Right [RpkiObject (RpkiMeta { aki = Just (AKI ki)}) (RoaRO cms@(CMS so))] = roa
   let CertificateWithSignature 
-        eeCertificate 
+        _ 
         (SignatureAlgorithmIdentifier signAlgorithm) 
-        _ = scCertificate $ soContent so
+        (SignatureValue sign) encoded = scCertificate $ soContent so
 
-  let SignatureValue sign = signature $ scSignerInfos $ soContent so
+  putStrLn $ "encoded = " ++ show encoded
 
-  let pubKey@(PubKeyRSA pk) = certPubKey eeCertificate
+  let skiMap = bySKIMap objects
+  let [x@(RpkiObject _ (CerRO cer@(CerObject (ResourceCert parentCert))))] = MultiMap.lookup (SKI ki) skiMap
 
-  --  java                  haskell
-  -- signer.resultDigest == signedAttributes.MessageDigest
-  -- 
+  let s = validateSignature (RoaRO cms) cer
 
-  -- 
-  let digestEncoded = "010\r\ACK\t`\134H\SOHe\ETX\EOT\STX\SOH\ENQ\NUL\EOT \202\&2\213\195\143N\v}\158\203d\SI\227\246\136\244\ACK\164Sg>\ACKR\128\213R\198\249\194\&24l"
+  putStrLn $ "x = " <> show x
+  putStrLn $ "s = " <> show s
 
-  -- This is the hash of the serialised SignedAttributes set, i.e. the part of the blob 
-  -- corresponding to SignedAttributes
-  let digestOriginal = "\202\&2\213\195\143N\v}\158\203d\SI\227\246\136\244\ACK\164Sg>\ACKR\128\213R\198\249\194\&24l"
+  let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
 
-  ---- WORKS
-  let rr = RSA.verify (Nothing :: Maybe SHA256) pk digestEncoded sign
-  ---- WORKS!!!!!
+  let pubKey = certPubKey $ signedObject $ getSigned $ withRFC parentCert certX509              
+  let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
 
+  putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]
 
-  let saContent = "1k0\SUB\ACK\t*\134H\134\247\r\SOH\t\ETX1\r\ACK\v*\134H\134\247\r\SOH\t\DLE\SOH\CAN0\FS\ACK\t*\134H\134\247\r\SOH\t\ENQ1\SI\ETB\r190101010413Z0/\ACK\t*\134H\134\247\r\SOH\t\EOT1\"\EOT \191M\161_C#\187\242\236f\198\163\246\132\178\222\131+\215\220\247\138\&7*\DC2\229)\ETX`<\203\175"
-  let rr1 = RSA.verify (Just SHA256) pk saContent sign
-  -- let rr1 = RSA.verify (Nothing :: Maybe SHA256) pk digestOriginal sign
-  
-
-  let v = verifySignature signAlgorithm pubKey digestEncoded sign
-  let v1 = verifySignature signAlgorithm pubKey saContent sign
-
-  putStrLn $ "so = " ++ show so
-  putStrLn $ "v = " ++ show v
-  putStrLn $ "v1 = " ++ show v1
-  putStrLn $ "pk = " ++ show pk  
-  putStrLn $ "sign = " ++ show (hex sign)  
-  putStrLn $ "rr = " ++ show rr
   putStrLn $ "validateCMSSignature = " ++ (show $ validateCMSSignature cms)
-  putStrLn $ "rr1 = " ++ show rr1
+
+  
+testCrl :: IO ()
+testCrl = do
+  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/repository/ripe-ncc-ta.crl"
+  let d = decodeSignedCRL bs
+  putStrLn $ "d = " ++ show d  
+  case decodeASN1' BER bs of
+    Left e -> putStrLn $ show e
+    Right asns -> do
+      let crl :: Either String (CRL, [ASN1]) = fromASN1 asns  
+      putStrLn $ "asns = " ++ show asns  
   
 
 readObject :: String -> B.ByteString -> IO (Either (ParseError T.Text) [RpkiObject])
 readObject fileName content = do    
   let ext = L.drop (L.length fileName - 3) fileName
   let uri = URI $ T.pack fileName
-  pure $ case ext of
+  pure $! case ext of
         "cer" -> do
             f <- parseResourceCertificate content
             let (meta, o) = f uri
@@ -167,7 +142,7 @@ validateKeys objects =
     validateChildren :: RpkiMeta -> RO -> [SignatureVerification]
     validateChildren meta (CerRO cert) = signatureChecks ++ childSignatureChecks
       where
-        childSignatureChecks = L.concat [ validateChildren m cer | RpkiObject m cer@(CerRO c) <- children meta ]      
+        childSignatureChecks = L.concat [ validateChildren m cer | RpkiObject m cer@(CerRO _) <- children meta ]      
         signatureChecks = map (\(RpkiObject _ c) -> validateSignature c cert) $ children meta
     validateChildren _ _ = []
 
@@ -177,6 +152,14 @@ validateKeys objects =
 
     akiMap = byAKIMap objects
     
+
+parallel :: Int -> (a -> IO b) -> [a] -> IO [b]
+parallel poolSize f as = do
+  (chanIn, chanOut) <- Chan.newChan $ max 1 (poolSize - 1)
+  snd <$> concurrently (pushAll chanIn) (readAll chanOut)
+  where
+    pushAll chanIn  = forM_ as $ \a -> async (f a) >>= Chan.writeChan chanIn
+    readAll chanOut = forM as $ \_ -> Chan.readChan chanOut >>= wait      
 
 
 bySKIMap :: [RpkiObject] -> MultiMap SKI RpkiObject
@@ -189,5 +172,6 @@ byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject (RpkiMeta { aki = Ju
 
 main :: IO ()
 main = do 
-  -- runValidate
-  testSignature
+  -- testCrl
+  runValidate  
+  -- testSignature

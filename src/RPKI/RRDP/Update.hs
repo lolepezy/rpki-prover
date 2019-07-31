@@ -52,23 +52,24 @@ makeUpdates repo@(RrdpRepo repoUri _ _) = runExceptT $ do
     nextStep        <- except $ first Fatal $ rrdpNextStep repo notification
     case nextStep of
         NothingToDo -> lift $ pure (repo, DontSave)
-        UseSnapshot (SnapshotInfo uri hash) -> do
-            snapshotXml                  <- tryDownload uri (Fatal . CantDownloadSnapshot . show)
+        UseSnapshot (SnapshotInfo snapshotUri hash) -> do
+            snapshotXml                  <- tryDownload snapshotUri (Fatal . CantDownloadSnapshot . show)
             snapshot@(Snapshot _ _ _ ps) <- withExceptT Fatal $ processSnapshot snapshotXml hash
             lift $ pure (repoFromSnapshot snapshot, SaveSnapshot ps)
-        UseDeltas sortedDeltasToApply -> do
-            deltas <- lift $ forM sortedDeltasToApply $ \(DeltaInfo uri hash serial) ->
-                                runExceptT $ do
-                                    deltaXml <- tryDownload uri (CantDownloadDelta . show)
-                                    processDelta deltaXml hash serial
-            let saveDeltas ds = SaveDeltas $ map (\(Delta _ _ _ items) -> SaveDelta items) ds
+        UseDeltas sortedDeltasToBeApplied -> do
+            deltas <- lift $ 
+                forM sortedDeltasToBeApplied $ \(DeltaInfo uri hash serial) ->
+                    runExceptT $ do
+                        deltaXml <- tryDownload uri (CantDownloadDelta . show)
+                        processDelta deltaXml hash serial
+            let saveDeltas = SaveDeltas . map (\(Delta _ _ _ items) -> SaveDelta items)
             let newRepo ds = repoFromDeltas ds notification
-            case extract deltas of
+            case deltasTillFirstError deltas of
                 (Nothing, validDeltas) -> lift $ pure (newRepo validDeltas, saveDeltas validDeltas)
-                (Just e, validDeltas)  -> throwE $ Partial e (newRepo validDeltas, saveDeltas validDeltas)
+                (Just e,  validDeltas) -> throwE $ Partial e (newRepo validDeltas, saveDeltas validDeltas)
     where
-        extract :: [Either RrdpError Delta] -> (Maybe RrdpError, [Delta])
-        extract deltas = second DL.toList $ go deltas DL.empty
+        deltasTillFirstError :: [Either RrdpError Delta] -> (Maybe RrdpError, [Delta])
+        deltasTillFirstError deltas = second DL.toList $ go deltas DL.empty
             where
                 go [] accumulated = (Nothing, accumulated)
                 go (Left e :   _) accumulated = (Just e, accumulated)
@@ -137,7 +138,7 @@ rrdpNextStep (RrdpRepo _ repoSessionId repoSerial) Notification{..} =
                 sortedDeltas = L.sortOn getSerial deltas
                 chosenDeltas = filter ((> repoSerial) . getSerial) sortedDeltas
 
-                nonConsecutive = L.filter (\(p, n) -> n /= next p) $
+                nonConsecutive = L.filter (\(s, s') -> next s /= s') $
                     L.zip sortedSerials (tail sortedSerials)
 
 getSerial :: DeltaInfo -> Serial

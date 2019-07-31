@@ -82,6 +82,7 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
+- unagi-chan
 
 # ghc-options:
 #   - -with-rtsopts=-N    
