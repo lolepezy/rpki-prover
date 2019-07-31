@@ -14,21 +14,21 @@ import Data.Hourglass
 import GHC.Generics
 
 import Data.X509 as X509
--- import RPKI.Domain
 
 newtype SignatureValue = SignatureValue B.ByteString 
   deriving (Show, Eq, Ord, Typeable, Generic)  
 
 data SignedObject a = SignedObject {
     soContentType :: !ContentType, 
-    soContent     :: !(SignedData a),
-    rawContent    :: !B.ByteString
+    soContent     :: !(SignedData a)
 } deriving (Show, Eq, Typeable, Generic)
 
 data CertificateWithSignature = CertificateWithSignature 
   !X509.Certificate
   !SignatureAlgorithmIdentifier
   !SignatureValue
+  -- TODO Test what is better here: strict or lazy
+  !B.ByteString
   deriving (Show, Eq, Typeable, Generic)
 
 {- 

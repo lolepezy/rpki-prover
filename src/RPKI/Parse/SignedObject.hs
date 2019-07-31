@@ -7,8 +7,6 @@ import qualified Data.ByteString as B
 import Control.Applicative
 import Data.Maybe
 
-import Data.Bifunctor
-
 import Data.ASN1.BitArray
 import Data.ASN1.Types
 import Data.ASN1.Parse
@@ -46,20 +44,17 @@ import qualified RPKI.Util as U
 -}
 parseSignedObject :: ParseASN1 a -> ParseASN1 (SignedObject a)
 parseSignedObject eContentParse = 
-  onNextContainer Sequence $ do
-    contentType    <- parseContentType
-    (content, raw) <- parseContent
-    pure $ SignedObject contentType content raw
+  onNextContainer Sequence $ 
+    SignedObject <$> parseContentType <*> parseContent
   where  
     parseContentType = getOID (pure . ContentType) "Wrong OID for contentType"
     parseContent = onNextContainer (Container Context 0) $ 
-      onNextContainer Sequence $ do
-        version       <- parseVersion
-        digestAlg     <- onNextContainer Set parseDigestAlgorithms
-        (info, raw)   <- parseEncapContentInfo
-        eeCertificate <- parseEECertificate
-        signerInfo    <- onNextContainer Set (onNextContainer Sequence parseSignerInfo)
-        pure (SignedData version digestAlg info eeCertificate signerInfo, raw)
+      onNextContainer Sequence $ 
+        SignedData <$> parseVersion 
+          <*> (onNextContainer Set parseDigestAlgorithms)
+          <*> parseEncapContentInfo
+          <*> parseEECertificate
+          <*> onNextContainer Set (onNextContainer Sequence parseSignerInfo)        
 
     parseVersion = getInteger (pure . CMSVersion . fromInteger) "Wrong version"
 
@@ -68,7 +63,7 @@ parseSignedObject eContentParse =
             (getNext >>= \case
               OID oid -> pure $ Just  oid
               Null    -> pure Nothing
-              s       -> throwParseError $ "DigestAlgorithms is wrong " ++ show s)
+              s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s)
 
     parseEncapContentInfo = onNextContainer Sequence $ do
       contentType <- parseContentType            
@@ -78,24 +73,28 @@ parseSignedObject eContentParse =
         where
           eContent contentType = do 
             fullContent <- getMany getNext
-            -- _ <- throwParseError $ "fullContent =  " ++ show fullContent
-            let bs = B.concat [ os | OctetString os <- fullContent ]
+            let bs = B.concat [ os | OctetString os <- fullContent ]            
             case decodeASN1' BER bs of
-              Left e     -> throwParseError $ "Couldn't decode embedded content: " ++ show e
+              Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
               Right asns ->  
                 case runParseASN1 eContentParse asns of
-                  Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " ++ e
-                  Right a -> pure (EncapsulatedContentInfo contentType a, bs)
+                  Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
+                  Right a -> pure $ EncapsulatedContentInfo contentType a
         
 
-    parseEECertificate = 
-      onNextContainer (Container Context 0) $ 
-        onNextContainer Sequence $
-            CertificateWithSignature <$> 
-              (onNextContainer Sequence getObject) <*>
-              parseSignatureAlgorithm <*>
-              parseSignature                                  
-                                
+    parseEECertificate = onNextContainer (Container Context 0) $                  
+      onNextContainer Sequence $ 
+        getNextContainerMaybe Sequence >>= \case 
+          Nothing   -> throwParseError "No EE certificate"
+          Just asns -> 
+            case runParseASN1 getObject asns of
+              Left e       -> throwParseError $ show e
+              Right eeCert -> CertificateWithSignature eeCert <$> 
+                                parseSignatureAlgorithm <*> 
+                                parseSignature <*> 
+                                pure encodedCert
+                                where 
+                                  encodedCert = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]                                
 
     parseSignerInfo = SignerInfos <$>
       parseVersion <*>
@@ -107,7 +106,7 @@ parseSignedObject eContentParse =
       where 
         parseSid = getNext >>= \case 
           Other Context 0 si -> pure $ SignerIdentifier si
-          s                  -> throwParseError $ "Unknown SID : " ++ show s
+          s                  -> throwParseError $ "Unknown SID : " <> show s
 
         parseSignedAttributes = 
           getNextContainerMaybe (Container Context 0) >>= \case
@@ -117,33 +116,33 @@ parseSignedObject eContentParse =
                 Left e -> throwParseError $ show e
                 Right attributes -> pure $ SignedAttributes attributes saEncoded
                 where 
-                  saEncoded = encodeASN1' DER $ [Start Set] ++ asns ++ [End Set]
+                  saEncoded = encodeASN1' DER $ [Start Set] <> asns <> [End Set]
                   parseSA = getMany $ 
                           onNextContainer Sequence $ getNext >>= \case 
                             OID attrId 
                               | attrId == id_contentType -> getNextContainerMaybe Set >>= \case 
                                       Just [OID ct] -> pure $ ContentTypeAttr $ ContentType ct
-                                      s -> throwParseError $ "Unknown contentType: " ++ show s
+                                      s -> throwParseError $ "Unknown contentType: " <> show s
                               | attrId == id_messageDigest -> getNextContainerMaybe Set >>= \case
                                       Just [OctetString md] -> pure $ MessageDigest md
-                                      s -> throwParseError $ "Unknown SID: " ++ show s
+                                      s -> throwParseError $ "Unknown SID: " <> show s
                               | attrId == id_signingTime -> getNextContainerMaybe Set >>= \case
                                       Just [ASN1Time TimeUTC dt tz] -> pure $ SigningTime dt tz
-                                      s -> throwParseError $ "Unknown Signing Time: " ++ show s
+                                      s -> throwParseError $ "Unknown Signing Time: " <> show s
                               | attrId == id_binarySigningTime -> getNextContainerMaybe Set >>= \case
                                       Just [IntVal i] -> pure $ BinarySigningTime i
-                                      s -> throwParseError $ "Unknown Binary Signing Time: " ++ show s
+                                      s -> throwParseError $ "Unknown Binary Signing Time: " <> show s
                               | otherwise -> getNextContainerMaybe Set >>= \case
                                       Just asn1 -> pure $ UnknownAttribute attrId asn1
                                       Nothing   -> pure $ UnknownAttribute attrId []
 
-                            s -> throwParseError $ "Unknown signed attribute OID: " ++ show s
+                            s -> throwParseError $ "Unknown signed attribute OID: " <> show s
                                       
         
     parseSignature = getNext >>= \case 
         OctetString sig            -> pure $ SignatureValue sig
         BitString (BitArray _ sig) -> pure $ SignatureValue sig
-        s                          -> throwParseError $ "Unknown signature value : " ++ show s
+        s                          -> throwParseError $ "Unknown signature value : " <> show s
 
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
@@ -151,11 +150,12 @@ parseSignedObject eContentParse =
 getMeta :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
 getMeta obj bs = 
   case extVal exts id_subjectKeyId of
-    Just s -> do
+    Nothing -> Left . fmtErr $ "SKI is absent" 
+    Just s  -> do
         ki <- parseKI s
         aki' <- case extVal exts id_authorityKeyId of
                   Nothing -> pure $ Nothing
-                  Just a  -> Just . AKI <$> parseKI a        
+                  Just a  -> Just . AKI <$> parseKI a
         pure $ 
           \location -> RpkiMeta {        
               aki  = aki',
@@ -163,8 +163,7 @@ getMeta obj bs =
               hash = U.sha256s bs,
               locations = location :| [],
               serial = Serial (certSerial x509)    
-                  }        
-    Nothing -> Left . fmtErr $ "SKI is absent" 
+          }            
   where
     exts = getExts x509  
-    CertificateWithSignature x509 _ _ = scCertificate $ soContent obj
+    CertificateWithSignature x509 _ _ _ = scCertificate $ soContent obj
