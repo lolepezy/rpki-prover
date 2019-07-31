@@ -51,7 +51,7 @@ id_messageDigest      = id_pkcs9 ++ [4]
 id_signingTime        = id_pkcs9 ++ [5]
 id_binarySigningTime  = id_pkcs9 ++ [16, 2, 46]
 
-id_sha256             = id_pkcs9 ++ [16, 1, 24]
+id_sha256             = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 
 fmtErr :: String -> ParseError T.Text
 fmtErr = ParseError . T.pack
