@@ -7,6 +7,8 @@ import Control.Concurrent.Async
 import Control.Monad
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
+import Control.Parallel.Strategies
+
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.List as L
@@ -139,10 +141,13 @@ validateKeys :: [RpkiObject] -> Either String [SignatureVerification]
 validateKeys objects = 
   case [ ro | ro@(RpkiObject (RpkiMeta { aki = Nothing }) _) <- objects ] of
     []      -> Left $ "No TA certificate"    
-    taCerts -> Right $ L.concat [ validateChildren meta ro | RpkiObject meta ro <- taCerts ]
+    taCerts -> Right $ concat [ validateChildren meta ro | RpkiObject meta ro <- taCerts ]
   where    
     validateChildren :: RpkiMeta -> RO -> [SignatureVerification]
-    validateChildren meta (CerRO parentCert) = L.concatMap (validateChildParent parentCert) $ children meta
+    validateChildren meta (CerRO parentCert) = concat childrenVerification 
+      where 
+        childrenVerification = parMap strategy (validateChildParent parentCert) $ children meta
+        strategy = parListChunk 1000 rseq
     validateChildren _ _ = []
 
     validateChildParent parentCert = \case 
@@ -153,7 +158,7 @@ validateKeys objects =
         [validateSignature cer parentCert] <> validateChildren m cer      
       where
         eeSignAndCMSSign  :: RO -> CMS a -> [SignatureVerification]
-        eeSignAndCMSSign ro cms = [ validateCMSSignature cms,  validateSignature ro parentCert]            
+        eeSignAndCMSSign ro cms = [ validateCMSSignature cms, validateSignature ro parentCert]            
 
     children meta = MultiMap.lookup (AKI ki) akiMap
       where
@@ -161,7 +166,6 @@ validateKeys objects =
 
     akiMap = byAKIMap objects
     
-
 
 bySKIMap :: [RpkiObject] -> MultiMap SKI RpkiObject
 bySKIMap ros = MultiMap.fromList [ (ski, ro) | ro@(RpkiObject (RpkiMeta {..}) _) <- ros ]

@@ -57,6 +57,7 @@ dependencies:
 - MissingH
 - mtl
 - multimap
+- parallel
 - pem
 - primitive
 - semigroups
