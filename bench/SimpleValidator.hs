@@ -51,7 +51,7 @@ runValidate = do
 
 readRepo :: IO [Either (ParseError T.Text) [RpkiObject]]
 readRepo = do
-  let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/"  
+  let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/"  
   let expr = (fileName ~~? "*.cer") ||? 
              (fileName ~~? "*.roa") ||?
              (fileName ~~? "*.mft") 
@@ -60,7 +60,7 @@ readRepo = do
   -- SLY.toList $ SLY.fromFoldable fileNames 
   --            |& SLY.mapM (\f -> B.readFile f >>= readObject f)             
 
-  parallel 50 (\f -> B.readFile f >>= readObject f) fileNames 
+  parallel 100 (\f -> B.readFile f >>= readObject f) fileNames 
   -- mapM (\f -> B.readFile f >>= readObject f) fileNames
 
 
