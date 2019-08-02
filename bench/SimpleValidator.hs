@@ -138,15 +138,22 @@ readObject fileName content = do
 validateKeys :: [RpkiObject] -> Either String [SignatureVerification]
 validateKeys objects = 
   case [ ro | ro@(RpkiObject (RpkiMeta { aki = Nothing }) _) <- objects ] of
-    []                   -> Left $ "No TA certificate"    
-    [RpkiObject meta ro] -> Right $ validateChildren meta ro
+    []      -> Left $ "No TA certificate"    
+    taCerts -> Right $ L.concat [ validateChildren meta ro | RpkiObject meta ro <- taCerts ]
   where    
     validateChildren :: RpkiMeta -> RO -> [SignatureVerification]
-    validateChildren meta (CerRO cert) = signatureChecks <> childSignatureChecks
-      where
-        childSignatureChecks = L.concat [ validateChildren m cer | RpkiObject m cer@(CerRO _) <- children meta ]      
-        signatureChecks = map (\(RpkiObject _ c) -> validateSignature c cert) $ children meta
+    validateChildren meta (CerRO parentCert) = L.concatMap (validateChildParent parentCert) $ children meta
     validateChildren _ _ = []
+
+    validateChildParent parentCert = \case 
+      (RpkiObject _ ro@(MftRO cms@(CMS _))) -> eeSignAndCMSSign ro cms 
+      (RpkiObject _ ro@(RoaRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
+      (RpkiObject _ ro@(GbrRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
+      (RpkiObject m cer@(CerRO _))          -> 
+        [validateSignature cer parentCert] <> validateChildren m cer      
+      where
+        eeSignAndCMSSign  :: RO -> CMS a -> [SignatureVerification]
+        eeSignAndCMSSign ro cms = [ validateCMSSignature cms,  validateSignature ro parentCert]            
 
     children meta = MultiMap.lookup (AKI ki) akiMap
       where
