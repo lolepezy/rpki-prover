@@ -22,7 +22,6 @@ import Data.Hourglass
 import GHC.Generics
 
 import qualified Data.X509 as X509
-import qualified Data.ASN1.OID as O
 
 import RPKI.IP    
 import RPKI.SignTypes
@@ -81,12 +80,19 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
 
 newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
-newtype CrlObject = CrlObject Crl deriving (Show, Eq, Ord, Typeable, Generic)
+data CrlObject = CrlObject !SignCRL !CrlMeta deriving (Show, Eq, Typeable, Generic)
 
 type MftObject = CMS Manifest
 type RoaObject = CMS [Roa]
 type GbrObject = CMS Gbr
     
+data CrlMeta = CrlMeta {
+    locations :: NonEmpty URI
+  , hash      :: !Hash
+  , aki       :: !AKI
+  , serial    :: !Serial
+} deriving (Show, Eq, Ord, Typeable)
+
 data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI
   , hash      :: !Hash

@@ -49,15 +49,10 @@ parseRoa bs = do
           pure $ mkRoa bs' nzBits (fromIntegral nzBits) 
         Just [BitString (BitArray nzBits bs'), IntVal maxLength] -> 
           pure $ mkRoa bs' nzBits (fromInteger maxLength)           
-        Just a  -> throwParseError $ "Unexpected ROA content: " ++ show a
+        Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
         Nothing -> throwParseError $ "Unexpected ROA content"
       where 
         mkRoa bs' nz maxL = Roa (ASN asId) (mkPrefix bs' nz) maxL
 
     ipv4 bs' nzBits = APrefix $ V4AF $ WithAF $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
     ipv6 bs' nzBits = APrefix $ V6AF $ WithAF $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)
-
-
-          
-    
-      

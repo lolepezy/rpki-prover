@@ -107,9 +107,11 @@ testSignature = do
   
 testCrl :: IO ()
 testCrl = do
-  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
-  let x = parseCrl bs  
-  putStrLn $ "x = " ++ show x    
+  -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
+  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository//aca/Kn3R14fXk-TIr1bhl9Tu2Sr2uhM.crl"  
+  case parseCrl bs of
+    Left e -> putStrLn $ "x = " <> show e
+    Right x -> putStrLn $ "x = " <> (show $ x $ URI "rsync://bla")
   
 -- beheer@psg-wonen.nl
 readObject :: String -> B.ByteString -> IO (Either (ParseError T.Text) [RpkiObject])

@@ -13,7 +13,7 @@ import Data.ASN1.Parse
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
-import Data.List.NonEmpty       (NonEmpty ((:|)))
+import Data.List.NonEmpty (NonEmpty ((:|)))
 
 import Data.X509
 
