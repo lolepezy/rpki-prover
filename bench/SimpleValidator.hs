@@ -21,6 +21,7 @@ import Data.X509.Validation
 import Data.ASN1.Types
 import Data.ASN1.BinaryEncoding
 import Data.ASN1.Encoding
+import Data.ASN1.Parse
 
 import RPKI.Domain
 import RPKI.SignTypes
@@ -29,6 +30,7 @@ import RPKI.Parse.Common
 import RPKI.Parse.Cert
 import RPKI.Parse.MFT
 import RPKI.Parse.ROA
+import RPKI.Parse.CRL
 
 import RPKI.Util
 
@@ -105,16 +107,11 @@ testSignature = do
   
 testCrl :: IO ()
 testCrl = do
-  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/repository/ripe-ncc-ta.crl"
-  let d = decodeSignedCRL bs
-  putStrLn $ "d = " ++ show d  
-  case decodeASN1' BER bs of
-    Left e -> putStrLn $ show e
-    Right asns -> do
-      let crl :: Either String (CRL, [ASN1]) = fromASN1 asns  
-      putStrLn $ "asns = " ++ show asns  
+  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
+  let x = parseCrl bs  
+  putStrLn $ "x = " ++ show x    
   
-
+-- beheer@psg-wonen.nl
 readObject :: String -> B.ByteString -> IO (Either (ParseError T.Text) [RpkiObject])
 readObject fileName content = do    
   let ext = L.drop (L.length fileName - 3) fileName

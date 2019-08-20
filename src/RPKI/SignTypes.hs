@@ -15,9 +15,6 @@ import GHC.Generics
 
 import Data.X509 as X509
 
-newtype SignatureValue = SignatureValue B.ByteString 
-  deriving (Show, Eq, Ord, Typeable, Generic)  
-
 data SignedObject a = SignedObject {
     soContentType :: !ContentType, 
     soContent     :: !(SignedData a)
@@ -94,8 +91,13 @@ newtype CMSVersion = CMSVersion Int
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
   deriving (Show, Eq, Ord, Typeable, Generic)
+
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier SignatureALG  
   deriving (Show, Eq, Typeable, Generic)
+
+newtype SignatureValue = SignatureValue B.ByteString 
+  deriving (Show, Eq, Ord, Typeable, Generic)  
+
 
 -- Axccording to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
@@ -108,4 +110,14 @@ data Attribute = ContentTypeAttr ContentType
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
       deriving (Show, Eq, Typeable, Generic)
+
+
+-- Signed CRL
+data SignCRL = SignCRL {
+  crl                :: CRL,
+  signatureAlgorithm :: SignatureAlgorithmIdentifier,
+  signatureValue     :: SignatureValue
+} deriving (Show, Eq, Typeable, Generic)
+
+
 

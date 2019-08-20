@@ -18,10 +18,10 @@ import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
 import Data.X509
-import Crypto.Hash (SHA256)
 
 import RPKI.IP
 import RPKI.Domain
+import RPKI.SignTypes
 
 newtype ParseError s = ParseError s
   deriving (Eq, Show, Functor)
@@ -123,4 +123,11 @@ parseKI bs = case decodeASN1' BER bs of
 oid2Hash :: OID -> ParseASN1 HashALG
 oid2Hash = \case
       oid | oid == id_sha256 -> pure HashSHA256
-          | otherwise        -> throwParseError $ "Unknown hashing algorithm OID: " ++ show oid
+          | otherwise        -> throwParseError $ "Unknown hashing algorithm OID: " <> show oid
+
+parseSignature :: ParseASN1 SignatureValue
+parseSignature = getNext >>= \case 
+          OctetString sig            -> pure $ SignatureValue sig
+          BitString (BitArray _ sig) -> pure $ SignatureValue sig
+          s                          -> throwParseError $ "Unknown signature value : " <> show s
+  

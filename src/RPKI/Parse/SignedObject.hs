@@ -137,15 +137,8 @@ parseSignedObject eContentParse =
                                       Nothing   -> pure $ UnknownAttribute attrId []
 
                             s -> throwParseError $ "Unknown signed attribute OID: " <> show s
-                                      
-        
-    parseSignature = getNext >>= \case 
-        OctetString sig            -> pure $ SignatureValue sig
-        BitString (BitArray _ sig) -> pure $ SignatureValue sig
-        s                          -> throwParseError $ "Unknown signature value : " <> show s
-
+                                            
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
-
 
 getMeta :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
 getMeta obj bs = 
