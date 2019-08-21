@@ -34,11 +34,11 @@ id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
 
 oid_pkix = [1, 3, 6, 1, 5, 5, 7]
-oid_pe                    = oid_pkix ++ [ 1 ]
-id_pe_ipAddrBlocks        = oid_pe ++ [ 7 ]
-id_pe_autonomousSysIds    = oid_pe ++ [ 8 ]
-id_pe_ipAddrBlocks_v2     = oid_pe ++ [ 28 ]
-id_pe_autonomousSysIds_v2 = oid_pe ++ [ 29 ]  
+oid_pe                    = oid_pkix <> [ 1 ]
+id_pe_ipAddrBlocks        = oid_pe <> [ 7 ]
+id_pe_autonomousSysIds    = oid_pe <> [ 8 ]
+id_pe_ipAddrBlocks_v2     = oid_pe <> [ 28 ]
+id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]  
 
 id_subjectKeyId, id_authorityKeyId, id_crlNumber :: OID
 id_subjectKeyId   = [2, 5, 29, 14]
@@ -47,10 +47,10 @@ id_crlNumber      = [2, 5, 29, 20]
 
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime, id_sha256 :: OID
 id_pkcs9              = [1, 2, 840, 113549, 1, 9]
-id_contentType        = id_pkcs9 ++ [3]
-id_messageDigest      = id_pkcs9 ++ [4]
-id_signingTime        = id_pkcs9 ++ [5]
-id_binarySigningTime  = id_pkcs9 ++ [16, 2, 46]
+id_contentType        = id_pkcs9 <> [3]
+id_messageDigest      = id_pkcs9 <> [4]
+id_signingTime        = id_pkcs9 <> [5]
+id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 
 id_sha256             = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 
@@ -63,7 +63,7 @@ mapParseErr = first fmtErr
 parseError :: String -> ASN1 -> ParseASN1 a
 parseError m a = throwParseError $ case m of 
       [] -> show a
-      m' -> m' ++ "(" ++ show a ++ ")"
+      m' -> m' <> "(" <> show a <> ")"
 
 getNull_ :: ParseASN1 a -> ParseASN1 a
 getNull_ f = getNull f ""
@@ -76,7 +76,7 @@ getNull f m = getNext >>= \case
 getInteger :: (Integer -> ParseASN1 a) -> String -> ParseASN1 a
 getInteger f m = getNext >>= \case 
       IntVal i -> f i
-      b        -> throwParseError $ m ++ "(" ++ show b ++ ")"
+      b        -> throwParseError $ m <> "(" <> show b <> ")"
 
 getOID :: (OID -> ParseASN1 a) -> String -> ParseASN1 a
 getOID f m = getNext >>= \case 
@@ -116,10 +116,10 @@ getExtsSign = getExts . signedObject . getSigned
 
 parseKI :: B.ByteString -> ParseResult KI
 parseKI bs = case decodeASN1' BER bs of
-      Left e -> Left $ fmtErr $ "Error decoding key identifier: " ++ show e
+      Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
       Right [OctetString bytes] -> pure $ KI bytes
       Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ KI bytes
-      Right s -> Left $ fmtErr $ "Unknown key identifier " ++ show s
+      Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
 
 oid2Hash :: OID -> ParseASN1 HashALG
 oid2Hash = \case

@@ -107,8 +107,10 @@ testSignature = do
   
 testCrl :: IO ()
 testCrl = do
-  -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
-  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository//aca/Kn3R14fXk-TIr1bhl9Tu2Sr2uhM.crl"  
+  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
+  -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/aca/Kn3R14fXk-TIr1bhl9Tu2Sr2uhM.crl"  
+  putStrLn $ "asns = " <> show (decodeASN1' BER bs)
+
   case parseCrl bs of
     Left e -> putStrLn $ "x = " <> show e
     Right x -> putStrLn $ "x = " <> (show $ x $ URI "rsync://bla")

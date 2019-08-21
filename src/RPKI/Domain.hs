@@ -87,18 +87,18 @@ type RoaObject = CMS [Roa]
 type GbrObject = CMS Gbr
     
 data CrlMeta = CrlMeta {
-    locations :: NonEmpty URI
-  , hash      :: !Hash
-  , aki       :: !AKI
-  , serial    :: !Serial
+    locations :: NonEmpty URI, 
+    hash      :: !Hash, 
+    aki       :: !AKI, 
+    crlNumber :: !Integer
 } deriving (Show, Eq, Ord, Typeable)
 
 data RpkiMeta = RpkiMeta {
-    locations :: NonEmpty URI
-  , hash      :: !Hash
-  , aki       :: !(Maybe AKI)
-  , ski       :: !SKI
-  , serial    :: !Serial
+    locations :: NonEmpty URI, 
+    hash      :: !Hash, 
+    aki       :: !(Maybe AKI), 
+    ski       :: !SKI, 
+    serial    :: !Serial
 } deriving (Show, Eq, Ord, Typeable)
 
 data RO = CerRO CerObject 
