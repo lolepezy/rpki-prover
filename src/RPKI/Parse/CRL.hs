@@ -22,7 +22,7 @@ import           RPKI.SignTypes
 parseCrl :: B.ByteString -> ParseResult (URI -> (CrlMeta, CrlObject))
 parseCrl bs = do
   asns                    <- first (fmtErr . show) $ decodeASN1' BER bs
-  signCrl@(SignCRL c _ _) <- first fmtErr $ runParseASN1 getCrl asns  
+  signCrl@(SignCRL c _ _ _) <- first fmtErr $ runParseASN1 getCrl asns  
   exts <- case crlExtensions c of
             Extensions Nothing           -> Left $ fmtErr "No CRL extensions"
             Extensions (Just extensions) -> Right extensions
@@ -34,26 +34,34 @@ parseCrl bs = do
             Nothing -> Left $ fmtErr "No CRL number in CRL"
             Just n  -> Right n
 
-  number <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
-  n <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") number
+  numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
+  crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
   let meta location = CrlMeta {
       locations = location :| [],
       aki = AKI $ KI aki',
       hash = U.sha256s bs,
-      crlNumber = n
+      crlNumber = crlNumber'
     }
   pure $ \location -> (meta location, CrlObject signCrl)
   where  
     getCrl = onNextContainer Sequence $ do
-      crl' <- onNextContainer Sequence $ do        
-        x509Crl    <- parseX509CRL
-        extensions <- onNextContainer (Container Context 0) $ 
-                        onNextContainer Sequence $ getMany $ getObject 
-        pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
+      (asns, crl') <- getNextContainerMaybe Sequence >>= \case 
+        Nothing   -> throwParseError "Invalid CRL format"
+        Just asns -> case runParseASN1 getCrlContent asns of
+          Left e  -> throwParseError $ "Invalid CRL format: " <> e
+          Right c -> pure (asns, c)
       SignCRL crl' <$> 
         (SignatureAlgorithmIdentifier <$> getObject) <*> 
-        parseSignature
+        parseSignature <*> 
+        (pure $ encodeASN1' DER asns)
+        where
+          getCrlContent = do        
+            x509Crl    <- parseX509CRL
+            extensions <- onNextContainer (Container Context 0) $ 
+                            onNextContainer Sequence $ getMany $ getObject 
+            pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
+
 
     parseX509CRL = do
         CRL <$> (getNext >>= getVersion)

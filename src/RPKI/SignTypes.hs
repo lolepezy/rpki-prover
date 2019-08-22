@@ -116,7 +116,8 @@ data Attribute = ContentTypeAttr ContentType
 data SignCRL = SignCRL {
   crl                :: CRL,
   signatureAlgorithm :: SignatureAlgorithmIdentifier,
-  signatureValue     :: SignatureValue
+  signatureValue     :: SignatureValue,
+  encodedValue       :: !B.ByteString
 } deriving (Show, Eq, Typeable, Generic)
 
 
