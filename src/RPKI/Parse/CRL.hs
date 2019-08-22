@@ -19,7 +19,7 @@ import           RPKI.Parse.Common
 import           RPKI.SignTypes
 
 
-parseCrl :: B.ByteString -> ParseResult (URI -> CrlObject)
+parseCrl :: B.ByteString -> ParseResult (URI -> (CrlMeta, CrlObject))
 parseCrl bs = do
   asns                    <- first (fmtErr . show) $ decodeASN1' BER bs
   signCrl@(SignCRL c _ _) <- first fmtErr $ runParseASN1 getCrl asns  
@@ -37,23 +37,46 @@ parseCrl bs = do
   number <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
   n <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") number
 
-  pure $ \location -> CrlObject signCrl $ CrlMeta {
-                          locations = location :| [],
-                          aki = AKI $ KI aki',
-                          hash = U.sha256s bs,
-                          crlNumber = n
-                        }
+  let meta location = CrlMeta {
+      locations = location :| [],
+      aki = AKI $ KI aki',
+      hash = U.sha256s bs,
+      crlNumber = n
+    }
+  pure $ \location -> (meta location, CrlObject signCrl)
   where  
     getCrl = onNextContainer Sequence $ do
-      crl <- onNextContainer Sequence $ do
-        c <- getObject
+      crl' <- onNextContainer Sequence $ do        
+        x509Crl    <- parseX509CRL
         extensions <- onNextContainer (Container Context 0) $ 
                         onNextContainer Sequence $ getMany $ getObject 
-        pure $ c { crlExtensions = Extensions (Just extensions) }
-      SignCRL crl <$> 
+        pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
+      SignCRL crl' <$> 
         (SignatureAlgorithmIdentifier <$> getObject) <*> 
         parseSignature
 
+    parseX509CRL = do
+        CRL <$> (getNext >>= getVersion)
+            <*> getObject
+            <*> getObject
+            <*> (getNext >>= getThisUpdate)
+            <*> getNextUpdate
+            <*> getRevokedCertificates
+            <*> getObject
+      where getVersion (IntVal v) = pure $ fromIntegral v
+            getVersion _          = throwParseError "Unexpected type for version"
+
+            getThisUpdate (ASN1Time _ t _) = pure t
+            getThisUpdate t                = throwParseError $ "Bad this update format, expecting time" <> show t
+
+            getNextUpdate = getNextMaybe $ \case 
+              (ASN1Time _ tnext _) -> Just tnext
+              _                    -> Nothing
+
+            getRevokedCertificates = 
+              onNextContainerMaybe Sequence (getMany getObject) >>= \case
+                Nothing -> pure []
+                Just rc -> pure rc
 
 
 

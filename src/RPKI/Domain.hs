@@ -80,21 +80,21 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
 
 newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
-data CrlObject = CrlObject !SignCRL !CrlMeta deriving (Show, Eq, Typeable, Generic)
+newtype CrlObject = CrlObject SignCRL deriving (Show, Eq, Typeable, Generic)
 
 type MftObject = CMS Manifest
 type RoaObject = CMS [Roa]
 type GbrObject = CMS Gbr
     
 data CrlMeta = CrlMeta {
-    locations :: NonEmpty URI, 
+    locations :: !(NonEmpty URI), 
     hash      :: !Hash, 
     aki       :: !AKI, 
     crlNumber :: !Integer
 } deriving (Show, Eq, Ord, Typeable)
 
 data RpkiMeta = RpkiMeta {
-    locations :: NonEmpty URI, 
+    locations :: !(NonEmpty URI), 
     hash      :: !Hash, 
     aki       :: !(Maybe AKI), 
     ski       :: !SKI, 
@@ -103,18 +103,18 @@ data RpkiMeta = RpkiMeta {
 
 data RO = CerRO CerObject 
         | MftRO MftObject
-        | CrlRO CrlObject
         | RoaRO RoaObject
         | GbrRO GbrObject
     deriving (Show, Eq, Typeable, Generic)
 
-data RpkiObject = RpkiObject RpkiMeta RO
+data RpkiObject = RpkiObject RpkiMeta RO 
+                | RpkiCrl CrlMeta CrlObject
     deriving (Show, Eq, Typeable, Generic)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
-    certX509    :: !(X509.SignedExact X509.Certificate) 
-  , ipResources :: !(Maybe (IpResourceSet rfc))
-  , asResources :: !(Maybe (ResourceSet AsResource rfc))
+    certX509    :: !(X509.SignedExact X509.Certificate), 
+    ipResources :: !(Maybe (IpResourceSet rfc)), 
+    asResources :: !(Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
 
 -- TODO Implement it properly
@@ -138,12 +138,8 @@ data Manifest = Manifest {
   , mftEntries  :: ![(T.Text, Hash)]
 } deriving (Show, Eq, Typeable)
 
-data Crl = Crl {
-    entries :: [RpkiObj]
-} deriving (Show, Eq, Ord, Typeable)
 
 data Gbr = Gbr deriving (Show, Eq, Ord, Typeable)
-
 
 data RpkiObj = RpkiObj !ObjId !RpkiMeta
     deriving (Show, Eq, Ord, Typeable)

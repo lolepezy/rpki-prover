@@ -12,7 +12,6 @@ import qualified Data.Set                 as S
 
 import           Data.Bifunctor
 import           Data.Bits
-import           Data.Maybe
 
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.BitArray
@@ -35,23 +34,22 @@ import           RPKI.Parse.Common
 parseResourceCertificate :: B.ByteString ->
                             ParseResult (URI -> (RpkiMeta, CerObject))
 parseResourceCertificate bs = do
-  -- let certificate :: Either (ParseError T.Text) (SignedExact Certificate) = mapParseErr $ decodeSignedObject bs
   certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
   let x509 = signedObject $ getSigned certificate
   let exts = getExtsSign certificate  
   case extVal exts id_subjectKeyId of
-    Just s -> do        
+    Just s -> do
         r <- parseResources certificate
         ki <- parseKI s
         aki' <- case extVal exts id_authorityKeyId of
                 Nothing -> pure $ Nothing
                 Just a  -> Just . AKI <$> parseKI a
         let meta location = RpkiMeta {
-            aki  = aki'
-          , ski  = SKI ki
-          , hash = U.sha256s bs
-          , locations = location :| []
-          , serial = Serial (certSerial x509)          
+            aki  = aki', 
+            ski  = SKI ki, 
+            hash = U.sha256s bs, 
+            locations = location :| [], 
+            serial = Serial (certSerial x509)          
           }
         pure $ \location -> (meta location, CerObject r)
     Nothing -> (Left . fmtErr) "No SKI extension"
@@ -204,8 +202,8 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
     asOrRange = getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
           IntVal asn -> pure $ AS $ as' asn
-          something  -> throwParseError $ "Unknown ASN specification " ++ show something
+          something  -> throwParseError $ "Unknown ASN specification " <> show something
         Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
-        Just something -> throwParseError $ "Unknown ASN specification " ++ show something
+        Just something -> throwParseError $ "Unknown ASN specification " <> show something
       where
         as' = ASN . fromInteger

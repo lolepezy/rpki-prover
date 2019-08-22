@@ -3,10 +3,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 
-import Control.Concurrent.Async
-import Control.Monad
-import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
-
 import Control.Parallel.Strategies
 
 import qualified Data.ByteString as B
@@ -18,10 +14,8 @@ import Data.MultiMap (MultiMap)
 import Data.X509
 import Data.X509.Validation
 
-import Data.ASN1.Types
 import Data.ASN1.BinaryEncoding
 import Data.ASN1.Encoding
-import Data.ASN1.Parse
 
 import RPKI.Domain
 import RPKI.SignTypes
@@ -32,19 +26,19 @@ import RPKI.Parse.MFT
 import RPKI.Parse.ROA
 import RPKI.Parse.CRL
 
-import RPKI.Util
-
 import System.FilePath.Find
+
+import RPKI.Util (parallel)
 
 runValidate :: IO ()
 runValidate = do  
   parsedObjects <- readRepo              
 
-  let errors = [ e | Left e <- parsedObjects ]  
-  let objects = [ o | Right os <- parsedObjects, o <- os ]
+  let errors = [ (f, e) | (f, Left e) <- parsedObjects ]  
+  let objects = [ o | (_, Right os) <- parsedObjects, o <- os ]
 
   putStrLn $ "errors = " <> show (length errors)
-  -- putStrLn $ "error 0 = " <> show (head errors)
+  -- putStrLn $ "errors 0 = " <> show (head errors)
   putStrLn $ "objects = " <> show (length objects)  
   let Right signatureValidations = validateKeys objects
   putStrLn $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
@@ -53,29 +47,33 @@ runValidate = do
   putStrLn $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
   
 
-readRepo :: IO [Either (ParseError T.Text) [RpkiObject]]
+readRepo :: IO [(String, Either (ParseError T.Text) [RpkiObject])]
 readRepo = do
   let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/"  
   let expr = (fileName ~~? "*.cer") ||? 
              (fileName ~~? "*.roa") ||?
-             (fileName ~~? "*.mft") 
-             -- add (fileName ~~? "*.crl")
+             (fileName ~~? "*.mft") ||?            
+             (fileName ~~? "*.crl") 
   fileNames <- find always expr repository 
   -- SLY.toList $ SLY.fromFoldable fileNames 
   --            |& SLY.mapM (\f -> B.readFile f >>= readObject f)             
 
   parallel 100 (\f -> B.readFile f >>= readObject f) fileNames 
+  -- where 
+  --   readOne f = do
+  --     bs <- B.readFile f
+  --     readObject bs
   -- mapM (\f -> B.readFile f >>= readObject f) fileNames
 
 
 testSignature :: IO ()
 testSignature = do
   parsed <- readRepo
-  let objects = [ o | Right os <- parsed, o <- os ]
+  let objects = [ o | (_, Right os) <- parsed, o <- os ]
 
   let roaFile = "/Users/mpuzanov/ripe/tmp//rpki/repo/ripe.net/repository/DEFAULT/5b/6ab497-16d9-4c09-94d9-1be4c416a09c/1/XY9rz4RATnJEwJxBpE7ExbD-Ubk.roa"  
   bs  <- B.readFile roaFile
-  roa <- readObject roaFile bs
+  (_, roa) <- readObject roaFile bs
 
   putStrLn $ "roa blob = " ++ show bs
 
@@ -108,35 +106,42 @@ testSignature = do
 testCrl :: IO ()
 testCrl = do
   bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
-  -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/aca/Kn3R14fXk-TIr1bhl9Tu2Sr2uhM.crl"  
+  -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/lacnic/repository/lacnic/0043f52c-eeee-4d62-97e6-44c83c8beb9f/3c4a28de1ccccd1e98eb95feb157d61c6659de78.crl"  
   putStrLn $ "asns = " <> show (decodeASN1' BER bs)
 
   case parseCrl bs of
-    Left e -> putStrLn $ "x = " <> show e
+    Left e  -> putStrLn $ "x = " <> show e
     Right x -> putStrLn $ "x = " <> (show $ x $ URI "rsync://bla")
-  
--- beheer@psg-wonen.nl
-readObject :: String -> B.ByteString -> IO (Either (ParseError T.Text) [RpkiObject])
-readObject fileName content = do    
-  let ext = L.drop (L.length fileName - 3) fileName
-  let uri = URI $ T.pack fileName
-  pure $! case ext of
+
+
+readObject :: String -> B.ByteString -> IO (String, Either (ParseError T.Text) [RpkiObject])
+readObject fName content = do    
+  let ext = L.drop (L.length fName - 3) fName
+  let uri = URI $ T.pack fName
+  let os = case ext of
         "cer" -> do
             f <- parseResourceCertificate content
             let (meta, o) = f uri
-            pure $! [RpkiObject meta $ CerRO o]
+            pure [RpkiObject meta $ CerRO o]
 
         "mft" -> do
             f <- parseMft content             
             let (meta, o) = f uri
-            pure $! [RpkiObject meta $ MftRO o]
+            pure [RpkiObject meta $ MftRO o]
 
         "roa" -> do
             f <- parseRoa content
             let (meta, o) = f uri
-            pure $! [RpkiObject meta $ RoaRO o]
+            pure [RpkiObject meta $ RoaRO o]
 
-        _     -> pure $! [] 
+        "crl" -> do
+            f <- parseCrl content
+            let (meta, o) = f uri
+            pure [RpkiCrl meta o]
+
+        _     -> pure []
+
+  pure (fName, os)
 
 validateKeys :: [RpkiObject] -> Either String [SignatureVerification]
 validateKeys objects = 

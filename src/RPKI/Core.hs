@@ -19,11 +19,6 @@
 
 module RPKI.Core where
 
-import           Control.Concurrent
-import           Control.Concurrent.Async
-import           Control.Concurrent.STM
-import           Control.Monad
-
 import qualified Data.ByteString                   as B
 import qualified Data.DList                        as DL
 import qualified Data.List                         as L
