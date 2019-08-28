@@ -131,13 +131,19 @@ data Roa = Roa
     deriving (Show, Eq, Ord, Typeable)
 
 data Manifest = Manifest {
-    mftNumber   :: !Int  
-  , fileHashAlg :: !X509.HashALG
-  , thisTime    :: !DateTime
-  , nextTime    :: !DateTime 
-  , mftEntries  :: ![(T.Text, Hash)]
+    mftNumber   :: !Int, 
+    fileHashAlg :: !X509.HashALG, 
+    thisTime    :: !DateTime, 
+    nextTime    :: !DateTime, 
+    mftEntries  :: ![(T.Text, Hash)]
 } deriving (Show, Eq, Typeable)
 
+data SignCRL = SignCRL {
+  crl                :: !X509.CRL,
+  signatureAlgorithm :: SignatureAlgorithmIdentifier,
+  signatureValue     :: SignatureValue,
+  encodedValue       :: !B.ByteString
+} deriving (Show, Eq, Typeable, Generic)
 
 data Gbr = Gbr deriving (Show, Eq, Ord, Typeable)
 

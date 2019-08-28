@@ -24,7 +24,6 @@ data CertificateWithSignature = CertificateWithSignature
   !X509.Certificate
   !SignatureAlgorithmIdentifier
   !SignatureValue
-  -- TODO Test what is better here: strict or lazy
   !B.ByteString
   deriving (Show, Eq, Typeable, Generic)
 
@@ -110,15 +109,4 @@ data Attribute = ContentTypeAttr ContentType
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
       deriving (Show, Eq, Typeable, Generic)
-
-
--- Signed CRL
-data SignCRL = SignCRL {
-  crl                :: CRL,
-  signatureAlgorithm :: SignatureAlgorithmIdentifier,
-  signatureValue     :: SignatureValue,
-  encodedValue       :: !B.ByteString
-} deriving (Show, Eq, Typeable, Generic)
-
-
 

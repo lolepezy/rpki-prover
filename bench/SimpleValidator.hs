@@ -55,14 +55,7 @@ readRepo = do
              (fileName ~~? "*.mft") ||?            
              (fileName ~~? "*.crl") 
   fileNames <- find always expr repository 
-  -- SLY.toList $ SLY.fromFoldable fileNames 
-  --            |& SLY.mapM (\f -> B.readFile f >>= readObject f)             
-
-  parallel 100 (\f -> B.readFile f >>= readObject f) fileNames 
-  -- where 
-  --   readOne f = do
-  --     bs <- B.readFile f
-  --     readObject bs
+  parallel 50 (\f -> B.readFile f >>= readObject f) fileNames 
   -- mapM (\f -> B.readFile f >>= readObject f) fileNames
 
 
@@ -77,7 +70,7 @@ testSignature = do
 
   putStrLn $ "roa blob = " ++ show bs
 
-  let Right [RpkiObject (RpkiMeta { aki = Just (AKI ki)}) (RoaRO cms@(CMS so))] = roa
+  let Right [rr@(RpkiObject (RpkiMeta { aki = Just (AKI ki)}) (RoaRO cms@(CMS so)))] = roa
   let CertificateWithSignature 
         _ 
         (SignatureAlgorithmIdentifier signAlgorithm) 
@@ -88,7 +81,7 @@ testSignature = do
   let skiMap = bySKIMap objects
   let [x@(RpkiObject _ (CerRO cer@(CerObject (ResourceCert parentCert))))] = MultiMap.lookup (SKI ki) skiMap
 
-  let s = validateSignature (RoaRO cms) cer
+  let s = validateSignature rr cer
 
   putStrLn $ "x = " <> show x
   putStrLn $ "s = " <> show s
@@ -105,13 +98,38 @@ testSignature = do
   
 testCrl :: IO ()
 testCrl = do
+  
   bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
   -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/lacnic/repository/lacnic/0043f52c-eeee-4d62-97e6-44c83c8beb9f/3c4a28de1ccccd1e98eb95feb157d61c6659de78.crl"  
-  putStrLn $ "asns = " <> show (decodeASN1' BER bs)
+  -- putStrLn $ "asns = " <> show (decodeASN1' BER bs)
+  
+  parsed <- readRepo
+  let objects = [ o | (_, Right os) <- parsed, o <- os ]  
 
   case parseCrl bs of
     Left e  -> putStrLn $ "x = " <> show e
-    Right x -> putStrLn $ "x = " <> (show $ x $ URI "rsync://bla")
+    Right x -> do
+      let (CrlMeta { aki = AKI ki }, CrlObject crl) = x $ URI "rsync://bla"
+      putStrLn $ "aki = " <> show ki
+      let SignCRL 
+            _ 
+            (SignatureAlgorithmIdentifier signAlgorithm) 
+            (SignatureValue sign) 
+            encoded  = crl
+
+      let skiMap = bySKIMap objects
+      let xx = MultiMap.lookup (SKI ki) skiMap
+      putStrLn $ "xx = " <> show xx
+      let [x@(RpkiObject _ (CerRO cer@(CerObject (ResourceCert parentCert))))] = xx
+
+      let pubKey = certPubKey $ signedObject $ getSigned $ withRFC parentCert certX509              
+
+      let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
+      let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
+      putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]
+
+      putStrLn $ "verify = " <> (show $ verifySignature signAlgorithm pubKey encoded sign)
+      
 
 
 readObject :: String -> B.ByteString -> IO (String, Either (ParseError T.Text) [RpkiObject])
@@ -157,13 +175,13 @@ validateKeys objects =
     validateChildren _ _ = []
 
     validateChildParent parentCert = \case 
-      (RpkiObject _ ro@(MftRO cms@(CMS _))) -> eeSignAndCMSSign ro cms 
-      (RpkiObject _ ro@(RoaRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
-      (RpkiObject _ ro@(GbrRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
-      (RpkiObject m cer@(CerRO _))          -> 
-        [validateSignature cer parentCert] <> validateChildren m cer      
+      ro@(RpkiObject _ (MftRO cms@(CMS _))) -> eeSignAndCMSSign ro cms 
+      ro@(RpkiObject _ (RoaRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
+      ro@(RpkiObject _ (GbrRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
+      ro@(RpkiObject m cer@(CerRO _))       -> 
+        [validateSignature ro parentCert] <> validateChildren m cer      
       where
-        eeSignAndCMSSign  :: RO -> CMS a -> [SignatureVerification]
+        eeSignAndCMSSign  :: RpkiObject -> CMS a -> [SignatureVerification]
         eeSignAndCMSSign ro cms = [ validateCMSSignature cms, validateSignature ro parentCert]            
 
     children meta = MultiMap.lookup (AKI ki) akiMap

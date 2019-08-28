@@ -21,15 +21,20 @@ import           RPKI.SignTypes
 
 parseCrl :: B.ByteString -> ParseResult (URI -> (CrlMeta, CrlObject))
 parseCrl bs = do
-  asns                    <- first (fmtErr . show) $ decodeASN1' BER bs
+  asns                      <- first (fmtErr . show) $ decodeASN1' BER bs
   signCrl@(SignCRL c _ _ _) <- first fmtErr $ runParseASN1 getCrl asns  
   exts <- case crlExtensions c of
             Extensions Nothing           -> Left $ fmtErr "No CRL extensions"
             Extensions (Just extensions) -> Right extensions
-  aki' <- case extVal exts id_authorityKeyId of
+  akiBS <- case extVal exts id_authorityKeyId of
             Nothing -> Left $ fmtErr "No AKI in CRL"
             Just a  -> Right a
 
+  aki' <- case decodeASN1' BER akiBS of
+            Left e -> Left $ fmtErr $ "Unknown AKI format: " <> show e
+            Right [Start Sequence, Other Context 0 ki, End Sequence] -> Right ki
+            Right s -> Left $ fmtErr $ "Unknown AKI format: " <> show s
+ 
   crlNumberBS :: B.ByteString <- case extVal exts id_crlNumber of
             Nothing -> Left $ fmtErr "No CRL number in CRL"
             Just n  -> Right n
@@ -51,18 +56,20 @@ parseCrl bs = do
         Just asns -> case runParseASN1 getCrlContent asns of
           Left e  -> throwParseError $ "Invalid CRL format: " <> e
           Right c -> pure (asns, c)
-      SignCRL crl' <$> 
-        (SignatureAlgorithmIdentifier <$> getObject) <*> 
-        parseSignature <*> 
-        (pure $ encodeASN1' DER asns)
-        where
-          getCrlContent = do        
-            x509Crl    <- parseX509CRL
-            extensions <- onNextContainer (Container Context 0) $ 
-                            onNextContainer Sequence $ getMany $ getObject 
-            pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
+      signatureId  <- getObject
+      signatureVal <- parseSignature
+      let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
+      -- throwParseError $ "asns = " <> show asns
+      pure $ SignCRL crl' (SignatureAlgorithmIdentifier signatureId) signatureVal encoded
+      
+    getCrlContent = do        
+      x509Crl    <- parseX509CRL
+      extensions <- onNextContainer (Container Context 0) $ 
+                      onNextContainer Sequence $ getMany $ getObject 
+      pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
 
-
+    -- This is copy-pasted from the Data.X509.CRL to fix getRevokedCertificates 
+    -- which should be more flexible.
     parseX509CRL = do
         CRL <$> (getNext >>= getVersion)
             <*> getObject

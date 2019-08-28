@@ -3,45 +3,47 @@ module RPKI.Validate where
 
 import qualified Data.ByteString as B
 
-import Data.Validation
-
 import Data.X509 hiding (getCertificate)
 import Data.X509.Validation hiding (InvalidSignature)
 
 import RPKI.Domain
 import RPKI.SignTypes
-
-type ValidationResult = Validation Invalid () 
     
-validateSignature :: RO -> CerObject -> SignatureVerification
-validateSignature ro (CerObject (ResourceCert parentCert)) = 
+
+validateSignature :: RpkiObject -> CerObject -> SignatureVerification
+validateSignature rpkiObject (CerObject (ResourceCert parentCert)) = 
     verifySignature signAlgorithm pubKey signData sign
     where        
-        (signAlgorithm, signData, sign) = getSign ro
+        (signAlgorithm, signData, sign) = getSign rpkiObject
         pubKey = certPubKey $ signedObject $ getSigned $ withRFC parentCert certX509              
 
-        getSign (CerRO (CerObject (ResourceCert resourceCert))) = (signAlgorithm, signData, sign)
+        getSign (RpkiObject _ (CerRO (CerObject (ResourceCert resourceCert)))) = 
+            (signedAlg $ getSigned signedExact, 
+            getSignedData signedExact, 
+            signedSignature $ getSigned signedExact)
             where    
-                signedExact = withRFC resourceCert certX509
-                signAlgorithm = signedAlg $ getSigned signedExact 
-                sign = signedSignature $ getSigned signedExact 
-                signData = getSignedData signedExact
+                signedExact = withRFC resourceCert certX509     
+                
+        getSign (RpkiCrl _ (CrlObject signCrl)) = (algorithm, encoded, signature)
+            where
+                SignCRL 
+                    _ 
+                    (SignatureAlgorithmIdentifier algorithm) 
+                    (SignatureValue signature) 
+                    encoded = signCrl                
 
-        getSign (MftRO (CMS signObject)) = getSign' signObject
-        getSign (RoaRO (CMS signObject)) = getSign' signObject
-        getSign (GbrRO (CMS signObject)) = getSign' signObject
-        -- TODO Implement CRL as well
+        getSign (RpkiObject _ (MftRO (CMS signObject))) = getSignCMS signObject
+        getSign (RpkiObject _ (RoaRO (CMS signObject))) = getSignCMS signObject
+        getSign (RpkiObject _ (GbrRO (CMS signObject))) = getSignCMS signObject        
 
-        getSign' :: SignedObject a -> (SignatureALG, B.ByteString, B.ByteString)
-        getSign' signObject = (signAlgorithm, encodedCert, sign)
+        getSignCMS :: SignedObject a -> (SignatureALG, B.ByteString, B.ByteString)
+        getSignCMS signObject = (algorithm, encodedCert, signature)
             where                 
                 CertificateWithSignature
                     _
-                    (SignatureAlgorithmIdentifier signAlgorithm) 
-                    (SignatureValue sign) 
+                    (SignatureAlgorithmIdentifier algorithm) 
+                    (SignatureValue signature) 
                     encodedCert = scCertificate $ soContent signObject
-                
-    
 
 
 validateCMSSignature :: CMS a -> SignatureVerification
