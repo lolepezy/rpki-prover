@@ -87,18 +87,18 @@ type RoaObject = CMS [Roa]
 type GbrObject = CMS Gbr
     
 data CrlMeta = CrlMeta {
-    locations :: !(NonEmpty URI), 
-    hash      :: !Hash, 
-    aki       :: !AKI, 
-    crlNumber :: !Integer
+    locations :: NonEmpty URI, 
+    hash      :: Hash, 
+    aki       :: AKI, 
+    crlNumber :: Integer
 } deriving (Show, Eq, Ord, Typeable)
 
 data RpkiMeta = RpkiMeta {
-    locations :: !(NonEmpty URI), 
-    hash      :: !Hash, 
-    aki       :: !(Maybe AKI), 
-    ski       :: !SKI, 
-    serial    :: !Serial
+    locations :: (NonEmpty URI), 
+    hash      :: Hash, 
+    aki       :: (Maybe AKI), 
+    ski       :: SKI, 
+    serial    :: Serial
 } deriving (Show, Eq, Ord, Typeable)
 
 data RO = CerRO CerObject 
@@ -112,9 +112,9 @@ data RpkiObject = RpkiObject RpkiMeta RO
     deriving (Show, Eq, Typeable, Generic)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
-    certX509    :: !(X509.SignedExact X509.Certificate), 
-    ipResources :: !(Maybe (IpResourceSet rfc)), 
-    asResources :: !(Maybe (ResourceSet AsResource rfc))
+    certX509    :: (X509.SignedExact X509.Certificate), 
+    ipResources :: (Maybe (IpResourceSet rfc)), 
+    asResources :: (Maybe (ResourceSet AsResource rfc))
 } deriving (Show, Eq, Typeable)
 
 -- TODO Implement it properly
@@ -125,24 +125,24 @@ newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
     deriving (Show, Eq, Ord, Typeable)
 
 data Roa = Roa     
-    !ASN 
-    !APrefix    
+    ASN 
+    APrefix    
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable)
 
 data Manifest = Manifest {
-    mftNumber   :: !Int, 
-    fileHashAlg :: !X509.HashALG, 
-    thisTime    :: !DateTime, 
-    nextTime    :: !DateTime, 
-    mftEntries  :: ![(T.Text, Hash)]
+    mftNumber   :: Int, 
+    fileHashAlg :: X509.HashALG, 
+    thisTime    :: DateTime, 
+    nextTime    :: DateTime, 
+    mftEntries  :: [(T.Text, Hash)]
 } deriving (Show, Eq, Typeable)
 
 data SignCRL = SignCRL {
-  crl                :: !X509.CRL,
+  crl                :: X509.CRL,
   signatureAlgorithm :: SignatureAlgorithmIdentifier,
   signatureValue     :: SignatureValue,
-  encodedValue       :: !B.ByteString
+  encodedValue       :: B.ByteString
 } deriving (Show, Eq, Typeable, Generic)
 
 data Gbr = Gbr deriving (Show, Eq, Ord, Typeable)

@@ -16,15 +16,15 @@ import GHC.Generics
 import Data.X509 as X509
 
 data SignedObject a = SignedObject {
-    soContentType :: !ContentType, 
-    soContent     :: !(SignedData a)
+    soContentType :: ContentType, 
+    soContent     :: (SignedData a)
 } deriving (Show, Eq, Typeable, Generic)
 
 data CertificateWithSignature = CertificateWithSignature 
-  !X509.Certificate
-  !SignatureAlgorithmIdentifier
-  !SignatureValue
-  !B.ByteString
+    X509.Certificate
+    SignatureAlgorithmIdentifier
+    SignatureValue
+    B.ByteString
   deriving (Show, Eq, Typeable, Generic)
 
 {- 
@@ -41,11 +41,11 @@ data CertificateWithSignature = CertificateWithSignature
       SignerInfos ::= SET OF SignerInfo
 -}
 data SignedData a = SignedData {
-      scVersion          :: !CMSVersion
-    , scDigestAlgorithms :: !DigestAlgorithmIdentifiers
-    , scEncapContentInfo :: !(EncapsulatedContentInfo a)
-    , scCertificate      :: !CertificateWithSignature
-    , scSignerInfos      :: !SignerInfos
+      scVersion          :: CMSVersion, 
+      scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
+      scEncapContentInfo :: (EncapsulatedContentInfo a), 
+      scCertificate      :: CertificateWithSignature, 
+      scSignerInfos      :: SignerInfos
   } deriving (Show, Eq, Typeable, Generic)
   
   {- 
@@ -54,8 +54,8 @@ data SignedData a = SignedData {
           eContent [0] EXPLICIT OCTET STRING OPTIONAL }
   -}
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
-      eContentType :: !ContentType
-    , cContent     :: !a    
+      eContentType :: ContentType, 
+      cContent     :: a    
   } deriving (Show, Eq, Ord, Typeable, Generic)
   
   {-
@@ -69,12 +69,12 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
             unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
   -}
 data SignerInfos = SignerInfos {
-      siVersion          :: !CMSVersion
-    , siSid              :: !SignerIdentifier
-    , digestAlgorithm    :: !DigestAlgorithmIdentifiers
-    , signedAttrs        :: !SignedAttributes
-    , signatureAlgorithm :: !SignatureAlgorithmIdentifier
-    , signature          :: !SignatureValue
+      siVersion          :: CMSVersion, 
+      siSid              :: SignerIdentifier, 
+      digestAlgorithm    :: DigestAlgorithmIdentifiers, 
+      signedAttrs        :: SignedAttributes, 
+      signatureAlgorithm :: SignatureAlgorithmIdentifier, 
+      signature          :: SignatureValue
   } deriving (Show, Eq, Typeable, Generic)
   
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text 
@@ -100,7 +100,7 @@ newtype SignatureValue = SignatureValue B.ByteString
 
 -- Axccording to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
-data SignedAttributes = SignedAttributes ![Attribute] B.ByteString
+data SignedAttributes = SignedAttributes [Attribute] B.ByteString
   deriving (Show, Eq, Typeable, Generic)
 
 data Attribute = ContentTypeAttr ContentType 
