@@ -16,9 +16,6 @@ import Data.MultiMap (MultiMap)
 import Data.X509
 import Data.X509.Validation
 
-import Data.ASN1.BinaryEncoding
-import Data.ASN1.Encoding
-
 import RPKI.Domain
 import RPKI.SignTypes
 import RPKI.Validate
@@ -30,15 +27,17 @@ import RPKI.Parse.CRL
 
 import System.FilePath.Find
 
-import RPKI.Util (parallel)
+import RPKI.Util (parallel, sha256s)
 
 import Data.Time.Clock (getCurrentTime)
 
-import Codec.Serialise
 import Database.LMDB.Simple
+import Database.LMDB.Simple.Extra
 
 import Streaming
 import qualified Streaming.Prelude as S
+
+import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 mkLmdb :: IO (Environment ReadWrite)
 mkLmdb = openReadWriteEnvironment "./data" limits 
@@ -50,36 +49,32 @@ mkLmdb = openReadWriteEnvironment "./data" limits
 
 runValidate :: IO ()
 runValidate = do
-  say "open LMDB"    
-  lmdb <- mkLmdb
+  say "starting"
+  parsedObjects <- readRepo              
 
-  saveRepoToLmdb lmdb
-
-  -- db <- readWriteTransaction lmdb $ getDatabase (Just "objects") :: IO (Database Hash RpkiObject)  
-
-  -- say "starting"
-  -- parsedObjects <- readRepo              
-
-  -- let errors = [ (f, e) | (f, Left e) <- parsedObjects ]  
+  let errors = [ (f, e) | (f, Left e) <- parsedObjects ]  
   
-  -- say $ "errors = " <> show (length errors)
-  -- let objects = [ o | (_, Right os) <- parsedObjects, o <- os ]
+  say $ "errors = " <> show (length errors)
+  let objects = [ o | (_, Right os) <- parsedObjects, o <- os ]
 
-  -- say $ "objects = " <> show (length objects)  
+  say $ "objects = " <> show (length objects)
 
-  -- transaction lmdb $
-  --   forM_ objects $ \case 
-  --      ro@(RpkiObject RpkiMeta {..} _) -> put db hash (Just ro)
-  --      rc@(RpkiCrl CrlMeta {..} _) -> put db hash (Just rc)
-
-  -- let Right signatureValidations = validateKeys objects
-  -- say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
-  -- say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
-  -- say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
-  -- say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
+  let Right signatureValidations = validateKeys objects
+  say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
+  say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
+  say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
+  say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
 
   say "done"
   
+validateObjects :: [RpkiObject] -> IO ()
+validateObjects objects = do
+  let Right signatureValidations = validateKeys objects
+  say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
+  say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
+  say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
+  say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
+
 type ReadStuff = (String, Either (ParseError T.Text) [RpkiObject])
 
 readRepo :: IO [ReadStuff]
@@ -90,35 +85,120 @@ readRepo = do
              (fileName ~~? "*.mft") ||?            
              (fileName ~~? "*.crl") 
   fileNames <- find always expr repository 
-  parallel 50 (\f -> (readObject f) <$> (B.readFile f)) fileNames 
+  mapM (\f -> (readObject f) <$> (B.readFile f)) fileNames 
+  -- parallel 50 (\f -> (readObject f) <$> (B.readFile f)) fileNames 
 
-
-saveRepoToLmdb :: Environment ReadWrite -> IO ()
-saveRepoToLmdb lmdb = do
+getFileNames :: IO [String]
+getFileNames = do
   let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/"  
   let expr = (fileName ~~? "*.cer") ||? 
               (fileName ~~? "*.roa") ||?
               (fileName ~~? "*.mft") ||?            
               (fileName ~~? "*.crl") 
-  fileNames                      <- find always expr repository 
+  find always expr repository 
+
+saveSerialised :: Environment ReadWrite -> IO ()
+saveSerialised lmdb = do
+  say "start"
+  fileNames <- getFileNames
+  say "found"
+
   db :: Database Hash RpkiObject <- readWriteTransaction lmdb $ getDatabase (Just "objects")  
-  _                              <- readWriteTransaction lmdb 
-                                      $ S.effects
-                                      $ S.mapM (saveToLmdb db)
-                                      $ S.concat
-                                      $ S.map (\case 
-                                            (_, Right o) -> o
-                                            (_, Left _)  -> [])
-                                      $ S.mapM (\f -> do
-                                            bs <- liftIO $ B.readFile f
-                                            pure $ readObject f bs)
-                                      $ S.each fileNames
-  pure ()
+
+  (chanIn, chanOut) <- Chan.newChan 20
+  void $ concurrently
+      (writeChan fileNames chanIn)
+      (readWriteTransaction lmdb $ readChan db fileNames chanOut)  
+
+  say $ "re-read and validate"
+  objects <- readAll db
+  validateObjects objects
+  say $ "done"
+
   where 
+    writeChan fileNames chanIn =
+      S.effects $
+      S.mapM (Chan.writeChan chanIn) $
+      S.mapM (\f -> async $ do
+        bs <- liftIO $ B.readFile f
+        pure (readObject f bs, bs)) $
+      S.each fileNames
+
+    readChan db fileNames chanOut = 
+      S.effects $ 
+      S.mapM (saveToLmdb db) $ 
+      S.concat $ 
+      S.map (\case 
+              ((_, Right o), _) -> o
+              ((_, Left _), _)  -> []) $
+      S.mapM (liftIO . wait) $
+      S.mapM (\_ -> liftIO $ Chan.readChan chanOut) $
+      S.each fileNames
+
     saveToLmdb :: Database Hash RpkiObject -> RpkiObject -> Transaction ReadWrite ()
     saveToLmdb db = \case 
-       ro@(RpkiObject RpkiMeta {..} _) -> put db hash (Just ro)
-       rc@(RpkiCrl CrlMeta {..} _) -> put db hash (Just rc)
+       ro@(RpkiObject RpkiMeta {..} _) -> do
+        put db hash (Just ro)
+       rc@(RpkiCrl CrlMeta {..} _) -> do
+        put db hash (Just rc) 
+
+    readAll :: Database Hash RpkiObject -> IO [RpkiObject]
+    readAll db = readOnlyTransaction lmdb $ do
+        ks <- keys db
+        S.toList_ $ 
+          S.concat $ 
+          S.mapM (get db) $ 
+          S.each ks      
+        
+
+saveOriginal :: Environment ReadWrite -> IO ()
+saveOriginal lmdb = do
+  say "start"
+  fileNames <- getFileNames
+  say "found"
+
+  db :: Database Hash (String, B.ByteString) <- readWriteTransaction lmdb $ getDatabase (Just "originals")  
+
+  (chanIn, chanOut) <- Chan.newChan 20
+  void $ concurrently
+      (writeChan fileNames chanIn)
+      (readWriteTransaction lmdb $ readChan db fileNames chanOut)  
+
+  say $ "re-read and validate"
+  objects <- readAll db
+  validateObjects objects
+  say $ "done"
+
+  where 
+    writeChan fileNames chanIn =
+      S.effects $
+      S.mapM (Chan.writeChan chanIn) $
+      S.mapM (\f -> async $ do 
+                      bs <- B.readFile f
+                      pure (f, bs)) $
+      S.each fileNames
+
+    readChan db fileNames chanOut = 
+      S.effects $ 
+      S.mapM (\(f, bs) -> put db (sha256s bs) (Just (f, bs))) $       
+      S.mapM (liftIO . wait) $
+      S.mapM (\_ -> liftIO $ Chan.readChan chanOut) $
+      S.each fileNames
+     
+    readAll :: Database Hash (String, B.ByteString) -> IO [RpkiObject]
+    readAll db = readOnlyTransaction lmdb $ do
+        ks <- keys db
+        S.toList_ $ 
+          S.concat $ 
+          S.map (\case 
+                  (_, Right o) -> o
+                  (_, Left _)  -> []) $        
+          S.map (\(f, bs) -> readObject f bs) $
+          S.concat $ 
+          S.mapM (get db) $ 
+          S.each ks      
+          
+
 
 testSignature :: IO ()
 testSignature = do
@@ -263,7 +343,9 @@ byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject (RpkiMeta { aki = Ju
 main :: IO ()
 main = do 
   -- testCrl
-  runValidate  
+  -- runValidate  
+  -- mkLmdb >>= saveSerialised
+  mkLmdb >>= saveOriginal
   -- testSignature
 
 say :: String -> IO ()

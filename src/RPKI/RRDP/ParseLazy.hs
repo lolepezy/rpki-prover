@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings     #-}
 
-module RPKI.RRDP.Parse where
+module RPKI.RRDP.ParseLazy where
 
 import           Control.Monad
 import           Control.Monad.ST
 import           Data.STRef
 
-import           Control.Monad.Primitive    (PrimMonad (..), stToPrim)
+import           Control.Monad.Primitive    (PrimMonad (..))
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
 
@@ -14,12 +14,12 @@ import qualified Data.ByteString            as B
 import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Char                  (isSpace, chr)
-import qualified Data.Map                   as M
+import qualified Data.List                   as L
 import           Data.Hex                   (unhex)
 import           Data.Word
 import           Text.Read                  (readMaybe)
 
-import           Xeno.SAX                   as X
+import qualified Text.XML.Expat.SAX as X
 
 import           RPKI.Domain
 import           RPKI.RRDP.Types
@@ -27,18 +27,18 @@ import           RPKI.Util                  (convert)
 
 parseNotification :: BL.ByteString -> Either RrdpError Notification
 parseNotification bs = runST $ do
-    deltas       <- newSTRef []
+    deltaInfos   <- newSTRef []
     version      <- newSTRef Nothing
     snapshotUri  <- newSTRef Nothing
     snapshotHash <- newSTRef Nothing
     serial       <- newSTRef Nothing
     sessionId    <- newSTRef Nothing
 
-    let parse = parseXml (BL.toStrict bs)
+    let parse = parseLazyXml bs
             (\case
                 ("notification", attributes) -> do
                     forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
+                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId  v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serial . Just)
                     forAttribute attributes "version" NoVersion $
@@ -48,19 +48,19 @@ parseNotification bs = runST $ do
                 ("snapshot", attributes) -> do
                     forAttribute attributes "hash" NoSnapshotHash $
                         \v  -> case makeHash v of
-                            Nothing   -> throwE $ BadHash v
+                            Nothing   -> throwE $ BadHash  v
                             Just hash -> lift $ writeSTRef snapshotHash $ Just hash
                     forAttribute attributes "uri" NoSnapshotURI $
                         \v  -> lift $ writeSTRef snapshotUri $ Just $ URI $ convert v
                 ("delta", attributes) -> do
-                    uri    <- forAttribute attributes "uri" NoDeltaURI (lift . pure)
-                    h      <- forAttribute attributes "hash" NoDeltaHash (lift . pure)
-                    s      <- forAttribute attributes "serial" NoDeltaSerial (lift . pure)
-                    serial <- parseSerial s (lift . pure)
+                    s       <- forAttribute attributes "serial" NoDeltaSerial (lift . pure)
+                    uri     <- forAttribute attributes "uri" NoDeltaURI (lift . pure)
+                    h       <- forAttribute attributes "hash" NoDeltaHash (lift . pure)                    
+                    serial' <- parseSerial s (lift . pure)
                     case makeHash h of
-                        Nothing   -> throwE $ BadHash h
-                        Just hash -> lift $ modifySTRef deltas $ \ds ->
-                                DeltaInfo (URI (convert uri)) hash serial : ds
+                        Nothing   -> throwE $ BadHash  h
+                        Just hash' -> lift $ modifySTRef deltaInfos $ \ds ->
+                                DeltaInfo (URI (convert uri)) hash' serial' : ds
                 (_, _) -> pure ()
             )
             (\_ -> pure ())
@@ -72,7 +72,7 @@ parseNotification bs = runST $ do
                         (SnapshotInfo <$> 
                             valuesOrError snapshotUri NoSnapshotURI <*>
                             valuesOrError snapshotHash NoSnapshotHash) <*>
-                        (reverse <$> (lift . readSTRef) deltas)
+                        (reverse <$> (lift . readSTRef) deltaInfos)
 
     runExceptT (parse >> notification)
 
@@ -84,11 +84,11 @@ parseSnapshot bs = runST $ do
     serial    <- newSTRef Nothing
     version   <- newSTRef Nothing
 
-    let parse = parseXml (BL.toStrict bs)
+    let parse = parseLazyXml bs
             (\case
                 ("snapshot", attributes) -> do
                     forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
+                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId  v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serial . Just)
                     forAttribute attributes "version" NoSerial $
@@ -111,7 +111,7 @@ parseSnapshot bs = runST $ do
     let snapshotPublishes = do
             ps <- (lift . readSTRef) publishes
             forM (reverse ps) $ \case 
-                (uri, Nothing) -> throwE $ BadPublish uri
+                (uri, Nothing) -> throwE $ BadPublish  uri
                 (uri, Just base64) ->
                     case toContent base64 of 
                         Left e    -> throwE $ BadBase64 $ convert e
@@ -133,7 +133,7 @@ parseDelta bs = runST $ do
     serial    <- newSTRef Nothing
     version   <- newSTRef Nothing
 
-    let parse = parseXml (BL.toStrict bs)
+    let parse = parseLazyXml bs
             (\case
                 ("delta", attributes) -> do
                     forAttribute attributes "session_id" NoSessionId $
@@ -147,7 +147,7 @@ parseDelta bs = runST $ do
 
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    hash <- case M.lookup "hash" attributes of
+                    hash <- case L.lookup "hash" attributes of
                         Nothing -> lift $ pure Nothing
                         Just h -> case makeHash h of                    
                             Nothing   -> throwE $ BadHash h
@@ -170,7 +170,7 @@ parseDelta bs = runST $ do
                             []        -> pure ()
                             item : is ->
                                 case item of
-                                    Left  (uri, _)             -> throwE $ ContentInWithdraw $ B.concat [uri, ", c = " :: B.ByteString, base64]
+                                    Left  (uri, _) -> throwE $ ContentInWithdraw $ B.concat [uri, ", c = " :: B.ByteString, base64]
                                     Right (uri, hash, content) -> do                            
                                         let base64' = appendBase64 base64 content
                                         lift $ writeSTRef items $ Right (uri, hash, base64') : is                        
@@ -180,7 +180,7 @@ parseDelta bs = runST $ do
             is <- (lift . readSTRef) items
             forM (reverse is) $ \case 
                 Left  (uri, hash)              -> pure $ DW $ DeltaWithdraw (URI $ convert uri) hash
-                Right (uri, hash, Nothing)     -> throwE $ BadPublish uri
+                Right (uri, hash, Nothing)     -> throwE $ BadPublish  uri
                 Right (uri, hash, Just base64) ->                     
                     case toContent base64 of 
                         Left e        -> throwE $ BadBase64 $ convert e
@@ -208,12 +208,12 @@ parseInteger :: B.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs
 
 forAttribute :: Monad m =>
-                M.Map B.ByteString B.ByteString ->
+                [(B.ByteString, B.ByteString)] ->
                 B.ByteString ->
                 RrdpError ->
                 (B.ByteString -> ExceptT RrdpError m v) ->
                 ExceptT RrdpError m v
-forAttribute as name err f = case M.lookup name as of
+forAttribute as name err f = case L.lookup name as of
     Nothing -> throwE err
     Just v  -> f v
 
@@ -231,28 +231,21 @@ valuesOrError v e =
         Nothing -> throwE e
         Just s  -> (lift . pure) s
 
-type Element = (B.ByteString, M.Map B.ByteString B.ByteString)
+type Element = (B.ByteString, [(B.ByteString, B.ByteString)])
 
-parseXml :: (MonadTrans t, PrimMonad pm, Monad (t pm)) =>
-            B.ByteString ->
+
+parseLazyXml :: (MonadTrans t, PrimMonad pm, Monad (t pm)) =>
+            BL.ByteString ->
             (Element -> t pm ()) ->
             (B.ByteString -> t pm ()) ->
             t pm ()
-parseXml bs onElement onText = do
-    element <- lift $ stToPrim $ newSTRef ("" :: B.ByteString, M.empty)
-    X.process
-        (\elemName -> lift $ stToPrim $ modifySTRef' element (\(_, as) -> (elemName, as)))
-        (\name value -> lift $ stToPrim $ modifySTRef' element (\(n, as) -> (n, M.insert name value as)))
-        (\elemName -> do
-            e <- lift $ stToPrim $ readSTRef element
-            lift $ stToPrim $ writeSTRef element (elemName, M.empty)
-            onElement e)
-        onText
-        nothing
-        nothing
-        bs
-    where nothing _ = lift $ pure ()
-
+parseLazyXml bs onElement onText = 
+    forM_ (X.parse options bs) $ \case 
+        X.StartElement tag attrs -> onElement (tag, attrs)
+        X.CharacterData text     -> onText text 
+        _ -> pure ()
+    where
+        options = X.defaultParseOptions :: X.ParseOptions B.ByteString B.ByteString
 
 makeHash :: B.ByteString -> Maybe Hash
 makeHash bs = Hash . toBytes <$> hexString bs

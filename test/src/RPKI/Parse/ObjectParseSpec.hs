@@ -71,7 +71,7 @@ testSignedObjectParsing = do
   
 
 testAllManifests = testAllObjects parseMft "mft"  
-testAllRoas      = testAllObjects parseRoa "roa" 
+testAllRoas      = testAllObjects parseRoa "roa"
 -- testAllCerts     = testAllObjects (\bs -> 
 --                       parseResourceCertificate bs
 --                       (URI "something.cer")) "cer" 

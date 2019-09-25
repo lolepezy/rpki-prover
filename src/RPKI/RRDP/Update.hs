@@ -4,23 +4,14 @@
 
 module RPKI.RRDP.Update where
 
-import           Control.Concurrent
-import           Control.Concurrent.Async
-import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
-import           Control.Monad.ST
-import           Data.STRef
-
 import           Control.Lens               ((^.))
 
-import           Control.Monad.Primitive    (PrimMonad (..), stToPrim)
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
 
 import           Data.Bifunctor             (first, second)
-import qualified Data.ByteString            as B
-import qualified Data.ByteString.Base16     as B16
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.DList                 as DL
 import qualified Data.List                  as L

@@ -21,8 +21,7 @@ import Data.Bifunctor
 
 import RPKI.Domain  
 import RPKI.IP
-import RPKI.Parse.Common 
-import RPKI.SignTypes 
+import RPKI.Parse.Common
 import RPKI.Parse.SignedObject 
 
 

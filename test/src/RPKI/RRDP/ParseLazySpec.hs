@@ -4,7 +4,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module RPKI.RRDP.ParseSpec where
+module RPKI.RRDP.ParseLazySpec where
 
 import qualified Data.ByteString                      as B
 import qualified Data.ByteString.Lazy                 as BL
@@ -20,7 +20,7 @@ import           Control.Monad.Trans.Class
 import qualified Data.ByteString.Base64               as B64
 
 import           RPKI.Domain
-import           RPKI.RRDP.Parse
+import           RPKI.RRDP.ParseLazy
 import           RPKI.RRDP.Types
 
 import           Test.QuickCheck.Arbitrary.Generic
@@ -38,26 +38,36 @@ import           RPKI.Util                            (convert)
 
 import RPKI.Orphans
 
-testParseSnapshot :: IO ()
-testParseSnapshot = do
+testLazyParseSnapshot :: IO ()
+testLazyParseSnapshot = do
   snapshot <- BL.readFile "./snapshot.xml"
-  let x = parseSnapshot snapshot
-  print $ x `deepseq` (1 :: Integer)
-  -- print $ length x
-  -- runIdentityT $ parseXml (B.toStrict snapshot)
-  --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
-  --     (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
+  let x = parseSnapshot snapshot  
+  print $ x `deepseq` x
+  runIdentityT $ parseLazyXml snapshot
+      (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
+      (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
 
-testParseDelta = do
+testLazyParseDelta :: IO ()
+testLazyParseDelta = do
   delta <- BL.readFile "./delta.xml"
   let x = parseDelta delta
   print $ x `deepseq` x
-  runIdentityT $ parseXml (BL.toStrict delta)
+  runIdentityT $ parseLazyXml delta
       (\z -> lift $ ioToPrim $ print ("e = " ++ show z))
       (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
 
 
-rrdpXmlParsingGroup = testGroup "RRDP parsing"
+testLazyParseNotification :: IO ()
+testLazyParseNotification = do
+  notification <- BL.readFile "./notification.xml"
+  let x = parseNotification notification
+  print $ x `deepseq` x
+  runIdentityT $ parseLazyXml notification
+      (\z -> lift $ ioToPrim $ print ("e = " ++ show z))
+      (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
+
+
+rrdpXmlLazyParsingGroup = testGroup "RRDP Hexpat parsing"
   [
     QC.testProperty
       "Generate and parse back a snapshot"
@@ -77,7 +87,8 @@ prop_generate_and_parse_snapshot_creates_same_object = monadicIO $ do
   snapshot :: Snapshot <- pick arbitrary
   let xml = snaphostToXml snapshot
   let s = parseSnapshot (convert xml)
-  assert $ (Right snapshot) == s
+  assert $ (Right snapshot) == s  
+
 
 prop_generate_and_parse_delta_creates_same_object :: QC.Property
 prop_generate_and_parse_delta_creates_same_object = monadicIO $ do
@@ -90,7 +101,7 @@ prop_generate_and_parse_notification_creates_same_object :: QC.Property
 prop_generate_and_parse_notification_creates_same_object = monadicIO $ do
   notification :: Notification <- pick arbitrary  
   let xml = notificationToXml notification
-  let n = parseNotification (convert xml)
+  let n = parseNotification (convert xml)  
   assert $ Right notification == n
 
 snaphostToXml :: Snapshot -> String
@@ -125,9 +136,10 @@ notificationToXml Notification {
       ..
     } =
   [i|<notification version="#{v}" session_id="#{sid}" serial="#{s}">
-      <snapshot uri="#{su}" hash="#{hex sh}"></snaphost>
+      <snapshot uri="#{su}" hash="#{hex sh}"></snapshot>
       #{concatMap delta deltas}
   </notification>|]
   where
-    delta (DeltaInfo (URI u) (Hash hash) (Serial s)) =
-      [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{s}"></delta>|]  
+    delta (DeltaInfo (URI u) (Hash hash) (Serial ds)) =
+      [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{ds}"></delta>|]  
+
