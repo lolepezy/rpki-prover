@@ -1,6 +1,10 @@
-{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveAnyClass, DeriveGeneric, FlexibleInstances #-}
 
 module RPKI.SignTypes where
+
+import Codec.Serialise
+import Codec.Serialise.Class
+import Data.Store
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
@@ -14,6 +18,13 @@ import Data.Hourglass
 import GHC.Generics
 
 import Data.X509 as X509
+
+import Data.ASN1.BitArray
+import Crypto.PubKey.RSA.Types (PublicKey)
+import Crypto.PubKey.DSA (PublicKey)
+
+import RPKI.Serialise.Orphans
+import RPKI.Serialise.StoreOrphans
 
 data SignedObject a = SignedObject {
     soContentType :: ContentType, 
@@ -110,3 +121,32 @@ data Attribute = ContentTypeAttr ContentType
             | UnknownAttribute OID [ASN1]
       deriving (Show, Eq, Typeable, Generic)
 
+-- serialisation
+instance Serialise ContentType
+instance Serialise a => Serialise (EncapsulatedContentInfo a)
+instance Serialise a => Serialise (SignedObject a)
+instance Serialise a => Serialise (SignedData a)
+instance Serialise CMSVersion
+instance Serialise DigestAlgorithmIdentifiers
+instance Serialise SignatureAlgorithmIdentifier
+instance Serialise SignatureValue
+instance Serialise SignerIdentifier
+instance Serialise SignedAttributes
+instance Serialise Attribute
+instance Serialise CertificateWithSignature
+instance Serialise SignerInfos
+
+-- store
+instance Store ContentType
+instance Store a => Store (EncapsulatedContentInfo a)
+instance Store a => Store (SignedObject a)
+instance Store a => Store (SignedData a)
+instance Store CMSVersion
+instance Store DigestAlgorithmIdentifiers
+instance Store SignatureAlgorithmIdentifier
+instance Store SignatureValue
+instance Store SignerIdentifier
+instance Store SignedAttributes
+instance Store Attribute
+instance Store CertificateWithSignature
+instance Store SignerInfos

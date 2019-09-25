@@ -108,10 +108,8 @@ parseResources x509cert = do
 parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
 parseIpExt addrBlocks = mapParseErr $
   flip runParseASN1 addrBlocks $ do
-    afs <- onNextContainer Sequence (getMany addrFamily)
-    let ipv4 = rs [ af | Left  af <- afs ]
-    let ipv6 = rs [ af | Right af <- afs ]
-    pure $ IpResourceSet ipv4 ipv6
+    afs <- onNextContainer Sequence (getMany addrFamily)    
+    pure $ IpResourceSet $ rs $ [ af | Left  af <- afs ] <> [ af | Right af <- afs ]
     where
       rs []       = RS S.empty
       rs (af : _) = af

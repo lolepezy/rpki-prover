@@ -1,5 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Domain where
 
@@ -10,6 +11,8 @@ import qualified Data.Text.Short as TS
 
 import Control.DeepSeq
 
+import Codec.Serialise
+
 import Data.Ord (comparing)
 
 import Data.Kind (Type)
@@ -18,6 +21,7 @@ import Data.Data (Typeable)
 import Data.List.NonEmpty
 
 import Data.Hourglass
+import Data.Store
 
 import GHC.Generics
 
@@ -25,6 +29,8 @@ import qualified Data.X509 as X509
 
 import RPKI.IP    
 import RPKI.SignTypes
+
+import RPKI.Serialise.StoreOrphans
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -57,8 +63,7 @@ data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 data IpResourceSet (rfc :: ValidationRFC) = 
-    IpResourceSet !(ResourceSet (IpResource 'Ipv4F) rfc)
-                  !(ResourceSet (IpResource 'Ipv6F) rfc)
+    IpResourceSet !(ResourceSet IpResource rfc)
     deriving (Show, Eq, Ord, Typeable, Generic)                    
 
 -- TODO Use library type?
@@ -91,7 +96,7 @@ data CrlMeta = CrlMeta {
     hash      :: Hash, 
     aki       :: AKI, 
     crlNumber :: Integer
-} deriving (Show, Eq, Ord, Typeable)
+} deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RpkiMeta = RpkiMeta {
     locations :: (NonEmpty URI), 
@@ -99,7 +104,10 @@ data RpkiMeta = RpkiMeta {
     aki       :: (Maybe AKI), 
     ski       :: SKI, 
     serial    :: Serial
-} deriving (Show, Eq, Ord, Typeable)
+} deriving (Show, Eq, Ord, Typeable, Generic)
+
+data AMeta = CM CrlMeta | RM RpkiMeta
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RO = CerRO CerObject 
         | MftRO MftObject
@@ -115,20 +123,20 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: (X509.SignedExact X509.Certificate), 
     ipResources :: (Maybe (IpResourceSet rfc)), 
     asResources :: (Maybe (ResourceSet AsResource rfc))
-} deriving (Show, Eq, Typeable)
+} deriving (Show, Eq, Typeable, Generic)
 
 -- TODO Implement it properly
 instance Ord (ResourceCertificate (rfc :: ValidationRFC)) where
     compare = comparing ipResources <> comparing asResources
 
 newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Roa = Roa     
-    ASN 
-    APrefix    
+    {-# UNPACK #-} !ASN 
+    !APrefix    
     {-# UNPACK #-} !Int
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Manifest = Manifest {
     mftNumber   :: Int, 
@@ -136,7 +144,7 @@ data Manifest = Manifest {
     thisTime    :: DateTime, 
     nextTime    :: DateTime, 
     mftEntries  :: [(T.Text, Hash)]
-} deriving (Show, Eq, Typeable)
+} deriving (Show, Eq, Typeable, Generic)
 
 data SignCRL = SignCRL {
   crl                :: X509.CRL,
@@ -145,7 +153,7 @@ data SignCRL = SignCRL {
   encodedValue       :: B.ByteString
 } deriving (Show, Eq, Typeable, Generic)
 
-data Gbr = Gbr deriving (Show, Eq, Ord, Typeable)
+data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RpkiObj = RpkiObj !ObjId !RpkiMeta
     deriving (Show, Eq, Ord, Typeable)
@@ -221,6 +229,73 @@ data RrdpError = BrokenSerial !B.ByteString |
                  DeltaHashMismatch Hash Hash Serial
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-data CryptoValidation = CryptoOk |
-                        NoDigest |
-                        InvalidSignature
+-- serialisation
+instance Serialise Hash
+instance Serialise RpkiMeta
+instance Serialise CrlMeta
+instance Serialise AMeta
+instance Serialise URI
+instance Serialise AKI
+instance Serialise SKI
+instance Serialise KI
+instance Serialise Serial
+instance Serialise RO
+instance Serialise Manifest
+instance Serialise Roa
+instance Serialise Gbr
+instance Serialise ASN
+instance Serialise APrefix
+instance Serialise a => Serialise (CMS a)
+instance Serialise CerObject
+instance Serialise CrlObject
+instance Serialise SignCRL
+instance Serialise ResourceCert
+instance Serialise RpkiObject
+
+instance Serialise (WithRFC 'Strict_ ResourceCertificate)
+instance Serialise (ResourceCertificate 'Strict_)
+instance Serialise (IpResourceSet 'Strict_)
+instance Serialise (ResourceSet IpResource 'Strict_)
+instance Serialise (ResourceCertificate 'Reconsidered)
+instance Serialise (IpResourceSet 'Reconsidered)
+instance Serialise (ResourceSet IpResource 'Reconsidered)
+instance Serialise (WithRFC 'Reconsidered ResourceCertificate)
+instance Serialise (ResourceSet AsResource 'Strict_)
+instance Serialise (ResourceSet AsResource 'Reconsidered)
+instance Serialise AsResource
+
+
+-- store
+instance Store Hash
+instance Store RpkiMeta
+instance Store CrlMeta
+instance Store AMeta
+instance Store URI
+instance Store AKI
+instance Store SKI
+instance Store KI
+instance Store Serial
+instance Store RO
+instance Store Manifest
+instance Store Roa
+instance Store Gbr
+instance Store ASN
+instance Store APrefix
+instance Store a => Store (CMS a)
+instance Store CerObject
+instance Store CrlObject
+instance Store SignCRL
+instance Store ResourceCert
+instance Store RpkiObject
+
+instance Store (WithRFC 'Strict_ ResourceCertificate)
+instance Store (ResourceCertificate 'Strict_)
+instance Store (IpResourceSet 'Strict_)
+instance Store (ResourceSet IpResource 'Strict_)
+instance Store (ResourceCertificate 'Reconsidered)
+instance Store (IpResourceSet 'Reconsidered)
+instance Store (ResourceSet IpResource 'Reconsidered)
+instance Store (WithRFC 'Reconsidered ResourceCertificate)
+instance Store (ResourceSet AsResource 'Strict_)
+instance Store (ResourceSet AsResource 'Reconsidered)
+instance Store AsResource

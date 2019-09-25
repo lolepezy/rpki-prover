@@ -21,7 +21,7 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 default-extensions: ViewPatterns, LambdaCase, ScopedTypeVariables, 
                     AllowAmbiguousTypes, ConstraintKinds, DataKinds, 
-                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor, 
+                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
                     DuplicateRecordFields, FlexibleContexts, GADTs, 
                     KindSignatures, MultiWayIf, NoMonomorphismRestriction, 
                     PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
@@ -38,6 +38,7 @@ dependencies:
 - base64-bytestring
 - bytestring
 - bytestring-conversion
+- cborg
 - containers
 - cryptohash-sha256
 - cryptonite
@@ -48,11 +49,13 @@ dependencies:
 - generic-lens
 - hashable
 - hex
+- hexpat
 - hourglass
 - hw-ip
 - interpolate
 - ixset-typed
 - lens
+- lmdb-simple
 - memory
 - MissingH
 - mtl
@@ -61,20 +64,21 @@ dependencies:
 - pem
 - primitive
 - semigroups
+- serialise
 - stm
 - stm-containers
+- store
 - streaming
 - streaming-bytestring
-- streamly
 - string-conversions
 - text
 - text-short
+- th-utilities
 - time
 - transformers
 - validation
 - wreq
 - x509
-- x509-store
 - x509-validation
 - xeno
 - QuickCheck
@@ -137,4 +141,4 @@ tests:
     - -Wall
     # - -O2
     dependencies:
-    - rpki-prover  
+    - rpki-prover

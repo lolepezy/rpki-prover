@@ -132,7 +132,7 @@ notificationToXml Notification {
 
 instance Arbitrary URI where
   arbitrary = URI <$> do
-    ext  <- elements [ ".cer", ".mft", ".roa" ]
+    ext  <- elements [ ".cer", ".mft", ".roa", ".crl", ".gbr" ]
     name <- listOf1 $ elements ['a'..'z']
     pure $ convert $ "rsync://" <> name <> ext
   shrink = genericShrink

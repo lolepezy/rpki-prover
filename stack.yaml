@@ -18,7 +18,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-14.3
+resolver: lts-14.4
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -40,6 +40,11 @@ packages:
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
 extra-deps: 
+ - "../lib/hs-certificate/x509"
+#  - "../lib/hs-certificate/x509-store"
+#  - "../lib/hs-certificate/x509-system"
+#  - "../lib/hs-certificate/x509-util"
+ - "../lib/hs-certificate/x509-validation"
  - primitive-extras-0.7.1
  - stm-containers-1.1.0.4
  - stm-hamt-1.2.0.2
@@ -47,6 +52,7 @@ extra-deps:
  - streaming-utils-0.2.0.0
  - json-stream-0.4.2.4 
  - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653
+ - lmdb-simple-0.4.0.0@sha256:a4e72c3e2edbf4103ce7298ab566f8c914ea9159624adc2ce094f1122b47c5e3,2773
  - git: git@github.com:vincenthz/hs-asn1.git
    commit: 6ac0d32b5fa0023267c36cbb754d95ca23d7ec48
    subdirs:

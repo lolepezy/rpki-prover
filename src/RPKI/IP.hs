@@ -1,14 +1,18 @@
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableInstances, FlexibleInstances #-}
 module RPKI.IP where
+
+import Codec.Serialise
+import Data.Store
 
 import qualified Data.ByteString as B  
 import qualified Data.List as L
 
-import Data.Kind (Type)
 import Data.Data (Typeable)
 
 import Data.Word
 import Data.Bits
+
+import GHC.Generics
 
 import HaskellWorks.Data.Network.Ip.Validity
 import HaskellWorks.Data.Network.Ip.Range
@@ -16,73 +20,33 @@ import HaskellWorks.Data.Network.Ip.Word128
 import HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
-import RPKI.GenTypes
-
 data AddrFamily = Ipv4F | Ipv6F
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical) 
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype Ipv4Range = Ipv4Range (Range V4.IpAddress) 
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 newtype Ipv6Range = Ipv6Range (Range V6.IpAddress) 
-    deriving (Show, Eq, Ord, Typeable)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
-data IpPrefix (f :: AddrFamily) where
-    Ipv4P :: !Ipv4Prefix -> IpPrefix 'Ipv4F
-    Ipv6P :: !Ipv6Prefix -> IpPrefix 'Ipv6F    
+data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
-data IpRange (f :: AddrFamily) where
-    Ipv4R :: !Ipv4Range -> IpRange 'Ipv4F
-    Ipv6R :: !Ipv6Range -> IpRange 'Ipv6F    
+data IpRange = Ipv4R !Ipv4Range | Ipv6R !Ipv6Range
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
-newtype WithAF (f :: AddrFamily) (r :: AddrFamily -> Type) = WithAF (r f)
+newtype APrefix = APrefix IpPrefix
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
-data AnAF (r :: AddrFamily -> Type) = 
-    V4AF (WithAF 'Ipv4F r)
-  | V6AF (WithAF 'Ipv6F r)  
+newtype ARange = ARange IpRange
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
-newtype APrefix = APrefix (AnAF IpPrefix)    
-  deriving (Show, Eq, Ord, Typeable)
-
-newtype ARange = ARange (AnAF IpRange)
-  deriving (Show, Eq, Ord, Typeable)
-
-data IpResource (rfc :: AddrFamily) where
-  IpP :: !(IpPrefix f) -> IpResource f
-  IpR :: !(IpRange f ) -> IpResource f
-  deriving (Show, Eq, Ord, Typeable)
-
-deriving instance Show (IpPrefix f)
-deriving instance Eq (IpPrefix f)
-deriving instance Ord (IpPrefix f)
-deriving instance Typeable (IpPrefix f)
-
-deriving instance Show (IpRange f)
-deriving instance Eq (IpRange f)
-deriving instance Ord (IpRange f)
-deriving instance Typeable (IpRange f)
-
-deriving instance Show (r f) => Show (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
-deriving instance Eq (r f) => Eq (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
-deriving instance Ord (r f) => Ord (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
-deriving instance Typeable (r f) => Typeable (WithAF (f :: AddrFamily) (r :: AddrFamily -> Type))
-
-type ForAllAFs c r = (AllF c r ['Ipv4F, 'Ipv6F]) 
-
-deriving instance (ForAllAFs Show r) => Show (AnAF (r :: AddrFamily -> Type))
-deriving instance (ForAllAFs Eq r)   => Eq (AnAF (r :: AddrFamily -> Type))
-deriving instance (ForAllAFs Ord r)  => Ord (AnAF (r :: AddrFamily -> Type))
-deriving instance (ForAllAFs Typeable r) => Typeable (AnAF (r :: AddrFamily -> Type))
-
-
-withAF :: forall r a . AnAF r -> (forall f . WithAF (f :: AddrFamily) r -> a) -> a
-withAF (V4AF r) f = f r
-withAF (V6AF r) f = f r
-
+data IpResource = IpP !IpPrefix | IpR !IpRange
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
 mkIpv4Block w32 nonZeroBits = Ipv4Prefix (V4.IpBlock (V4.IpAddress w32) (V4.IpNetMask nonZeroBits))
@@ -135,3 +99,41 @@ rightPad n a as = go 0 as
     go acc [] | acc < n  = a : go (acc + 1) []
               | otherwise = []  
     go acc (x : xs) = x : go (acc + 1) xs    
+
+-- Serialise instances
+instance Serialise IpPrefix
+instance Serialise IpRange
+instance Serialise Ipv4Prefix
+instance Serialise Ipv6Prefix
+instance Serialise Ipv4Range
+instance Serialise Ipv6Range
+
+instance Serialise (V4.IpBlock Canonical)
+instance Serialise (V6.IpBlock Canonical)
+instance Serialise (Range V4.IpAddress)
+instance Serialise (Range V6.IpAddress)
+instance Serialise V4.IpAddress
+instance Serialise V6.IpAddress
+instance Serialise V4.IpNetMask
+instance Serialise V6.IpNetMask
+
+instance Serialise IpResource
+
+-- store instances
+instance Store IpPrefix
+instance Store IpRange
+instance Store Ipv4Prefix
+instance Store Ipv6Prefix
+instance Store Ipv4Range
+instance Store Ipv6Range
+
+instance Store (V4.IpBlock Canonical)
+instance Store (V6.IpBlock Canonical)
+instance Store (Range V4.IpAddress)
+instance Store (Range V6.IpAddress)
+instance Store V4.IpAddress
+instance Store V6.IpAddress
+instance Store V4.IpNetMask
+instance Store V6.IpNetMask
+
+instance Store IpResource
