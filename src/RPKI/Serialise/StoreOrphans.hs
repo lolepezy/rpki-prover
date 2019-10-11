@@ -1,4 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 module RPKI.Serialise.StoreOrphans where
@@ -85,7 +84,7 @@ instance Store ASN1ConstructionType
 instance Store SerializedPoint
 instance Store Crypto.PubKey.ECC.Types.CurveName
 
-peekPK f = f <$> (peek @B.ByteString) >>= \case 
+peekPK f = f <$> peek @B.ByteString >>= \case 
     CryptoPassed p -> pure p
     CryptoFailed e -> fail $ show e
 

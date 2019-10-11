@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RPKI.Parse.Common where
+module RPKI.Parse.Internal.Common where
   
 import Data.Bifunctor
 
@@ -23,11 +23,7 @@ import RPKI.IP
 import RPKI.Domain
 import RPKI.SignTypes
 
-newtype ParseError s = ParseError s
-  deriving (Eq, Show, Functor)
-
 type ParseResult a = Either (ParseError T.Text) a
-
 
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings   #-}
 
-module RPKI.Parse.MFT where
+module RPKI.Parse.Internal.MFT where
 
 import qualified Data.ByteString          as B
 import qualified Data.Text                as T
@@ -12,8 +12,8 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
 
 import           RPKI.Domain
-import           RPKI.Parse.Common
-import           RPKI.Parse.SignedObject
+import           RPKI.Parse.Internal.Common
+import           RPKI.Parse.Internal.SignedObject
 
 
 parseMft :: B.ByteString -> ParseResult (URI -> (RpkiMeta, MftObject))

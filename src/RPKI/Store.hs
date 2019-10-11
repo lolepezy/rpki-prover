@@ -23,13 +23,13 @@ type EntryIxs = '[ AKI, Hash, URI ]
 type IxEntry  = IxSet EntryIxs RpkiObj
 
 byAKI :: RpkiObj -> [AKI]
-byAKI (RpkiObj _ (RpkiMeta { aki = a })) = catMaybes [a]
+byAKI (RpkiObj _ RpkiMeta { aki = a }) = catMaybes [a]
 
 byHash :: RpkiObj -> [Hash]
-byHash (RpkiObj _ (RpkiMeta { hash = h })) = [h]
+byHash (RpkiObj _ RpkiMeta { hash = h }) = [h]
 
 byLocation :: RpkiObj -> [URI]
-byLocation (RpkiObj _ (RpkiMeta { locations = loc })) = NE.toList loc
+byLocation (RpkiObj _ RpkiMeta { locations = loc }) = NE.toList loc
 
 
 instance Indexable EntryIxs RpkiObj where

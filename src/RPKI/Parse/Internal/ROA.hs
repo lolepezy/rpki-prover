@@ -1,16 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RPKI.Parse.ROA where
+module RPKI.Parse.Internal.ROA where
 
 import qualified Data.ByteString as B  
 
 import Data.Monoid (mconcat)
 
-import Control.Lens
-import Data.Generics.Product
-
 import Data.Word
-
 import Data.ASN1.Types
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
@@ -21,8 +17,8 @@ import Data.Bifunctor
 
 import RPKI.Domain  
 import RPKI.IP
-import RPKI.Parse.Common
-import RPKI.Parse.SignedObject 
+import RPKI.Parse.Internal.Common
+import RPKI.Parse.Internal.SignedObject 
 
 
 parseRoa :: B.ByteString -> ParseResult (URI -> (RpkiMeta, RoaObject))
@@ -33,8 +29,9 @@ parseRoa bs = do
     pure $ \location -> (meta location, CMS signedRoa)
   where     
     parseRoas' = onNextContainer Sequence $ do      
+      -- TODO Fix it so that it would work with present attestation version
       asId <- getInteger (pure . fromInteger) "Wrong ASID"
-      mconcat <$> (onNextContainer Sequence $ getMany $ 
+      mconcat <$> onNextContainer Sequence (getMany $
         onNextContainer Sequence $ 
           getAddressFamily "Expected an address family here" >>= \case 
               Right Ipv4F -> getRoa asId ipv4
@@ -49,9 +46,9 @@ parseRoa bs = do
         Just [BitString (BitArray nzBits bs'), IntVal maxLength] -> 
           pure $ mkRoa bs' nzBits (fromInteger maxLength)           
         Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
-        Nothing -> throwParseError $ "Unexpected ROA content"
+        Nothing -> throwParseError "Unexpected ROA content"
       where 
-        mkRoa bs' nz maxL = Roa (ASN asId) (mkPrefix bs' nz) maxL
+        mkRoa bs' nz = Roa (ASN asId) (mkPrefix bs' nz)
 
     ipv4 bs' nzBits = APrefix $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
     ipv6 bs' nzBits = APrefix $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)

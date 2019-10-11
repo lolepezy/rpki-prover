@@ -1,13 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RPKI.Parse.SignedObject where
+module RPKI.Parse.Internal.SignedObject where
   
 import qualified Data.ByteString as B
 
 import Control.Applicative
 import Data.Maybe
 
-import Data.ASN1.BitArray
 import Data.ASN1.Types
 import Data.ASN1.Parse
 import Data.ASN1.Encoding
@@ -19,7 +18,7 @@ import Data.X509
 
 import RPKI.Domain
 import RPKI.SignTypes
-import RPKI.Parse.Common
+import RPKI.Parse.Internal.Common
 
 import qualified RPKI.Util as U
 
@@ -51,7 +50,7 @@ parseSignedObject eContentParse =
     parseContent = onNextContainer (Container Context 0) $ 
       onNextContainer Sequence $ 
         SignedData <$> parseVersion 
-          <*> (onNextContainer Set parseDigestAlgorithms)
+          <*> onNextContainer Set parseDigestAlgorithms
           <*> parseEncapContentInfo
           <*> parseEECertificate
           <*> onNextContainer Set (onNextContainer Sequence parseSignerInfo)        
@@ -68,8 +67,8 @@ parseSignedObject eContentParse =
     parseEncapContentInfo = onNextContainer Sequence $ do
       contentType <- parseContentType            
       onNextContainer (Container Context 0) $                 
-          (onNextContainer (Container Universal 4) (eContent contentType)) <|> 
-          (eContent contentType)
+          onNextContainer (Container Universal 4) (eContent contentType) <|> 
+          eContent contentType
         where
           eContent contentType = do 
             fullContent <- getMany getNext
@@ -111,7 +110,7 @@ parseSignedObject eContentParse =
         parseSignedAttributes = 
           getNextContainerMaybe (Container Context 0) >>= \case
             Nothing -> throwParseError "No signedAttributes"
-            Just asns  -> do              
+            Just asns  -> 
               case runParseASN1 parseSA asns of
                 Left e -> throwParseError $ show e
                 Right attributes -> pure $ SignedAttributes attributes saEncoded
@@ -147,7 +146,7 @@ getMeta obj bs =
     Just s  -> do
         ki <- parseKI s
         aki' <- case extVal exts id_authorityKeyId of
-                  Nothing -> pure $ Nothing
+                  Nothing -> pure Nothing
                   Just a  -> Just . AKI <$> parseKI a
         pure $ 
           \location -> RpkiMeta {        

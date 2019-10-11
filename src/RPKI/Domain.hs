@@ -30,8 +30,6 @@ import qualified Data.X509 as X509
 import RPKI.IP    
 import RPKI.SignTypes
 
-import RPKI.Serialise.StoreOrphans
-
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
@@ -49,7 +47,7 @@ newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r
 
 type AnRFC r = Either (WithRFC 'Strict_ r) (WithRFC 'Reconsidered r)
 
-withRFC :: AnRFC r -> (forall rfc . (r rfc) -> a) -> a
+withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
 withRFC (Left (WithRFC a)) f = f a
 withRFC (Right (WithRFC a)) f = f a  
 
@@ -62,12 +60,12 @@ newtype RSet r = RSet (AnRFC (ResourceSet r))
 data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-data IpResourceSet (rfc :: ValidationRFC) = 
-    IpResourceSet !(ResourceSet IpResource rfc)
+newtype IpResourceSet (rfc :: ValidationRFC) = 
+    IpResourceSet (ResourceSet IpResource rfc)
     deriving (Show, Eq, Ord, Typeable, Generic)                    
 
 -- TODO Use library type?
-data Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -99,9 +97,9 @@ data CrlMeta = CrlMeta {
 } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RpkiMeta = RpkiMeta {
-    locations :: (NonEmpty URI), 
+    locations :: NonEmpty URI, 
     hash      :: Hash, 
-    aki       :: (Maybe AKI), 
+    aki       :: Maybe AKI, 
     ski       :: SKI, 
     serial    :: Serial
 } deriving (Show, Eq, Ord, Typeable, Generic)
@@ -120,9 +118,9 @@ data RpkiObject = RpkiObject RpkiMeta RO
     deriving (Show, Eq, Typeable, Generic)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
-    certX509    :: (X509.SignedExact X509.Certificate), 
-    ipResources :: (Maybe (IpResourceSet rfc)), 
-    asResources :: (Maybe (ResourceSet AsResource rfc))
+    certX509    :: X509.SignedExact X509.Certificate, 
+    ipResources :: Maybe (IpResourceSet rfc), 
+    asResources :: Maybe (ResourceSet AsResource rfc)
 } deriving (Show, Eq, Typeable, Generic)
 
 -- TODO Implement it properly
@@ -194,17 +192,21 @@ data Invalid = Error | Warning
     deriving (Show, Eq, Ord, Typeable, Generic)
 
         
--- Validation errors
+-- Errors
 
-data VError = InvalidCert !T.Text |
-              ParentDoesntHaveResources |
-              NoAKIinManifest |
-              ROACannotBeAParent |
-              NoAKI | 
-              RrdpProblem RrdpError
-    deriving (Show, Eq, Ord, Typeable, Generic)
+newtype ParseError s = ParseError s
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
+data ValidationError = InvalidCert !T.Text |
+                        ParentDoesntHaveResources |
+                        NoAKIinManifest |
+                        ROACannotBeAParent |
+                        NoAKI | 
+                        RrdpProblem RrdpError
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
-data RrdpError = BrokenSerial !B.ByteString |
+data RrdpError = BrokenXml !T.Text | 
+                 BrokenSerial !B.ByteString |
                  NoSessionId |
                  NoSerial | 
                  NoSnapshotHash | 
@@ -228,6 +230,12 @@ data RrdpError = BrokenSerial !B.ByteString |
                  SnapshotHashMismatch Hash Hash |
                  DeltaHashMismatch Hash Hash Serial
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
+data ObjectError = ParseE (ParseError T.Text) | 
+                   RrdpE RrdpError |
+                   ValidationE ValidationError      
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
 
 -- serialisation
 instance Serialise Hash

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings   #-}
 
-module RPKI.Parse.CRL where
+module RPKI.Parse.Internal.CRL where
 
 import qualified Data.ByteString          as B
 
@@ -15,7 +15,7 @@ import Data.X509
 
 import           RPKI.Domain
 import qualified RPKI.Util as U
-import           RPKI.Parse.Common
+import           RPKI.Parse.Internal.Common
 import           RPKI.SignTypes
 
 
@@ -65,12 +65,12 @@ parseCrl bs = do
     getCrlContent = do        
       x509Crl    <- parseX509CRL
       extensions <- onNextContainer (Container Context 0) $ 
-                      onNextContainer Sequence $ getMany $ getObject 
+                      onNextContainer Sequence $ getMany getObject 
       pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
 
     -- This is copy-pasted from the Data.X509.CRL to fix getRevokedCertificates 
     -- which should be more flexible.
-    parseX509CRL = do
+    parseX509CRL = 
         CRL <$> (getNext >>= getVersion)
             <*> getObject
             <*> getObject

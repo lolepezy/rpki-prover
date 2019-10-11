@@ -38,10 +38,14 @@ dependencies:
 - base64-bytestring
 - bytestring
 - bytestring-conversion
+- bytestring-mmap
 - cborg
 - containers
-- cryptohash-sha256
+- conduit
+- http-conduit
+- xml-conduit
 - cryptonite
+- cryptohash-sha256
 - deepseq
 - directory
 - dlist
@@ -70,6 +74,7 @@ dependencies:
 - store
 - streaming
 - streaming-bytestring
+- streaming-utils
 - string-conversions
 - text
 - text-short
@@ -88,6 +93,8 @@ dependencies:
 - generic-arbitrary
 - quickcheck-instances
 - unagi-chan
+- unliftio
+- xml-types
 
 # ghc-options:
 #   - -with-rtsopts=-N    

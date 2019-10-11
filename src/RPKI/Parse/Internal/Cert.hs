@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings   #-}
 
-module RPKI.Parse.Cert where
+module RPKI.Parse.Internal.Cert where
 
 import           Control.Applicative
 
@@ -26,7 +26,7 @@ import           RPKI.IP
 import qualified RPKI.IP                  as IP
 import qualified RPKI.Util                as U
 
-import           RPKI.Parse.Common
+import           RPKI.Parse.Internal.Common
 
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
@@ -42,7 +42,7 @@ parseResourceCertificate bs = do
         r <- parseResources certificate
         ki <- parseKI s
         aki' <- case extVal exts id_authorityKeyId of
-                Nothing -> pure $ Nothing
+                Nothing -> pure Nothing
                 Just a  -> Just . AKI <$> parseKI a
         let meta location = RpkiMeta {
             aki  = aki', 
@@ -67,13 +67,13 @@ parseResources x509cert = do
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns, Nothing) -> (ResourceCert . Left . WithRFC) <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> (ResourceCert . Right . WithRFC) <$> cert' x509cert ips asns
+        (ips, Nothing, asns, Nothing) -> ResourceCert . Left . WithRFC <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> ResourceCert . Right . WithRFC <$> cert' x509cert ips asns
     where
       broken = Left . fmtErr
       cert' x509c ips asns = ResourceCertificate x509c <$>
-            (traverse (parseR parseIpExt) ips) <*>
-            (traverse (parseR parseAsnExt) asns)
+            traverse (parseR parseIpExt) ips <*>
+            traverse (parseR parseAsnExt) asns
 
       parseR :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
       parseR f ext = f =<< first fmt decoded

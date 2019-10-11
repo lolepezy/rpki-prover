@@ -94,7 +94,7 @@ someW8ToW128 ws = (
   where unpacked = rightPad 16 0 ws  
 
 rightPad :: Int -> a -> [a] -> [a]
-rightPad n a as = go 0 as
+rightPad n a = go 0
   where
     go acc [] | acc < n  = a : go (acc + 1) []
               | otherwise = []  

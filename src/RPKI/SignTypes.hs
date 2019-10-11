@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveAnyClass, DeriveGeneric, FlexibleInstances #-}
-
 module RPKI.SignTypes where
 
 import Codec.Serialise
@@ -28,7 +26,7 @@ import RPKI.Serialise.StoreOrphans
 
 data SignedObject a = SignedObject {
     soContentType :: ContentType, 
-    soContent     :: (SignedData a)
+    soContent     :: SignedData a
 } deriving (Show, Eq, Typeable, Generic)
 
 data CertificateWithSignature = CertificateWithSignature 
@@ -54,7 +52,7 @@ data CertificateWithSignature = CertificateWithSignature
 data SignedData a = SignedData {
       scVersion          :: CMSVersion, 
       scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
-      scEncapContentInfo :: (EncapsulatedContentInfo a), 
+      scEncapContentInfo :: EncapsulatedContentInfo a, 
       scCertificate      :: CertificateWithSignature, 
       scSignerInfos      :: SignerInfos
   } deriving (Show, Eq, Typeable, Generic)
