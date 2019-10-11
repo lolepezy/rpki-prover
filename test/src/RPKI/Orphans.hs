@@ -2,10 +2,8 @@
 
 module RPKI.Orphans where
 
-import Control.Monad
-
 import qualified Data.ByteString                      as B
-import qualified Data.ByteString.Lazy                 as BL
+import qualified Data.ByteString.Base64               as B64
 
 import Test.QuickCheck.Arbitrary.Generic
 import Test.QuickCheck.Gen
@@ -14,19 +12,13 @@ import Test.QuickCheck.Instances.Text
 import Test.QuickCheck.Monadic
 
 import RPKI.Domain
-import RPKI.RRDP.Parse
 import RPKI.RRDP.Types
-
-import RPKI.Parse.Cert
-import RPKI.Parse.MFT
-import RPKI.Parse.ROA
-import RPKI.Store
 
 import RPKI.Util (convert)
 
 instance Arbitrary URI where
   arbitrary = URI <$> do
-    ext  <- elements [ ".cer", ".mft", ".roa", ".crl", ".gbr" ]
+    ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
     name <- listOf1 $ elements ['a'..'z']
     pure $ convert $ "rsync://" <> name <> ext
   shrink = genericShrink
@@ -60,10 +52,16 @@ instance Arbitrary DeltaItem where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary Content where
-  arbitrary = Content <$> suchThat arbitrary (\b -> B.length b > 1)
+instance Arbitrary DecodedBase64 where
+  arbitrary = genericArbitrary
   shrink = genericShrink
 
+instance Arbitrary EncodedBase64 where
+    arbitrary = do 
+        DecodedBase64 bs <- arbitrary
+        pure $ EncodedBase64 $ B64.encode bs
+    shrink = genericShrink   
+  
 instance Arbitrary SnapshotInfo where
   arbitrary = genericArbitrary
   shrink = genericShrink

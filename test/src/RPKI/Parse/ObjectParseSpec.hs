@@ -9,9 +9,7 @@ import Control.Monad
 import qualified Data.X509 as X509
 
 import RPKI.Domain
-import RPKI.Parse.Cert
-import RPKI.Parse.MFT
-import RPKI.Parse.ROA
+import RPKI.Parse.Parse
 import RPKI.Store
 
 import System.Environment

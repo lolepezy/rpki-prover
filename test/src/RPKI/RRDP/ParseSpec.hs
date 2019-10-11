@@ -6,30 +6,15 @@
 
 module RPKI.RRDP.ParseSpec where
 
-import qualified Data.ByteString                      as B
-import qualified Data.ByteString.Lazy                 as BL
-
 import           Data.Hex                             (hex)
-
-import           Control.DeepSeq
-
-import           Control.Monad.Identity
-import           Control.Monad.Primitive              (ioToPrim)
-import           Control.Monad.Trans.Class
-
-import qualified Data.ByteString.Base64               as B64
 
 import           RPKI.Domain
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 
 import           Test.QuickCheck.Arbitrary.Generic
-import           Test.QuickCheck.Gen
-import           Test.QuickCheck.Instances.ByteString
-import           Test.QuickCheck.Instances.Text
 import           Test.QuickCheck.Monadic
 import           Test.Tasty
-import qualified Test.Tasty.HUnit                     as HU
 import           Test.Tasty.QuickCheck                as QC
 
 import           Data.String.Interpolate
@@ -38,26 +23,8 @@ import           RPKI.Util                            (convert)
 
 import RPKI.Orphans
 
-testParseSnapshot :: IO ()
-testParseSnapshot = do
-  snapshot <- BL.readFile "./snapshot.xml"
-  let x = parseSnapshot snapshot
-  print $ x `deepseq` (1 :: Integer)
-  -- print $ length x
-  -- runIdentityT $ parseXml (B.toStrict snapshot)
-  --     (\x -> lift $ ioToPrim $ print ("e = " ++ show x))
-  --     (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
-
-testParseDelta = do
-  delta <- BL.readFile "./delta.xml"
-  let x = parseDelta delta
-  print $ x `deepseq` x
-  runIdentityT $ parseXml (BL.toStrict delta)
-      (\z -> lift $ ioToPrim $ print ("e = " ++ show z))
-      (\t -> lift $ ioToPrim $ print ("t = " ++ show t))
-
-
-rrdpXmlParsingGroup = testGroup "RRDP parsing"
+rrdpXmlLazyParsingGroup :: TestTree
+rrdpXmlLazyParsingGroup = testGroup "RRDP Hexpat parsing"
   [
     QC.testProperty
       "Generate and parse back a snapshot"
@@ -77,7 +44,7 @@ prop_generate_and_parse_snapshot_creates_same_object = monadicIO $ do
   snapshot :: Snapshot <- pick arbitrary
   let xml = snaphostToXml snapshot
   let s = parseSnapshot (convert xml)
-  assert $ (Right snapshot) == s
+  assert $ (Right snapshot) == s  
 
 prop_generate_and_parse_delta_creates_same_object :: QC.Property
 prop_generate_and_parse_delta_creates_same_object = monadicIO $ do
@@ -99,8 +66,8 @@ snaphostToXml (Snapshot (Version v) (SessionId sid) (Serial s) publishes) =
          #{concatMap pub publishes}
   </snapshot>|]
   where
-    pub (SnapshotPublish (URI u) (Content c)) =
-      [i|<publish uri="#{u}">#{B64.encode c}</publish>|]
+    pub (SnapshotPublish (URI u) (EncodedBase64 c)) =
+      [i|<publish uri="#{u}">#{c}</publish>|]
 
 deltaToXml :: Delta -> String
 deltaToXml (Delta (Version v) (SessionId sess) (Serial s) items) =
@@ -108,10 +75,10 @@ deltaToXml (Delta (Version v) (SessionId sess) (Serial s) items) =
         #{concatMap item items}
   </delta>|]
   where
-    item (DP (DeltaPublish (URI u) Nothing (Content c))) =
-      [i|<publish uri="#{u}">#{B64.encode c}</publish>|]
-    item (DP (DeltaPublish (URI u) (Just (Hash hash)) (Content c))) =
-      [i|<publish uri="#{u}" hash="#{hex hash}">#{B64.encode c}</publish>|]
+    item (DP (DeltaPublish (URI u) Nothing (EncodedBase64 c))) =
+      [i|<publish uri="#{u}">#{c}</publish>|]
+    item (DP (DeltaPublish (URI u) (Just (Hash hash)) (EncodedBase64 c))) =
+      [i|<publish uri="#{u}" hash="#{hex hash}">#{c}</publish>|]
     item (DW (DeltaWithdraw (URI u) (Hash hash))) =
       [i|<withdraw uri="#{u}" hash="#{hex hash}"></withdraw>|]
 
@@ -125,9 +92,10 @@ notificationToXml Notification {
       ..
     } =
   [i|<notification version="#{v}" session_id="#{sid}" serial="#{s}">
-      <snapshot uri="#{su}" hash="#{hex sh}"></snaphost>
+      <snapshot uri="#{su}" hash="#{hex sh}"></snapshot>
       #{concatMap delta deltas}
   </notification>|]
   where
-    delta (DeltaInfo (URI u) (Hash hash) (Serial s)) =
-      [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{s}"></delta>|]  
+    delta (DeltaInfo (URI u) (Hash hash) (Serial ds)) =
+      [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{ds}"></delta>|]  
+

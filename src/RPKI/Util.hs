@@ -1,14 +1,18 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE BangPatterns #-}
 module RPKI.Util where
 
-import Control.Concurrent.Async
-import Control.Monad
+import           Control.Concurrent.Async
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
-        
+import           Control.Monad
+
 import qualified Crypto.Hash.SHA256      as S256
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Lazy         as BL
 import qualified Data.String.Conversions as SC
+
+import Conduit
+
 
 import           RPKI.Domain
 
@@ -27,4 +31,13 @@ parallel poolSize f as = do
   snd <$> concurrently (writeAll chanIn) (readAll chanOut)
   where
     writeAll chanIn  = forM_ as $ \a -> async (f a) >>= Chan.writeChan chanIn
-    readAll chanOut = forM as $ \_ -> Chan.readChan chanOut >>= wait      
+    readAll chanOut = forM as $ \_ -> Chan.readChan chanOut >>= wait
+
+-- Conduit, calculating SHA256 hash 
+sinkHash :: Monad m => forall o. ConduitT B.ByteString o m B.ByteString
+sinkHash = loop S256.init 
+  where
+    loop ctx = await >>= \case
+      Nothing -> return $! S256.finalize ctx
+      Just bs -> let !ctx' = S256.update ctx bs
+                  in loop ctx'

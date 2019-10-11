@@ -1,221 +1,119 @@
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE BangPatterns     #-}
 
 module RPKI.RRDP.Parse where
 
 import           Control.Monad
-import           Control.Monad.ST
-import           Data.STRef
-
-import           Control.Monad.Primitive    (PrimMonad (..), stToPrim)
-import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString            as B
 import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Char                  (isSpace, chr)
-import qualified Data.Map                   as M
+import qualified Data.List                   as L
 import           Data.Hex                   (unhex)
 import           Data.Word
+import qualified Data.Text                  as T
 import           Text.Read                  (readMaybe)
 
-import           Xeno.SAX                   as X
+import qualified Text.XML.Expat.SAX as X
 
 import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Util                  (convert)
 
+
+type NOTIF = (Maybe (Version, SessionId, Serial), Maybe SnapshotInfo, [DeltaInfo])
+
 parseNotification :: BL.ByteString -> Either RrdpError Notification
-parseNotification bs = runST $ do
-    deltas       <- newSTRef []
-    version      <- newSTRef Nothing
-    snapshotUri  <- newSTRef Nothing
-    snapshotHash <- newSTRef Nothing
-    serial       <- newSTRef Nothing
-    sessionId    <- newSTRef Nothing
+parseNotification xml = makeNotification =<< folded
+    where
+        makeNotification (Nothing, _, _) = Left NoSessionId
+        makeNotification (_, Nothing, _) = Left NoSnapshotURI
+        makeNotification (Just (v, sid, s), Just si, dis) = Right $ Notification v sid s si (reverse dis)
 
-    let parse = parseXml (BL.toStrict bs)
-            (\case
-                ("notification", attributes) -> do
-                    forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
-                    forAttribute attributes "serial" NoSerial $
-                        \v -> parseSerial v (lift . writeSTRef serial . Just)
-                    forAttribute attributes "version" NoVersion $
-                        \v -> case parseInteger v of
-                            Nothing -> throwE NoVersion
-                            Just v' -> lift $ writeSTRef version  (Just $ Version v')
-                ("snapshot", attributes) -> do
-                    forAttribute attributes "hash" NoSnapshotHash $
-                        \v  -> case makeHash v of
-                            Nothing   -> throwE $ BadHash v
-                            Just hash -> lift $ writeSTRef snapshotHash $ Just hash
-                    forAttribute attributes "uri" NoSnapshotURI $
-                        \v  -> lift $ writeSTRef snapshotUri $ Just $ URI $ convert v
-                ("delta", attributes) -> do
-                    uri    <- forAttribute attributes "uri" NoDeltaURI (lift . pure)
-                    h      <- forAttribute attributes "hash" NoDeltaHash (lift . pure)
-                    s      <- forAttribute attributes "serial" NoDeltaSerial (lift . pure)
-                    serial <- parseSerial s (lift . pure)
-                    case makeHash h of
-                        Nothing   -> throwE $ BadHash h
-                        Just hash -> lift $ modifySTRef deltas $ \ds ->
-                                DeltaInfo (URI (convert uri)) hash serial : ds
-                (_, _) -> pure ()
-            )
-            (\_ -> pure ())
+        folded = foldM foldElements (Nothing, Nothing, []) $ bs2Sax xml
 
-    let notification = Notification <$>
-                        valuesOrError version NoVersion <*>
-                        valuesOrError sessionId NoSessionId <*>
-                        valuesOrError serial NoSerial <*>
-                        (SnapshotInfo <$> 
-                            valuesOrError snapshotUri NoSnapshotURI <*>
-                            valuesOrError snapshotHash NoSnapshotHash) <*>
-                        (reverse <$> (lift . readSTRef) deltas)
+        foldElements :: NOTIF -> SAX -> Either RrdpError NOTIF
+        foldElements (Nothing, Nothing, []) (X.StartElement "notification" as) = (, Nothing, []) . Just <$> parseMeta as
+        foldElements (_, _, _) (X.StartElement "notification" _) = Left $ BrokenXml "Misplaced 'notification' tag"
 
-    runExceptT (parse >> notification)
+        foldElements (Just m, Nothing, _) (X.StartElement "snapshot" as) = (Just m, , []) . Just <$> parseSnapshotInfo as
+        foldElements (Nothing, Nothing, _) (X.StartElement "snapshot" _) = Left $ BrokenXml "Misplaced 'snapshot' tag"
 
+        foldElements (Just m, si, dis) (X.StartElement "delta" as) = do
+            di <- parseDeltaInfo as
+            let !z = di : dis
+            pure (Just m, si, z)
+        foldElements (Nothing, _, _) (X.StartElement "delta" _) = Left $ BrokenXml "Misplaced 'delta' tag"
+
+        foldElements n _ = Right n
+
+
+type SN = (Maybe (Version, SessionId, Serial), [SnapshotPublish])
 
 parseSnapshot :: BL.ByteString -> Either RrdpError Snapshot
-parseSnapshot bs = runST $ do
-    publishes <- newSTRef []
-    sessionId <- newSTRef Nothing
-    serial    <- newSTRef Nothing
-    version   <- newSTRef Nothing
+parseSnapshot xml = makeSnapshot =<< folded
+    where
+        makeSnapshot (Nothing, _) = Left NoSessionId
+        makeSnapshot (Just (v, sid, s), ps) = Right $ Snapshot v sid s $ reverse ps
 
-    let parse = parseXml (BL.toStrict bs)
-            (\case
-                ("snapshot", attributes) -> do
-                    forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
-                    forAttribute attributes "serial" NoSerial $
-                        \v -> parseSerial v (lift . writeSTRef serial . Just)
-                    forAttribute attributes "version" NoSerial $
-                        \v -> case parseInteger v of
-                            Nothing -> throwE NoVersion
-                            Just v' -> lift $ writeSTRef version  (Just $ Version v')
-                ("publish", attributes) -> do
-                    uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    lift $ modifySTRef' publishes $ \pubs -> (uri, Nothing) : pubs
-                (_, _) -> pure ()
-            )
-            (\base64 ->                                
-                (lift . readSTRef) publishes >>= \case
-                    []               -> pure ()
-                    (uri, cs) : pubs -> do
-                        let base64' = appendBase64 base64 cs
-                        lift $ writeSTRef publishes $ (uri, base64') : pubs
-            )
+        folded = foldM foldPubs (Nothing, []) $ bs2Sax xml
 
-    let snapshotPublishes = do
-            ps <- (lift . readSTRef) publishes
-            forM (reverse ps) $ \case 
-                (uri, Nothing) -> throwE $ BadPublish uri
-                (uri, Just base64) ->
-                    case toContent base64 of 
-                        Left e    -> throwE $ BadBase64 $ convert e
-                        Right content -> pure $ SnapshotPublish (URI $ convert uri) content
+        foldPubs :: SN -> SAX -> Either RrdpError SN
+        foldPubs (Nothing, ps) (X.StartElement "snapshot" as) = (,ps) . Just <$> parseMeta as
+        foldPubs (Just _, _) (X.StartElement "snapshot" _)  = 
+            Left $ BrokenXml "More than one 'snapshot'"
+        foldPubs (Nothing, _) (X.StartElement "publish" _)  = 
+            Left $ BrokenXml "'publish' before 'snapshot'"
+        foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri)]) = 
+            Right (Just sn, SnapshotPublish (URI $ convert uri) (EncodedBase64 "") : ps)
+        foldPubs (Just _, []) (X.StartElement "publish" as) = 
+            Left $ BrokenXml $ T.pack $ "Wrong atrribute set " <> show as
+  
+        foldPubs (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
+        foldPubs (Just sn, SnapshotPublish uri (EncodedBase64 c) : ps) (X.CharacterData cd) = 
+          let nc = c <> trim cd in Right (Just sn, SnapshotPublish uri (EncodedBase64 nc) : ps)      
+        foldPubs x  _                                          = Right x
 
-    let snapshot = Snapshot <$>
-                    (valuesOrError version NoVersion) <*>
-                    (valuesOrError sessionId NoSessionId) <*>
-                    (valuesOrError serial NoSerial) <*>
-                    snapshotPublishes
 
-    runExceptT (parse >> snapshot)
-
+type DT = (Maybe (Version, SessionId, Serial), [DeltaItem])
 
 parseDelta :: BL.ByteString -> Either RrdpError Delta
-parseDelta bs = runST $ do
-    items <- newSTRef []
-    sessionId <- newSTRef Nothing
-    serial    <- newSTRef Nothing
-    version   <- newSTRef Nothing
-
-    let parse = parseXml (BL.toStrict bs)
-            (\case
-                ("delta", attributes) -> do
-                    forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionId $ Just $ SessionId v
-                    forAttribute attributes "serial" NoSerial $
-                        \v -> parseSerial v (lift . writeSTRef serial . Just)
-                    forAttribute attributes "version" NoSerial $
-                        \v -> case parseInteger v of
-                            Nothing -> throwE NoVersion
-                            Just v' -> lift $ writeSTRef version  (Just $ Version v')
-
-                ("publish", attributes) -> do
-                    uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    hash <- case M.lookup "hash" attributes of
-                        Nothing -> lift $ pure Nothing
-                        Just h -> case makeHash h of                    
-                            Nothing   -> throwE $ BadHash h
-                            Just hash -> lift $ pure $ Just hash
-                    lift $ modifySTRef' items $ \ps -> Right (uri, hash, Nothing) : ps
-
-                ("withdraw", attributes) -> do
-                    uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    h <- forAttribute attributes "hash" NoHashInWithdraw (lift . pure)
-                    case makeHash h of                    
-                        Nothing   -> throwE $ BadHash h
-                        Just hash -> lift $ modifySTRef' items $ \ps -> Left (uri, hash) : ps
-                (_, _) -> pure ()
-            )
-            (\base64 ->         
-                if B.all isSpace_ base64 then 
-                        lift $ pure ()                       
-                    else 
-                        (lift . readSTRef) items >>= \case
-                            []        -> pure ()
-                            item : is ->
-                                case item of
-                                    Left  (uri, _)             -> throwE $ ContentInWithdraw $ B.concat [uri, ", c = " :: B.ByteString, base64]
-                                    Right (uri, hash, content) -> do                            
-                                        let base64' = appendBase64 base64 content
-                                        lift $ writeSTRef items $ Right (uri, hash, base64') : is                        
-            )
-
-    let deltaItems = do
-            is <- (lift . readSTRef) items
-            forM (reverse is) $ \case 
-                Left  (uri, hash)              -> pure $ DW $ DeltaWithdraw (URI $ convert uri) hash
-                Right (uri, hash, Nothing)     -> throwE $ BadPublish uri
-                Right (uri, hash, Just base64) ->                     
-                    case toContent base64 of 
-                        Left e        -> throwE $ BadBase64 $ convert e
-                        Right content -> pure $ DP $ DeltaPublish (URI $ convert uri) hash content
-
-    let delta = Delta <$>
-                    valuesOrError version NoVersion <*>
-                    valuesOrError sessionId NoSessionId <*>
-                    valuesOrError serial NoSerial <*>
-                    deltaItems
-
-    runExceptT (parse >> delta)
-
-appendBase64 :: B.ByteString -> Maybe B.ByteString -> Maybe B.ByteString
-appendBase64 base64 content = 
-    maybe (Just base64) (Just . newContent) content
+parseDelta xml = makeDelta =<< folded
     where
-        trimmed = trim base64
-        newContent existing = case B.null trimmed of 
-                True  -> existing
-                False -> B.concat [existing, trimmed]
-        base64' = (Just . maybe base64 newContent) content
+        makeDelta (Nothing, _) = Left NoSessionId
+        makeDelta (Just (v, sid, s), ps) = Right $ Delta v sid s $ reverse ps
+
+        folded = foldM foldItems (Nothing, []) $ bs2Sax xml
+
+        foldItems :: DT -> SAX -> Either RrdpError DT
+        foldItems (Nothing, ps) (X.StartElement "delta" as) = (,ps) . Just <$> parseMeta as
+        foldItems (Just _, _)   (X.StartElement "delta" _)  = 
+            Left $ BrokenXml "More than one 'delta'"
+        foldItems (Nothing, _)  (X.StartElement "publish" _)  = 
+            Left $ BrokenXml "'publish' before 'delta'"
+        foldItems (Nothing, _)  (X.StartElement "withdraw" _)  = 
+            Left $ BrokenXml "'withdraw' before 'delta'"            
+        foldItems (Just sn, ps) (X.StartElement "publish" as) = do
+            dp <- parseDeltaPublish as
+            pure (Just sn, DP dp : ps)
+        foldItems (Just sn, ps) (X.StartElement "withdraw" as) = do
+            dw <- parseDeltaWithdraw as
+            pure (Just sn, DW dw : ps)        
+    
+        foldItems (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
+        foldItems (Just sn, DP (DeltaPublish uri h (EncodedBase64 c)) : ps) (X.CharacterData cd) = 
+            let nc = c <> trim cd in Right (Just sn, DP (DeltaPublish uri h (EncodedBase64 nc)) : ps)
+        foldItems d@(Just _, DW (DeltaWithdraw _ _) : _) (X.CharacterData cd) = 
+            if B.all isSpace_ cd 
+                then Right d 
+                else Left $ ContentInWithdraw cd
+        foldItems x  _                                          = Right x
+
 
 parseInteger :: B.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs
-
-forAttribute :: Monad m =>
-                M.Map B.ByteString B.ByteString ->
-                B.ByteString ->
-                RrdpError ->
-                (B.ByteString -> ExceptT RrdpError m v) ->
-                ExceptT RrdpError m v
-forAttribute as name err f = case M.lookup name as of
-    Nothing -> throwE err
-    Just v  -> f v
 
 parseSerial :: Monad m =>
               B.ByteString ->
@@ -225,34 +123,52 @@ parseSerial v f =  case parseInteger v of
     Nothing -> throwE $ BrokenSerial v
     Just s  -> f $ Serial s
 
-valuesOrError :: STRef s (Maybe v) -> RrdpError -> ExceptT RrdpError (ST s) v
-valuesOrError v e =
-    (lift . readSTRef) v >>= \case
-        Nothing -> throwE e
-        Just s  -> (lift . pure) s
 
-type Element = (B.ByteString, M.Map B.ByteString B.ByteString)
+parseMeta :: [(B.ByteString, B.ByteString)] -> Either RrdpError (Version, SessionId, Serial)
+parseMeta as = do
+    sId <- toEither NoSessionId $ L.lookup "session_id" as
+    s   <- toEither NoSerial $ L.lookup "serial" as
+    s'  <- toEither NoSerial $ parseInteger s
+    v   <- toEither NoVersion $ L.lookup "version" as
+    v'  <- toEither NoVersion $ parseInteger v            
+    pure (Version v', SessionId sId, Serial s')
 
-parseXml :: (MonadTrans t, PrimMonad pm, Monad (t pm)) =>
-            B.ByteString ->
-            (Element -> t pm ()) ->
-            (B.ByteString -> t pm ()) ->
-            t pm ()
-parseXml bs onElement onText = do
-    element <- lift $ stToPrim $ newSTRef ("" :: B.ByteString, M.empty)
-    X.process
-        (\elemName -> lift $ stToPrim $ modifySTRef' element (\(_, as) -> (elemName, as)))
-        (\name value -> lift $ stToPrim $ modifySTRef' element (\(n, as) -> (n, M.insert name value as)))
-        (\elemName -> do
-            e <- lift $ stToPrim $ readSTRef element
-            lift $ stToPrim $ writeSTRef element (elemName, M.empty)
-            onElement e)
-        onText
-        nothing
-        nothing
-        bs
-    where nothing _ = lift $ pure ()
+parseSnapshotInfo :: [(B.ByteString, B.ByteString)] -> Either RrdpError SnapshotInfo
+parseSnapshotInfo as = do
+    u <- toEither NoSnapshotURI $ L.lookup "uri" as
+    h <- toEither NoSnapshotHash $ L.lookup "hash" as        
+    case makeHash h of
+        Nothing -> Left $ BadHash h
+        Just h' -> pure $ SnapshotInfo (URI $ convert u) h'
 
+parseDeltaInfo :: [(B.ByteString, B.ByteString)] -> Either RrdpError DeltaInfo
+parseDeltaInfo as = do
+    u <- toEither NoSnapshotURI $ L.lookup "uri" as
+    h <- toEither NoSnapshotHash $ L.lookup "hash" as      
+    s <- toEither NoSerial $ L.lookup "serial" as
+    s' <- toEither NoSerial $ parseInteger s  
+    case makeHash h of
+        Nothing -> Left $ BadHash h
+        Just h' -> pure $ DeltaInfo (URI $ convert u) h' (Serial s')
+
+parseDeltaPublish :: [(B.ByteString, B.ByteString)] -> Either RrdpError DeltaPublish
+parseDeltaPublish as = do
+    u <- toEither NoPublishURI $ L.lookup "uri" as
+    case L.lookup "hash" as of 
+        Nothing -> Right $ DeltaPublish (URI $ convert u) Nothing (EncodedBase64 "")
+        Just h -> case makeHash h of
+            Nothing -> Left $ BadHash h
+            Just h' -> Right $ DeltaPublish (URI $ convert u) (Just h') (EncodedBase64 "")
+
+parseDeltaWithdraw :: [(B.ByteString, B.ByteString)] -> Either RrdpError DeltaWithdraw
+parseDeltaWithdraw as = do
+    u <- toEither NoPublishURI $ L.lookup "uri" as
+    h <- toEither NoHashInWithdraw $ L.lookup "hash" as  
+    case makeHash h of
+        Nothing -> Left $ BadHash h    
+        Just h' -> pure $ DeltaWithdraw (URI $ convert u) h'
+
+-- Some auxiliary things
 
 makeHash :: B.ByteString -> Maybe Hash
 makeHash bs = Hash . toBytes <$> hexString bs
@@ -267,15 +183,38 @@ hexString bs = HexString <$> unhex bs
 toBytes :: HexString -> B.ByteString
 toBytes (HexString bs) = bs
 
-
-toContent :: B.ByteString -> Either String Content
-toContent bs = Content <$> (B64.decode $ trim bs)    
-
-concatContent :: [Content] -> Content
-concatContent cs = Content $ B.concat $ map (\(Content c) -> c) cs
+decodeBase64 :: EncodedBase64 -> Either RrdpError DecodedBase64
+decodeBase64 (EncodedBase64 bs) = case B64.decode bs of
+    Left _ -> Left $ BadBase64 bs
+    Right b -> Right $ DecodedBase64 b
 
 trim :: B.ByteString -> B.ByteString
 trim bs = B.takeWhile (not . isSpace_) $ B.dropWhile isSpace_ bs    
 
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
+
+toEither :: e -> Maybe v -> Either e v
+toEither e Nothing  = Left e
+toEither _ (Just v) = Right v
+
+mapXmlElem :: (Element -> Either RrdpError a) ->
+              (B.ByteString -> Either RrdpError a) ->
+              X.SAXEvent B.ByteString B.ByteString -> 
+              Maybe (Either RrdpError a)
+mapXmlElem onElement onText = \case
+    X.StartElement tag attrs -> Just $ onElement (tag, attrs)
+    X.CharacterData text     -> Just $ onText text 
+    X.FailDocument e         -> Just $ Left $ BrokenXml $ T.pack $ show e 
+    _                        -> Nothing
+
+type Element = (B.ByteString, [(B.ByteString, B.ByteString)])
+type SAX = X.SAXEvent B.ByteString B.ByteString
+
+
+bs2Sax :: BL.ByteString -> [SAX]
+bs2Sax xml = filter isEmpty_ saxs
+    where 
+        isEmpty_ (X.CharacterData cd) = not $ B.all isSpace_ cd
+        isEmpty_ _ = True        
+        saxs = X.parse (X.defaultParseOptions :: X.ParseOptions B.ByteString B.ByteString) xml    

@@ -1,5 +1,4 @@
 {-# LANGUAGE MultiWayIf            #-}
-{-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 
 module RPKI.RRDP.Update where
@@ -14,6 +13,7 @@ import           Control.Monad.Trans.Except
 import           Data.Bifunctor             (first, second)
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.DList                 as DL
+import Data.IORef
 import qualified Data.List                  as L
 import qualified Data.Text                  as T
 import qualified Network.Wreq               as WR
@@ -25,6 +25,53 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import qualified RPKI.Util                  as U
 
+--
+import Streaming
+import qualified Streaming.Prelude as S
+import qualified Data.ByteString.Streaming as Q
+import Data.ByteString.Streaming.HTTP
+
+import qualified Crypto.Hash.SHA256      as S256
+
+withHash :: Q.ByteString IO a -> Q.ByteString IO a
+withHash x = x
+
+streamHttpResponse :: URI -> 
+                      (Q.ByteString IO () -> IO (Either err a)) -> 
+                      (SomeException -> err) -> 
+                      ExceptT err IO (a, Hash)
+streamHttpResponse (URI uri) handler err = 
+    lift (try go) >>= \case
+        Left (e :: SomeException) -> throwE $ err e
+        Right r                   -> except r
+    where 
+        go = do
+            req     <- parseRequest $ T.unpack uri
+            tls     <- newManager tlsManagerSettings 
+            hashRef <- newIORef S256.init
+            withHTTP req tls $ \resp -> do
+                s <- handler $ 
+                        Q.fromChunks $ 
+                        S.mapM (\b -> modifyIORef hashRef (`S256.update` b) >> pure b) $ 
+                        Q.toChunks $ responseBody resp
+                h <- readIORef hashRef
+                pure $ (,Hash $ S256.finalize h) <$> s
+                    
+
+streamHttpResponse0 :: URI -> 
+                    (Q.ByteString IO () -> IO a) -> 
+                    (SomeException -> err) -> 
+                    ExceptT err IO a
+streamHttpResponse0 (URI uri) handler err = 
+  lift (try go) >>= \case
+      Left (e :: SomeException) -> throwE $ err e
+      Right r                   -> pure r
+  where 
+      go = do
+          req     <- parseRequest $ T.unpack uri
+          tls     <- newManager tlsManagerSettings 
+          withHTTP req tls $ \resp -> handler $ responseBody resp
+                  
 
 tryDownload :: URI -> (SomeException -> err) -> ExceptT err IO BL.ByteString
 tryDownload (URI uri) err = do
@@ -89,12 +136,61 @@ processDelta deltaXml hash serial = do
     except $ parseDelta deltaXml
 
 
+streamUpdates :: Repository 'Rrdp -> IO (Either Problem UpdateResult)
+streamUpdates repo@(RrdpRepo repoUri _ _) = runExceptT $ do
+    (notification, _) <- withExceptT Fatal $ streamHttpResponse repoUri
+                            (\s -> parseNotification <$> Q.toLazy_ s)
+                            (CantDownloadNotification . show)
+    nextStep <- except $ first Fatal $ rrdpNextStep repo notification
+    
+    case nextStep of
+        NothingToDo -> pure (repo, DontSave)
+        UseSnapshot (SnapshotInfo uri hash) -> do
+            (sn@(Snapshot _ _ _ ps), realHash) <- withExceptT Fatal $ streamHttpResponse uri
+                                                    (\s -> parseSnapshot <$> Q.toLazy_ s)
+                                                    (CantDownloadSnapshot . show)
+            when (realHash /= hash) $ throwE $ Fatal $ SnapshotHashMismatch hash realHash
+            pure (repoFromSnapshot sn, SaveSnapshot ps)
+
+        UseDeltas sortedDeltasToApply -> do
+            deltas <- lift $ forM sortedDeltasToApply $ \(DeltaInfo uri hash serial) -> do
+                    x :: Either RrdpError (Delta, Hash) <- runExceptT $ streamHttpResponse uri
+                        (\s -> parseDelta <$> Q.toLazy_ s)
+                        (CantDownloadDelta . show)       
+                    pure $ case x of 
+                        Left e                   -> Left e
+                        Right (d, h) | h /= hash -> Left $ DeltaHashMismatch hash h serial
+                                     | otherwise -> Right d
+            let saveDeltas = SaveDeltas . map (\(Delta _ _ _ items) -> SaveDelta items)
+            let newRepo ds = repoFromDeltas ds notification
+            case deltasTillFirstError deltas of
+                (Nothing, validDeltas) -> pure (newRepo validDeltas, saveDeltas validDeltas)
+                (Just e,  validDeltas) -> throwE $ Partial e (newRepo validDeltas, saveDeltas validDeltas) 
+    where
+        repoFromSnapshot :: Snapshot -> Repository 'Rrdp
+        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri sid s
+
+        repoFromDeltas :: [Delta] -> Notification -> Repository 'Rrdp
+        repoFromDeltas ds notification = RrdpRepo repoUri newSessionId newSerial
+            where
+                newSessionId = sessionId notification
+                newSerial = L.maximum $ map (\(Delta _ _ s _) -> s) ds
+
+        deltasTillFirstError :: [Either RrdpError Delta] -> (Maybe RrdpError, [Delta])
+        deltasTillFirstError deltas = second DL.toList $ go deltas DL.empty
+            where
+                go [] accumulated = (Nothing, accumulated)
+                go (Left e :   _) accumulated = (Just e, accumulated)
+                go (Right d : ds) accumulated = go ds (accumulated `DL.snoc` d)
+
+
+
 type UpdateResult = (Repository 'Rrdp, ObjectUpdates)
 
 data Problem = Fatal RrdpError | Partial RrdpError UpdateResult
     deriving (Show, Eq, Ord, Generic)
 
-data SaveDelta = SaveDelta [DeltaItem]
+newtype SaveDelta = SaveDelta [DeltaItem]
     deriving (Show, Eq, Ord, Generic)
 
 data Step = UseSnapshot SnapshotInfo

@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module RPKI.RRDP.Types where
 
@@ -16,13 +16,16 @@ data Notification = Notification {
   deltas       :: [DeltaInfo]
 } deriving (Show, Eq, Ord, Generic, NFData)
 
-newtype Content = Content B.ByteString
-  deriving (Show, Eq, Ord, Generic, NFData)
+newtype EncodedBase64 = EncodedBase64 B.ByteString
+  deriving (Show, Eq, Ord, Generic, Monoid, Semigroup, NFData)
+
+newtype DecodedBase64 = DecodedBase64 B.ByteString
+  deriving (Show, Eq, Ord, Generic, Monoid, Semigroup, NFData)
 
 data SnapshotInfo = SnapshotInfo !URI !Hash
   deriving (Show, Eq, Ord, Generic, NFData)
 
-data SnapshotPublish = SnapshotPublish !URI !Content
+data SnapshotPublish = SnapshotPublish !URI !EncodedBase64
   deriving (Show, Eq, Ord, Generic, NFData)
 
 data Snapshot = Snapshot !Version !SessionId !Serial [SnapshotPublish]
@@ -34,7 +37,7 @@ data DeltaInfo = DeltaInfo !URI !Hash !Serial
 data DeltaItem = DP DeltaPublish | DW DeltaWithdraw
   deriving (Show, Eq, Ord, Generic, NFData)
 
-data DeltaPublish = DeltaPublish !URI !(Maybe Hash) !Content
+data DeltaPublish = DeltaPublish !URI !(Maybe Hash) !EncodedBase64
   deriving (Show, Eq, Ord, Generic, NFData)
 
 data DeltaWithdraw = DeltaWithdraw !URI !Hash
