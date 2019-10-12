@@ -4,11 +4,11 @@
 {-# LANGUAGE RecordWildCards #-}
 
 import Control.Monad
-import Control.Concurrent.STM
-import Control.Concurrent
 import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
-import Control.DeepSeq (force, ($!!))
+import Control.DeepSeq (($!!))
+import Control.Exception
+import qualified Crypto.Hash.SHA256      as S256
 
 import qualified Codec.Serialise as Serialise
 
@@ -48,6 +48,8 @@ import RPKI.RRDP.Update
 import Streaming
 import qualified Streaming.Prelude as S
 import qualified Data.ByteString.Streaming as Q
+import Data.ByteString.Streaming.HTTP
+import Data.IORef
 
 import Conduit
 import qualified Data.Conduit.List      as CL
@@ -63,6 +65,10 @@ import qualified Data.ByteString.Base64               as B64
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
+import System.IO (withFile, IOMode(..))
+import System.Directory (removeFile)
+import System.IO.Temp (withSystemTempFile)
+import           Data.Hex                   (hex, unhex)
 
 import qualified UnliftIO.Async as Unlift
 
@@ -321,11 +327,33 @@ validateKeys objects =
     
 
 bySKIMap :: [RpkiObject] -> MultiMap SKI RpkiObject
-bySKIMap ros = MultiMap.fromList [ (ski, ro) | ro@(RpkiObject (RpkiMeta {..}) _) <- ros ]
+bySKIMap ros = MultiMap.fromList [ (ski, ro) | ro@(RpkiObject RpkiMeta {..} _) <- ros ]
 
 byAKIMap :: [RpkiObject] -> MultiMap AKI RpkiObject
-byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject (RpkiMeta { aki = Just a }) _) <- ros ]
+byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject RpkiMeta { aki = Just a } _) <- ros ]
 
+
+streamHttpResponse (URI uri) handler err = 
+  lift (try go) >>= \case
+    Left (e :: SomeException) -> throwE $ err e
+    Right r                   -> except r
+  where 
+    go = do
+      req     <- parseRequest $ T.unpack uri
+      tls     <- newManager tlsManagerSettings 
+      hashRef <- newIORef S256.init
+      s <- withHTTP req tls $ \resp -> 
+        handler $ 
+        Q.fromChunks $ 
+        S.mapM (\b -> modifyIORef hashRef (`S256.update` b) >> pure b) $ 
+        Q.toChunks $ responseBody resp
+      h <- readIORef hashRef
+      pure $ (,Hash $ S256.finalize h) <$> s
+
+parseWithTmp filename f = 
+  withSystemTempFile "test_mmap_" $ \name h -> do
+    runResourceT $ Q.hPut h $ Q.readFile filename
+    f =<< unsafeMMapFile name   
 
 -- RRDP
 updateRRDPRepo :: Environment ReadWrite -> IO ()
@@ -334,21 +362,26 @@ updateRRDPRepo lmdb = do
 
   db :: Database Hash B.ByteString <- readWriteTransaction lmdb $ getDatabase (Just "objects")  
 
-  -- hash <- runResourceT $ 
-  --           httpSink "https://rrdp.ripe.net/f375f929-1bd9-42bd-bd8c-41dd072b4c0a/1792/snapshot.xml"
-  --           (\_ -> getZipSink (ZipSink (sinkFile "tmp.xml") *> ZipSink sinkHash))
+  -- runResourceT $ runExceptT $ streamHttpResponse 
+  --   "https://rrdp.ripe.net/670de3e5-de83-4d77-bede-9d8a78454151/1585/snapshot.xml" 
+  --   (\s -> Q.writeFile "snapshot.xml")  
+  --   show
   
-  xml <- unsafeMMapFile "tmp.xml"
-  case parseSnapshot xml of
-    Left e -> putStrLn $ "error = " <> show e
-    Right (Snapshot _ _ _ ps) -> do
-      (chanIn, chanOut) <- Chan.newChan 20
-      void $ Unlift.concurrently 
-        (write_ chanIn ps) 
-        (readWriteTransaction lmdb $ read_ chanOut db ps)    
+  parseWithTmp "snapshot1.xml" $ \xml -> fileToDb db xml  
+
     where
+      fileToDb db xml =
+        case parseSnapshot xml of
+          Left e -> putStrLn $ "error = " <> show e
+          Right (Snapshot _ _ _ ps) -> do
+            (chanIn, chanOut) <- Chan.newChan 20
+            void $ Unlift.concurrently 
+              (write_ chanIn ps) 
+              (readWriteTransaction lmdb $ read_ chanOut db ps)    
+
+
       mkObject u b64 = do
-        DecodedBase64 b <- first RrdpE $ decodeBase64 b64
+        DecodedBase64 b <- first RrdpE$ decodeBase64 b64
         first ParseE $ readObject (T.unpack u) b
 
       write_ chanIn ps = 
@@ -358,15 +391,12 @@ updateRRDPRepo lmdb = do
 
       read_ chanOut db x = forM x $ \_ -> 
         liftIO (Chan.readChan chanOut >>= wait) >>= \case
-          Left e             -> abort >> (liftIO $ putStrLn $ "error = " <> show e)
+          Left e             -> abort >> liftIO (putStrLn $ "error = " <> show e)
           Right (_, (h, bs)) -> put db h (Just bs)
 
-      toBytes_ o@(RpkiObject RpkiMeta {..} _) = 
-        (hash, BL.toStrict $ Serialise.serialise o)
-      toBytes_ c@(RpkiCrl CrlMeta {..} _) = 
-        (hash, BL.toStrict $ Serialise.serialise c)               
+      toBytes_ o@(RpkiObject RpkiMeta {..} _) = (hash, BL.toStrict $ Serialise.serialise o)
+      toBytes_ c@(RpkiCrl CrlMeta {..} _)     = (hash, BL.toStrict $ Serialise.serialise c)               
     
-
       readAll :: Database Hash RpkiObject -> IO [RpkiObject]
       readAll db = readOnlyTransaction lmdb $ do
           ks <- keys db
@@ -388,6 +418,6 @@ main = do
 
 say :: String -> IO ()
 say s = do
-  let !ss = s `seq` s
+  let !ss = s
   t <- getCurrentTime
   putStrLn $ show t <> ": " <> ss

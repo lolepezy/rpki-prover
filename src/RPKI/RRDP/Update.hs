@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiWayIf            #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards       #-}
 
 module RPKI.RRDP.Update where
@@ -9,11 +10,13 @@ import           Control.Lens               ((^.))
 
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
+import Control.Monad.Catch hiding (try)
 
 import           Data.Bifunctor             (first, second)
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.DList                 as DL
 import Data.IORef
+import Data.Char (isAlpha)
 import qualified Data.List                  as L
 import qualified Data.Text                  as T
 import qualified Network.Wreq               as WR
@@ -33,6 +36,10 @@ import Data.ByteString.Streaming.HTTP
 
 import qualified Crypto.Hash.SHA256      as S256
 
+import System.IO.Temp (withSystemTempFile)
+import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
+import System.IO (Handle)
+
 withHash :: Q.ByteString IO a -> Q.ByteString IO a
 withHash x = x
 
@@ -49,13 +56,13 @@ streamHttpResponse (URI uri) handler err =
             req     <- parseRequest $ T.unpack uri
             tls     <- newManager tlsManagerSettings 
             hashRef <- newIORef S256.init
-            withHTTP req tls $ \resp -> do
-                s <- handler $ 
-                        Q.fromChunks $ 
-                        S.mapM (\b -> modifyIORef hashRef (`S256.update` b) >> pure b) $ 
-                        Q.toChunks $ responseBody resp
-                h <- readIORef hashRef
-                pure $ (,Hash $ S256.finalize h) <$> s
+            s <- withHTTP req tls $ \resp -> 
+                handler $ 
+                    Q.fromChunks $ 
+                    S.mapM (\b -> modifyIORef hashRef (`S256.update` b) >> pure b) $ 
+                    Q.toChunks $ responseBody resp
+            h <- readIORef hashRef
+            pure $ (,Hash $ S256.finalize h) <$> s
                     
 
 streamHttpResponse0 :: URI -> 
@@ -71,11 +78,12 @@ streamHttpResponse0 (URI uri) handler err =
           req     <- parseRequest $ T.unpack uri
           tls     <- newManager tlsManagerSettings 
           withHTTP req tls $ \resp -> handler $ responseBody resp
-                  
 
-tryDownload :: URI -> (SomeException -> err) -> ExceptT err IO BL.ByteString
+
+
+tryDownload :: MonadIO m => URI -> (SomeException -> err) -> ExceptT err m BL.ByteString
 tryDownload (URI uri) err = do
-    t <- lift $ try (WR.get $ T.unpack uri)
+    t <- liftIO $ try (WR.get $ T.unpack uri)
     case t of
         Left (e :: SomeException) -> throwE $ err e
         Right r                   -> pure $ r ^. WR.responseBody
@@ -136,24 +144,35 @@ processDelta deltaXml hash serial = do
     except $ parseDelta deltaXml
 
 
-streamUpdates :: Repository 'Rrdp -> IO (Either Problem UpdateResult)
-streamUpdates repo@(RrdpRepo repoUri _ _) = runExceptT $ do
-    (notification, _) <- withExceptT Fatal $ streamHttpResponse repoUri
-                            (\s -> parseNotification <$> Q.toLazy_ s)
-                            (CantDownloadNotification . show)
-    nextStep <- except $ first Fatal $ rrdpNextStep repo notification
-    
+streamUpdates :: (MonadIO m, MonadMask m) => 
+                Repository 'Rrdp -> 
+                (Snapshot -> ExceptT RrdpError m ()) ->
+                (Delta -> ExceptT RrdpError m ()) ->
+                m (Either Problem (Repository 'Rrdp))
+streamUpdates repo@(RrdpRepo repoUri _ _) handleSnapshot handleDelta = runExceptT $ do
+    notificationXml <- tryDownload repoUri (Fatal . CantDownloadNotification . show)
+    notification    <- except $ first Fatal $ parseNotification notificationXml
+    nextStep        <- except $ first Fatal $ rrdpNextStep repo notification    
     case nextStep of
-        NothingToDo -> pure (repo, DontSave)
-        UseSnapshot (SnapshotInfo uri hash) -> do
-            (sn@(Snapshot _ _ _ ps), realHash) <- withExceptT Fatal $ streamHttpResponse uri
-                                                    (\s -> parseSnapshot <$> Q.toLazy_ s)
-                                                    (CantDownloadSnapshot . show)
-            when (realHash /= hash) $ throwE $ Fatal $ SnapshotHashMismatch hash realHash
-            pure (repoFromSnapshot sn, SaveSnapshot ps)
-
-        UseDeltas sortedDeltasToApply -> do
-            deltas <- lift $ forM sortedDeltasToApply $ \(DeltaInfo uri hash serial) -> do
+        NothingToDo            -> pure repo
+        UseSnapshot snapshot   -> useSnapshot snapshot
+        UseDeltas sortedDeltas -> useDeltas sortedDeltas notification
+    where        
+        useSnapshot (SnapshotInfo uri@(URI u) hash) = do
+            let tmpFileName = U.convert $ normalize u
+            -- Download snapshot to a temporary file and MMAP it to a lazy bytestring 
+            -- to minimize the heap usage. Snapshots can be pretty big, so we don't want 
+            -- a spike in heap usage
+            withSystemTempFile tmpFileName $ \name fd -> do
+                realHash <- downloadToFile uri (Fatal . CantDownloadSnapshot . show) fd
+                when (realHash /= hash) $ throwE $ Fatal $ SnapshotHashMismatch hash realHash
+                xml <- liftIO $ unsafeMMapFile name
+                snapshot <- except $ first Fatal $ parseSnapshot xml
+                withExceptT Fatal $ handleSnapshot snapshot            
+                pure $ repoFromSnapshot snapshot
+        
+        useDeltas sortedDeltasToApply notification = do
+            deltas <- liftIO $ forM sortedDeltasToApply $ \(DeltaInfo uri hash serial) -> do
                     x :: Either RrdpError (Delta, Hash) <- runExceptT $ streamHttpResponse uri
                         (\s -> parseDelta <$> Q.toLazy_ s)
                         (CantDownloadDelta . show)       
@@ -164,9 +183,9 @@ streamUpdates repo@(RrdpRepo repoUri _ _) = runExceptT $ do
             let saveDeltas = SaveDeltas . map (\(Delta _ _ _ items) -> SaveDelta items)
             let newRepo ds = repoFromDeltas ds notification
             case deltasTillFirstError deltas of
-                (Nothing, validDeltas) -> pure (newRepo validDeltas, saveDeltas validDeltas)
+                (Nothing, validDeltas) -> pure $ newRepo validDeltas
                 (Just e,  validDeltas) -> throwE $ Partial e (newRepo validDeltas, saveDeltas validDeltas) 
-    where
+
         repoFromSnapshot :: Snapshot -> Repository 'Rrdp
         repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri sid s
 
@@ -183,6 +202,32 @@ streamUpdates repo@(RrdpRepo repoUri _ _) = runExceptT $ do
                 go (Left e :   _) accumulated = (Just e, accumulated)
                 go (Right d : ds) accumulated = go ds (accumulated `DL.snoc` d)
 
+
+downloadToFile :: MonadIO m =>
+                URI -> 
+                (SomeException -> err) -> 
+                Handle -> 
+                ExceptT err m Hash
+downloadToFile (URI uri) err destinationHandle = 
+    liftIO (try go) >>= \case
+        Left (e :: SomeException) -> throwE $ err e
+        Right r                   -> pure r
+    where
+        go = do
+            req  <- parseRequest $ T.unpack uri
+            tls  <- newManager tlsManagerSettings 
+            hash <- newIORef S256.init
+            withHTTP req tls $ \resp -> 
+                Q.hPut destinationHandle $ 
+                    Q.chunkMapM (\chunk -> 
+                    modifyIORef' hash (`S256.update` chunk) >> pure chunk) $ 
+                    responseBody resp
+            h' <- readIORef hash        
+            pure $ Hash $ S256.finalize h'
+
+            
+normalize :: T.Text -> T.Text
+normalize = T.map (\c -> if isAlpha c then c else '_') 
 
 
 type UpdateResult = (Repository 'Rrdp, ObjectUpdates)

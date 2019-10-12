@@ -49,6 +49,7 @@ dependencies:
 - deepseq
 - directory
 - dlist
+- exceptions
 - filemanip
 - generic-lens
 - hashable
@@ -81,6 +82,7 @@ dependencies:
 - th-utilities
 - time
 - transformers
+- temporary
 - validation
 - wreq
 - x509
