@@ -18,7 +18,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-14.7
+resolver: lts-14.10
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -41,9 +41,6 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps: 
  - "../lib/hs-certificate/x509"
-#  - "../lib/hs-certificate/x509-store"
-#  - "../lib/hs-certificate/x509-system"
-#  - "../lib/hs-certificate/x509-util"
  - "../lib/hs-certificate/x509-validation"
  - primitive-extras-0.7.1
  - stm-containers-1.1.0.4
@@ -54,13 +51,6 @@ extra-deps:
  - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653
  - lmdb-simple-0.4.0.0@sha256:a4e72c3e2edbf4103ce7298ab566f8c914ea9159624adc2ce094f1122b47c5e3,2773
  - bytestring-mmap-0.2.2@sha256:d04e6bc5a158dd292757d3b9b032beb8a2c43e768777d64a8289abf89f612f67,1282
- - git: git@github.com:vincenthz/hs-asn1.git
-   commit: 6ac0d32b5fa0023267c36cbb754d95ca23d7ec48
-   subdirs:
-   - data
-   - encoding
-   - parse
-   - types
  
 # Override default flag values for local packages and extra-deps
 # flags: {}
