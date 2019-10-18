@@ -18,8 +18,6 @@ import           Control.Monad.Trans.Except
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8)
-import qualified Data.List as L
 import qualified Data.Text.Encoding as TE
 import qualified Data.MultiMap as MultiMap
 import Data.MultiMap (MultiMap)

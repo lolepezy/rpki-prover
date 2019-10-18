@@ -96,6 +96,7 @@ dependencies:
 - quickcheck-instances
 - unagi-chan
 - unliftio
+- unliftio-core
 - xml-types
 
 # ghc-options:
