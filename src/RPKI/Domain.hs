@@ -177,7 +177,7 @@ data RepoType = Rsync | Rrdp
 
 data Repository (t :: RepoType) where
     RsyncRepo :: URI -> Repository 'Rsync
-    RrdpRepo  :: URI -> SessionId -> Serial -> Repository 'Rrdp
+    RrdpRepo  :: URI -> Maybe (SessionId, Serial) -> Repository 'Rrdp
 
 deriving instance Show (Repository t)
 deriving instance Eq (Repository t)

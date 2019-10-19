@@ -43,7 +43,7 @@ updateRrdpRepo :: (MonadUnliftIO m, MonadMask m) =>
                 (Snapshot -> m (Maybe RrdpError)) ->
                 (Delta -> m (Maybe RrdpError)) ->
                 m (Either RrdpError (Repository 'Rrdp, Maybe RrdpError))
-updateRrdpRepo repo@(RrdpRepo repoUri _ _) handleSnapshot handleDelta = do
+updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
     notificationXml <- download repoUri (CantDownloadNotification . show)
     bindRight (notificationXml >>= parseNotification) $ \notification -> 
         bindRight (rrdpNextStep repo notification) $ \case
@@ -93,10 +93,10 @@ updateRrdpRepo repo@(RrdpRepo repoUri _ _) handleSnapshot handleDelta = do
                             else let !d = parseDelta dXml in d
 
         repoFromSnapshot :: Snapshot -> Repository 'Rrdp
-        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri sid s
+        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri $ Just (sid, s)
 
         repoFromDeltas :: [Delta] -> Notification -> Repository 'Rrdp
-        repoFromDeltas ds notification = RrdpRepo repoUri newSessionId newSerial
+        repoFromDeltas ds notification = RrdpRepo repoUri $ Just (newSessionId, newSerial)
             where
                 newSessionId = sessionId notification
                 newSerial = L.maximum $ map (\(Delta _ _ s _) -> s) ds        
@@ -137,7 +137,8 @@ data Step = UseSnapshot SnapshotInfo
 -- Decide what to do next based on current state of the repository
 -- and the parsed notification file
 rrdpNextStep :: Repository 'Rrdp -> Notification -> Either RrdpError Step
-rrdpNextStep (RrdpRepo _ repoSessionId repoSerial) Notification{..} =
+rrdpNextStep (RrdpRepo _ Nothing) Notification{..} = Right $ UseSnapshot snapshotInfo
+rrdpNextStep (RrdpRepo _ (Just (repoSessionId, repoSerial))) Notification{..} =
     if  | sessionId /= repoSessionId -> Right $ UseSnapshot snapshotInfo
         | repoSerial > serial  -> Left $ LocalSerialBiggerThanRemote repoSerial serial
         | repoSerial == serial -> Right NothingToDo
