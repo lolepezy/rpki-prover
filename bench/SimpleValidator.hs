@@ -354,8 +354,8 @@ parseWithTmp filename f =
     f =<< unsafeMMapFile name   
 
 -- RRDP
-updateRRDPRepo :: Environment ReadWrite -> IO ()
-updateRRDPRepo lmdb = do
+validatorUpdateRRDPRepo :: Environment ReadWrite -> IO ()
+validatorUpdateRRDPRepo lmdb = do
   say "begin"
 
   db :: Database Hash B.ByteString <- readWriteTransaction lmdb $ getDatabase (Just "objects")  
@@ -411,7 +411,7 @@ main = do
   -- runValidate  
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
-  mkLmdb >>= updateRRDPRepo
+  mkLmdb >>= validatorUpdateRRDPRepo
   -- testSignature
 
 say :: String -> IO ()
