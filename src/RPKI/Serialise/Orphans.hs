@@ -5,8 +5,6 @@ import Codec.Serialise
 import Codec.CBOR.Encoding
 import Codec.CBOR.Decoding
 
-import Data.Store
-
 import Data.ByteArray (convert)
 
 import Data.ASN1.Types

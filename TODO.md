@@ -1,5 +1,4 @@
 
-+ parse CRLs (or fix the X509's parser)
 - verify EE Certificates
 - validate certificates/objects with regards to CRLs
 - implement all the validations according to the RFCs (time, digests, etc.)

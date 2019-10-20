@@ -10,7 +10,6 @@ import qualified Data.X509 as X509
 
 import RPKI.Domain
 import RPKI.Parse.Parse
-import RPKI.Store
 
 import System.Environment
 import System.Directory

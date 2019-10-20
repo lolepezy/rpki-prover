@@ -2,7 +2,6 @@
 module RPKI.IP where
 
 import Codec.Serialise
-import Data.Store
 
 import qualified Data.ByteString as B  
 import qualified Data.List as L
@@ -118,22 +117,3 @@ instance Serialise V4.IpNetMask
 instance Serialise V6.IpNetMask
 
 instance Serialise IpResource
-
--- store instances
-instance Store IpPrefix
-instance Store IpRange
-instance Store Ipv4Prefix
-instance Store Ipv6Prefix
-instance Store Ipv4Range
-instance Store Ipv6Range
-
-instance Store (V4.IpBlock Canonical)
-instance Store (V6.IpBlock Canonical)
-instance Store (Range V4.IpAddress)
-instance Store (Range V6.IpAddress)
-instance Store V4.IpAddress
-instance Store V6.IpAddress
-instance Store V4.IpNetMask
-instance Store V6.IpNetMask
-
-instance Store IpResource

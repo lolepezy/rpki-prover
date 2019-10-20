@@ -26,11 +26,11 @@ validateSignature rpkiObject (CerObject (ResourceCert parentCert)) =
                 
         getSign (RpkiCrl _ (CrlObject signCrl)) = (algorithm, encoded, signature)
             where
-                SignCRL 
-                    _ 
-                    (SignatureAlgorithmIdentifier algorithm) 
-                    (SignatureValue signature) 
-                    encoded = signCrl                
+                SignCRL { 
+                    signatureAlgorithm = (SignatureAlgorithmIdentifier algorithm),
+                    signatureValue = (SignatureValue signature),
+                    encodedValue = encoded 
+                } = signCrl                
 
         getSign (RpkiObject _ (MftRO (CMS signObject))) = getSignCMS signObject
         getSign (RpkiObject _ (RoaRO (CMS signObject))) = getSignCMS signObject

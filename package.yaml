@@ -72,7 +72,6 @@ dependencies:
 - serialise
 - stm
 - stm-containers
-- store
 - streaming
 - streaming-bytestring
 - streaming-utils
