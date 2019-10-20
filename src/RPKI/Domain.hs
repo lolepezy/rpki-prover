@@ -1,6 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.Domain where
 
@@ -17,11 +18,8 @@ import Data.Ord (comparing)
 
 import Data.Kind (Type)
 import Data.Data (Typeable)
-
 import Data.List.NonEmpty
-
 import Data.Hourglass
-import Data.Store
 
 import GHC.Generics
 
@@ -92,8 +90,7 @@ type GbrObject = CMS Gbr
 data CrlMeta = CrlMeta {
     locations :: NonEmpty URI, 
     hash      :: Hash, 
-    aki       :: AKI, 
-    crlNumber :: Integer
+    aki       :: AKI    
 } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RpkiMeta = RpkiMeta {
@@ -104,9 +101,6 @@ data RpkiMeta = RpkiMeta {
     serial    :: Serial
 } deriving (Show, Eq, Ord, Typeable, Generic)
 
-data AMeta = CM CrlMeta | RM RpkiMeta
-    deriving (Show, Eq, Ord, Typeable, Generic)
-
 data RO = CerRO CerObject 
         | MftRO MftObject
         | RoaRO RoaObject
@@ -116,6 +110,7 @@ data RO = CerRO CerObject
 data RpkiObject = RpkiObject RpkiMeta RO 
                 | RpkiCrl CrlMeta CrlObject
     deriving (Show, Eq, Typeable, Generic)
+
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: X509.SignedExact X509.Certificate, 
@@ -148,16 +143,11 @@ data SignCRL = SignCRL {
   crl                :: X509.CRL,
   signatureAlgorithm :: SignatureAlgorithmIdentifier,
   signatureValue     :: SignatureValue,
-  encodedValue       :: B.ByteString
+  encodedValue       :: B.ByteString,
+  crlNumber          :: Integer
 } deriving (Show, Eq, Typeable, Generic)
 
 data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
-
-data RpkiObj = RpkiObj !ObjId !RpkiMeta
-    deriving (Show, Eq, Ord, Typeable)
-
--- Id of the object in the object store
-newtype ObjId = ObjId B.ByteString deriving (Show, Eq, Ord, Typeable)
 
 
 -- Subject Public Key Info
@@ -241,7 +231,6 @@ data ObjectError = ParseE (ParseError T.Text) |
 instance Serialise Hash
 instance Serialise RpkiMeta
 instance Serialise CrlMeta
-instance Serialise AMeta
 instance Serialise URI
 instance Serialise AKI
 instance Serialise SKI
@@ -273,37 +262,16 @@ instance Serialise (ResourceSet AsResource 'Reconsidered)
 instance Serialise AsResource
 
 
--- store
-instance Store Hash
-instance Store RpkiMeta
-instance Store CrlMeta
-instance Store AMeta
-instance Store URI
-instance Store AKI
-instance Store SKI
-instance Store KI
-instance Store Serial
-instance Store RO
-instance Store Manifest
-instance Store Roa
-instance Store Gbr
-instance Store ASN
-instance Store APrefix
-instance Store a => Store (CMS a)
-instance Store CerObject
-instance Store CrlObject
-instance Store SignCRL
-instance Store ResourceCert
-instance Store RpkiObject
+-- 
+getHash :: RpkiObject -> Hash
+getHash (RpkiObject RpkiMeta {..} _) = hash
+getHash (RpkiCrl CrlMeta {..} _)     = hash
 
-instance Store (WithRFC 'Strict_ ResourceCertificate)
-instance Store (ResourceCertificate 'Strict_)
-instance Store (IpResourceSet 'Strict_)
-instance Store (ResourceSet IpResource 'Strict_)
-instance Store (ResourceCertificate 'Reconsidered)
-instance Store (IpResourceSet 'Reconsidered)
-instance Store (ResourceSet IpResource 'Reconsidered)
-instance Store (WithRFC 'Reconsidered ResourceCertificate)
-instance Store (ResourceSet AsResource 'Strict_)
-instance Store (ResourceSet AsResource 'Reconsidered)
-instance Store AsResource
+getLocations :: RpkiObject -> NonEmpty URI
+getLocations (RpkiObject RpkiMeta {..} _) = locations
+getLocations (RpkiCrl CrlMeta {..} _) = locations
+
+getAKI :: RpkiObject -> Maybe AKI
+getAKI (RpkiObject RpkiMeta {..} _) = aki
+getAKI (RpkiCrl CrlMeta {..} _) = Just aki
+

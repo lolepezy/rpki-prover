@@ -128,7 +128,7 @@ saveSerialised :: Environment ReadWrite -> IO ()
 saveSerialised lmdb = do
   say "start"
   fileNames <- getFileNames
-  say "found"
+  -- say $ "found" <> show fileNames
 
   db :: Database Hash RpkiObject <- readWriteTransaction lmdb $ getDatabase (Just "objects")  
 
@@ -139,7 +139,9 @@ saveSerialised lmdb = do
 
   say $ "re-read and validate"
   objects <- readAll db
-  validateObjects objects
+  say $ "objects number = " <> show (length objects)
+
+  -- validateObjects objects
   say $ "done"
 
   where 
@@ -163,8 +165,10 @@ saveSerialised lmdb = do
     saveToLmdb :: Database Hash RpkiObject -> RpkiObject -> Transaction ReadWrite ()
     saveToLmdb db = \case 
        ro@(RpkiObject RpkiMeta {..} _) -> do
+        -- liftIO $ say $ "hash = " <> show hash
         put db hash (Just ro)
-       rc@(RpkiCrl CrlMeta {..} _) -> do
+       rc@(RpkiCrl CrlMeta {..} _)     -> do
+        -- liftIO $ say $ "hash = " <> show hash
         put db hash (Just rc) 
 
     readAll :: Database Hash RpkiObject -> IO [RpkiObject]
@@ -274,11 +278,11 @@ testCrl = do
     Right x -> do
       let (CrlMeta { aki = AKI ki }, CrlObject crl) = x $ URI "rsync://bla"
       putStrLn $ "aki = " <> show ki
-      let SignCRL 
-            _ 
-            (SignatureAlgorithmIdentifier signAlgorithm) 
-            (SignatureValue sign) 
-            encoded  = crl
+      let SignCRL {
+            signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
+            signatureValue = (SignatureValue sign), 
+            encodedValue = encoded 
+          } = crl
 
       let skiMap = bySKIMap objects
       let xx = MultiMap.lookup (SKI ki) skiMap
@@ -331,23 +335,6 @@ byAKIMap :: [RpkiObject] -> MultiMap AKI RpkiObject
 byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject RpkiMeta { aki = Just a } _) <- ros ]
 
 
-streamHttpResponse (URI uri) handler err = 
-  lift (try go) >>= \case
-    Left (e :: SomeException) -> throwE $ err e
-    Right r                   -> except r
-  where 
-    go = do
-      req     <- parseRequest $ T.unpack uri
-      tls     <- newManager tlsManagerSettings 
-      hashRef <- newIORef S256.init
-      s <- withHTTP req tls $ \resp -> 
-        handler $ 
-        Q.fromChunks $ 
-        S.mapM (\b -> modifyIORef hashRef (`S256.update` b) >> pure b) $ 
-        Q.toChunks $ responseBody resp
-      h <- readIORef hashRef
-      pure $ (,Hash $ S256.finalize h) <$> s
-
 parseWithTmp filename f = 
   withSystemTempFile "test_mmap_" $ \name h -> do
     runResourceT $ Q.hPut h $ Q.readFile filename
@@ -393,7 +380,7 @@ validatorUpdateRRDPRepo lmdb = do
           Right (_, (h, bs)) -> put db h (Just bs)
 
       toBytes_ o@(RpkiObject RpkiMeta {..} _) = (hash, BL.toStrict $ Serialise.serialise o)
-      toBytes_ c@(RpkiCrl CrlMeta {..} _)     = (hash, BL.toStrict $ Serialise.serialise c)               
+      toBytes_ c@(RpkiCrl CrlMeta {..} _)     = (hash, BL.toStrict $ Serialise.serialise c)
     
       readAll :: Database Hash RpkiObject -> IO [RpkiObject]
       readAll db = readOnlyTransaction lmdb $ do
@@ -409,9 +396,9 @@ main :: IO ()
 main = do 
   -- testCrl
   -- runValidate  
-  -- mkLmdb >>= saveSerialised
+  mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
-  mkLmdb >>= validatorUpdateRRDPRepo
+  -- mkLmdb >>= validatorUpdateRRDPRepo
   -- testSignature
 
 say :: String -> IO ()

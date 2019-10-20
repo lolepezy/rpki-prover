@@ -21,9 +21,9 @@ import           RPKI.SignTypes
 
 parseCrl :: B.ByteString -> ParseResult (URI -> (CrlMeta, CrlObject))
 parseCrl bs = do
-  asns                      <- first (fmtErr . show) $ decodeASN1' BER bs
-  signCrl@(SignCRL c _ _ _) <- first fmtErr $ runParseASN1 getCrl asns  
-  exts <- case crlExtensions c of
+  asns                <- first (fmtErr . show) $ decodeASN1' BER bs
+  (x509crl, signCrlF) <- first fmtErr $ runParseASN1 getCrl asns  
+  exts <- case crlExtensions x509crl of
             Extensions Nothing           -> Left $ fmtErr "No CRL extensions"
             Extensions (Just extensions) -> Right extensions
   akiBS <- case extVal exts id_authorityKeyId of
@@ -45,10 +45,9 @@ parseCrl bs = do
   let meta location = CrlMeta {
       locations = location :| [],
       aki = AKI $ KI aki',
-      hash = U.sha256s bs,
-      crlNumber = crlNumber'
+      hash = U.sha256s bs
     }
-  pure $ \location -> (meta location, CrlObject signCrl)
+  pure $ \location -> (meta location, CrlObject $ signCrlF crlNumber')
   where  
     getCrl = onNextContainer Sequence $ do
       (asns, crl') <- getNextContainerMaybe Sequence >>= \case 
@@ -59,8 +58,9 @@ parseCrl bs = do
       signatureId  <- getObject
       signatureVal <- parseSignature
       let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
-      -- throwParseError $ "asns = " <> show asns
-      pure $ SignCRL crl' (SignatureAlgorithmIdentifier signatureId) signatureVal encoded
+      pure (crl', 
+        \crlNumber -> 
+          SignCRL crl' (SignatureAlgorithmIdentifier signatureId) signatureVal encoded crlNumber)
       
     getCrlContent = do        
       x509Crl    <- parseX509CRL
