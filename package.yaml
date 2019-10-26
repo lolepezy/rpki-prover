@@ -43,7 +43,8 @@ dependencies:
 - containers
 - conduit
 - http-conduit
-- xml-conduit
+- co-log
+- co-log-core
 - cryptonite
 - cryptohash-sha256
 - deepseq
@@ -60,9 +61,12 @@ dependencies:
 - interpolate
 - ixset-typed
 - lens
+- lmdb
 - lmdb-simple
+- lifted-async
 - memory
 - MissingH
+- monad-control
 - mtl
 - multimap
 - parallel
@@ -97,6 +101,7 @@ dependencies:
 - unliftio
 - unliftio-core
 - xml-types
+- xml-conduit
 
 # ghc-options:
 #   - -with-rtsopts=-N    

@@ -396,9 +396,9 @@ main :: IO ()
 main = do 
   -- testCrl
   -- runValidate  
-  mkLmdb >>= saveSerialised
+  -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
-  -- mkLmdb >>= validatorUpdateRRDPRepo
+  mkLmdb >>= validatorUpdateRRDPRepo
   -- testSignature
 
 say :: String -> IO ()
