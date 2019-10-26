@@ -2,12 +2,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE BangPatterns       #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.RRDP.Update where
+
+import Colog
 
 import           Control.Exception
 import           Control.Monad
 import           Control.Lens               ((^.))
+
+import Control.DeepSeq (($!!))
 
 import Control.Monad.Catch hiding (try)
 import Control.Monad.IO.Unlift
@@ -23,11 +28,11 @@ import qualified Network.Wreq               as WR
 import           GHC.Generics
 
 import           RPKI.Domain
+import           RPKI.Store.Storage
 import           RPKI.RRDP.Parse
+import           RPKI.Parse.Parse
 import           RPKI.RRDP.Types
 import qualified RPKI.Util                  as U
-
-
 import qualified Data.ByteString.Streaming as Q
 import Data.ByteString.Streaming.HTTP
 
@@ -37,21 +42,26 @@ import System.IO.Temp (withSystemTempFile)
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
 import System.IO (Handle)
 
+import qualified UnliftIO.Async as Unlift
+import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
-updateRrdpRepo :: (MonadUnliftIO m, MonadMask m) => 
-                Repository 'Rrdp -> 
-                (Snapshot -> m (Maybe RrdpError)) ->
-                (Delta -> m (Maybe RrdpError)) ->
-                m (Either RrdpError (Repository 'Rrdp, Maybe RrdpError))
+{- 
+    TODO 
+    1) Replace IO with some reasonable Monad (MonadIO + MonadMask/MonadUnliftIO/MonadBaseControl).
+    2) Maybe return bracketed IO actions instead of exectuting them.
+-}
+updateRrdpRepo :: Repository 'Rrdp -> 
+                (Snapshot -> IO (Maybe SomeError)) ->
+                (Delta -> IO (Maybe SomeError)) ->
+                IO (Either SomeError (Repository 'Rrdp, Maybe e))
 updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
-    notificationXml <- download repoUri (CantDownloadNotification . show)
-    bindRight (notificationXml >>= parseNotification) $ \notification -> 
-        bindRight (rrdpNextStep repo notification) $ \case
+    notificationXml <- download repoUri (RrdpE . CantDownloadNotification . show)
+    bindRight (notificationXml >>= (first RrdpE . parseNotification)) $ \notification -> 
+        bindRight (first RrdpE $ rrdpNextStep repo notification) $ \case
             NothingToDo            -> pure $ Right (repo, Nothing)
             UseSnapshot snapshot   -> fmap (, Nothing) <$> useSnapshot snapshot                            
             UseDeltas sortedDeltas -> useDeltas sortedDeltas notification
-    where               
-        -- TODO Back to ExceptT?
+    where
         bindRight e f = either (pure . Left) f e 
         
         useSnapshot (SnapshotInfo uri@(URI u) hash) = do
@@ -60,16 +70,14 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
             -- to minimize the heap usage. Snapshots can be pretty big, so we don't want 
             -- a spike in heap usage
             withSystemTempFile tmpFileName $ \name fd -> do
-                realHash <- downloadToFile uri (CantDownloadSnapshot . show) fd
+                realHash <- downloadToFile uri (RrdpE . CantDownloadSnapshot . show) fd
                 bindRight realHash $ \realHash' ->
                     if realHash' /= hash
-                        then pure $ Left $ SnapshotHashMismatch hash realHash'
+                        then pure $ Left $ RrdpE $ SnapshotHashMismatch hash realHash'
                         else do
-                            snapshot <- liftIO $ parseSnapshot <$> unsafeMMapFile name
+                            snapshot <- first RrdpE . parseSnapshot <$> unsafeMMapFile name
                             bindRight snapshot $ \s ->
-                                handleSnapshot s >>= \case
-                                    Nothing -> pure $ Right $ repoFromSnapshot s
-                                    Just e  -> pure $ Left e                
+                                maybe (Right $ repoFromSnapshot s) Left <$> handleSnapshot s
 
         useDeltas sortedDeltas notification = do
             deltas <- U.parallel 10 processDelta sortedDeltas            
@@ -85,12 +93,12 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
                         Just e  -> pure (valids, Just e)
 
                 processDelta (DeltaInfo uri hash serial) = do                     
-                    deltaXml <- download uri (CantDownloadDelta . show)                        
+                    deltaXml <- download uri (RrdpE . CantDownloadDelta . show)                        
                     bindRight deltaXml $ \dXml ->
                         let realHash = U.sha256 dXml
                         in pure $ if realHash /= hash
-                            then Left $ DeltaHashMismatch hash realHash serial
-                            else let !d = parseDelta dXml in d
+                            then Left $ RrdpE $ DeltaHashMismatch hash realHash serial
+                            else let !d = first RrdpE $ parseDelta dXml in d
 
         repoFromSnapshot :: Snapshot -> Repository 'Rrdp
         repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri $ Just (sid, s)
@@ -169,3 +177,70 @@ next (Serial s) = Serial $ s + 1
 normalize :: T.Text -> T.Text
 normalize = T.map (\c -> if isAlpha c then c else '_') 
 
+
+process :: (WithLog env Message IO, Storage s) => 
+            Repository 'Rrdp ->        
+            s ->
+            IO (Either SomeError (Repository 'Rrdp, Maybe RrdpError))
+process r s = 
+    updateRrdpRepo r saveSnapshot saveDelta
+    where
+        saveSnapshot :: Snapshot -> IO (Maybe SomeError)
+        saveSnapshot (Snapshot _ _ _ ps) = 
+            either Just (const Nothing) . 
+                first (StorageE . StorageError . fmtEx) <$> 
+                    try (readWriteTx s $ U.boundedFunnel 20 ps objectAsyns writeObject)
+            where
+                objectAsyns (SnapshotPublish u encodedb64) =
+                    Unlift.async $ pure $!! mkObject u encodedb64
+                
+                writeObject a = Unlift.wait a >>= \case                        
+                    Left e   -> logError $ U.convert $ "Couldn't parse object: " <> show e
+                    Right st -> storeObj s st            
+
+        saveDelta :: Delta -> IO (Maybe SomeError)
+        saveDelta (Delta _ _ _ ds) = 
+            either Just (const Nothing) . 
+                first (StorageE . StorageError . fmtEx) <$> 
+                    try (readWriteTx s $ U.boundedFunnel 20 ds objectAsyns writeObject)
+            where
+                objectAsyns (DP (DeltaPublish u h encodedb64)) = do 
+                    a <- Unlift.async $ pure $!! mkObject u encodedb64
+                    pure $ Right (u, h, a)
+
+                objectAsyns (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
+                
+                writeObject = \case
+                    Left (u, h)           -> delete s (h, u)
+                    Right (u, Nothing, a) -> 
+                        Unlift.wait a >>= \case
+                            Left e -> logError $ U.convert $ "Couldn't parse object: " <> show e
+                            Right (h, st) ->
+                                getByHash s h >>= \case 
+                                    Nothing -> storeObj s (h, st)
+                                    Just existing ->
+                                        -- TODO Add location
+                                        logError $ U.convert $ "There's an existing object with hash: " <> show h
+                    Right (u, Just h, a) -> 
+                        Unlift.wait a >>= \case
+                            Left e -> logError $ U.convert $ "Couldn't parse object: " <> show e
+                            Right (h', st) ->
+                                getByHash s h >>= \case 
+                                    Nothing -> 
+                                        logError $ U.convert $ "No object with hash : " <> show h <> ", nothing to replace"                                        
+                                    Just existing -> do 
+                                        delete s (h, u)
+                                        getByHash s h' >>= \case 
+                                            Nothing -> storeObj s (h, st)
+                                            Just found -> 
+                                                -- TODO Add location
+                                                logError $ U.convert $ "There's an existing object with hash: " <> show h
+
+        mkObject (URI u) b64 = do
+            DecodedBase64 b <- first RrdpE $ decodeBase64 b64
+            ro <- first ParseE $ readObject (T.unpack u) b    
+            pure (getHash ro, toStorable ro)
+
+
+fmtEx :: SomeException -> T.Text
+fmtEx = T.pack . show 

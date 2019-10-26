@@ -7,10 +7,11 @@ module RPKI.Domain where
 
 import qualified Data.Set as S
 import qualified Data.ByteString as B
-import qualified Data.Text as T
+import qualified Data.Text as T 
 import qualified Data.Text.Short as TS
 
 import Control.DeepSeq
+import Control.Exception
 
 import Codec.Serialise
 
@@ -174,9 +175,6 @@ deriving instance Eq (Repository t)
 deriving instance Ord (Repository t)
 deriving instance Typeable (Repository t)
 
-    
-newtype Message = Message TS.ShortText 
-    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Invalid = Error | Warning
     deriving (Show, Eq, Ord, Typeable, Generic)
@@ -221,10 +219,18 @@ data RrdpError = BrokenXml !T.Text |
                  DeltaHashMismatch Hash Hash Serial
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-data ObjectError = ParseE (ParseError T.Text) | 
+
+data StorageError = StorageError T.Text 
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
+data SomeError = ParseE (ParseError T.Text) | 
                    RrdpE RrdpError |
+                   StorageE StorageError | 
                    ValidationE ValidationError      
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
+instance Exception SomeError
+
 
 
 -- serialisation

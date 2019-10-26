@@ -40,6 +40,20 @@ parallel poolSize f as = do
     readAll chanOut = forM as $ \_ -> 
       Unlift.wait =<< liftIO (Chan.readChan chanOut)
 
+boundedFunnel :: (Traversable t, MonadUnliftIO m) => 
+            Int ->
+            t a -> 
+            (a -> m b) -> 
+            (b -> m c) -> m (t c)
+boundedFunnel poolSize as f g = do
+  (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
+  snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
+  where
+    writeAll chanIn  = forM_ as $
+      liftIO . Chan.writeChan chanIn <=< f
+    readAll chanOut = forM as $ \_ -> 
+      g =<< liftIO (Chan.readChan chanOut)
+
 -- Conduit, calculating SHA256 hash 
 sinkHash :: Monad m => forall o. ConduitT B.ByteString o m B.ByteString
 sinkHash = loop S256.init 
