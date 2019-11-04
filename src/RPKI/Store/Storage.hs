@@ -15,21 +15,19 @@ import qualified Codec.Serialise as Serialise
 import GHC.Generics
 
 import RPKI.Domain
-import Database.LMDB.Simple
-import Database.LMDB.Raw
 import Control.Monad.IO.Unlift
 import Control.Monad.Trans.Reader
 
-newtype TxReadOnly = TxReadOnly ReadOnly
-newtype TxReadWrite = TxReadWrite ReadWrite
+-- newtype TxReadOnly = TxReadOnly ReadOnly
+-- newtype TxReadWrite = TxReadWrite ReadWrite
 
-class TxMode mode
+-- class TxMode mode
 
-instance TxMode TxReadOnly
-instance TxMode TxReadWrite
+-- instance TxMode TxReadOnly
+-- instance TxMode TxReadWrite
 
-newtype StorageTx mode a = StorageTx { unApp :: Transaction mode a }
-    deriving (Functor, Applicative, Monad, MonadIO)
+-- newtype StorageTx mode a = StorageTx { unApp :: Transaction mode a }
+--     deriving (Functor, Applicative, Monad, MonadIO)
 
 -- deriving via ReaderT MDB_txn IO instance MonadUnliftIO (Transaction mode)
 

@@ -62,7 +62,7 @@ dependencies:
 - ixset-typed
 - lens
 - lmdb
-- lmdb-simple
+- lmdb-high-level
 - lifted-async
 - memory
 - MissingH

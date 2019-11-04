@@ -206,7 +206,7 @@ data RrdpError = BrokenXml !T.Text |
                  NoVersion | 
                  BadVersion !B.ByteString | 
                  NoPublishURI |
-                 BadBase64 !B.ByteString |
+                 BadBase64 String !B.ByteString |
                  BadPublish !B.ByteString |
                  NoHashInWithdraw |
                  ContentInWithdraw !B.ByteString |

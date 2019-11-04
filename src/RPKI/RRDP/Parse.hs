@@ -7,9 +7,9 @@ import           Control.Monad
 import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString            as B
-import qualified Data.ByteString.Base64     as B64
+import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Lazy       as BL
-import           Data.Char                  (isSpace, chr)
+import           Data.Char                 
 import qualified Data.List                   as L
 import           Data.Hex                   (unhex)
 import           Data.Word
@@ -73,7 +73,9 @@ parseSnapshot xml = makeSnapshot =<< folded
   
         foldPubs (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
         foldPubs (Just sn, SnapshotPublish uri (EncodedBase64 c) : ps) (X.CharacterData cd) = 
-          let nc = c <> trim cd in Right (Just sn, SnapshotPublish uri (EncodedBase64 nc) : ps)      
+          let !nc = c <> trim cd
+              !sp = SnapshotPublish uri (EncodedBase64 nc) : ps
+            in Right (Just sn, sp)      
         foldPubs x  _                                          = Right x
 
 
@@ -131,7 +133,7 @@ parseMeta as = do
     s'  <- toEither NoSerial $ parseInteger s
     v   <- toEither NoVersion $ L.lookup "version" as
     v'  <- toEither NoVersion $ parseInteger v            
-    pure (Version v', SessionId sId, Serial s')
+    pure (Version v', SessionId $ sId, Serial s')
 
 parseSnapshotInfo :: [(B.ByteString, B.ByteString)] -> Either RrdpError SnapshotInfo
 parseSnapshotInfo as = do
@@ -183,9 +185,9 @@ hexString bs = HexString <$> unhex bs
 toBytes :: HexString -> B.ByteString
 toBytes (HexString bs) = bs
 
-decodeBase64 :: EncodedBase64 -> Either RrdpError DecodedBase64
-decodeBase64 (EncodedBase64 bs) = case B64.decode bs of
-    Left _ -> Left $ BadBase64 bs
+decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
+decodeBase64 (EncodedBase64 bs) context = case B64.decode bs of
+    Left e -> Left $ BadBase64 (e <> " for " <> show context) bs
     Right b -> Right $ DecodedBase64 b
 
 trim :: B.ByteString -> B.ByteString
@@ -213,8 +215,8 @@ type SAX = X.SAXEvent B.ByteString B.ByteString
 
 
 bs2Sax :: BL.ByteString -> [SAX]
-bs2Sax xml = filter isEmpty_ saxs
+bs2Sax xml = filter nonEmpty_ saxs
     where 
-        isEmpty_ (X.CharacterData cd) = not $ B.all isSpace_ cd
-        isEmpty_ _ = True        
+        nonEmpty_ (X.CharacterData cd) = not $ B.all isSpace_ cd
+        nonEmpty_ _ = True        
         saxs = X.parse (X.defaultParseOptions :: X.ParseOptions B.ByteString B.ByteString) xml    

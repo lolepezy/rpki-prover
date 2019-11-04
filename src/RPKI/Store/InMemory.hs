@@ -15,13 +15,18 @@ import RPKI.Store.Storage
 
 newtype InMemoryStore = InMemoryStore (TVar (Map Hash StorableRO))
 
-instance Storage InMemoryStore where
+memStore :: IO InMemoryStore
+memStore = atomically $ InMemoryStore <$> newTVar Map.empty
 
+instance Storage InMemoryStore where
     readOnlyTx _ = id
     readWriteTx _ = id
 
-    storeObj (InMemoryStore entries) (h, storable) = 
-        atomically $ modifyTVar' entries (Map.insert h storable)
+    storeObj (InMemoryStore entries) (h, storable) = pure ()
+        -- atomically $ modifyTVar' entries (Map.insert h storable)
+
+    delete (InMemoryStore entries) (h, _) = 
+            atomically $ modifyTVar' entries $ Map.delete h
 
     getByAKI (InMemoryStore entries) a = atomically $ do
         e <- readTVar entries

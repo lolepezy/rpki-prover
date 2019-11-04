@@ -40,10 +40,9 @@ import qualified Crypto.Hash.SHA256      as S256
 
 import System.IO.Temp (withSystemTempFile)
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
-import System.IO (Handle)
+import System.IO (Handle, hClose)
 
 import qualified UnliftIO.Async as Unlift
-import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 {- 
     TODO 
@@ -67,7 +66,7 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
         useSnapshot (SnapshotInfo uri@(URI u) hash) = do
             let tmpFileName = U.convert $ normalize u
             -- Download snapshot to a temporary file and MMAP it to a lazy bytestring 
-            -- to minimize the heap usage. Snapshots can be pretty big, so we don't want 
+            -- to minimize the heap. Snapshots can be pretty big, so we don't want 
             -- a spike in heap usage
             withSystemTempFile tmpFileName $ \name fd -> do
                 realHash <- downloadToFile uri (RrdpE . CantDownloadSnapshot . show) fd
@@ -75,6 +74,8 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
                     if realHash' /= hash
                         then pure $ Left $ RrdpE $ SnapshotHashMismatch hash realHash'
                         else do
+                            -- File has to be closed before it can be opened again ny mmap
+                            hClose fd
                             snapshot <- first RrdpE . parseSnapshot <$> unsafeMMapFile name
                             bindRight snapshot $ \s ->
                                 maybe (Right $ repoFromSnapshot s) Left <$> handleSnapshot s
@@ -178,31 +179,33 @@ normalize :: T.Text -> T.Text
 normalize = T.map (\c -> if isAlpha c then c else '_') 
 
 
-process :: (WithLog env Message IO, Storage s) => 
-            Repository 'Rrdp ->        
+process :: Storage s => 
+            LogAction IO String ->
+            Repository 'Rrdp ->
             s ->
             IO (Either SomeError (Repository 'Rrdp, Maybe RrdpError))
-process r s = 
-    updateRrdpRepo r saveSnapshot saveDelta
+process logger repository storage = 
+    updateRrdpRepo repository saveSnapshot saveDelta
     where
         saveSnapshot :: Snapshot -> IO (Maybe SomeError)
-        saveSnapshot (Snapshot _ _ _ ps) = 
+        saveSnapshot (Snapshot _ _ _ ps) = do
+            logger <& "Using snapshot for the repository: " <> show repository
             either Just (const Nothing) . 
                 first (StorageE . StorageError . fmtEx) <$> 
-                    try (readWriteTx s $ U.boundedFunnel 20 ps objectAsyns writeObject)
+                    try (U.boundedFunnel 20 ps objectAsyns writeObject)
             where
                 objectAsyns (SnapshotPublish u encodedb64) =
-                    Unlift.async $ pure $!! mkObject u encodedb64
+                    Unlift.async $ pure $!! (u, mkObject u encodedb64)
                 
                 writeObject a = Unlift.wait a >>= \case                        
-                    Left e   -> logError $ U.convert $ "Couldn't parse object: " <> show e
-                    Right st -> storeObj s st            
+                    (u, Left e)   -> logger <& (U.convert $ "Couldn't parse object: " <> show e <> ", u = " <> show u)
+                    (u, Right st) -> storeObj storage st            
 
         saveDelta :: Delta -> IO (Maybe SomeError)
         saveDelta (Delta _ _ _ ds) = 
             either Just (const Nothing) . 
                 first (StorageE . StorageError . fmtEx) <$> 
-                    try (readWriteTx s $ U.boundedFunnel 20 ds objectAsyns writeObject)
+                    try (readWriteTx storage $ U.boundedFunnel 20 ds objectAsyns writeObject)
             where
                 objectAsyns (DP (DeltaPublish u h encodedb64)) = do 
                     a <- Unlift.async $ pure $!! mkObject u encodedb64
@@ -211,33 +214,33 @@ process r s =
                 objectAsyns (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
                 
                 writeObject = \case
-                    Left (u, h)           -> delete s (h, u)
+                    Left (u, h)           -> delete storage (h, u)
                     Right (u, Nothing, a) -> 
                         Unlift.wait a >>= \case
-                            Left e -> logError $ U.convert $ "Couldn't parse object: " <> show e
+                            Left e -> logger <& U.convert ("Couldn't parse object: " <> show e)
                             Right (h, st) ->
-                                getByHash s h >>= \case 
-                                    Nothing -> storeObj s (h, st)
+                                getByHash storage h >>= \case 
+                                    Nothing -> storeObj storage (h, st)
                                     Just existing ->
                                         -- TODO Add location
-                                        logError $ U.convert $ "There's an existing object with hash: " <> show h
+                                        logger <& U.convert ("There's an existing object with hash: " <> show h)
                     Right (u, Just h, a) -> 
                         Unlift.wait a >>= \case
-                            Left e -> logError $ U.convert $ "Couldn't parse object: " <> show e
+                            Left e -> logger <& U.convert ("Couldn't parse object: " <> show e)
                             Right (h', st) ->
-                                getByHash s h >>= \case 
+                                getByHash storage h >>= \case 
                                     Nothing -> 
-                                        logError $ U.convert $ "No object with hash : " <> show h <> ", nothing to replace"                                        
+                                        logger <& U.convert ("No object with hash : " <> show h <> ", nothing to replace")
                                     Just existing -> do 
-                                        delete s (h, u)
-                                        getByHash s h' >>= \case 
-                                            Nothing -> storeObj s (h, st)
+                                        delete storage (h, u)
+                                        getByHash storage h' >>= \case 
+                                            Nothing -> storeObj storage (h, st)
                                             Just found -> 
                                                 -- TODO Add location
-                                                logError $ U.convert $ "There's an existing object with hash: " <> show h
+                                                logger <& U.convert ("There's an existing object with hash: " <> show h)
 
         mkObject (URI u) b64 = do
-            DecodedBase64 b <- first RrdpE $ decodeBase64 b64
+            DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
             ro <- first ParseE $ readObject (T.unpack u) b    
             pure (getHash ro, toStorable ro)
 

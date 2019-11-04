@@ -7,15 +7,14 @@ module RPKI.Store.LMDB where
 
 import qualified Data.ByteString.Lazy as BL
 
-import Database.LMDB.Simple
 import qualified Codec.Serialise as Serialise
 
 import RPKI.Domain
 import RPKI.Store.Storage
 
 data LMDBStore = LMDBStore { 
-    env :: Environment ReadWrite,
-    db :: Database Hash BL.ByteString 
+    -- env :: Environment ReadWrite,
+    -- db :: Database Hash BL.ByteString 
 }
 
 -- instance Storage LMDBStore where
