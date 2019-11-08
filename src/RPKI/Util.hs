@@ -54,11 +54,27 @@ boundedFunnel poolSize as f g = do
     readAll chanOut = forM as $ \_ -> 
       g =<< liftIO (Chan.readChan chanOut)
 
--- Conduit, calculating SHA256 hash 
-sinkHash :: Monad m => forall o. ConduitT B.ByteString o m B.ByteString
-sinkHash = loop S256.init 
+
+txFunnel :: (Traversable t, MonadUnliftIO m) => 
+            Int ->
+            t a -> 
+            (a -> m b) -> 
+            ((tx -> m (t c)) -> m (t c)) ->
+            (tx -> b -> m c) -> m (t c)
+txFunnel poolSize as f withTx g = do
+  (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
+  snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
+  where
+    writeAll chanIn = forM_ as $
+      liftIO . Chan.writeChan chanIn <=< f
+    readAll chanOut = withTx $ \tx -> 
+      forM as $ \_ -> 
+        g tx =<< liftIO (Chan.readChan chanOut)
+
+-- Conduit calculating SHA256 hash 
+sinkHash :: Monad m => forall o. ConduitT B.ByteString o m Hash
+sinkHash = Hash <$> loop S256.init 
   where
     loop ctx = await >>= \case
-      Nothing -> return $! S256.finalize ctx
-      Just bs -> let !ctx' = S256.update ctx bs
-                  in loop ctx'
+      Nothing -> pure $! S256.finalize ctx
+      Just bs -> loop $! S256.update ctx bs

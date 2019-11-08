@@ -10,17 +10,12 @@ import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
-import qualified Crypto.Hash.SHA256      as S256
 
 import qualified Codec.Serialise as Serialise
-
-import           Control.Monad.Trans.Class
-import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import qualified Data.MultiMap as MultiMap
 import Data.MultiMap (MultiMap)
 
@@ -33,8 +28,6 @@ import RPKI.Validate
 import RPKI.Parse.Parse
 
 import System.FilePath.Find
-
-import RPKI.Util (parallel, sha256s, sinkHash)
 
 import Data.Time.Clock (getCurrentTime)
 
@@ -75,6 +68,9 @@ import System.IO.Temp (withSystemTempFile)
 import           Data.Hex                   (hex, unhex)
 
 import qualified UnliftIO.Async as Unlift
+
+import RPKI.Store.LMDB
+
 
 mkLmdb :: IO (Environment ReadWrite)
 mkLmdb = initializeReadWriteEnvironment mapSize readerNum maxDatabases "./data"
@@ -359,7 +355,7 @@ parseWithTmp filename f = --BL.readFile filename >>= f
   --   -- f =<< BL.hGetContents h   
 
 -- RRDP
-validatorUpdateRRDPRepo :: Environment ReadWrite -> IO ()
+validatorUpdateRRDPRepo :: Environment 'ReadWrite -> IO ()
 validatorUpdateRRDPRepo lmdb = do
   say "begin"
 
@@ -419,10 +415,11 @@ validatorUpdateRRDPRepo lmdb = do
 processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
     say "begin"  
-    db :: Database Hash B.ByteString <- makeLmdbMap env
-    s <- memStore
+    db <- makeLmdbMap env
+    let store = LmdbStore env db
     let repo = RrdpRepo (URI "https://rrdp.ripe.net/notification.xml") Nothing
-    void $ process logStringStdout repo s
+    e <- process logStringStdout repo store
+    say $ "resulve " <> show e
   
 
 
@@ -433,7 +430,7 @@ main = do
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
-  mkLmdb >>= validatorUpdateRRDPRepo
+  mkLmdb >>= processRRDP
   -- testSignature
 
 say :: String -> IO ()

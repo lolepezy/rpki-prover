@@ -18,7 +18,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-14.12
+resolver: lts-14.13
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -42,6 +42,7 @@ packages:
 extra-deps: 
  - "../lib/hs-certificate/x509"
  - "../lib/hs-certificate/x509-validation"
+ - "../lib/lmdb-high-level"
  - primitive-extras-0.7.1
  - stm-containers-1.1.0.4
  - stm-hamt-1.2.0.2
@@ -49,7 +50,6 @@ extra-deps:
  - streaming-utils-0.2.0.0
  - json-stream-0.4.2.4 
  - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653
- - lmdb-high-level-0.1@sha256:e91a9d883963858f300baab028d927f7c2e5f42f05b4bba93878da93aa3338e5,1406
  - bytestring-mmap-0.2.2@sha256:d04e6bc5a158dd292757d3b9b032beb8a2c43e768777d64a8289abf89f612f67,1282
  
 # Override default flag values for local packages and extra-deps
@@ -60,7 +60,7 @@ extra-deps:
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true
-#
+
 # Require a specific version of stack, using version ranges
 # require-stack-version: -any # Default
 # require-stack-version: ">=1.7"

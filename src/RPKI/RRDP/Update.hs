@@ -192,35 +192,35 @@ process logger repository storage =
             logger <& "Using snapshot for the repository: " <> show repository
             either Just (const Nothing) . 
                 first (StorageE . StorageError . fmtEx) <$> 
-                    try (U.boundedFunnel 20 ps objectAsyns writeObject)
+                    try (U.txFunnel 20 ps objectAsyncs (readWriteTx storage) writeObject)
             where
-                objectAsyns (SnapshotPublish u encodedb64) =
+                objectAsyncs (SnapshotPublish u encodedb64) =
                     Unlift.async $ pure $!! (u, mkObject u encodedb64)
                 
-                writeObject a = Unlift.wait a >>= \case                        
+                writeObject tx a = Unlift.wait a >>= \case                        
                     (u, Left e)   -> logger <& (U.convert $ "Couldn't parse object: " <> show e <> ", u = " <> show u)
-                    (u, Right st) -> storeObj storage st            
+                    (u, Right st) -> storeObj tx storage st            
 
         saveDelta :: Delta -> IO (Maybe SomeError)
         saveDelta (Delta _ _ _ ds) = 
             either Just (const Nothing) . 
                 first (StorageE . StorageError . fmtEx) <$> 
-                    try (readWriteTx storage $ U.boundedFunnel 20 ds objectAsyns writeObject)
+                try (U.txFunnel 20 ds objectAsyncs (readWriteTx storage) writeObject)
             where
-                objectAsyns (DP (DeltaPublish u h encodedb64)) = do 
+                objectAsyncs (DP (DeltaPublish u h encodedb64)) = do 
                     a <- Unlift.async $ pure $!! mkObject u encodedb64
                     pure $ Right (u, h, a)
 
-                objectAsyns (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
-                
-                writeObject = \case
-                    Left (u, h)           -> delete storage (h, u)
+                objectAsyncs (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
+
+                writeObject tx = \case
+                    Left (u, h)           -> delete tx storage (h, u)
                     Right (u, Nothing, a) -> 
                         Unlift.wait a >>= \case
                             Left e -> logger <& U.convert ("Couldn't parse object: " <> show e)
                             Right (h, st) ->
-                                getByHash storage h >>= \case 
-                                    Nothing -> storeObj storage (h, st)
+                                getByHash tx storage h >>= \case 
+                                    Nothing -> storeObj tx storage (h, st)
                                     Just existing ->
                                         -- TODO Add location
                                         logger <& U.convert ("There's an existing object with hash: " <> show h)
@@ -228,13 +228,13 @@ process logger repository storage =
                         Unlift.wait a >>= \case
                             Left e -> logger <& U.convert ("Couldn't parse object: " <> show e)
                             Right (h', st) ->
-                                getByHash storage h >>= \case 
+                                getByHash tx storage h >>= \case 
                                     Nothing -> 
                                         logger <& U.convert ("No object with hash : " <> show h <> ", nothing to replace")
                                     Just existing -> do 
-                                        delete storage (h, u)
-                                        getByHash storage h' >>= \case 
-                                            Nothing -> storeObj storage (h, st)
+                                        delete tx storage (h, u)
+                                        getByHash tx storage h' >>= \case 
+                                            Nothing -> storeObj tx storage (h, st)
                                             Just found -> 
                                                 -- TODO Add location
                                                 logger <& U.convert ("There's an existing object with hash: " <> show h)

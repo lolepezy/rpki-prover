@@ -2,10 +2,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE StandaloneDeriving #-}
 
 module RPKI.Store.Storage where
 
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 
 import Control.DeepSeq
@@ -13,37 +13,24 @@ import Control.DeepSeq
 import qualified Codec.Serialise as Serialise
 
 import GHC.Generics
-
 import RPKI.Domain
-import Control.Monad.IO.Unlift
-import Control.Monad.Trans.Reader
 
--- newtype TxReadOnly = TxReadOnly ReadOnly
--- newtype TxReadWrite = TxReadWrite ReadWrite
-
--- class TxMode mode
-
--- instance TxMode TxReadOnly
--- instance TxMode TxReadWrite
-
--- newtype StorageTx mode a = StorageTx { unApp :: Transaction mode a }
---     deriving (Functor, Applicative, Monad, MonadIO)
-
--- deriving via ReaderT MDB_txn IO instance MonadUnliftIO (Transaction mode)
-
-newtype StorableRO = StorableRO BL.ByteString
+newtype StorableRO = StorableRO B.ByteString
     deriving (Show, Eq, Ord, Generic, NFData)
 
+data TxMode = RO | RW
+
 class Storage s where        
-    getByHash :: s -> Hash -> IO (Maybe RpkiObject)
-    getByAKI :: s -> AKI -> IO [RpkiObject]
-    storeObj :: s -> (Hash, StorableRO) -> IO ()
-    delete :: s -> (Hash, URI) -> IO ()
-    readOnlyTx :: s -> IO a -> IO a
-    readWriteTx :: s -> IO a -> IO a
+    data Tx s (m :: TxMode)
+    getByHash :: Tx s m -> s -> Hash -> IO (Maybe RpkiObject)
+    getByAKI :: Tx s m -> s -> AKI -> IO [RpkiObject]
+    storeObj :: Tx s 'RW -> s -> (Hash, StorableRO) -> IO ()
+    delete :: Tx s 'RW -> s -> (Hash, URI) -> IO ()
+    readOnlyTx :: s -> (Tx s 'RO -> IO a) -> IO a
+    readWriteTx :: s -> (Tx s 'RW -> IO a) -> IO a
 
 toStorable :: RpkiObject -> StorableRO
-toStorable = StorableRO . Serialise.serialise
+toStorable = StorableRO . BL.toStrict . Serialise.serialise
 
 fromStorable :: StorableRO -> RpkiObject
-fromStorable (StorableRO b) = Serialise.deserialise b
+fromStorable (StorableRO b) = Serialise.deserialise $ BL.fromStrict b
