@@ -19,7 +19,6 @@ import Control.Monad.IO.Unlift
 import           Data.Bifunctor             (first, second)
 import qualified Data.ByteString.Lazy       as BL
 import Data.IORef
-import Data.Char (isAlpha)
 import qualified Data.List                  as L
 import qualified Data.Text                  as T
 import qualified Network.Wreq               as WR
@@ -48,11 +47,11 @@ import qualified UnliftIO.Async as Unlift
     1) Replace IO with some reasonable Monad (MonadIO + MonadMask/MonadUnliftIO/MonadBaseControl).
     2) Maybe return bracketed IO actions instead of exectuting them.
 -}
-updateRrdpRepo :: Repository 'Rrdp -> 
+updateRrdpRepo :: RrdpRepository -> 
                 (Snapshot -> IO (Maybe SomeError)) ->
                 (Delta -> IO (Maybe SomeError)) ->
-                IO (Either SomeError (Repository 'Rrdp, Maybe e))
-updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
+                IO (Either SomeError (RrdpRepository, Maybe e))
+updateRrdpRepo repo@(RrdpRepository repoUri _) handleSnapshot handleDelta = do
     notificationXml <- download repoUri (RrdpE . CantDownloadNotification . show)
     bindRight (notificationXml >>= (first RrdpE . parseNotification)) $ \notification -> 
         bindRight (first RrdpE $ rrdpNextStep repo notification) $ \case
@@ -63,7 +62,7 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
         bindRight e f = either (pure . Left) f e 
         
         useSnapshot (SnapshotInfo uri@(URI u) hash) = do
-            let tmpFileName = U.convert $ normalize u
+            let tmpFileName = U.convert $ U.normalizeUri u
             -- Download snapshot to a temporary file and MMAP it to a lazy bytestring 
             -- to minimize the heap. Snapshots can be pretty big, so we don't want 
             -- a spike in heap usage
@@ -100,11 +99,11 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
                             then Left $ RrdpE $ DeltaHashMismatch hash realHash serial
                             else let !d = first RrdpE $ parseDelta dXml in d
 
-        repoFromSnapshot :: Snapshot -> Repository 'Rrdp
-        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepo repoUri $ Just (sid, s)
+        repoFromSnapshot :: Snapshot -> RrdpRepository
+        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepository repoUri $ Just (sid, s)
 
-        repoFromDeltas :: [Delta] -> Notification -> Repository 'Rrdp
-        repoFromDeltas ds notification = RrdpRepo repoUri $ Just (newSessionId, newSerial)
+        repoFromDeltas :: [Delta] -> Notification -> RrdpRepository
+        repoFromDeltas ds notification = RrdpRepository repoUri $ Just (newSessionId, newSerial)
             where
                 newSessionId = sessionId notification
                 newSerial = L.maximum $ map (\(Delta _ _ s _) -> s) ds        
@@ -144,9 +143,10 @@ data Step = UseSnapshot SnapshotInfo
 
 -- Decide what to do next based on current state of the repository
 -- and the parsed notification file
-rrdpNextStep :: Repository 'Rrdp -> Notification -> Either RrdpError Step
-rrdpNextStep (RrdpRepo _ Nothing) Notification{..} = Right $ UseSnapshot snapshotInfo
-rrdpNextStep (RrdpRepo _ (Just (repoSessionId, repoSerial))) Notification{..} =
+rrdpNextStep :: RrdpRepository -> Notification -> Either RrdpError Step
+rrdpNextStep (RrdpRepository _ Nothing) Notification{..} = 
+    Right $ UseSnapshot snapshotInfo
+rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{..} =
     if  | sessionId /= repoSessionId -> Right $ UseSnapshot snapshotInfo
         | repoSerial > serial  -> Left $ LocalSerialBiggerThanRemote repoSerial serial
         | repoSerial == serial -> Right NothingToDo
@@ -174,15 +174,12 @@ getSerial (DeltaInfo _ _ s) = s
 next :: Serial -> Serial
 next (Serial s) = Serial $ s + 1
 
-normalize :: T.Text -> T.Text
-normalize = T.map (\c -> if isAlpha c then c else '_') 
-
 
 processRrdp :: Storage s => 
                 LogAction IO String ->
-                Repository 'Rrdp ->
+                RrdpRepository ->
                 s ->
-                IO (Either SomeError (Repository 'Rrdp, Maybe RrdpError))
+                IO (Either SomeError (RrdpRepository, Maybe RrdpError))
 processRrdp logger repository storage = 
     updateRrdpRepo repository saveSnapshot saveDelta
     where
@@ -190,7 +187,7 @@ processRrdp logger repository storage =
         saveSnapshot (Snapshot _ _ _ ps) = do
             logger <& "Using snapshot for the repository: " <> show repository
             either Just (const Nothing) . 
-                first (StorageE . StorageError . fmtEx) <$> 
+                first (StorageE . StorageError . U.fmtEx) <$> 
                     try (U.txFunnel 20 ps objectAsyncs (readWriteTx storage) writeObject)
             where
                 objectAsyncs (SnapshotPublish u encodedb64) =
@@ -203,8 +200,8 @@ processRrdp logger repository storage =
         saveDelta :: Delta -> IO (Maybe SomeError)
         saveDelta (Delta _ _ _ ds) = 
             either Just (const Nothing) . 
-                first (StorageE . StorageError . fmtEx) <$> 
-                try (U.txFunnel 20 ds objectAsyncs (readWriteTx storage) writeObject)
+                first (StorageE . StorageError . U.fmtEx) <$> 
+                    try (U.txFunnel 20 ds objectAsyncs (readWriteTx storage) writeObject)
             where
                 objectAsyncs (DP (DeltaPublish u h encodedb64)) = do 
                     a <- Unlift.async $ pure $!! mkObject u encodedb64
@@ -242,7 +239,3 @@ processRrdp logger repository storage =
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
             ro <- first ParseE $ readObject (T.unpack u) b    
             pure (getHash ro, toStorable ro)
-
-
-fmtEx :: SomeException -> T.Text
-fmtEx = T.pack . show 

@@ -1,20 +1,22 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE BangPatterns #-}
 
 module RPKI.Util where
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 import           Control.Monad
+import           Control.Exception
 
 import qualified Crypto.Hash.SHA256      as S256
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Lazy         as BL
 import qualified Data.String.Conversions as SC
+import qualified Data.Text         as T
+
+import Data.Char (isAlpha)
 
 import Conduit
 
 import qualified UnliftIO.Async as Unlift
-import Control.Monad.IO.Unlift
 
 import           RPKI.Domain
 
@@ -26,6 +28,12 @@ sha256s = Hash . S256.hash
 
 convert :: SC.ConvertibleStrings s1 s2 => s1 -> s2
 convert = SC.cs
+
+normalizeUri :: T.Text -> T.Text
+normalizeUri = T.map (\c -> if isAlpha c then c else '_') 
+
+fmtEx :: SomeException -> T.Text
+fmtEx = T.pack . show 
 
 -- FIXME Do something about 'wait' throwing an exception
 parallel :: (Traversable t, MonadUnliftIO m) => 

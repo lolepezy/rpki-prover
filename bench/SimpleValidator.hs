@@ -418,7 +418,7 @@ processRRDP env = do
     say "begin"  
     db <- makeLmdbMap env
     let store = LmdbStore env db
-    let repo = RrdpRepo (URI "https://rrdp.ripe.net/notification.xml") Nothing
+    let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing
     e <- processRrdp logStringStdout repo store
     say $ "resulve " <> show e
   

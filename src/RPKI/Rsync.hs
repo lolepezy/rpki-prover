@@ -3,7 +3,6 @@
 
 module RPKI.Rsync where
 
-import Colog
 import Control.DeepSeq (($!!))
 
 import Data.Bifunctor
@@ -14,6 +13,7 @@ import           Control.Monad.Reader
 import           UnliftIO.Exception
 
 import qualified Data.ByteString                   as B
+import qualified Data.Text                  as T
 
 import           RPKI.Domain
 import           RPKI.Store.Storage
@@ -29,6 +29,7 @@ import System.Directory ( doesDirectoryExist, getDirectoryContents )
 import System.FilePath ( (</>) )
 
 import System.Process.Typed
+import System.Exit
 
 data RsyncConf = RsyncConf {
   rsyncRoot :: FilePath
@@ -36,26 +37,53 @@ data RsyncConf = RsyncConf {
 
 processRsync :: (Has RsyncConf conf, Has AppLogger conf) => 
                 Storage s => 
-                Repository 'Rsync -> s -> ReaderT conf IO ()
-processRsync (RsyncRepo (URI u)) storage = do
-  -- proc "rsync" ["/etc/hosts", "-", "/etc/group"]
-  RsyncConf {..}   <- asks getter
-  logger :: AppLogger <- asks getter
-  lift $ loadRsyncRepository logger rsyncRoot storage
-  pure ()
+                RsyncRepository -> s -> ReaderT conf IO (Either SomeError ())
+processRsync (RsyncRepository (URI uri)) storage = do  
+  RsyncConf {..} <- asks getter
+  let destination = destinationDirectory rsyncRoot uri
+  let rsync = proc "rsync" [
+          "--timeout=300", 
+          "--update", 
+          "--times", 
+          "--copy-links", 
+          T.unpack uri, 
+          destination
+        ]
+
+  logger :: AppLogger   <- asks getter
+  (exitCode, _, stderr) <- lift $ readProcess rsync
+  case exitCode of  
+    ExitSuccess ->
+      lift $ loadRsyncRepository logger rsyncRoot storage      
+    ExitFailure errorCode -> do
+      lift $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
+        " with code " <> show errorCode <> " and message " <> show stderr
+      pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr
+  where
+    destinationDirectory root uri = root </> T.unpack (U.normalizeUri uri)
 
 
 loadRsyncRepository :: (Storage s, Logger logger) => 
                         logger ->
                         FilePath -> 
                         s -> 
-                        IO ()
+                        IO (Either SomeError ())
 loadRsyncRepository logger topPath storage = do
     (chanIn, chanOut) <- Chan.newChan 12
-    void $ concurrently 
-      (readFiles chanIn topPath `finally` Chan.writeChan chanIn Nothing)
-      (saveObjects chanOut)
+    -- count <- newIORef (0 :: Int)
+    r <- concurrently (travelrseFS chanIn) (saveObjects chanOut)
+
+    -- TODO Implement
+    -- case r  of 
+    --   (Left e1, Left e2) -> 
+    pure $ Right ()
   where 
+    travelrseFS chanIn = 
+      first (StorageError . U.fmtEx) <$> try (
+          readFiles chanIn topPath 
+            `finally` 
+            Chan.writeChan chanIn Nothing)        
+
     readFiles chanIn currentPath = do
       names <- getDirectoryContents currentPath
       let properNames = filter (`notElem` [".", ".."]) names
@@ -72,9 +100,10 @@ loadRsyncRepository logger topPath storage = do
               Chan.writeChan chanIn $ Just a      
 
     saveObjects chanOut = 
-      readWriteTx storage go
-        where 
-          go tx = Chan.readChan chanOut >>= \case 
+      first (StorageError . U.fmtEx) <$> 
+        try (readWriteTx storage go)
+      where 
+        go tx = Chan.readChan chanOut >>= \case 
             Nothing -> pure ()
             Just a  -> do
               try (wait a) >>= \case

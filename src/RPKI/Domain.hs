@@ -7,6 +7,7 @@ module RPKI.Domain where
 
 import qualified Data.Set as S
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T 
 import qualified Data.Text.Short as TS
 
@@ -166,15 +167,19 @@ data TA = TA {
 
 data RepoType = Rsync | Rrdp
 
-data Repository (t :: RepoType) where
-    RsyncRepo :: URI -> Repository 'Rsync
-    RrdpRepo  :: URI -> Maybe (SessionId, Serial) -> Repository 'Rrdp
+data RsyncRepository = RsyncRepository {
+    uri :: URI    
+} deriving (Show, Eq, Ord, Typeable, Generic)
 
-deriving instance Show (Repository t)
-deriving instance Eq (Repository t)
-deriving instance Ord (Repository t)
-deriving instance Typeable (Repository t)
+data RrdpRepository = RrdpRepository {
+    uri :: URI,
+    session :: Maybe (SessionId, Serial)
+} deriving (Show, Eq, Ord, Typeable, Generic)
 
+data Repository = 
+    RsyncRepo RsyncRepository | 
+    RrdpRepo RrdpRepository 
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Invalid = Error | Warning
     deriving (Show, Eq, Ord, Typeable, Generic)
@@ -219,14 +224,19 @@ data RrdpError = BrokenXml !T.Text |
                  DeltaHashMismatch Hash Hash Serial
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
+data RsyncError = RsyncProcessError !Int !BL.ByteString |
+                  FileReadError !T.Text
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data StorageError = StorageError T.Text 
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data SomeError = ParseE (ParseError T.Text) | 
                    RrdpE RrdpError |
+                   RsyncE RsyncError |
                    StorageE StorageError | 
-                   ValidationE ValidationError      
+                   ValidationE ValidationError |
+                   ComposeE [SomeError]
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 instance Exception SomeError
