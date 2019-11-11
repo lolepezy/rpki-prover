@@ -5,7 +5,8 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.MFT,
     module RPKI.Parse.Internal.ROA,
     module RPKI.Parse.Internal.SignedObject,
-    readObject
+    readObject,
+    supportedExtension
 )
 where
 
@@ -22,6 +23,10 @@ import qualified Data.ByteString as B
 import qualified Data.List as L
 import qualified Data.Text as T
 
+supportedExtension :: String -> Bool
+supportedExtension filename = 
+    let ext = L.drop (L.length filename - 4) filename
+        in elem ext [".cer", ".mft", ".crl", ".roa", ".gbr"] 
 
 readObject :: String -> B.ByteString -> ParseResult RpkiObject
 readObject name content = do    

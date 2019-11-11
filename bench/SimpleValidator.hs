@@ -40,7 +40,7 @@ import RPKI.RRDP.Types
 import RPKI.RRDP.Parse
 import RPKI.RRDP.Update
 
-import RPKI.Store.InMemory
+import RPKI.Rsync
 
 import Streaming
 import qualified Streaming.Prelude as S
@@ -70,9 +70,10 @@ import           Data.Hex                   (hex, unhex)
 import qualified UnliftIO.Async as Unlift
 
 import RPKI.Store.LMDB
+import RPKI.Logging
 
 
-mkLmdb :: IO (Environment ReadWrite)
+mkLmdb :: IO (Environment 'ReadWrite)
 mkLmdb = initializeReadWriteEnvironment mapSize readerNum maxDatabases "./data"
   where 
     mapSize = 8*1000*1000*1000
@@ -418,10 +419,15 @@ processRRDP env = do
     db <- makeLmdbMap env
     let store = LmdbStore env db
     let repo = RrdpRepo (URI "https://rrdp.ripe.net/notification.xml") Nothing
-    e <- process logStringStdout repo store
+    e <- processRrdp logStringStdout repo store
     say $ "resulve " <> show e
   
-
+saveRsync env = do
+    say "begin"  
+    db <- makeLmdbMap env
+    let store = LmdbStore env db
+    e <- loadRsyncRepository (AppLogger logTextStdout) "/Users/mpuzanov/ripe/tmp/rpki/repo/" store
+    say $ "done " <> show e
 
 main :: IO ()
 main = do 
@@ -430,7 +436,7 @@ main = do
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
-  mkLmdb >>= processRRDP
+  mkLmdb >>= saveRsync
   -- testSignature
 
 say :: String -> IO ()

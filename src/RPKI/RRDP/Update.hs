@@ -14,7 +14,6 @@ import           Control.Lens               ((^.))
 
 import Control.DeepSeq (($!!))
 
-import Control.Monad.Catch hiding (try)
 import Control.Monad.IO.Unlift
 
 import           Data.Bifunctor             (first, second)
@@ -74,7 +73,7 @@ updateRrdpRepo repo@(RrdpRepo repoUri _) handleSnapshot handleDelta = do
                     if realHash' /= hash
                         then pure $ Left $ RrdpE $ SnapshotHashMismatch hash realHash'
                         else do
-                            -- File has to be closed before it can be opened again ny mmap
+                            -- File has to be closed before it can be opened again by mmap
                             hClose fd
                             snapshot <- first RrdpE . parseSnapshot <$> unsafeMMapFile name
                             bindRight snapshot $ \s ->
@@ -179,12 +178,12 @@ normalize :: T.Text -> T.Text
 normalize = T.map (\c -> if isAlpha c then c else '_') 
 
 
-process :: Storage s => 
-            LogAction IO String ->
-            Repository 'Rrdp ->
-            s ->
-            IO (Either SomeError (Repository 'Rrdp, Maybe RrdpError))
-process logger repository storage = 
+processRrdp :: Storage s => 
+                LogAction IO String ->
+                Repository 'Rrdp ->
+                s ->
+                IO (Either SomeError (Repository 'Rrdp, Maybe RrdpError))
+processRrdp logger repository storage = 
     updateRrdpRepo repository saveSnapshot saveDelta
     where
         saveSnapshot :: Snapshot -> IO (Maybe SomeError)
@@ -221,7 +220,7 @@ process logger repository storage =
                             Right (h, st) ->
                                 getByHash tx storage h >>= \case 
                                     Nothing -> storeObj tx storage (h, st)
-                                    Just existing ->
+                                    Just _ ->
                                         -- TODO Add location
                                         logger <& U.convert ("There's an existing object with hash: " <> show h)
                     Right (u, Just h, a) -> 
@@ -231,11 +230,11 @@ process logger repository storage =
                                 getByHash tx storage h >>= \case 
                                     Nothing -> 
                                         logger <& U.convert ("No object with hash : " <> show h <> ", nothing to replace")
-                                    Just existing -> do 
+                                    Just _ -> do 
                                         delete tx storage (h, u)
                                         getByHash tx storage h' >>= \case 
                                             Nothing -> storeObj tx storage (h, st)
-                                            Just found -> 
+                                            Just _  -> 
                                                 -- TODO Add location
                                                 logger <& U.convert ("There's an existing object with hash: " <> show h)
 

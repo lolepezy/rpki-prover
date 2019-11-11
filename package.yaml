@@ -47,11 +47,13 @@ dependencies:
 - co-log-core
 - cryptonite
 - cryptohash-sha256
+- data-has
 - deepseq
 - directory
 - dlist
 - exceptions
 - filemanip
+- filepath
 - generic-lens
 - hashable
 - hex
@@ -80,9 +82,10 @@ dependencies:
 - streaming-bytestring
 - streaming-utils
 - string-conversions
+- tagged
 - text
 - text-short
-- th-utilities
+- typed-process
 - time
 - transformers
 - temporary

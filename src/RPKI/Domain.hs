@@ -16,6 +16,7 @@ import Control.Exception
 import Codec.Serialise
 
 import Data.Ord (comparing)
+import Data.Hex (hex)
 
 import Data.Kind (Type)
 import Data.Data (Typeable)
@@ -65,7 +66,6 @@ newtype IpResourceSet (rfc :: ValidationRFC) =
 
 -- TODO Use library type?
 newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-
 
 newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -247,7 +247,6 @@ instance Serialise Manifest
 instance Serialise Roa
 instance Serialise Gbr
 instance Serialise ASN
-instance Serialise APrefix
 instance Serialise a => Serialise (CMS a)
 instance Serialise CerObject
 instance Serialise CrlObject
@@ -281,3 +280,5 @@ getAKI :: RpkiObject -> Maybe AKI
 getAKI (RpkiObject RpkiMeta {..} _) = aki
 getAKI (RpkiCrl CrlMeta {..} _) = Just aki
 
+hexHash :: Hash -> String
+hexHash (Hash bs) = show $ hex bs

@@ -106,6 +106,7 @@ instance Serialise Ipv4Prefix
 instance Serialise Ipv6Prefix
 instance Serialise Ipv4Range
 instance Serialise Ipv6Range
+instance Serialise APrefix
 
 instance Serialise (V4.IpBlock Canonical)
 instance Serialise (V6.IpBlock Canonical)
