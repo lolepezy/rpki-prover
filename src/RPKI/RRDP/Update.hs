@@ -10,15 +10,16 @@ import Colog
 
 import           Control.Exception
 import           Control.Monad
+import           Control.Monad.Reader
 import           Control.Lens               ((^.))
 
 import Control.DeepSeq (($!!))
 
-import Control.Monad.IO.Unlift
 
 import           Data.Bifunctor             (first, second)
 import qualified Data.ByteString.Lazy       as BL
 import Data.IORef
+import Data.Has
 import qualified Data.List                  as L
 import qualified Data.Text                  as T
 import qualified Network.Wreq               as WR
@@ -30,7 +31,9 @@ import           RPKI.Store.Storage
 import           RPKI.RRDP.Parse
 import           RPKI.Parse.Parse
 import           RPKI.RRDP.Types
+import           RPKI.Logging
 import qualified RPKI.Util                  as U
+
 import qualified Data.ByteString.Streaming as Q
 import Data.ByteString.Streaming.HTTP
 
@@ -175,17 +178,17 @@ next :: Serial -> Serial
 next (Serial s) = Serial $ s + 1
 
 
-processRrdp :: Storage s => 
-                LogAction IO String ->
+processRrdp :: (Has AppLogger conf, Storage s) =>                 
                 RrdpRepository ->
                 s ->
-                IO (Either SomeError (RrdpRepository, Maybe RrdpError))
-processRrdp logger repository storage = 
-    updateRrdpRepo repository saveSnapshot saveDelta
-    where
-        saveSnapshot :: Snapshot -> IO (Maybe SomeError)
-        saveSnapshot (Snapshot _ _ _ ps) = do
-            logger <& "Using snapshot for the repository: " <> show repository
+                ReaderT conf IO (Either SomeError (RrdpRepository, Maybe RrdpError))
+processRrdp repository storage = do
+    logger :: AppLogger   <- asks getter 
+    lift $ updateRrdpRepo repository (saveSnapshot logger) (saveDelta logger)
+    where        
+        saveSnapshot :: AppLogger -> Snapshot -> IO (Maybe SomeError)
+        saveSnapshot logger (Snapshot _ _ _ ps) = do
+            logInfo_ logger $ U.convert $ "Using snapshot for the repository: " <> show repository
             either Just (const Nothing) . 
                 first (StorageE . StorageError . U.fmtEx) <$> 
                     try (U.txFunnel 20 ps objectAsyncs (readWriteTx storage) writeObject)
@@ -194,11 +197,11 @@ processRrdp logger repository storage =
                     Unlift.async $ pure $!! (u, mkObject u encodedb64)
                 
                 writeObject tx a = Unlift.wait a >>= \case                        
-                    (u, Left e)   -> logger <& (U.convert $ "Couldn't parse object: " <> show e <> ", u = " <> show u)
+                    (u, Left e)   -> logError_ logger $ U.convert $ "Couldn't parse object: " <> show e <> ", u = " <> show u
                     (u, Right st) -> storeObj tx storage st            
 
-        saveDelta :: Delta -> IO (Maybe SomeError)
-        saveDelta (Delta _ _ _ ds) = 
+        saveDelta :: AppLogger -> Delta -> IO (Maybe SomeError)
+        saveDelta logger (Delta _ _ _ ds) = 
             either Just (const Nothing) . 
                 first (StorageE . StorageError . U.fmtEx) <$> 
                     try (U.txFunnel 20 ds objectAsyncs (readWriteTx storage) writeObject)
@@ -213,27 +216,27 @@ processRrdp logger repository storage =
                     Left (u, h)           -> delete tx storage (h, u)
                     Right (u, Nothing, a) -> 
                         Unlift.wait a >>= \case
-                            Left e -> logger <& U.convert ("Couldn't parse object: " <> show e)
+                            Left e -> logError_ logger $ U.convert ("Couldn't parse object: " <> show e)
                             Right (h, st) ->
                                 getByHash tx storage h >>= \case 
                                     Nothing -> storeObj tx storage (h, st)
                                     Just _ ->
                                         -- TODO Add location
-                                        logger <& U.convert ("There's an existing object with hash: " <> show h)
+                                        logWarn_ logger $ U.convert ("There's an existing object with hash: " <> show h)
                     Right (u, Just h, a) -> 
                         Unlift.wait a >>= \case
-                            Left e -> logger <& U.convert ("Couldn't parse object: " <> show e)
+                            Left e -> logError_ logger $ U.convert ("Couldn't parse object: " <> show e)
                             Right (h', st) ->
                                 getByHash tx storage h >>= \case 
                                     Nothing -> 
-                                        logger <& U.convert ("No object with hash : " <> show h <> ", nothing to replace")
+                                        logWarn_ logger $ U.convert ("No object with hash : " <> show h <> ", nothing to replace")
                                     Just _ -> do 
                                         delete tx storage (h, u)
                                         getByHash tx storage h' >>= \case 
                                             Nothing -> storeObj tx storage (h, st)
                                             Just _  -> 
                                                 -- TODO Add location
-                                                logger <& U.convert ("There's an existing object with hash: " <> show h)
+                                                logWarn_ logger $ U.convert ("There's an existing object with hash: " <> show h)
 
         mkObject (URI u) b64 = do
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u

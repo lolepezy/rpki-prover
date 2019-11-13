@@ -10,6 +10,7 @@ import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
+import Control.Monad.Reader
 
 import qualified Codec.Serialise as Serialise
 
@@ -419,14 +420,17 @@ processRRDP env = do
     db <- makeLmdbMap env
     let store = LmdbStore env db
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing
-    e <- processRrdp logStringStdout repo store
+    let conf = (AppLogger logTextStdout)
+    e <- (`runReaderT` conf) $ processRrdp repo store
     say $ "resulve " <> show e
   
 saveRsync env = do
     say "begin"  
     db <- makeLmdbMap env
     let store = LmdbStore env db
-    e <- loadRsyncRepository (AppLogger logTextStdout) "/Users/mpuzanov/ripe/tmp/rpki/repo/" store
+    let repo = RsyncRepository (URI "rsync://rpki.afrinic.net/repository/afrinic")
+    let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+    e <- (`runReaderT` conf) $ processRsync repo store 
     say $ "done " <> show e
 
 main :: IO ()

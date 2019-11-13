@@ -25,7 +25,7 @@ import Data.Has
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
-import System.Directory ( doesDirectoryExist, getDirectoryContents )
+import System.Directory ( doesDirectoryExist, getDirectoryContents, createDirectoryIfMissing )
 import System.FilePath ( (</>) )
 
 import System.Process.Typed
@@ -35,8 +35,7 @@ data RsyncConf = RsyncConf {
   rsyncRoot :: FilePath
 }
 
-processRsync :: (Has RsyncConf conf, Has AppLogger conf) => 
-                Storage s => 
+processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) => 
                 RsyncRepository -> s -> ReaderT conf IO (Either SomeError ())
 processRsync (RsyncRepository (URI uri)) storage = do  
   RsyncConf {..} <- asks getter
@@ -46,19 +45,29 @@ processRsync (RsyncRepository (URI uri)) storage = do
           "--update", 
           "--times", 
           "--copy-links", 
+          "--recursive", 
+          "--delete",
           T.unpack uri, 
           destination
         ]
 
-  logger :: AppLogger   <- asks getter
-  (exitCode, _, stderr) <- lift $ readProcess rsync
-  case exitCode of  
-    ExitSuccess ->
-      lift $ loadRsyncRepository logger rsyncRoot storage      
-    ExitFailure errorCode -> do
-      lift $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
-        " with code " <> show errorCode <> " and message " <> show stderr
-      pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr
+  created <- lift $
+    first (RsyncE . FileReadError . U.fmtEx) <$> 
+      try (createDirectoryIfMissing True destination)
+  case created of      
+    Left e  -> pure $ Left e
+    Right _ -> do
+      logger :: AppLogger   <- asks getter 
+      (exitCode, stdout, stderr) <- lift $ readProcess rsync      
+      case exitCode of  
+        ExitSuccess ->
+          lift $ loadRsyncRepository logger rsyncRoot storage      
+        ExitFailure errorCode -> do
+          lift $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
+            " with code " <> show errorCode <> 
+            " sdterr = " <> show stderr <>
+            " stdout = " <> show stdout
+          pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr
   where
     destinationDirectory root uri = root </> T.unpack (U.normalizeUri uri)
 
@@ -70,16 +79,11 @@ loadRsyncRepository :: (Storage s, Logger logger) =>
                         IO (Either SomeError ())
 loadRsyncRepository logger topPath storage = do
     (chanIn, chanOut) <- Chan.newChan 12
-    -- count <- newIORef (0 :: Int)
-    r <- concurrently (travelrseFS chanIn) (saveObjects chanOut)
-
-    -- TODO Implement
-    -- case r  of 
-    --   (Left e1, Left e2) -> 
-    pure $ Right ()
+    (r1, r2) <- concurrently (travelrseFS chanIn) (saveObjects chanOut)
+    pure $ first RsyncE r1 >> first StorageE r2
   where 
     travelrseFS chanIn = 
-      first (StorageError . U.fmtEx) <$> try (
+      first (FileReadError . U.fmtEx) <$> try (
           readFiles chanIn topPath 
             `finally` 
             Chan.writeChan chanIn Nothing)        
