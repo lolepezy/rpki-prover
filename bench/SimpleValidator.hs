@@ -430,7 +430,9 @@ saveRsync env = do
     let store = LmdbStore env db
     let repo = RsyncRepository (URI "rsync://rpki.afrinic.net/repository/afrinic")
     let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
-    e <- (`runReaderT` conf) $ processRsync repo store 
+    -- e <- (`runReaderT` conf) $ processRsync repo store 
+
+    e <- (`runReaderT` conf) $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     say $ "done " <> show e
 
 main :: IO ()

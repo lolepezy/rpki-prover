@@ -35,21 +35,36 @@ data RsyncConf = RsyncConf {
   rsyncRoot :: FilePath
 }
 
+-- | Download one file using rsync
+rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) => 
+              URI -> 
+              ReaderT conf IO (Either SomeError RpkiObject)
+rsyncFile (URI uri) = do
+  RsyncConf {..} <- asks getter
+  let destination = rsyncDestination rsyncRoot uri
+  let rsync = rsyncProc (URI uri) destination RsyncOneFile
+  logger :: AppLogger   <- asks getter 
+  (exitCode, stdout, stderr) <- lift $ readProcess rsync      
+  case exitCode of  
+    ExitFailure errorCode -> do
+      lift $ logError_ logger $ U.convert $ "Rsync process failed: " <> show rsync <> 
+        " with code " <> show errorCode <> 
+        " sdterr = " <> show stderr <>
+        " stdout = " <> show stdout
+      pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr  
+    ExitSuccess -> do
+      read' <- lift $ first (RsyncE . FileReadError . U.fmtEx) <$> 
+        try (B.readFile destination)        
+
+      pure $ first ParseE . readObject (U.convert uri) =<< read'
+
+
 processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) => 
                 RsyncRepository -> s -> ReaderT conf IO (Either SomeError ())
 processRsync (RsyncRepository (URI uri)) storage = do  
   RsyncConf {..} <- asks getter
-  let destination = destinationDirectory rsyncRoot uri
-  let rsync = proc "rsync" [
-          "--timeout=300", 
-          "--update", 
-          "--times", 
-          "--copy-links", 
-          "--recursive", 
-          "--delete",
-          T.unpack uri, 
-          destination
-        ]
+  let destination = rsyncDestination rsyncRoot uri
+  let rsync = rsyncProc (URI uri) destination RsyncDirectory
 
   created <- lift $
     first (RsyncE . FileReadError . U.fmtEx) <$> 
@@ -67,11 +82,24 @@ processRsync (RsyncRepository (URI uri)) storage = do
             " with code " <> show errorCode <> 
             " sdterr = " <> show stderr <>
             " stdout = " <> show stdout
-          pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr
-  where
-    destinationDirectory root uri = root </> T.unpack (U.normalizeUri uri)
+          pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr  
+    
+
+data RsyncCL = RsyncOneFile | RsyncDirectory
+
+rsyncProc :: URI -> FilePath -> RsyncCL -> ProcessConfig () () ()
+rsyncProc (URI uri) destination rsyncCL = 
+  let extraOptions = case rsyncCL of 
+        RsyncOneFile   -> []
+        RsyncDirectory -> ["--recursive", "--delete", "--copy-links" ]
+      options = [ "--timeout=300",  "--update",  "--times" ] ++ extraOptions
+      in proc "rsync" $ options ++ [ T.unpack uri, destination ]
 
 
+rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
+
+-- | Recursively traverse given directory and save all the parseabvle 
+-- | objects from there into the storage.
 loadRsyncRepository :: (Storage s, Logger logger) => 
                         logger ->
                         FilePath -> 
@@ -120,7 +148,7 @@ loadRsyncRepository logger topPath storage = do
                       Nothing -> storeObj tx storage (h, st)
                       Just _  ->
                           -- TODO Add location
-                          logError_ logger $ U.convert ("There's an existing object with hash: " <> show (hexHash h) <> ", ignoring the new one.")
+                          logInfo_ logger $ U.convert ("There's an existing object with hash: " <> show (hexHash h) <> ", ignoring the new one.")
               go tx
 
 
