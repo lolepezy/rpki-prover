@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.RRDP.Types where
 
@@ -15,12 +17,6 @@ data Notification = Notification {
   snapshotInfo :: !SnapshotInfo,
   deltas       :: [DeltaInfo]
 } deriving (Show, Eq, Ord, Generic, NFData)
-
-newtype EncodedBase64 = EncodedBase64 B.ByteString
-  deriving (Show, Eq, Ord, Generic, Monoid, Semigroup, NFData)
-
-newtype DecodedBase64 = DecodedBase64 B.ByteString
-  deriving (Show, Eq, Ord, Generic, Monoid, Semigroup, NFData)
 
 data SnapshotInfo = SnapshotInfo !URI !Hash
   deriving (Show, Eq, Ord, Generic, NFData)

@@ -7,20 +7,19 @@ import           Control.Monad
 import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString            as B
-import qualified Data.ByteString.Base64 as B64
+import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as BL
-import           Data.Char                 
-import qualified Data.List                   as L
 import           Data.Hex                   (unhex)
-import           Data.Word
+import qualified Data.List                  as L
 import qualified Data.Text                  as T
 import           Text.Read                  (readMaybe)
 
-import qualified Text.XML.Expat.SAX as X
+import qualified Text.XML.Expat.SAX         as X
 
 import           RPKI.Domain
 import           RPKI.RRDP.Types
-import           RPKI.Util                  (convert)
+
+import           RPKI.Util                  (convert, trim, isSpace_)
 
 
 type NOTIF = (Maybe (Version, SessionId, Serial), Maybe SnapshotInfo, [DeltaInfo])
@@ -189,12 +188,6 @@ decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
 decodeBase64 (EncodedBase64 bs) context = case B64.decode bs of
     Left e -> Left $ BadBase64 (e <> " for " <> show context) bs
     Right b -> Right $ DecodedBase64 b
-
-trim :: B.ByteString -> B.ByteString
-trim bs = B.takeWhile (not . isSpace_) $ B.dropWhile isSpace_ bs    
-
-isSpace_ :: Word8 -> Bool
-isSpace_ = isSpace . chr . fromEnum
 
 toEither :: e -> Maybe v -> Either e v
 toEither e Nothing  = Left e

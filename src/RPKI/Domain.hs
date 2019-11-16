@@ -1,7 +1,9 @@
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 module RPKI.Domain where
 
@@ -18,6 +20,8 @@ import Codec.Serialise
 
 import Data.Ord (comparing)
 import Data.Hex (hex)
+
+import Generics.Deriving.Semigroup
 
 import Data.Kind (Type)
 import Data.Data (Typeable)
@@ -156,6 +160,15 @@ data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
 newtype SPKI = SPKI B.ByteString
     deriving (Show, Eq, Ord, Typeable, Generic)
 
+newtype EncodedBase64 = EncodedBase64 B.ByteString
+    deriving (Show, Eq, Ord, Generic, NFData)
+    deriving newtype (Monoid, Semigroup)
+  
+newtype DecodedBase64 = DecodedBase64 B.ByteString
+    deriving (Show, Eq, Ord, Generic, NFData)
+    deriving newtype (Monoid, Semigroup)
+  
+
 newtype TaName = TaName T.Text
 
 data TA = TA {
@@ -225,13 +238,19 @@ data RrdpError = BrokenXml !T.Text |
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data RsyncError = RsyncProcessError !Int !BL.ByteString |
-                  FileReadError !T.Text
+                  FileReadError !T.Text |
+                  RsyncDirError !T.Text
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data StorageError = StorageError T.Text 
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
+newtype TALError = TALError T.Text 
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving newtype Semigroup
+
 data SomeError = ParseE (ParseError T.Text) | 
+                   TALE TALError | 
                    RrdpE RrdpError |
                    RsyncE RsyncError |
                    StorageE StorageError | 

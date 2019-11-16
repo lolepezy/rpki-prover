@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 module RPKI.Util where
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
@@ -8,14 +6,16 @@ import           Control.Exception
 
 import qualified Crypto.Hash.SHA256      as S256
 import qualified Data.ByteString         as B
-import qualified Data.ByteString.Lazy         as BL
+import qualified Data.ByteString.Char8   as C
+import qualified Data.ByteString.Lazy    as BL
 import qualified Data.String.Conversions as SC
-import qualified Data.Text         as T
+import qualified Data.Text               as T
+import           Data.Char
+import           Data.Word
 
 import Data.Char (isAlpha)
 
-import Conduit
-
+import UnliftIO
 import qualified UnliftIO.Async as Unlift
 
 import           RPKI.Domain
@@ -32,8 +32,15 @@ convert = SC.cs
 normalizeUri :: T.Text -> T.Text
 normalizeUri = T.map (\c -> if isAlpha c then c else '_') 
 
+trim :: B.ByteString -> B.ByteString
+trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)    
+
+isSpace_ :: Word8 -> Bool
+isSpace_ = isSpace . chr . fromEnum
+
 fmtEx :: SomeException -> T.Text
 fmtEx = T.pack . show 
+
 
 -- FIXME Do something about 'wait' throwing an exception
 parallel :: (Traversable t, MonadUnliftIO m) => 
@@ -97,12 +104,3 @@ txFunnel poolSize as f withTx g = do
 --           liftIO (Chan.readChan chanOut) >>= \case
 --             Nothing -> pure ()
 --             Just a -> g tx a    -- 
-
-
--- Conduit calculating SHA256 hash 
-sinkHash :: Monad m => forall o. ConduitT B.ByteString o m Hash
-sinkHash = Hash <$> loop S256.init 
-  where
-    loop ctx = await >>= \case
-      Nothing -> pure $! S256.finalize ctx
-      Just bs -> loop $! S256.update ctx bs
