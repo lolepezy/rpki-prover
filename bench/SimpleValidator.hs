@@ -70,7 +70,7 @@ import           Data.Hex                   (hex, unhex)
 
 import qualified UnliftIO.Async as Unlift
 
-import RPKI.Store.LMDB
+import RPKI.Store.Base.LMDB
 import RPKI.Logging
 
 
@@ -442,7 +442,7 @@ main = do
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
-  mkLmdb >>= saveRsync
+  mkLmdb >>= validatorUpdateRRDPRepo
   -- testSignature
 
 say :: String -> IO ()

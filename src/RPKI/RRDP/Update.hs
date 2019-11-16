@@ -27,7 +27,7 @@ import qualified Network.Wreq               as WR
 import           GHC.Generics
 
 import           RPKI.Domain
-import           RPKI.Store.Storage
+import           RPKI.Store.Base.Storage
 import           RPKI.RRDP.Parse
 import           RPKI.Parse.Parse
 import           RPKI.RRDP.Types

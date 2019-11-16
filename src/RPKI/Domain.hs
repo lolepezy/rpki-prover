@@ -21,8 +21,6 @@ import Codec.Serialise
 import Data.Ord (comparing)
 import Data.Hex (hex)
 
-import Generics.Deriving.Semigroup
-
 import Data.Kind (Type)
 import Data.Data (Typeable)
 import Data.List.NonEmpty

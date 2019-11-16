@@ -3,7 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module RPKI.Store.LMDB where
+module RPKI.Store.Base.LMDB where
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
@@ -13,7 +13,7 @@ import qualified Codec.Serialise as Serialise
 import Data.Coerce (coerce)
 
 import RPKI.Domain
-import RPKI.Store.Storage
+import RPKI.Store.Base.Storage
 
 import Lmdb.Connection
 import qualified Lmdb.Map as LmdbMap

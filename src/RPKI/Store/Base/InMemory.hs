@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module RPKI.Store.InMemory where
+module RPKI.Store.Base.InMemory where
 
 import qualified Data.Map as Map
 import Data.Map (Map)
@@ -10,7 +10,7 @@ import Data.Map (Map)
 import Control.Concurrent.STM
 
 import RPKI.Domain
-import RPKI.Store.Storage
+import RPKI.Store.Base.Storage
 
 
 newtype InMemoryStore = InMemoryStore (TVar (Map Hash StorableRO))

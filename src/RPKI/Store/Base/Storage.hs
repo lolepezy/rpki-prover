@@ -3,7 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE DerivingVia #-}
 
-module RPKI.Store.Storage where
+module RPKI.Store.Base.Storage where
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
