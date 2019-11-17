@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.TAL where
 
@@ -29,6 +30,9 @@ data TAL = PropertiesTAL {
   publicKeyInfo        :: EncodedBase64
 } deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
+certLocations :: TAL -> [URI]
+certLocations PropertiesTAL {..} = [certificateLocation]
+certLocations RFC_TAL {..}       = certificateLocations
 
 parseTAL :: T.Text -> Either TALError TAL
 parseTAL bs = 

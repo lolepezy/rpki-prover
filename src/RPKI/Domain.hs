@@ -10,8 +10,7 @@ module RPKI.Domain where
 import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text as T 
-import qualified Data.Text.Short as TS
+import qualified Data.Text as T
 
 import Control.DeepSeq
 import Control.Exception
@@ -206,7 +205,8 @@ data ValidationError = InvalidCert !T.Text |
                         NoAKIinManifest |
                         ROACannotBeAParent |
                         NoAKI | 
-                        RrdpProblem RrdpError
+                        SPKIMismatch EncodedBase64 EncodedBase64 |
+                        UnknownObjectAsTACert
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 
@@ -248,7 +248,7 @@ newtype TALError = TALError T.Text
     deriving newtype Semigroup
 
 data SomeError = ParseE (ParseError T.Text) | 
-                   TALE TALError | 
+                   TAL_E TALError | 
                    RrdpE RrdpError |
                    RsyncE RsyncError |
                    StorageE StorageError | 

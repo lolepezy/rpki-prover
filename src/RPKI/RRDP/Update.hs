@@ -6,8 +6,6 @@
 
 module RPKI.RRDP.Update where
 
-import Colog
-
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Reader

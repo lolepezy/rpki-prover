@@ -1,5 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
@@ -8,27 +8,50 @@
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE OverloadedStrings   #-}
 
 module RPKI.Core where
 
-import qualified Data.DList                        as DL
+import           Control.Monad
+import           Control.Monad.Reader
+
 import qualified Data.List                         as L
-import qualified Data.Map                          as M
-import           Data.Maybe                        (maybe)
 import qualified Data.Text                         as T
+import Data.Has
 
-import           Data.Data                         (Typeable)
-import           Data.Kind                         (Type)
-
-import           Control.Monad.Trans.Writer.Strict
-
-import qualified StmContainers.Map                 as SM
-
-import           Control.Concurrent.STM.TQueue
-
+import           Data.X509
 import           RPKI.Domain
+import           RPKI.Parse.Parse
 import           RPKI.TAL
+import           RPKI.Store.Stores
+import           RPKI.Rsync
+import           RPKI.Logging
+import           RPKI.Util (convert)
 
 
-validateTA :: TAL -> IO ()
-validateTA tal = pure ()
+validateTA :: (Has RsyncConf conf, Has AppLogger conf) => 
+              TAL -> 
+              ReaderT conf IO (Either SomeError ())
+validateTA tal = do  
+  logger :: AppLogger <- asks getter 
+  fetchTACertificate logger >>= \case
+    Left e             -> pure $ Left $ TAL_E e
+    Right (RpkiObject _ (CerRO (CerObject (ResourceCert taCert)))) -> do
+      let spki = subjectPublicKeyInfo $ signedObject $ getSigned $ withRFC taCert certX509
+      if publicKeyInfo tal == spki 
+        then do
+          pure $ Right ()
+        else 
+          pure $ Left $ ValidationE $ SPKIMismatch (publicKeyInfo tal) spki
+    _ -> 
+      pure $ Left $ ValidationE UnknownObjectAsTACert
+
+  where
+    fetchTACertificate logger = go $ certLocations tal
+      where
+        go [] = pure $ Left $ TALError "No certificate location could be fetched."
+        go (u : uris) = rsyncFile u >>= \case 
+          Left e -> do 
+            lift $ logError_ logger $ convert $ "Failed to fetch " <> show u <> ": " <> show e
+            go uris
+          Right o -> pure $ Right o

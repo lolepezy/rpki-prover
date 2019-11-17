@@ -5,6 +5,7 @@ module RPKI.Parse.Internal.Cert where
 import           Control.Applicative
 
 import qualified Data.ByteString          as B
+import qualified Data.ByteString.Base64   as B64
 
 import qualified Data.List                as L
 import           Data.List.NonEmpty       (NonEmpty ((:|)))
@@ -205,3 +206,9 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
         Just something -> throwParseError $ "Unknown ASN specification " <> show something
       where
         as' = ASN . fromInteger
+
+
+-- | https://tools.ietf.org/html/rfc5280#page-16
+subjectPublicKeyInfo :: Certificate -> EncodedBase64
+subjectPublicKeyInfo cert = EncodedBase64 $ B64.encode $ 
+  encodeASN1' DER $ (toASN1 $ certPubKey cert) []

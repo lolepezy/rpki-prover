@@ -16,10 +16,10 @@ import qualified Data.ByteString                   as B
 import qualified Data.Text                  as T
 
 import           RPKI.Domain
-import           RPKI.Store.Storage
+import           RPKI.Store.Base.Storage
 import           RPKI.Parse.Parse
 import qualified RPKI.Util as U
-import            RPKI.Logging
+import           RPKI.Logging
 
 import Data.Has
 
@@ -31,7 +31,7 @@ import System.FilePath ( (</>) )
 import System.Process.Typed
 import System.Exit
 
-data RsyncConf = RsyncConf {
+newtype RsyncConf = RsyncConf {
   rsyncRoot :: FilePath
 }
 
@@ -95,7 +95,8 @@ rsyncProc (URI uri) destination rsyncCL =
       options = [ "--timeout=300",  "--update",  "--times" ] ++ extraOptions
       in proc "rsync" $ options ++ [ T.unpack uri, destination ]
 
-
+-- TODO Make it generate shorter filenames
+rsyncDestination :: FilePath -> T.Text -> FilePath
 rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
 
 -- | Recursively traverse given directory and save all the parseabvle 
