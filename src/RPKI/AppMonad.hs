@@ -39,8 +39,8 @@ fromEither :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
 fromEither = fromIOEither . pure
 
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
-toEither env f = runExceptT $ (`runReaderT` env) f
+toEither env f = runExceptT $ runReaderT f env
 
 runValidatorT :: Monoid s =>
                 r -> ReaderT r (ExceptT e (StateT s m)) a -> m (Either e a, s)
-runValidatorT conf w = (runStateT $ runExceptT $ w `runReaderT` conf) mempty
+runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty

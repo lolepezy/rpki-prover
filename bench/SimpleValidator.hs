@@ -11,8 +11,6 @@ import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
 import Control.Monad.Reader
-import Control.Monad.State.Strict
-import Control.Monad.Except
 
 import qualified Codec.Serialise as Serialise
 
