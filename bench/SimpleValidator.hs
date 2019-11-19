@@ -11,6 +11,8 @@ import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
 import Control.Monad.Reader
+import Control.Monad.State.Strict
+import Control.Monad.Except
 
 import qualified Codec.Serialise as Serialise
 
@@ -23,6 +25,7 @@ import Data.MultiMap (MultiMap)
 import Data.X509
 import Data.X509.Validation
 
+import RPKI.AppMonad
 import RPKI.Domain
 import RPKI.SignTypes
 import RPKI.Validate
@@ -432,7 +435,7 @@ saveRsync env = do
     let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
     -- e <- (`runReaderT` conf) $ processRsync repo store 
 
-    e <- (`runReaderT` conf) $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     say $ "done " <> show e
 
 main :: IO ()

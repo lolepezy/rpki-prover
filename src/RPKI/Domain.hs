@@ -14,6 +14,9 @@ import qualified Data.Text as T
 
 import Control.DeepSeq
 import Control.Exception
+import Control.Monad.Except
+import Control.Monad.State.Strict
+import Control.Monad.Reader
 
 import Codec.Serialise
 
@@ -258,6 +261,9 @@ data SomeError = ParseE (ParseError T.Text) |
 
 instance Exception SomeError
 
+newtype ValidationWarning = ValidationWarning T.Text
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving newtype (Monoid, Semigroup)
 
 
 -- serialisation

@@ -10,12 +10,14 @@ import Data.Bifunctor
 import           Control.Concurrent.Async
 import           Control.Monad
 import           Control.Monad.Reader
-import           UnliftIO.Exception
+import           Control.Monad.Trans.Except
+import           UnliftIO.Exception hiding (fromEither)
 
 import qualified Data.ByteString                   as B
 import qualified Data.Text                  as T
 
 import           RPKI.Domain
+import           RPKI.AppMonad
 import           RPKI.Store.Base.Storage
 import           RPKI.Parse.Parse
 import qualified RPKI.Util as U
@@ -38,51 +40,48 @@ newtype RsyncConf = RsyncConf {
 -- | Download one file using rsync
 rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) => 
               URI -> 
-              ReaderT conf IO (Either SomeError RpkiObject)
+              ValidatorT conf IO RpkiObject
 rsyncFile (URI uri) = do
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
   let rsync = rsyncProc (URI uri) destination RsyncOneFile
-  logger :: AppLogger   <- asks getter 
-  (exitCode, stdout, stderr) <- lift $ readProcess rsync      
+  logger :: AppLogger        <- asks getter 
+  (exitCode, stdout, stderr) <- lift3 $ readProcess rsync      
   case exitCode of  
     ExitFailure errorCode -> do
-      lift $ logError_ logger $ U.convert $ "Rsync process failed: " <> show rsync <> 
+      lift3 $ logError_ logger $ U.convert $ "Rsync process failed: " <> show rsync <> 
         " with code " <> show errorCode <> 
         " sdterr = " <> show stderr <>
         " stdout = " <> show stdout
-      pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr  
+      lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
     ExitSuccess -> do
-      read' <- lift $ first (RsyncE . FileReadError . U.fmtEx) <$> 
-        try (B.readFile destination)        
-
-      pure $ first ParseE . readObject (U.convert uri) =<< read'
+        bs <- fromTry (RsyncE . FileReadError . U.fmtEx) $ B.readFile destination
+        fromEither $ first ParseE $ readObject (U.convert uri) bs
 
 
 processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) => 
-                RsyncRepository -> s -> ReaderT conf IO (Either SomeError ())
-processRsync (RsyncRepository (URI uri)) storage = do  
+                RsyncRepository -> 
+                s -> 
+                ValidatorT conf IO ()
+processRsync (RsyncRepository (URI uri)) storage = do 
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
   let rsync = rsyncProc (URI uri) destination RsyncDirectory
 
-  created <- lift $
-    first (RsyncE . FileReadError . U.fmtEx) <$> 
-      try (createDirectoryIfMissing True destination)
-  case created of      
-    Left e  -> pure $ Left e
-    Right _ -> do
-      logger :: AppLogger   <- asks getter 
-      (exitCode, stdout, stderr) <- lift $ readProcess rsync      
-      case exitCode of  
-        ExitSuccess ->
-          lift $ loadRsyncRepository logger rsyncRoot storage      
-        ExitFailure errorCode -> do
-          lift $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
-            " with code " <> show errorCode <> 
-            " sdterr = " <> show stderr <>
-            " stdout = " <> show stdout
-          pure $ Left $ RsyncE $ RsyncProcessError errorCode stderr  
+  _ <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+    createDirectoryIfMissing True destination
+  
+  logger :: AppLogger   <- asks getter 
+  (exitCode, stdout, stderr) <- lift $ readProcess rsync      
+  case exitCode of  
+    ExitSuccess ->
+      fromIOEither $ loadRsyncRepository logger rsyncRoot storage      
+    ExitFailure errorCode -> do
+      lift3 $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
+        " with code " <> show errorCode <> 
+        " sdterr = " <> show stderr <>
+        " stdout = " <> show stdout
+      lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
     
 
 data RsyncCL = RsyncOneFile | RsyncDirectory
@@ -136,21 +135,23 @@ loadRsyncRepository logger topPath storage = do
       first (StorageError . U.fmtEx) <$> 
         try (readWriteTx storage go)
       where 
-        go tx = Chan.readChan chanOut >>= \case 
+        go tx = 
+          Chan.readChan chanOut >>= \case 
             Nothing -> pure ()
-            Just a  -> do
-              try (wait a) >>= \case
-                Left (e :: SomeException) -> 
-                  logError_ logger $ U.convert ("An error reading the object: " <> show e)
-                Right (Left e) -> 
-                  logError_ logger $ U.convert ("An error parsing or serialising the object: " <> show e)
-                Right (Right (h, st)) -> 
-                  getByHash tx storage h >>= \case 
-                      Nothing -> storeObj tx storage (h, st)
-                      Just _  ->
-                          -- TODO Add location
-                          logInfo_ logger $ U.convert ("There's an existing object with hash: " <> show (hexHash h) <> ", ignoring the new one.")
-              go tx
+            Just a  -> try (wait a) >>= process tx >> go tx
+
+        process tx = \case
+          Left (e :: SomeException) -> 
+            logError_ logger $ U.convert ("An error reading the object: " <> show e)
+          Right (Left e) -> 
+            logError_ logger $ U.convert ("An error parsing or serialising the object: " <> show e)
+          Right (Right (h, st)) -> 
+            getByHash tx storage h >>= \case 
+                Nothing -> storeObj tx storage (h, st)
+                Just _  ->
+                    -- TODO Add location
+                    logInfo_ logger $ U.convert ("There's an existing object with hash: " <> show (hexHash h) <> ", ignoring the new one.")      
+              
 
 
 
