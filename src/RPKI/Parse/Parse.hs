@@ -28,30 +28,25 @@ supportedExtension filename =
     let ext = L.drop (L.length filename - 4) filename
         in elem ext [".cer", ".mft", ".crl", ".roa", ".gbr"] 
 
+-- | Parse object from a bytesting containing ASN1 representaton
+-- | Decide which parser to use based on the object's filename
 readObject :: String -> B.ByteString -> ParseResult RpkiObject
 readObject name content = do    
   let ext = L.drop (L.length name - 3) name
-  let uri = URI $ T.pack name
+  let u = URI $ T.pack name
   case ext of
-        "cer" -> do
-            f <- parseResourceCertificate content
-            let (meta, o) = f uri
-            pure $ RpkiObject meta $ CerRO o
+    "cer" -> parse_ u parseResourceCertificate CerRO content            
+    "mft" -> parse_ u parseMft MftRO content
+    "roa" -> parse_ u parseRoa RoaRO content            
+    "crl" -> do
+        f <- parseCrl content
+        let (meta, o) = f u
+        pure $ RpkiCrl meta o
 
-        "mft" -> do
-            f <- parseMft content             
-            let (meta, o) = f uri
-            pure $ RpkiObject meta $ MftRO o
-
-        "roa" -> do
-            f <- parseRoa content
-            let (meta, o) = f uri
-            pure $ RpkiObject meta $ RoaRO o
-
-        "crl" -> do
-            f <- parseCrl content
-            let (meta, o) = f uri
-            pure $ RpkiCrl meta o
-
-        _     -> Left $ fmtErr $ "Unknown object type: " <> show name
+    _     -> Left $ fmtErr $ "Unknown object type: " <> show name
+    where
+        parse_ u p constructor bs = do
+            f <- p bs
+            let (meta, o) = f u
+            pure $ (RpkiObject meta . constructor) o
 

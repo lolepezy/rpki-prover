@@ -67,7 +67,7 @@ processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) =>
                 RsyncRepository -> 
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
-processRsync (RsyncRepository (URI uri)) storage = do 
+processRsync (RsyncRepository (URI uri)) objectStore = do 
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
   let rsync = rsyncProc (URI uri) destination RsyncDirectory
@@ -79,7 +79,7 @@ processRsync (RsyncRepository (URI uri)) storage = do
   (exitCode, stdout, stderr) <- lift $ readProcess rsync      
   case exitCode of  
     ExitSuccess ->
-      fromIOEither $ loadRsyncRepository logger rsyncRoot storage
+      fromIOEither $ loadRsyncRepository logger rsyncRoot objectStore
     ExitFailure errorCode -> do
       lift3 $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
         " with code " <> show errorCode <> 

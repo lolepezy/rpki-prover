@@ -444,7 +444,7 @@ main = do
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
-  mkLmdb >>= validatorUpdateRRDPRepo
+  mkLmdb >>= processRRDP
   -- testSignature
 
 say :: String -> IO ()
