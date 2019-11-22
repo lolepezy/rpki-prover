@@ -1,3 +1,5 @@
+- Put capability (CPU count) into Has conf
+- Use ValidatorT wherever it makes sense
 
 - verify EE Certificates
 - validate certificates/objects with regards to CRLs
