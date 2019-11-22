@@ -5,6 +5,7 @@
 module RPKI.AppMonad where
 
 import Control.Monad.Except
+import Control.Monad.Trans.Except
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Exception
@@ -31,7 +32,7 @@ fromIOEither :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
 fromIOEither = lift . ExceptT . lift 
 
 fromTry :: (MonadTrans t1, MonadTrans t2, Monad (t2 IO), Exception exc) =>
-            (exc -> e) -> IO a2 -> t1 (ExceptT e (t2 IO)) a2
+            (exc -> e) -> IO t -> t1 (ExceptT e (t2 IO)) t
 fromTry mapErr t = fromIOEither $ first mapErr <$> try t
 
 fromEither :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
@@ -44,3 +45,10 @@ toEither env f = runExceptT $ runReaderT f env
 runValidatorT :: Monoid s =>
                 r -> ReaderT r (ExceptT e (StateT s m)) a -> m (Either e a, s)
 runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
+
+
+validatorWarning :: Monad m => ValidationWarning -> ValidatorT conf m ()
+validatorWarning w = lift $ modify' (<> w)
+
+validatorError :: Monad m => ValidationError -> ValidatorT conf m ()
+validatorError e = lift $ throwE $ ValidationE e

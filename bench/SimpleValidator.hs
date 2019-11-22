@@ -71,7 +71,9 @@ import           Data.Hex                   (hex, unhex)
 
 import qualified UnliftIO.Async as Unlift
 
-import RPKI.Store.Base.LMDB
+import qualified RPKI.Store.Base.LMDB as LMDB
+import RPKI.Store.Base.Map
+import           RPKI.Store.Stores
 import RPKI.Logging
 
 
@@ -418,22 +420,21 @@ validatorUpdateRRDPRepo lmdb = do
 processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
     say "begin"  
-    db <- makeLmdbMap env
-    let store = LmdbStore env db
+    lmdbStorage <- LMDB.create env "objects"
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing
     let conf = (AppLogger logTextStdout)
+    let store = RpkiObjectStore (SIxMap lmdbStorage [])
     e <- (`runReaderT` conf) $ processRrdp repo store
     say $ "resulve " <> show e
   
 saveRsync env = do
     say "begin"  
-    db <- makeLmdbMap env
-    let store = LmdbStore env db
+    lmdbStorage <- LMDB.create env "objects"
     let repo = RsyncRepository (URI "rsync://rpki.afrinic.net/repository/afrinic")
     let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
     -- e <- (`runReaderT` conf) $ processRsync repo store 
 
-    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (const Nothing)
     say $ "done " <> show e
 
 main :: IO ()

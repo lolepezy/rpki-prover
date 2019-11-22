@@ -1,15 +1,35 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances     #-}
+
 module RPKI.Store.Stores where
 
-import Control.Concurrent.STM
-import qualified Data.Map as Map
-import Data.Map (Map)
-
 import RPKI.Domain
+import RPKI.Store.Base.Map (SMap(..))
+import qualified RPKI.Store.Base.Map as SM
+import RPKI.Store.Base.Storage
+
+newtype RpkiObjectStore s = RpkiObjectStore (SMap s Hash SValue)  
+
+instance Storage s => WithStorage s (RpkiObjectStore s) where
+  storage (RpkiObjectStore s) = storage s
 
 
-newtype Store k v = Store (TVar (Map k v))
+getByHash :: Storage s => 
+              Tx s m -> RpkiObjectStore s -> Hash -> IO (Maybe RpkiObject)
+getByHash tx (RpkiObjectStore s) h = (fromSValue <$>) <$> SM.get tx s h
 
-withStore :: Store k v -> (Map k v -> Map k v) -> STM ()
-withStore (Store t) = modifyTVar' t    
+putObject :: Storage s => 
+            Tx s 'RW -> RpkiObjectStore s -> Hash -> SValue -> IO ()
+putObject tx (RpkiObjectStore s) h sv = SM.put tx s h sv
 
-newtype TAStore = TAStore (Store String TA)
+deleteObject :: Storage s => 
+                Tx s 'RW -> RpkiObjectStore s -> Hash -> IO ()
+deleteObject tx (RpkiObjectStore s) h = SM.delete tx s h
+
+
+newtype TAStore s = TAStore (SMap s String TA)
+
+instance Storage s => WithStorage s (TAStore s) where
+  storage (TAStore s) = storage s
+
+

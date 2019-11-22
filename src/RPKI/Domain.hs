@@ -209,7 +209,9 @@ data ValidationError = InvalidCert !T.Text |
                         ROACannotBeAParent |
                         NoAKI | 
                         SPKIMismatch EncodedBase64 EncodedBase64 |
-                        UnknownObjectAsTACert
+                        UnknownObjectAsTACert |
+                        TACertificateIsTooSmall !Int |
+                        TACertificateIsTooBig !Int 
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 

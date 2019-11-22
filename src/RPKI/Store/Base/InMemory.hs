@@ -13,14 +13,14 @@ import RPKI.Domain
 import RPKI.Store.Base.Storage
 
 
-newtype InMemoryStore = InMemoryStore (TVar (Map Hash StorableRO))
+newtype InMemoryStore = InMemoryStore (TVar (Map Hash SValue))
 
 -- memStore :: IO InMemoryStore
 -- memStore = atomically $ InMemoryStore <$> newTVar Map.empty
 
 -- instance Storage InMemoryStore where
---     readOnlyTx _ = id
---     readWriteTx _ = id
+--     roTx _ = id
+--     rwTx _ = id
 
 --     storeObj (InMemoryStore entries) (h, storable) = pure ()
 --         -- atomically $ modifyTVar' entries (Map.insert h storable)
