@@ -424,7 +424,7 @@ processRRDP env = do
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing
     let conf = (AppLogger logTextStdout)
     let store = RpkiObjectStore (SIxMap lmdbStorage [])
-    e <- (`runReaderT` conf) $ processRrdp repo store
+    e <- runValidatorT conf $ processRrdp repo store
     say $ "resulve " <> show e
   
 saveRsync env = do

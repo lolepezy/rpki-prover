@@ -1,48 +1,49 @@
-{-# LANGUAGE MultiWayIf            #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE BangPatterns       #-}
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.RRDP.Update where
 
 import           Control.Exception
+import           Control.Lens                   ((^.))
 import           Control.Monad
 import           Control.Monad.Reader
-import           Control.Lens               ((^.))
 
-import Control.DeepSeq (($!!))
+import           Control.DeepSeq                (($!!))
 
 
-import           Data.Bifunctor             (first, second)
-import qualified Data.ByteString.Lazy       as BL
-import Data.IORef
-import Data.Has
-import qualified Data.List                  as L
-import qualified Data.Text                  as T
-import qualified Network.Wreq               as WR
+import           Data.Bifunctor                 (first, second)
+import qualified Data.ByteString.Lazy           as BL
+import           Data.Has
+import           Data.IORef
+import qualified Data.List                      as L
+import qualified Data.Text                      as T
+import qualified Network.Wreq                   as WR
 
 import           GHC.Generics
 
+import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Logging
+import           RPKI.Parse.Parse
+import           RPKI.RRDP.Parse
+import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores
-import           RPKI.RRDP.Parse
-import           RPKI.Parse.Parse
-import           RPKI.RRDP.Types
-import           RPKI.Logging
-import qualified RPKI.Util                  as U
+import qualified RPKI.Util                      as U
 
-import qualified Data.ByteString.Streaming as Q
-import Data.ByteString.Streaming.HTTP
+import qualified Data.ByteString.Streaming      as Q
+import           Data.ByteString.Streaming.HTTP
 
-import qualified Crypto.Hash.SHA256      as S256
+import qualified Crypto.Hash.SHA256             as S256
 
-import System.IO.Temp (withSystemTempFile)
-import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
-import System.IO (Handle, hClose)
+import           System.IO                      (Handle, hClose)
+import           System.IO.Posix.MMap.Lazy      (unsafeMMapFile)
+import           System.IO.Temp                 (withSystemTempFile)
 
-import qualified UnliftIO.Async as Unlift
+import qualified UnliftIO.Async                 as Unlift
+
 
 {- 
     TODO 
@@ -52,7 +53,7 @@ import qualified UnliftIO.Async as Unlift
 updateRrdpRepo :: RrdpRepository -> 
                 (Snapshot -> IO (Maybe SomeError)) ->
                 (Delta -> IO (Maybe SomeError)) ->
-                IO (Either SomeError (RrdpRepository, Maybe e))
+                IO (Either SomeError (RrdpRepository, Maybe SomeError))
 updateRrdpRepo repo@(RrdpRepository repoUri _) handleSnapshot handleDelta = do
     notificationXml <- download repoUri (RrdpE . CantDownloadNotification . show)
     bindRight (notificationXml >>= (first RrdpE . parseNotification)) $ \notification -> 
@@ -84,7 +85,8 @@ updateRrdpRepo repo@(RrdpRepository repoUri _) handleSnapshot handleDelta = do
             deltas <- U.parallel 10 processDelta sortedDeltas            
             foldM foldDeltas' ([], Nothing) deltas >>= \case 
                 (ds, Nothing) -> pure $ Right (repoFromDeltas ds notification, Nothing)
-                (_, Just e)   -> pure $ Left e
+                ([], Just e)  -> pure $ Left e
+                (ds, Just e)  -> pure $ Right (repoFromDeltas ds notification, Just e)
             where
                 foldDeltas' (valids, Just e)   _         = pure (valids, Just e)
                 foldDeltas' (valids, Nothing) (Left e')  = pure (valids, Just e')
@@ -117,6 +119,7 @@ download (URI uri) err = liftIO $ do
     pure $ first err $ second (^. WR.responseBody) r
 
 
+-- | Download HTTP stream into a file while calculating its hash at the same time
 downloadToFile :: MonadIO m =>
                 URI -> 
                 (SomeException -> err) -> 
@@ -143,8 +146,8 @@ data Step = UseSnapshot SnapshotInfo
           | NothingToDo
     deriving (Show, Eq, Ord, Generic)
 
--- Decide what to do next based on current state of the repository
--- and the parsed notification file
+-- | Decides what to do next based on current state of the repository
+-- | and the parsed notification file
 rrdpNextStep :: RrdpRepository -> Notification -> Either RrdpError Step
 rrdpNextStep (RrdpRepository _ Nothing) Notification{..} = 
     Right $ UseSnapshot snapshotInfo
@@ -180,10 +183,10 @@ next (Serial s) = Serial $ s + 1
 processRrdp :: (Has AppLogger conf, Storage s) =>                 
                 RrdpRepository ->
                 RpkiObjectStore s ->
-                ReaderT conf IO (Either SomeError (RrdpRepository, Maybe RrdpError))
+                ValidatorT conf IO (RrdpRepository, Maybe SomeError)
 processRrdp repository objectStore = do
     logger :: AppLogger   <- asks getter 
-    lift $ updateRrdpRepo repository (saveSnapshot logger) (saveDelta logger)
+    fromIOEither $ updateRrdpRepo repository (saveSnapshot logger) (saveDelta logger)
     where
         rwTx_ = rwTx $ storage objectStore
         saveSnapshot :: AppLogger -> Snapshot -> IO (Maybe SomeError)
