@@ -29,6 +29,7 @@ type family LmdbTxMode (m :: TxMode) :: Lmdb.Mode where
 toROTx :: Lmdb.Transaction (m :: Lmdb.Mode) -> Lmdb.Transaction 'Lmdb.ReadOnly
 toROTx = coerce
 
+-- | Basic storage implemented using LMDB
 instance Storage LmdbStore where    
     data Tx LmdbStore (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
     roTx LmdbStore {..} f = withTransaction env (f . LmdbTx . readonly)
@@ -37,16 +38,11 @@ instance Storage LmdbStore where
     put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
         LmdbMap.insert' tx db ks bs
 
-    -- TODO Take uri into account as well
     delete (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) = 
         LmdbMap.delete' tx db ks
 
-    -- TODO Implement
-    -- getByAKI (LmdbTx tx) LmdbStore {..} a = pure []
-
-    get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) = do
-        z <- LmdbMap.lookup' (toROTx tx) db ks 
-        pure $ SValue . Storable <$> z
+    get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
+        (SValue . Storable <$>) <$> LmdbMap.lookup' (toROTx tx) db ks 
 
 
 create :: Lmdb.Environment 'Lmdb.ReadWrite -> String -> IO LmdbStore
