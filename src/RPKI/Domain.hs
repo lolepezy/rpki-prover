@@ -86,7 +86,7 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 
 newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
 
-newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Ord, Typeable, Generic)
+newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Typeable, Generic)
 newtype CrlObject = CrlObject SignCRL deriving (Show, Eq, Typeable, Generic)
 
 type MftObject = CMS Manifest
@@ -124,12 +124,8 @@ data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     asResources :: Maybe (ResourceSet AsResource rfc)
 } deriving (Show, Eq, Typeable, Generic)
 
--- TODO Implement it properly
-instance Ord (ResourceCertificate (rfc :: ValidationRFC)) where
-    compare = comparing ipResources <> comparing asResources
-
 newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Typeable, Generic)
 
 data Roa = Roa     
     {-# UNPACK #-} !ASN 
