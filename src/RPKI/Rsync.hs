@@ -46,7 +46,7 @@ rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) =>
 rsyncFile (URI uri) binaryCheck = do
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
-  let rsync = rsyncProc (URI uri) destination RsyncOneFile
+  let rsync = rsyncProcess (URI uri) destination RsyncOneFile
   logger :: AppLogger        <- asks getter 
   (exitCode, stdout, stderr) <- lift3 $ readProcess rsync      
   case exitCode of  
@@ -70,7 +70,7 @@ processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) =>
 processRsync (RsyncRepository (URI uri)) objectStore = do 
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
-  let rsync = rsyncProc (URI uri) destination RsyncDirectory
+  let rsync = rsyncProcess (URI uri) destination RsyncDirectory
 
   _ <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
     createDirectoryIfMissing True destination
@@ -90,8 +90,8 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
 
 data RsyncCL = RsyncOneFile | RsyncDirectory
 
-rsyncProc :: URI -> FilePath -> RsyncCL -> ProcessConfig () () ()
-rsyncProc (URI uri) destination rsyncCL = 
+rsyncProcess :: URI -> FilePath -> RsyncCL -> ProcessConfig () () ()
+rsyncProcess (URI uri) destination rsyncCL = 
   let extraOptions = case rsyncCL of 
         RsyncOneFile   -> []
         RsyncDirectory -> ["--recursive", "--delete", "--copy-links" ]
@@ -102,7 +102,7 @@ rsyncProc (URI uri) destination rsyncCL =
 rsyncDestination :: FilePath -> T.Text -> FilePath
 rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
 
--- | Recursively traverse given directory and save all the parseabvle 
+-- | Recursively traverse given directory and save all the parseable 
 -- | objects from there into the storage.
 loadRsyncRepository :: (Storage s, Logger logger) => 
                         logger ->
