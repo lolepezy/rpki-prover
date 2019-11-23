@@ -7,6 +7,7 @@ import Data.X509 hiding (getCertificate)
 import Data.X509.Validation hiding (InvalidSignature)
 
 import RPKI.Domain
+import RPKI.Parse.Parse
 import RPKI.SignTypes
     
 
@@ -15,7 +16,7 @@ validateSignature rpkiObject (CerObject (ResourceCert parentCert)) =
     verifySignature signAlgorithm pubKey signData sign
     where        
         (signAlgorithm, signData, sign) = getSign rpkiObject
-        pubKey = certPubKey $ signedObject $ getSigned $ withRFC parentCert certX509              
+        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
 
         getSign (RpkiObject _ (CerRO (CerObject (ResourceCert resourceCert)))) = 
             (signedAlg $ getSigned signedExact, 

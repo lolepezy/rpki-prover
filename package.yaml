@@ -67,6 +67,7 @@ dependencies:
 - lmdb-high-level
 - lifted-async
 - memory
+- mmorph
 - MissingH
 - monad-control
 - mtl

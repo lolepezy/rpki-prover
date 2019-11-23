@@ -35,3 +35,6 @@ instance Storage s => WithStorage s (TAStore s) where
 
 putTA :: Storage s => Tx s 'RW -> TAStore s -> TA -> IO ()
 putTA tx (TAStore s) ta = SM.put tx s (taName ta) ta
+
+getTA :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe TA)
+getTA tx (TAStore s) name = SM.get tx s name

@@ -9,6 +9,7 @@ import Control.Monad.Trans.Except
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Exception
+import Control.Monad.Morph
 
 import Data.Bifunctor
 
@@ -16,7 +17,12 @@ import RPKI.Domain
 
 
 -- Application monad stack
-type ValidatorT conf m r = ReaderT conf (ExceptT SomeError (StateT ValidationWarning m)) r
+type ValidatorT conf m r = ReaderT conf (ExceptT SomeError (StateT [ValidationWarning] m)) r
+
+type PureValidator r = ExceptT SomeError (State [ValidationWarning]) r
+
+puteToValidatorT :: Monad m => PureValidator r -> ValidatorT conf m r
+puteToValidatorT p = lift $ hoist (hoist generalize) p
 
 lift2 :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
         m a -> t1 (t2 m) a
@@ -42,13 +48,18 @@ fromEither = fromIOEither . pure
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runValidatorT :: Monoid s =>
-                r -> ReaderT r (ExceptT e (StateT s m)) a -> m (Either e a, s)
+runValidatorT :: conf -> ValidatorT conf m r -> m (Either SomeError r, [ValidationWarning])
 runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
 
 
 validatorWarning :: Monad m => ValidationWarning -> ValidatorT conf m ()
-validatorWarning w = lift $ modify' (<> w)
+validatorWarning w = lift $ modify' (w:)
 
 validatorError :: Monad m => ValidationError -> ValidatorT conf m r
 validatorError e = lift $ throwE $ ValidationE e
+
+pureWarning :: ValidationWarning -> PureValidator ()
+pureWarning w = lift $ modify' (w:)
+
+pureError :: ValidationError -> PureValidator r
+pureError e = throwE $ ValidationE e

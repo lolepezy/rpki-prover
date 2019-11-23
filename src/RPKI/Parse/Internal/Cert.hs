@@ -36,7 +36,7 @@ parseResourceCertificate :: B.ByteString ->
                             ParseResult (URI -> (RpkiMeta, CerObject))
 parseResourceCertificate bs = do
   certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
-  let x509 = signedObject $ getSigned certificate
+  let x509 = getX509Cert certificate
   let exts = getExtsSign certificate  
   case extVal exts id_subjectKeyId of
     Just s -> do
@@ -212,3 +212,6 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
 subjectPublicKeyInfo :: Certificate -> EncodedBase64
 subjectPublicKeyInfo cert = EncodedBase64 $ B64.encode $ 
   encodeASN1' DER $ (toASN1 $ certPubKey cert) []
+
+getX509Cert :: SignedExact c -> c
+getX509Cert = signedObject . getSigned

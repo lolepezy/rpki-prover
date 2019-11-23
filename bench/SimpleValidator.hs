@@ -38,12 +38,6 @@ import qualified Lmdb.Map as LmdbMap
 import Lmdb.Types
 import Lmdb.Codec
 
-import RPKI.RRDP.Types
-import RPKI.RRDP.Parse
-import RPKI.RRDP.Update
-
-import RPKI.Rsync
-
 import Streaming
 import qualified Streaming.Prelude as S
 import qualified Data.ByteString.Streaming as Q
@@ -71,10 +65,20 @@ import           Data.Hex                   (hex, unhex)
 
 import qualified UnliftIO.Async as Unlift
 
+import           RPKI.Core
+import           RPKI.Logging
+import           RPKI.RRDP.Parse
+import           RPKI.RRDP.Types
+import           RPKI.RRDP.Update
 import qualified RPKI.Store.Base.LMDB as LMDB
-import RPKI.Store.Base.Map
+import           RPKI.Store.Base.Map
 import           RPKI.Store.Stores
-import RPKI.Logging
+import           RPKI.TAL
+
+
+import           RPKI.Rsync
+import qualified RPKI.Util  as U
+
 
 
 mkLmdb :: IO (Environment 'ReadWrite)
@@ -271,7 +275,7 @@ testSignature = do
 
   let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
 
-  let pubKey = certPubKey $ signedObject $ getSigned $ withRFC parentCert certX509              
+  let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
   let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
 
   putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]
@@ -305,7 +309,7 @@ testCrl = do
       putStrLn $ "xx = " <> show xx
       let [x@(RpkiObject _ (CerRO cer@(CerObject (ResourceCert parentCert))))] = xx
 
-      let pubKey = certPubKey $ signedObject $ getSigned $ withRFC parentCert certX509              
+      let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
 
       let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
       let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
@@ -429,13 +433,19 @@ processRRDP env = do
   
 saveRsync env = do
     say "begin"  
-    lmdbStorage <- LMDB.create env "objects"
-    let repo = RsyncRepository (URI "rsync://rpki.afrinic.net/repository/afrinic")
     let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
-    -- e <- (`runReaderT` conf) $ processRsync repo store 
-
     e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (const Nothing)
     say $ "done " <> show e
+
+processTAL = do
+  say "begin"  
+  let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+  ta <- runValidatorT conf $ do
+    t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/apnic.tal"
+    tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t    
+    createTAFromTAL tal
+  say $ "done " <> show ta  
 
 main :: IO ()
 main = do 
@@ -444,7 +454,8 @@ main = do
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
-  mkLmdb >>= processRRDP
+  processTAL
+  -- mkLmdb >>= saveRsync
   -- testSignature
 
 say :: String -> IO ()
