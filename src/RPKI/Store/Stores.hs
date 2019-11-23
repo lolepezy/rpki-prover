@@ -27,9 +27,11 @@ deleteObject :: Storage s =>
 deleteObject tx (RpkiObjectStore s) h = SM.delete tx s h
 
 
-newtype TAStore s = TAStore (SMap s String TA)
+newtype TAStore s = TAStore (SMap s TaName TA)
 
 instance Storage s => WithStorage s (TAStore s) where
   storage (TAStore s) = storage s
 
 
+putTA :: Storage s => Tx s 'RW -> TAStore s -> TA -> IO ()
+putTA tx (TAStore s) ta = SM.put tx s (taName ta) ta

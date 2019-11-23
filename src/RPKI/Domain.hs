@@ -72,7 +72,7 @@ newtype IpResourceSet (rfc :: ValidationRFC) =
 -- TODO Use library type?
 newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-newtype URI  = URI T.Text deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype URI  = URI { unURI :: T.Text } deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -153,26 +153,27 @@ data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
 
 
 -- Subject Public Key Info
-newtype SPKI = SPKI B.ByteString
-    deriving (Show, Eq, Ord, Typeable, Generic)
+newtype SPKI = SPKI EncodedBase64
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 newtype EncodedBase64 = EncodedBase64 B.ByteString
-    deriving (Show, Eq, Ord, Generic, NFData)
+    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
     deriving newtype (Monoid, Semigroup)
   
 newtype DecodedBase64 = DecodedBase64 B.ByteString
-    deriving (Show, Eq, Ord, Generic, NFData)
+    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
     deriving newtype (Monoid, Semigroup)
   
 
 newtype TaName = TaName T.Text
+    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 data TA = TA {
     taName        :: !TaName
   , taCertificate :: !ResourceCert
   , taUri         :: !URI
   , taSpki        :: !SPKI
-}
+} deriving (Show, Eq, Generic, Serialise)
 
 data RepoType = Rsync | Rrdp
 

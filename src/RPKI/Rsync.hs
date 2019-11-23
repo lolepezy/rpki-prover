@@ -103,7 +103,7 @@ rsyncDestination :: FilePath -> T.Text -> FilePath
 rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
 
 -- | Recursively traverse given directory and save all the parseable 
--- | objects from there into the storage.
+-- | objects into the storage.
 loadRsyncRepository :: (Storage s, Logger logger) => 
                         logger ->
                         FilePath -> 

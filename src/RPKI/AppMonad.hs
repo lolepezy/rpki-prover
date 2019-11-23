@@ -50,5 +50,5 @@ runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
 validatorWarning :: Monad m => ValidationWarning -> ValidatorT conf m ()
 validatorWarning w = lift $ modify' (<> w)
 
-validatorError :: Monad m => ValidationError -> ValidatorT conf m ()
+validatorError :: Monad m => ValidationError -> ValidatorT conf m r
 validatorError e = lift $ throwE $ ValidationE e
