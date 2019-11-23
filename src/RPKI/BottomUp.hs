@@ -26,7 +26,6 @@ import qualified StmContainers.Map                 as SM
 
 import           Control.Concurrent.STM.TQueue
 
-import           RPKI.Cache
 import           RPKI.Domain
 
 {-
@@ -71,8 +70,7 @@ data RoaNode = RoaNode {
 
 data TAState = TAState {
   -- TODO Replace it with a container allowing for a fast search of ROAs by prefix
-  roas  :: [RoaNode],
-  store :: Store
+  roas  :: [RoaNode]  
 }
 
 data Validity = Valid | Invalid
