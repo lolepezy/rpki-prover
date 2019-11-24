@@ -25,6 +25,7 @@ import Data.X509.Validation
 
 import RPKI.AppMonad
 import RPKI.Domain
+import RPKI.Errors
 import RPKI.SignTypes
 import RPKI.Validation.Crypto
 import RPKI.Parse.Parse
@@ -74,8 +75,6 @@ import qualified RPKI.Store.Base.LMDB as LMDB
 import           RPKI.Store.Base.Map
 import           RPKI.Store.Stores
 import           RPKI.TAL
-
-
 import           RPKI.Rsync
 import qualified RPKI.Util  as U
 
@@ -442,12 +441,22 @@ processTAL = do
   let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
   result <- runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
+      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-ncc.tal"
     tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
     (u, ro) <- fetchTACertificate tal
     x <- pureToValidatorT $ validateTACert tal u ro
     pure (ro, x)
   say $ "done " <> show result
+
+getTACert = do
+  let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+  runValidatorT conf $ do
+    t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-ncc.tal"
+    tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
+    (u, ro) <- fetchTACertificate tal
+    x <- pureToValidatorT $ validateTACert tal u ro
+    pure (ro, x)
 
 
 main :: IO ()

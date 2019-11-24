@@ -22,6 +22,7 @@ import Data.X509
 import RPKI.IP
 import RPKI.Domain
 import RPKI.SignTypes
+import RPKI.Errors
 
 type ParseResult a = Either (ParseError T.Text) a
 
@@ -36,6 +37,9 @@ id_pe_autonomousSysIds    = oid_pe <> [ 8 ]
 id_pe_ipAddrBlocks_v2     = oid_pe <> [ 28 ]
 id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]  
 
+id_cp_ipAddr_asNumber :: OID
+id_cp_ipAddr_asNumber = oid_pkix <> [ 14, 2 ]
+
 id_subjectKeyId, id_authorityKeyId, id_crlNumber :: OID
 id_subjectKeyId   = [2, 5, 29, 14]
 id_authorityKeyId = [2, 5, 29, 35]
@@ -49,6 +53,9 @@ id_signingTime        = id_pkcs9 <> [5]
 id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 
 id_sha256             = [2, 16, 840, 1, 101, 3, 4, 2, 1]
+
+id_ce_certificatePolicies :: OID 
+id_ce_certificatePolicies = [2, 5, 29, 32]
 
 fmtErr :: String -> ParseError T.Text
 fmtErr = ParseError . T.pack

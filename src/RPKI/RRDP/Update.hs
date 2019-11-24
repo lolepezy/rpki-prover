@@ -25,6 +25,7 @@ import           GHC.Generics
 
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.RRDP.Parse

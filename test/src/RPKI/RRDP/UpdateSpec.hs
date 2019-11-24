@@ -9,6 +9,7 @@ module RPKI.RRDP.UpdateSpec where
 import qualified Data.Text               as T
 
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.Update
 

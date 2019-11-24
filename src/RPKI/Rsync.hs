@@ -17,6 +17,7 @@ import qualified Data.ByteString                   as B
 import qualified Data.Text                  as T
 
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.AppMonad
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores

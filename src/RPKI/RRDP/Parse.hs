@@ -17,6 +17,7 @@ import           Text.Read                  (readMaybe)
 import qualified Text.XML.Expat.SAX         as X
 
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.RRDP.Types
 
 import           RPKI.Util                  (convert, trim, isSpace_)

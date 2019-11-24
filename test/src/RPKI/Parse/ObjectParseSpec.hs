@@ -8,13 +8,11 @@ import Control.Monad
 
 import qualified Data.X509 as X509
 
-import RPKI.Domain
 import RPKI.Parse.Parse
 
-import System.Environment
-import System.Directory
 import System.FilePath.Find
 
+testCertParsing :: IO ()
 testCertParsing = do
   -- let path = "/Users/mpuzanov/dev/haskell/rpki-prover/test/big_cert.cer"
   let path = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync/repository.lacnic.net/rpki/lacnic/ff14e9055d5afaa37fbe20f4a26bd13c8f18d79a.cer"
