@@ -23,5 +23,9 @@ import           RPKI.TAL
 import           RPKI.Util                  (convert)
 
 
-
+validateTA :: (Has RsyncConf conf, Has AppLogger conf) =>
+              TAL -> ValidatorT conf IO ()
+validateTA tal = do
+  (u, ro) <- fetchTACertificate tal
+  pure ()
 

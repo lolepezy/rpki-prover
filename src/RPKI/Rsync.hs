@@ -41,9 +41,9 @@ newtype RsyncConf = RsyncConf {
 -- | Download one file using rsync
 rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) => 
               URI -> 
-              (B.ByteString -> Maybe ValidationError) ->
+              (B.ByteString -> PureValidator B.ByteString) ->
               ValidatorT conf IO RpkiObject
-rsyncFile (URI uri) binaryCheck = do
+rsyncFile (URI uri) validateBinary = do
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
   let rsync = rsyncProcess (URI uri) destination RsyncOneFile
@@ -57,10 +57,9 @@ rsyncFile (URI uri) binaryCheck = do
         " stdout = " <> show stdout
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
     ExitSuccess -> do
-        bs <- fromTry (RsyncE . FileReadError . U.fmtEx) $ B.readFile destination
-        case binaryCheck bs of 
-          Nothing -> fromEither $ first ParseE $ readObject (U.convert uri) bs
-          Just e  -> lift $ throwE $ ValidationE e
+        bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ B.readFile destination
+        checkedBs <- pureToValidatorT $ validateBinary bs
+        fromEither $ first ParseE $ readObject (U.convert uri) checkedBs
 
 
 processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) => 

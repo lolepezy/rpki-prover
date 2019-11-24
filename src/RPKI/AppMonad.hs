@@ -21,8 +21,8 @@ type ValidatorT conf m r = ReaderT conf (ExceptT SomeError (StateT [ValidationWa
 
 type PureValidator r = ExceptT SomeError (State [ValidationWarning]) r
 
-puteToValidatorT :: Monad m => PureValidator r -> ValidatorT conf m r
-puteToValidatorT p = lift $ hoist (hoist generalize) p
+pureToValidatorT :: Monad m => PureValidator r -> ValidatorT conf m r
+pureToValidatorT p = lift $ hoist (hoist generalize) p
 
 lift2 :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
         m a -> t1 (t2 m) a
@@ -53,13 +53,16 @@ runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
 
 
 validatorWarning :: Monad m => ValidationWarning -> ValidatorT conf m ()
-validatorWarning w = lift $ modify' (w:)
+validatorWarning = pureToValidatorT . pureWarning
 
 validatorError :: Monad m => ValidationError -> ValidatorT conf m r
-validatorError e = lift $ throwE $ ValidationE e
+validatorError = pureToValidatorT . pureError
 
 pureWarning :: ValidationWarning -> PureValidator ()
 pureWarning w = lift $ modify' (w:)
 
 pureError :: ValidationError -> PureValidator r
 pureError e = throwE $ ValidationE e
+
+pureErrorIfNot :: Bool -> ValidationError -> PureValidator ()
+pureErrorIfNot b e = if b then pure () else throwE $ ValidationE e

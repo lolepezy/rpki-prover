@@ -26,7 +26,7 @@ import Data.X509.Validation
 import RPKI.AppMonad
 import RPKI.Domain
 import RPKI.SignTypes
-import RPKI.Validate
+import RPKI.Validation.Crypto
 import RPKI.Parse.Parse
 
 import System.FilePath.Find
@@ -434,18 +434,21 @@ processRRDP env = do
 saveRsync env = do
     say "begin"  
     let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
-    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (const Nothing)
+    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
     say $ "done " <> show e
 
 processTAL = do
   say "begin"  
   let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
-  ta <- runValidatorT conf $ do
+  result <- runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/apnic.tal"
-    tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t    
-    createTAFromTAL tal
-  say $ "done " <> show ta  
+      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
+    tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
+    (u, ro) <- fetchTACertificate tal
+    x <- pureToValidatorT $ validateTACert tal u ro
+    pure (ro, x)
+  say $ "done " <> show result
+
 
 main :: IO ()
 main = do 

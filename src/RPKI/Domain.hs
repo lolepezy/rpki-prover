@@ -169,10 +169,10 @@ newtype TaName = TaName T.Text
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 data TA = TA {
-    taName        :: !TaName
-  , taCertificate :: !ResourceCert
-  , taUri         :: !URI
-  , taSpki        :: !SPKI
+    taName        :: TaName
+  , taCertificate :: Maybe ResourceCert
+  , taUri         :: URI
+  , taSpki        :: SPKI
 } deriving (Show, Eq, Generic, Serialise)
 
 data RepoType = Rsync | Rrdp
@@ -208,7 +208,9 @@ data ValidationError = InvalidCert !T.Text |
                         SPKIMismatch EncodedBase64 EncodedBase64 |
                         UnknownObjectAsTACert |
                         TACertificateIsTooSmall !Int |
-                        TACertificateIsTooBig !Int 
+                        TACertificateIsTooBig !Int |
+                        InvalidSignature !T.Text |
+                        AKIIsNotEmpty
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 

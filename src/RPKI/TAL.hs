@@ -10,22 +10,27 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Except
 
-import           Data.Data       (Typeable)
-import qualified Data.ByteString as B
-import Data.List.NonEmpty (NonEmpty(..))
-import qualified Data.List.NonEmpty as NE
-import qualified Data.List as L
-import qualified Data.Text       as T
+import qualified Data.ByteString            as B
+import           Data.Data                  (Typeable)
+import qualified Data.List                  as L
+import           Data.List.NonEmpty         (NonEmpty (..))
+import qualified Data.List.NonEmpty         as NE
+import qualified Data.Text                  as T
+import           Data.X509.Validation hiding (InvalidSignature)
+import           Data.Maybe
 
-import           GHC.Generics
 import           Data.Has
+import           GHC.Generics
 
+import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Rsync
-import           RPKI.AppMonad
-import           RPKI.Logging
-import           RPKI.Util       (convert)
+import           RPKI.Util        (convert)
+import           RPKI.Validation.Crypto
+import           RPKI.Validation.Cert
+
 
 
 -- | Represents Trust Anchor Locator as described here
@@ -100,52 +105,40 @@ parseTAL bs =
     looksLikeUri s = any (`T.isPrefixOf` s) ["rsync://", "http://", "https://"]
 
 
--- | Create a persistable TA object from a parsed TAL.
--- | It means fetch the TA certificate, validate it and 
-createTAFromTAL :: (Has RsyncConf conf, Has AppLogger conf) => 
-                  TAL -> 
-                  ValidatorT conf IO TA
-createTAFromTAL tal = do  
+-- | Fetch TA certificate based on TAL location(s)
+fetchTACertificate :: (Has RsyncConf conf, Has AppLogger conf) => 
+                      TAL -> ValidatorT conf IO (URI, RpkiObject)
+fetchTACertificate tal = do
   logger :: AppLogger    <- asks getter
   rsyncConf :: RsyncConf <- asks getter
-  (u, object) <- fetchTACertificate logger rsyncConf 
-  puteToValidatorT $ validateTACert tal u object
+  lift $ go logger rsyncConf $ NE.toList $ certLocations tal
   where
-    fetchTACertificate logger rsyncConf = lift $ go $ NE.toList $ certLocations tal
-      where
-        go []         = throwE $ TAL_E $ TALError "No certificate location could be fetched."
-        go (u : uris) = catchE ((u,) <$> rsync) $ \e -> do          
-            lift2 $ logError_ logger $ convert $ "Failed to fetch " <> show u <> ": " <> show e
-            go uris
-            where
-              rsync = runReaderT (rsyncFile u checkForWeirdSizes) (logger, rsyncConf)
-
+    go _ _ []                      = throwE $ TAL_E $ TALError "No certificate location could be fetched."
+    go logger rsyncConf (u : uris) = catchE ((u,) <$> rsync) $ \e -> do          
+        lift2 $ logError_ logger $ convert $ "Failed to fetch " <> show u <> ": " <> show e
+        go logger rsyncConf uris
+        where 
+          rsync = runReaderT (rsyncFile u validateSize) (logger, rsyncConf)    
       
-    checkForWeirdSizes :: B.ByteString -> Maybe ValidationError
-    checkForWeirdSizes bs = 
-      case () of _
-                  | len < 10             -> Just $ TACertificateIsTooSmall len
-                  | len > 10 * 1000*1000 -> Just $ TACertificateIsTooBig len
-                  | otherwise            -> Nothing
-      where len = B.length bs
-
 
 -- | 
-validateTACert :: TAL -> URI -> RpkiObject -> PureValidator TA
-validateTACert tal u (RpkiObject RpkiMeta {..}  (CerRO (CerObject rc@(ResourceCert taCert)))) =
-    let 
-      spki = subjectPublicKeyInfo $ getX509Cert $ withRFC taCert certX509
-    in 
-      if publicKeyInfo tal == spki 
-      then pure $ TA {
-            taName = TaName $ case caName tal of
-                        Nothing -> unURI u
-                        Just ca -> ca,
-            taCertificate = rc,
-            taUri = u,
-            taSpki = SPKI spki
-          }                
-      else 
-        pureError $ SPKIMismatch (publicKeyInfo tal) spki
+validateTACert :: TAL -> URI -> RpkiObject -> PureValidator ()
+validateTACert tal u ro@(RpkiObject RpkiMeta {..}  (CerRO cert@(CerObject (ResourceCert taCert)))) = do
+    let spki = subjectPublicKeyInfo $ getX509Cert $ withRFC taCert certX509
+    pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
+    pureErrorIfNot (isNothing aki) $ AKIIsNotEmpty
+    case validateSignature ro cert of
+      SignatureFailed f -> pureError $ InvalidSignature $ convert $ show f
+      SignaturePass -> do
+        pure ()
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
+
+
+validateSize :: B.ByteString -> PureValidator B.ByteString
+validateSize bs = 
+  case () of _
+              | len < 10             -> pureError $ TACertificateIsTooSmall len
+              | len > 10 * 1000*1000 -> pureError $ TACertificateIsTooBig len
+              | otherwise            -> pure bs
+  where len = B.length bs

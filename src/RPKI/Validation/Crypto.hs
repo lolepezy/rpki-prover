@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
-module RPKI.Validate where
+module RPKI.Validation.Crypto where
 
 import qualified Data.ByteString as B
 
@@ -10,7 +10,7 @@ import RPKI.Domain
 import RPKI.Parse.Parse
 import RPKI.SignTypes
     
-
+-- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification
 validateSignature rpkiObject (CerObject (ResourceCert parentCert)) = 
     verifySignature signAlgorithm pubKey signData sign
@@ -47,6 +47,7 @@ validateSignature rpkiObject (CerObject (ResourceCert parentCert)) =
                     encodedCert = scCertificate $ soContent signObject
 
 
+-- | Validate that the CMS is signed by the public key of the EE certficate at has
 validateCMSSignature :: CMS a -> SignatureVerification
 validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData sign    
     where
