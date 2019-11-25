@@ -1,9 +1,14 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE DeriveAnyClass       #-}
 
 module RPKI.Store.Stores where
 
+import Codec.Serialise
+import GHC.Generics
+
 import RPKI.Domain
+import RPKI.TAL
 import RPKI.Store.Base.Map (SMap(..))
 import qualified RPKI.Store.Base.Map as SM
 import RPKI.Store.Base.Storage
@@ -27,14 +32,19 @@ deleteObject :: Storage s =>
 deleteObject tx (RpkiObjectStore s) h = SM.delete tx s h
 
 
-newtype TAStore s = TAStore (SMap s TaName TA)
+newtype TAStore s = TAStore (SMap s TaName StoredTA)
 
 instance Storage s => WithStorage s (TAStore s) where
   storage (TAStore s) = storage s
 
+data StoredTA = StoredTA {
+  tal        :: TAL,
+  taCert     :: CerObject,
+  taCertMeta :: RpkiMeta
+} deriving (Show, Eq, Generic, Serialise)
 
-putTA :: Storage s => Tx s 'RW -> TAStore s -> TA -> IO ()
-putTA tx (TAStore s) ta = SM.put tx s (taName ta) ta
+putTA :: Storage s => Tx s 'RW -> TAStore s -> StoredTA -> IO ()
+putTA tx (TAStore s) ta = SM.put tx s (getTaName $ tal ta) ta
 
-getTA :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe TA)
+getTA :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe StoredTA)
 getTA tx (TAStore s) name = SM.get tx s name

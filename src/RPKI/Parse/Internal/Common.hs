@@ -54,8 +54,9 @@ id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 
 id_sha256             = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 
-id_ce_certificatePolicies :: OID 
-id_ce_certificatePolicies = [2, 5, 29, 32]
+id_ce_cRLDistributionPoints, id_ce_certificatePolicies :: OID 
+id_ce_cRLDistributionPoints = [2, 5, 29, 31]
+id_ce_certificatePolicies   = [2, 5, 29, 32]
 
 fmtErr :: String -> ParseError T.Text
 fmtErr = ParseError . T.pack

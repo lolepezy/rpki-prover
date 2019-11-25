@@ -49,10 +49,14 @@ fromEither = fromIOEither . pure
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runValidatorT :: conf -> ValidatorT conf m r -> m (Either SomeError r, [ValidationWarning])
+runPureValidator :: PureValidator r -> (Either SomeError r, [ValidationWarning])
+runPureValidator p = (runState $ runExceptT p) mempty
+
+runValidatorT  :: conf -> ValidatorT conf m r -> m (Either SomeError r, [ValidationWarning])
 runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
 
-
+-- TODO Introduce some sort of error/warning context, an 
+-- URI of the object the error is related to
 validatorWarning :: Monad m => ValidationWarning -> ValidatorT conf m ()
 validatorWarning = pureToValidatorT . pureWarning
 

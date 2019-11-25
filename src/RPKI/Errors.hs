@@ -74,17 +74,21 @@ newtype TALError = TALError T.Text
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     deriving newtype Semigroup
 
+newtype ValidationContext = ValidationContext T.Text 
+    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
 data SomeError = ParseE (ParseError T.Text) | 
                    TAL_E TALError | 
                    RrdpE RrdpError |
                    RsyncE RsyncError |
                    StorageE StorageError | 
-                   ValidationE ValidationError |
-                   ComposeE [SomeError]
+                   ValidationE ValidationError
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 instance Exception SomeError
 
-newtype ValidationWarning = ValidationWarning T.Text
+data ValidationWarning = ValidationWarning T.Text
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-    deriving newtype (Monoid, Semigroup)
+
+vContext :: URI -> ValidationContext
+vContext (URI u) = ValidationContext u

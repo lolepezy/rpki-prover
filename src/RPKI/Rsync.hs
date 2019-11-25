@@ -86,21 +86,7 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
         " sdterr = " <> show stderr <>
         " stdout = " <> show stdout
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
-    
-
-data RsyncCL = RsyncOneFile | RsyncDirectory
-
-rsyncProcess :: URI -> FilePath -> RsyncCL -> ProcessConfig () () ()
-rsyncProcess (URI uri) destination rsyncCL = 
-  let extraOptions = case rsyncCL of 
-        RsyncOneFile   -> []
-        RsyncDirectory -> ["--recursive", "--delete", "--copy-links" ]
-      options = [ "--timeout=300",  "--update",  "--times" ] ++ extraOptions
-      in proc "rsync" $ options ++ [ T.unpack uri, destination ]
-
--- TODO Make it generate shorter filenames
-rsyncDestination :: FilePath -> T.Text -> FilePath
-rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
+  
 
 -- | Recursively traverse given directory and save all the parseable 
 -- | objects into the storage.
@@ -131,7 +117,7 @@ loadRsyncRepository logger topPath objectStore = do
             when (supportedExtension path) $ do
               a <- async $ do 
                 bs <- B.readFile path                
-                -- "storableValue ro" has to happen in this thread, as it the way
+                -- "storableValue ro" has to happen in this thread, as it is the way
                 -- to force computation of the serialised object
                 pure $!! (\ro -> (getHash ro, storableValue ro)) <$> 
                   first ParseE (readObject path bs)
@@ -159,7 +145,19 @@ loadRsyncRepository logger topPath objectStore = do
                     logInfo_ logger $ U.convert ("There's an existing object with hash: " <> show (hexHash h) <> ", ignoring the new one.")      
               
 
+data RsyncCL = RsyncOneFile | RsyncDirectory
 
+rsyncProcess :: URI -> FilePath -> RsyncCL -> ProcessConfig () () ()
+rsyncProcess (URI uri) destination rsyncCL = 
+  let extraOptions = case rsyncCL of 
+        RsyncOneFile   -> []
+        RsyncDirectory -> ["--recursive", "--delete", "--copy-links" ]
+      options = [ "--timeout=300",  "--update",  "--times" ] ++ extraOptions
+      in proc "rsync" $ options ++ [ T.unpack uri, destination ]
+
+-- TODO Make it generate shorter filenames
+rsyncDestination :: FilePath -> T.Text -> FilePath
+rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
 
 
               

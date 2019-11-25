@@ -6,32 +6,20 @@ module RPKI.TAL where
 
 import           Control.DeepSeq
 import           Control.Monad
-import           Control.Monad.Except
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Except
+import           Data.Data          (Typeable)
+import qualified Data.List          as L
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Text          as T
 
-import qualified Data.ByteString            as B
-import           Data.Data                  (Typeable)
-import qualified Data.List                  as L
-import           Data.List.NonEmpty         (NonEmpty (..))
-import qualified Data.List.NonEmpty         as NE
-import qualified Data.Text                  as T
-import           Data.X509.Validation hiding (InvalidSignature)
-import           Data.Maybe
+import           Codec.Serialise
 
-import           Data.Has
 import           GHC.Generics
 
-import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Logging
-import           RPKI.Parse.Parse
-import           RPKI.Rsync
-import           RPKI.Util        (convert)
-import           RPKI.Validation.Crypto
-import           RPKI.Validation.Cert
 
+import           RPKI.Util        (convert)
 
 
 -- | Represents Trust Anchor Locator as described here
@@ -47,11 +35,18 @@ data TAL = PropertiesTAL {
 } | RFC_TAL {
   certificateLocations :: NonEmpty URI,
   publicKeyInfo        :: EncodedBase64
-} deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+} deriving (Show, Eq, Ord, Typeable, Generic, Serialise, NFData)
 
 certLocations :: TAL -> NonEmpty URI
 certLocations PropertiesTAL {..} = certificateLocation :| []
 certLocations RFC_TAL {..}       = certificateLocations
+
+getTaName :: TAL -> TaName
+getTaName tal = case tal of 
+  PropertiesTAL {..} -> maybe (uri2TaName certificateLocation) TaName caName
+  RFC_TAL {..}       -> uri2TaName $ NE.head certificateLocations
+  where 
+    uri2TaName = \(URI t) -> TaName t
 
 
 -- | Parse TAL object from raw text
@@ -104,42 +99,3 @@ parseTAL bs =
             }
 
     looksLikeUri s = any (`T.isPrefixOf` s) ["rsync://", "http://", "https://"]
-
-
--- | Fetch TA certificate based on TAL location(s)
-fetchTACertificate :: (Has RsyncConf conf, Has AppLogger conf) => 
-                      TAL -> ValidatorT conf IO (URI, RpkiObject)
-fetchTACertificate tal = do
-  logger :: AppLogger    <- asks getter
-  rsyncConf :: RsyncConf <- asks getter
-  lift $ go logger rsyncConf $ NE.toList $ certLocations tal
-  where
-    go _ _ []                      = throwE $ TAL_E $ TALError "No certificate location could be fetched."
-    go logger rsyncConf (u : uris) = catchE ((u,) <$> rsync) $ \e -> do          
-        lift2 $ logError_ logger $ convert $ "Failed to fetch " <> show u <> ": " <> show e
-        go logger rsyncConf uris
-        where 
-          rsync = runReaderT (rsyncFile u validateSize) (logger, rsyncConf)    
-      
-
--- | 
-validateTACert :: TAL -> URI -> RpkiObject -> PureValidator ()
-validateTACert tal u ro@(RpkiObject RpkiMeta {..}  (CerRO cert@(CerObject (ResourceCert taCert)))) = do
-    let spki = subjectPublicKeyInfo $ getX509Cert $ withRFC taCert certX509
-    pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
-    pureErrorIfNot (isNothing aki) $ AKIIsNotEmpty
-    case validateSignature ro cert of
-      SignatureFailed f -> pureError $ InvalidSignature $ convert $ show f
-      SignaturePass -> do
-        pure ()
-
-validateTACert _ _ _ = pureError UnknownObjectAsTACert
-
-
-validateSize :: B.ByteString -> PureValidator B.ByteString
-validateSize bs = 
-  case () of _
-              | len < 10             -> pureError $ TACertificateIsTooSmall len
-              | len > 10 * 1000*1000 -> pureError $ TACertificateIsTooBig len
-              | otherwise            -> pure bs
-  where len = B.length bs
