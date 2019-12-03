@@ -4,8 +4,6 @@
 
 module RPKI.Rsync where
 
-import           Control.DeepSeq                       (force)
-
 import           Data.Bifunctor
 
 import           Control.Concurrent.Async
@@ -20,6 +18,7 @@ import qualified Data.Text                             as T
 import           Data.IORef
 
 import           RPKI.AppMonad
+import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
@@ -72,7 +71,7 @@ rsyncFile (URI uri) validateBinary = do
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) => 
+processRsync :: (Has RsyncConf conf, Has AppLogger conf, Has Config conf, Storage s) => 
                 RsyncRepository -> 
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
@@ -90,7 +89,8 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
   lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
   case exitCode of  
     ExitSuccess -> do
-      count <- fromIOEither $ loadRsyncRepository logger rsyncRoot objectStore      
+      config :: Config <- asks getter
+      count <- fromIOEither $ loadRsyncRepository logger config rsyncRoot objectStore      
       lift3 $ logInfo_ logger [i|Finished loading #{count} objects into local storage|]      
     ExitFailure errorCode -> do
       lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
@@ -104,12 +104,13 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
 -- | objects into the storage.
 loadRsyncRepository :: (Storage s, Logger logger) => 
                         logger ->
+                        Config ->
                         FilePath -> 
                         RpkiObjectStore s -> 
                         IO (Either SomeError Integer)
-loadRsyncRepository logger topPath objectStore = do
+loadRsyncRepository logger config topPath objectStore = do
     counter <- newIORef 0
-    (chanIn, chanOut) <- Chan.newChan 12
+    (chanIn, chanOut) <- Chan.newChan $ parallelism config
     (r1, r2) <- concurrently (travelrseFS chanIn) (saveObjects counter chanOut)
     c <- readIORef counter
     pure (first RsyncE r1 >> first StorageE r2 >> pure c)

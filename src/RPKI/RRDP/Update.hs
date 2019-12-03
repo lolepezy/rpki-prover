@@ -23,6 +23,7 @@ import qualified Network.Wreq                   as WR
 import           GHC.Generics
 
 import           RPKI.AppMonad
+import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
@@ -182,7 +183,7 @@ nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1
 
 -- TODO Add warnings and errors to the specific ValidationContext
-processRrdp :: (Has AppLogger conf, Storage s) =>                 
+processRrdp :: (Has AppLogger conf, Has Config conf, Storage s) =>                 
                 RrdpRepository ->
                 RpkiObjectStore s ->
                 ValidatorT conf IO (RrdpRepository, Maybe SomeError)

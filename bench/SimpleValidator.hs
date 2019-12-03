@@ -67,6 +67,7 @@ import qualified UnliftIO.Async as Unlift
 
 import           RPKI.Core
 import           RPKI.Logging
+import           RPKI.Config
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.Update
@@ -426,18 +427,18 @@ processRRDP env = do
     say "begin"  
     lmdbStorage <- LMDB.create env "objects"
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
-    let conf = createLogger
+    let conf = (createLogger, Config getParallelism)
     let store = RpkiObjectStore {
       objects = SIxMap lmdbStorage [],
       byAKI = SMMap lmdbStorage
-    }
+    }    
     e <- runValidatorT conf $ processRrdp repo store
     say $ "resulve " <> show e
   
 saveRsyncRepo env = do
   lmdbStorage <- LMDB.create env "objects"
   let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
-  let conf = (createLogger, RsyncConf "/tmp/rsync")
+  let conf = (createLogger, RsyncConf "/tmp/rsync", Config getParallelism)
   let store = RpkiObjectStore {
     objects = SIxMap lmdbStorage [],
     byAKI = SMMap lmdbStorage
