@@ -37,10 +37,10 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
     HU.testCase "Should generate delta update when the session id is the same and serial is larger" $ do
         let sessionId = SessionId "something"
         let serial = Serial 13
-        let nextSerial = next serial
-        let delta = makeDelta nextSerial
+        let nextSerial' = nextSerial serial
+        let delta = makeDelta nextSerial'
         let repo = RrdpRepository (URI "http://rrdp.ripe.net/notification.xml") $ Just (sessionId, serial)
-        let nextStep = rrdpNextStep repo $ (makeNotification sessionId nextSerial) {      
+        let nextStep = rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
             deltas = [delta]
            }
         HU.assertEqual "It's a bummer" nextStep (Right $ UseDeltas [delta]),

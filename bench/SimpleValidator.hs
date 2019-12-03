@@ -10,7 +10,6 @@ import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
-import Control.Monad.Reader
 
 import qualified Codec.Serialise as Serialise
 
@@ -73,6 +72,7 @@ import           RPKI.RRDP.Types
 import           RPKI.RRDP.Update
 import qualified RPKI.Store.Base.LMDB as LMDB
 import           RPKI.Store.Base.Map
+import           RPKI.Store.Base.MultiMap
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Rsync
@@ -427,10 +427,25 @@ processRRDP env = do
     lmdbStorage <- LMDB.create env "objects"
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing
     let conf = (AppLogger logTextStdout)
-    let store = RpkiObjectStore (SIxMap lmdbStorage [])
+    let store = RpkiObjectStore {
+      objects = SIxMap lmdbStorage [],
+      byAKI = SMMap lmdbStorage
+    }
     e <- runValidatorT conf $ processRrdp repo store
     say $ "resulve " <> show e
   
+saveRsyncRepo env = do
+  say "begin"  
+  lmdbStorage <- LMDB.create env "objects"
+  let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")
+  let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+  let store = RpkiObjectStore {
+    objects = SIxMap lmdbStorage [],
+    byAKI = SMMap lmdbStorage
+  }
+  e <- runValidatorT conf $ processRsync repo store
+  say $ "done " <> show e
+
 saveRsync env = do
     say "begin"  
     let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
@@ -442,7 +457,7 @@ processTAL = do
   let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
   result <- runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-ncc.tal"
+      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
     tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
     (u, ro) <- fetchTACertificate tal
     x <- pureToValidatorT $ validateTACert tal u ro
@@ -453,7 +468,7 @@ getTACert = do
   let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
   runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-ncc.tal"
+      B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
     tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
     (u, ro) <- fetchTACertificate tal
     x <- pureToValidatorT $ validateTACert tal u ro
@@ -467,8 +482,8 @@ main = do
   -- mkLmdb >>= saveSerialised
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
-  processTAL
-  -- mkLmdb >>= saveRsync
+  -- processTAL
+  mkLmdb >>= saveRsyncRepo
   -- testSignature
 
 say :: String -> IO ()

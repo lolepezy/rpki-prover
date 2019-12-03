@@ -30,10 +30,11 @@ data ValidationError = InvalidCert !T.Text |
                         UnknownObjectAsTACert |
                         TACertificateIsTooSmall !Int |
                         TACertificateIsTooBig !Int |
-                        InvalidSignature !T.Text |
+                        TACertificateLocalIsNewer Serial Serial |
+                        InvalidSignature !T.Text |                        
                         AKIIsNotEmpty |
                         CertNoPolicyExtension |
-                        CertNoWrongPolicyExtension B.ByteString
+                        CertWrongPolicyExtension B.ByteString
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 
@@ -87,7 +88,7 @@ data SomeError = ParseE (ParseError T.Text) |
 
 instance Exception SomeError
 
-data ValidationWarning = ValidationWarning T.Text
+newtype ValidationWarning = ValidationWarning SomeError
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 vContext :: URI -> ValidationContext

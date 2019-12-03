@@ -25,7 +25,7 @@ parseRoa :: B.ByteString -> ParseResult (URI -> (RpkiMeta, RoaObject))
 parseRoa bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
     signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoas') asns
-    meta      <- getMeta signedRoa bs
+    meta      <- getMetaFromSigned signedRoa bs
     pure $ \location -> (meta location, CMS signedRoa)
   where     
     parseRoas' = onNextContainer Sequence $ do      

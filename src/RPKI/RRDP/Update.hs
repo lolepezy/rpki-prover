@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.RRDP.Update where
 
@@ -10,13 +11,14 @@ import           Control.Lens                   ((^.))
 import           Control.Monad
 import           Control.Monad.Reader
 
-import           Control.DeepSeq                (($!!))
+import           Control.DeepSeq                (force)
 
 
 import           Data.Bifunctor                 (first, second)
 import qualified Data.ByteString.Lazy           as BL
 import           Data.Has
 import           Data.IORef
+import           Data.String.Interpolate
 import qualified Data.List                      as L
 import qualified Data.Text                      as T
 import qualified Network.Wreq                   as WR
@@ -31,11 +33,13 @@ import           RPKI.Parse.Parse
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storable
 import           RPKI.Store.Stores
 import qualified RPKI.Util                      as U
 
 import qualified Data.ByteString.Streaming      as Q
 import           Data.ByteString.Streaming.HTTP
+
 
 import qualified Crypto.Hash.SHA256             as S256
 
@@ -136,7 +140,7 @@ downloadToFile (URI uri) err destinationHandle =
             withHTTP req tls $ \resp -> 
                 Q.hPut destinationHandle $ 
                     Q.chunkMapM (\chunk -> 
-                    modifyIORef' hash (`S256.update` chunk) >> pure chunk) $ 
+                        modifyIORef' hash (`S256.update` chunk) >> pure chunk) $ 
                     responseBody resp
             h' <- readIORef hash        
             pure $ Hash $ S256.finalize h'
@@ -159,7 +163,7 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{
         | otherwise ->
             case (deltas, nonConsecutive) of
                 ([], _) -> Right $ UseSnapshot snapshotInfo
-                (_, []) | next repoSerial < head (map getSerial sortedDeltas) ->
+                (_, []) | nextSerial repoSerial < head (map getSerial sortedDeltas) ->
                            -- we are too far behind
                            Right $ UseSnapshot snapshotInfo
                         | otherwise ->
@@ -170,17 +174,17 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{
                 sortedDeltas = L.sortOn getSerial deltas
                 chosenDeltas = filter ((> repoSerial) . getSerial) sortedDeltas
 
-                nonConsecutive = L.filter (\(s, s') -> next s /= s') $
+                nonConsecutive = L.filter (\(s, s') -> nextSerial s /= s') $
                     L.zip sortedSerials (tail sortedSerials)
 
 
 getSerial :: DeltaInfo -> Serial
 getSerial (DeltaInfo _ _ s) = s
 
-next :: Serial -> Serial
-next (Serial s) = Serial $ s + 1
+nextSerial :: Serial -> Serial
+nextSerial (Serial s) = Serial $ s + 1
 
--- TODO Use ValidatorT
+-- TODO Add warnings and errors to the specific ValidationContext
 processRrdp :: (Has AppLogger conf, Storage s) =>                 
                 RrdpRepository ->
                 RpkiObjectStore s ->
@@ -192,17 +196,18 @@ processRrdp repository objectStore = do
         rwTx_ = rwTx $ storage objectStore
         saveSnapshot :: AppLogger -> Snapshot -> IO (Maybe SomeError)
         saveSnapshot logger (Snapshot _ _ _ ps) = do
-            logInfo_ logger $ U.convert $ "Using snapshot for the repository: " <> show repository
+            logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
             either Just (const Nothing) . 
                 first (StorageE . StorageError . U.fmtEx) <$> 
                     try (U.txFunnel 20 ps objectAsyncs rwTx_ writeObject)
             where
-                objectAsyncs (SnapshotPublish u encodedb64) =
-                    Unlift.async $ pure $!! (u, mkObject u encodedb64)
+                objectAsyncs (SnapshotPublish u encodedb64) = do
+                    a <- Unlift.async $ pure $! toStorableObject u encodedb64
+                    pure (u,a)
                 
-                writeObject tx a = Unlift.wait a >>= \case                        
-                    (u, Left e)   -> logError_ logger $ U.convert $ "Couldn't parse object: " <> show e <> ", u = " <> show u
-                    (u, Right (h, sValue)) -> putObject tx objectStore h sValue
+                writeObject tx (u, a) = Unlift.wait a >>= \case                        
+                    SError e   -> logError_ logger [i|Couldn't parse object #u, error #e |]
+                    SObject so@(StorableObject ro _) -> putObject tx objectStore (getHash ro) so
 
         saveDelta :: AppLogger -> Delta -> IO (Maybe SomeError)
         saveDelta logger (Delta _ _ _ ds) = 
@@ -211,38 +216,46 @@ processRrdp repository objectStore = do
                     try (U.txFunnel 20 ds objectAsyncs rwTx_ writeObject)
             where
                 objectAsyncs (DP (DeltaPublish u h encodedb64)) = do 
-                    a <- Unlift.async $ pure $!! mkObject u encodedb64
+                    a <- Unlift.async $ pure $! toStorableObject u encodedb64
                     pure $ Right (u, h, a)
 
                 objectAsyncs (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
 
                 writeObject tx = \case
-                    Left (u, h)           -> deleteObject tx objectStore h
+                    Left (_, h)           -> deleteObject tx objectStore h
                     Right (u, Nothing, a) -> 
                         Unlift.wait a >>= \case
-                            Left e -> logError_ logger $ U.convert ("Couldn't parse object: " <> show e)
-                            Right (h :: Hash, sValue) ->
+                            SError e -> logError_ logger [i|Couldn't parse object #u, error #e |]
+                            SObject so@(StorableObject ro _) -> do
+                                let h = getHash ro
                                 getByHash tx objectStore h >>= \case
-                                    Nothing -> putObject tx objectStore h sValue
+                                    Nothing -> putObject tx objectStore h so
                                     Just _ ->
                                         -- TODO Add location
-                                        logWarn_ logger $ U.convert ("There's an existing object with hash: " <> show h)
-                    Right (u, Just h, a) -> 
+                                        logWarn_ logger [i|There's an existing object with hash #h |]
+                    Right (u, Just oldHash, a) -> 
                         Unlift.wait a >>= \case
-                            Left e -> logError_ logger $ U.convert ("Couldn't parse object: " <> show e)
-                            Right (h', st) ->
-                                getByHash tx objectStore h >>= \case 
+                            SError e -> logError_ logger [i|Couldn't parse object #u, error #e |]
+                            SObject so@(StorableObject ro _) -> do
+                                let newHash = getHash ro
+                                getByHash tx objectStore oldHash >>= \case 
                                     Nothing -> 
-                                        logWarn_ logger $ U.convert ("No object with hash : " <> show h <> ", nothing to replace")
+                                        logWarn_ logger [i|No object with hash #oldHash nothing to replace|]
                                     Just _ -> do 
-                                        deleteObject tx objectStore h
-                                        getByHash tx objectStore h' >>= \case 
-                                            Nothing -> putObject tx objectStore h st
+                                        deleteObject tx objectStore oldHash
+                                        getByHash tx objectStore newHash >>= \case 
+                                            Nothing -> putObject tx objectStore newHash so
                                             Just _  -> 
                                                 -- TODO Add location
-                                                logWarn_ logger $ U.convert ("There's an existing object with hash: " <> show h)
+                                                logWarn_ logger [i|There's an existing object with hash: #newHash|]
 
-        mkObject (URI u) b64 = do
-            DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-            ro <- first ParseE $ readObject (T.unpack u) b    
-            pure (getHash ro, storableValue ro)
+        toStorableObject (URI u) b64 = case parsed of
+            Left e   -> SError e
+            Right ro -> SObject $ StorableObject ro $ force (storableValue ro)
+            where
+                parsed = do
+                    DecodedBase64 b <- first RrdpE  $ decodeBase64 b64 u
+                    first ParseE $ readObject (T.unpack u) b
+                
+
+

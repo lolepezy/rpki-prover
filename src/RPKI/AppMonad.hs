@@ -12,8 +12,6 @@ import Control.Exception
 import Control.Monad.Morph
 
 import Data.Bifunctor
-
-import RPKI.Domain    
 import RPKI.Errors
 
 
@@ -45,6 +43,11 @@ fromTry mapErr t = fromIOEither $ first mapErr <$> try t
 fromEither :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
             Either e a -> t1 (ExceptT e (t2 m)) a
 fromEither = fromIOEither . pure
+
+fromTryEither :: (MonadTrans t1, MonadTrans t2, Monad (t1 (ExceptT e (t2 IO))), 
+                  Monad (t2 IO), Exception exc) =>
+                 (exc -> e) -> IO (Either e b) -> t1 (ExceptT e (t2 IO)) b
+fromTryEither mapErr t = fromEither =<< fromTry mapErr t
 
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env

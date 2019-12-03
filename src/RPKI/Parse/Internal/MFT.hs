@@ -20,7 +20,7 @@ parseMft :: B.ByteString -> ParseResult (URI -> (RpkiMeta, MftObject))
 parseMft bs = do
   asns      <- first (fmtErr . show) $ decodeASN1' BER bs
   signedMft <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
-  meta      <- getMeta signedMft bs
+  meta      <- getMetaFromSigned signedMft bs
   pure $ \location -> (meta location, CMS signedMft)
   where    
     parseManifest :: ParseASN1 Manifest

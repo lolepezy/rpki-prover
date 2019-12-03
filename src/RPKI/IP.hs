@@ -1,4 +1,6 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE UndecidableInstances, FlexibleInstances #-}
+
 module RPKI.IP where
 
 import Codec.Serialise
@@ -54,8 +56,8 @@ mkIpv4 :: Word32 -> Word32 -> Either Ipv4Range Ipv4Prefix
 mkIpv4 w1 w2 = 
     let r = Range (V4.IpAddress w1) (V4.IpAddress w2) 
     in case V4.rangeToBlocks r of
-        [b]   -> Right $ Ipv4Prefix b
-        _ : _ -> Left  $ Ipv4Range r        
+        [b] -> Right $ Ipv4Prefix b
+        _   -> Left  $ Ipv4Range r        
 
 mkIpv6Block :: (Word32, Word32, Word32, Word32) -> Word8 -> Ipv6Prefix
 mkIpv6Block w128 nonZeroBits = Ipv6Prefix (V6.IpBlock (V6.IpAddress w128) (V6.IpNetMask nonZeroBits))
@@ -64,8 +66,8 @@ mkIpv6 :: Word128 -> Word128 -> Either Ipv6Range Ipv6Prefix
 mkIpv6 w1 w2 = 
     let r = Range (V6.IpAddress w1) (V6.IpAddress w2) 
     in case V6.rangeToBlocks r of
-        [b]   -> Right $ Ipv6Prefix b
-        _ : _ -> Left  $ Ipv6Range r
+        [b] -> Right $ Ipv6Prefix b
+        _   -> Left  $ Ipv6Range r
 
 mkV4Prefix :: B.ByteString -> Word8 -> Ipv4Prefix
 mkV4Prefix bs nonZeroBits = 

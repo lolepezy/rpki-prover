@@ -9,6 +9,7 @@ module RPKI.Store.Base.Map where
 import           Codec.Serialise
 
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storable
 import qualified RPKI.Store.Base.Storage as S
 
 type Index s v = (s, v -> [SKey])

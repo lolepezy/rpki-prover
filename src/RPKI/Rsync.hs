@@ -1,39 +1,45 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE QuasiQuotes      #-}
+{-# LANGUAGE RecordWildCards  #-}
 
 module RPKI.Rsync where
 
-import Control.DeepSeq (($!!))
+import           Control.DeepSeq                       (force)
 
-import Data.Bifunctor
+import           Data.Bifunctor
 
 import           Control.Concurrent.Async
 import           Control.Monad
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Except
-import           UnliftIO.Exception hiding (fromEither)
+import           UnliftIO.Exception                    hiding (fromEither)
 
-import qualified Data.ByteString                   as B
-import qualified Data.Text                  as T
+import qualified Data.ByteString                       as B
+import           Data.String.Interpolate
+import qualified Data.Text                             as T
 
+import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.AppMonad
-import           RPKI.Store.Base.Storage
-import           RPKI.Store.Stores
-import           RPKI.Parse.Parse
-import qualified RPKI.Util as U
 import           RPKI.Logging
+import           RPKI.Parse.Parse
+import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storable
+import           RPKI.Store.Stores
+import qualified RPKI.Util                             as U
 
-import Data.Has
+import           Data.Has
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
-import System.Directory ( doesDirectoryExist, getDirectoryContents, createDirectoryIfMissing )
-import System.FilePath ( (</>) )
+import           System.Directory                      (createDirectoryIfMissing,
+                                                        doesDirectoryExist,
+                                                        getDirectoryContents)
+import           System.FilePath                       ((</>))
 
-import System.Process.Typed
-import System.Exit
+import           System.Exit
+import           System.Process.Typed
+
 
 newtype RsyncConf = RsyncConf {
   rsyncRoot :: FilePath
@@ -52,10 +58,10 @@ rsyncFile (URI uri) validateBinary = do
   (exitCode, stdout, stderr) <- lift3 $ readProcess rsync      
   case exitCode of  
     ExitFailure errorCode -> do
-      lift3 $ logError_ logger $ U.convert $ "Rsync process failed: " <> show rsync <> 
-        " with code " <> show errorCode <> 
-        " sdterr = " <> show stderr <>
-        " stdout = " <> show stdout
+      lift3 $ logError_ logger [i|Rsync process failed: #rsync 
+                                  with code #errorCode, 
+                                  stderr = #stderr, 
+                                  stdout = #stdout|]        
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
     ExitSuccess -> do
         bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ B.readFile destination
@@ -63,6 +69,8 @@ rsyncFile (URI uri) validateBinary = do
         fromEither $ first ParseE $ readObject (U.convert uri) checkedBs
 
 
+-- | Process the whole rsync repository, download it, traverse the directory and 
+-- | add all the relevant objects to the storage.
 processRsync :: (Has RsyncConf conf, Has AppLogger conf, Storage s) => 
                 RsyncRepository -> 
                 RpkiObjectStore s -> 
@@ -81,10 +89,10 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
     ExitSuccess ->
       fromIOEither $ loadRsyncRepository logger rsyncRoot objectStore
     ExitFailure errorCode -> do
-      lift3 $ logError_ logger $ T.pack $ "Rsync process failed: " <> show rsync <> 
-        " with code " <> show errorCode <> 
-        " sdterr = " <> show stderr <>
-        " stdout = " <> show stdout
+      lift3 $ logError_ logger [i|Rsync process failed: #rsync 
+                                  with code #errorCode, 
+                                  stderr = #stderr, 
+                                  stdout = #stdout|]
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
   
 
@@ -117,10 +125,12 @@ loadRsyncRepository logger topPath objectStore = do
             when (supportedExtension path) $ do
               a <- async $ do 
                 bs <- B.readFile path                
-                -- "storableValue ro" has to happen in this thread, as it is the way
-                -- to force computation of the serialised object
-                pure $!! (\ro -> (getHash ro, storableValue ro)) <$> 
-                  first ParseE (readObject path bs)
+                pure $! case first ParseE $ readObject path bs of
+                  Left e   -> SError e
+                  -- "storableValue ro" has to happen in this thread, as it is the way to 
+                  -- force computation of the serialised object and gain some parallelism
+                  Right ro -> SObject $ StorableObject ro $ force (storableValue ro)
+                  
               Chan.writeChan chanIn $ Just a      
 
     saveObjects chanOut = 
@@ -134,15 +144,16 @@ loadRsyncRepository logger topPath objectStore = do
 
         process tx = \case
           Left (e :: SomeException) -> 
-            logError_ logger $ U.convert ("An error reading the object: " <> show e)
-          Right (Left e) -> 
-            logError_ logger $ U.convert ("An error parsing or serialising the object: " <> show e)
-          Right (Right (h, sValue)) -> 
+            logError_ logger [i|An error reading the object: #e|]
+          Right (SError e) -> 
+            logError_ logger [i|An error parsing or serialising the object: #e|]
+          Right (SObject so@(StorableObject ro _)) -> do
+            let h = getHash ro
             getByHash tx objectStore h >>= \case 
-                Nothing -> putObject tx objectStore h sValue
+                Nothing -> putObject tx objectStore h so
                 Just _  ->
                     -- TODO Add location
-                    logInfo_ logger $ U.convert ("There's an existing object with hash: " <> show (hexHash h) <> ", ignoring the new one.")      
+                    logInfo_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
               
 
 data RsyncCL = RsyncOneFile | RsyncDirectory

@@ -139,8 +139,8 @@ parseSignedObject eContentParse =
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
-getMeta :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
-getMeta obj bs = 
+getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
+getMetaFromSigned obj bs = 
   case extVal exts id_subjectKeyId of
     Nothing -> Left . fmtErr $ "SKI is absent" 
     Just s  -> do

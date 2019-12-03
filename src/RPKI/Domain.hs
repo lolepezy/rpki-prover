@@ -9,18 +9,10 @@ module RPKI.Domain where
 
 import qualified Data.Set as S
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
 
 import Control.DeepSeq
-import Control.Exception
-import Control.Monad.Except
-import Control.Monad.State.Strict
-import Control.Monad.Reader
-
 import Codec.Serialise
-
-import Data.Ord (comparing)
 import Data.Hex (hex)
 
 import Data.Kind (Type)
@@ -243,5 +235,11 @@ getAKI :: RpkiObject -> Maybe AKI
 getAKI (RpkiObject RpkiMeta {..} _) = aki
 getAKI (RpkiCrl CrlMeta {..} _) = Just aki
 
+getMeta :: RpkiObject -> RpkiMeta
+getMeta (RpkiObject m _) = m
+
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs
+
+toAKI :: SKI -> AKI
+toAKI (SKI ki) = AKI ki

@@ -60,7 +60,6 @@ dependencies:
 - hexpat
 - hourglass
 - hw-ip
-- interpolate
 - ixset-typed
 - lens
 - lmdb
@@ -83,6 +82,7 @@ dependencies:
 - streaming-bytestring
 - streaming-utils
 - string-conversions
+- string-interpolate
 - tagged
 - text
 - text-short

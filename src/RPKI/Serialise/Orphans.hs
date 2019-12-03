@@ -1,5 +1,8 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 module RPKI.Serialise.Orphans where
+
+import qualified Data.ByteString as B
 
 import Codec.Serialise
 import Codec.CBOR.Encoding
@@ -105,6 +108,7 @@ deriving instance Generic Crypto.PubKey.ECC.Types.CurveName
 
 deriving instance Generic BitArray
 
+decodePK :: (B.ByteString -> CryptoFailable b) -> Decoder s b
 decodePK f = f <$> decodeBytes >>= \case 
     CryptoPassed p -> pure p
     CryptoFailed e -> fail $ show e

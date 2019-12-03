@@ -30,9 +30,9 @@ import RPKI.Util (convert)
     - check the resource set (needs the parent as well)
     - check it's not revoked (needs CRL)
  -}
-validateResourceCert :: CerObject -> PureValidator ()
-validateResourceCert (CerObject (ResourceCert rc)) = 
-  void $ validateHasCriticalExtensions $ getX509Cert $ withRFC rc certX509     
+validateResourceCert :: CerObject -> PureValidator CerObject
+validateResourceCert cert@(CerObject (ResourceCert rc)) = 
+  validateHasCriticalExtensions $ getX509Cert $ withRFC rc certX509     
   where
     validateHasCriticalExtensions x509cert = do
       let exts = getExts x509cert
@@ -48,12 +48,12 @@ validateResourceCert (CerObject (ResourceCert rc)) =
                     OID oid,
                     End Sequence,
                     End Sequence
-                  ] | oid == id_cp_ipAddr_asNumber -> pure ()
-                _ -> pureError $ CertNoWrongPolicyExtension bs
+                  ] | oid == id_cp_ipAddr_asNumber -> pure cert
+                _ -> pureError $ CertWrongPolicyExtension bs
                 
                 
 -- | 
-validateTACert :: TAL -> URI -> RpkiObject -> PureValidator ()
+validateTACert :: TAL -> URI -> RpkiObject -> PureValidator CerObject
 validateTACert tal u ro@(RpkiObject RpkiMeta {..}  (CerRO cert@(CerObject (ResourceCert taCert)))) = do
     let spki = subjectPublicKeyInfo $ getX509Cert $ withRFC taCert certX509
     pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    

@@ -30,7 +30,9 @@ convert :: SC.ConvertibleStrings s1 s2 => s1 -> s2
 convert = SC.cs
 
 normalizeUri :: T.Text -> T.Text
-normalizeUri = T.map (\c -> if isAlpha c then c else '_') 
+normalizeUri = T.map (\c -> if isOkForAFile c then c else '_') 
+  where
+    isOkForAFile c = isAlpha c || isDigit c || c == '.'
 
 trim :: B.ByteString -> B.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)    
@@ -76,15 +78,15 @@ txFunnel :: (Traversable t, MonadUnliftIO m) =>
             (a -> m b) -> 
             ((tx -> m (t c)) -> m (t c)) ->
             (tx -> b -> m c) -> m (t c)
-txFunnel poolSize as f withTx g = do
+txFunnel poolSize as produce withTx consume = do
   (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
   snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
   where
     writeAll chanIn = forM_ as $
-      liftIO . Chan.writeChan chanIn <=< f
+      liftIO . Chan.writeChan chanIn <=< produce
     readAll chanOut = withTx $ \tx -> 
       forM as $ \_ -> 
-        g tx =<< liftIO (Chan.readChan chanOut)
+        consume tx =<< liftIO (Chan.readChan chanOut)
 
 -- pipeToTx :: (Traversable t, MonadUnliftIO m) => 
 --         Int ->
