@@ -25,6 +25,9 @@ data StorableUnit a e = SObject !(StorableObject a) | SError !e
 data StorableObject a = StorableObject !a !SValue
     deriving (Show, Eq, Typeable, Generic)
 
+toStorableObject :: Serialise a => a -> StorableObject a 
+toStorableObject a = StorableObject a $ force (storableValue a)
+
 toStorable :: Serialise v => v -> Storable
 toStorable = Storable . BL.toStrict . serialise
 

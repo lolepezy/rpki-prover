@@ -129,7 +129,7 @@ loadRsyncRepository logger topPath objectStore = do
                   Left e   -> SError e
                   -- "storableValue ro" has to happen in this thread, as it is the way to 
                   -- force computation of the serialised object and gain some parallelism
-                  Right ro -> SObject $ StorableObject ro $ force (storableValue ro)
+                  Right ro -> SObject $ toStorableObject ro
                   
               Chan.writeChan chanIn $ Just a      
 

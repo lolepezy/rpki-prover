@@ -11,9 +11,6 @@ import           Control.Lens                   ((^.))
 import           Control.Monad
 import           Control.Monad.Reader
 
-import           Control.DeepSeq                (force)
-
-
 import           Data.Bifunctor                 (first, second)
 import qualified Data.ByteString.Lazy           as BL
 import           Data.Has
@@ -202,7 +199,7 @@ processRrdp repository objectStore = do
                     try (U.txFunnel 20 ps objectAsyncs rwTx_ writeObject)
             where
                 objectAsyncs (SnapshotPublish u encodedb64) = do
-                    a <- Unlift.async $ pure $! toStorableObject u encodedb64
+                    a <- Unlift.async $ pure $! asStorable u encodedb64
                     pure (u,a)
                 
                 writeObject tx (u, a) = Unlift.wait a >>= \case                        
@@ -216,7 +213,7 @@ processRrdp repository objectStore = do
                     try (U.txFunnel 20 ds objectAsyncs rwTx_ writeObject)
             where
                 objectAsyncs (DP (DeltaPublish u h encodedb64)) = do 
-                    a <- Unlift.async $ pure $! toStorableObject u encodedb64
+                    a <- Unlift.async $ pure $! asStorable u encodedb64
                     pure $ Right (u, h, a)
 
                 objectAsyncs (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
@@ -249,9 +246,9 @@ processRrdp repository objectStore = do
                                                 -- TODO Add location
                                                 logWarn_ logger [i|There's an existing object with hash: #newHash|]
 
-        toStorableObject (URI u) b64 = case parsed of
+        asStorable (URI u) b64 = case parsed of
             Left e   -> SError e
-            Right ro -> SObject $ StorableObject ro $ force (storableValue ro)
+            Right ro -> SObject $ toStorableObject ro
             where
                 parsed = do
                     DecodedBase64 b <- first RrdpE  $ decodeBase64 b64 u
