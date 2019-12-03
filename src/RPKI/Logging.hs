@@ -1,8 +1,10 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards   #-}
+
 module RPKI.Logging where
 
 import Colog
-import GHC.Stack (callStack)
+import GHC.Stack (callStack, withFrozenCallStack)
 
 import Data.Text
 
@@ -13,7 +15,7 @@ class Logger logger where
   logDebug_ :: logger -> Text -> IO ()
 
 
-newtype AppLogger = AppLogger (LogAction IO Text)
+newtype AppLogger = AppLogger (LogAction IO Message)
 
 instance Logger AppLogger where
   logError_ (AppLogger la) = logWhat E la 
@@ -21,9 +23,7 @@ instance Logger AppLogger where
   logInfo_  (AppLogger la) = logWhat I la 
   logDebug_ (AppLogger la) = logWhat D la 
 
-
-logWhat :: Severity -> LogAction IO Text -> Text -> IO ()
-logWhat sev la e = do 
-  let logAction = cmap fmtMessage la
-  logAction <& Msg sev callStack e
+logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
+logWhat sev la textMessage = do
+  withFrozenCallStack $ la <& Msg sev callStack textMessage
 

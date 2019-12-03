@@ -425,8 +425,8 @@ processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
     say "begin"  
     lmdbStorage <- LMDB.create env "objects"
-    let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing
-    let conf = (AppLogger logTextStdout)
+    let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
+    let conf = createLogger
     let store = RpkiObjectStore {
       objects = SIxMap lmdbStorage [],
       byAKI = SMMap lmdbStorage
@@ -435,26 +435,25 @@ processRRDP env = do
     say $ "resulve " <> show e
   
 saveRsyncRepo env = do
-  say "begin"  
   lmdbStorage <- LMDB.create env "objects"
-  let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")
-  let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+  let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
+  let conf = (createLogger, RsyncConf "/tmp/rsync")
   let store = RpkiObjectStore {
     objects = SIxMap lmdbStorage [],
     byAKI = SMMap lmdbStorage
   }
-  e <- runValidatorT conf $ processRsync repo store
-  say $ "done " <> show e
+  runValidatorT conf $ processRsync repo store
 
 saveRsync env = do
     say "begin"  
-    let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+    let logAction = logTextStdout
+    let conf = (createLogger, RsyncConf "/tmp/rsync")
     e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
     say $ "done " <> show e
 
 processTAL = do
   say "begin"  
-  let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+  let conf = (createLogger, RsyncConf "/tmp/rsync")
   result <- runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
       B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
@@ -465,7 +464,7 @@ processTAL = do
   say $ "done " <> show result
 
 getTACert = do
-  let conf = (AppLogger logTextStdout, RsyncConf "/tmp/rsync")
+  let conf = (createLogger, RsyncConf "/tmp/rsync")
   runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
       B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
@@ -483,7 +482,7 @@ main = do
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
   -- processTAL
-  mkLmdb >>= saveRsyncRepo
+  mkLmdb >>= void . saveRsyncRepo
   -- testSignature
 
 say :: String -> IO ()
@@ -491,3 +490,9 @@ say s = do
   let !ss = s
   t <- getCurrentTime
   putStrLn $ show t <> ": " <> ss
+
+createLogger :: AppLogger
+createLogger = AppLogger fullMessageAction
+  where
+    richMessageAction = cmapM fmtRichMessageDefault logTextStdout
+    fullMessageAction = upgradeMessageAction defaultFieldMap richMessageAction

@@ -17,6 +17,7 @@ import           UnliftIO.Exception                    hiding (fromEither)
 import qualified Data.ByteString                       as B
 import           Data.String.Interpolate
 import qualified Data.Text                             as T
+import           Data.IORef
 
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -84,15 +85,18 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
     createDirectoryIfMissing True destination
   
   logger :: AppLogger   <- asks getter 
-  (exitCode, stdout, stderr) <- lift $ readProcess rsync      
+  lift3 $ logInfo_ logger [i|Going to run #{rsync}|]
+  (exitCode, stdout, stderr) <- lift $ readProcess rsync
+  lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
   case exitCode of  
-    ExitSuccess ->
-      fromIOEither $ loadRsyncRepository logger rsyncRoot objectStore
+    ExitSuccess -> do
+      count <- fromIOEither $ loadRsyncRepository logger rsyncRoot objectStore      
+      lift3 $ logInfo_ logger [i|Finished loading #{count} objects into local storage|]      
     ExitFailure errorCode -> do
-      lift3 $ logError_ logger [i|Rsync process failed: #rsync 
-                                  with code #errorCode, 
-                                  stderr = #stderr, 
-                                  stdout = #stdout|]
+      lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
+                                  with code #{errorCode}, 
+                                  stderr = #{stderr}, 
+                                  stdout = #{stdout}|]
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
   
 
@@ -102,11 +106,13 @@ loadRsyncRepository :: (Storage s, Logger logger) =>
                         logger ->
                         FilePath -> 
                         RpkiObjectStore s -> 
-                        IO (Either SomeError ())
+                        IO (Either SomeError Integer)
 loadRsyncRepository logger topPath objectStore = do
+    counter <- newIORef 0
     (chanIn, chanOut) <- Chan.newChan 12
-    (r1, r2) <- concurrently (travelrseFS chanIn) (saveObjects chanOut)
-    pure $ first RsyncE r1 >> first StorageE r2
+    (r1, r2) <- concurrently (travelrseFS chanIn) (saveObjects counter chanOut)
+    c <- readIORef counter
+    pure (first RsyncE r1 >> first StorageE r2 >> pure c)
   where 
     travelrseFS chanIn = 
       first (FileReadError . U.fmtEx) <$> try (
@@ -127,13 +133,13 @@ loadRsyncRepository logger topPath objectStore = do
                 bs <- B.readFile path                
                 pure $! case first ParseE $ readObject path bs of
                   Left e   -> SError e
-                  -- "storableValue ro" has to happen in this thread, as it is the way to 
+                  -- "toStorableObject ro" has to happen in this thread, as it is the way to 
                   -- force computation of the serialised object and gain some parallelism
                   Right ro -> SObject $ toStorableObject ro
                   
               Chan.writeChan chanIn $ Just a      
 
-    saveObjects chanOut = 
+    saveObjects counter chanOut = 
       first (StorageError . U.fmtEx) <$> 
         try (rwTx (storage objectStore) go)
       where 
@@ -144,13 +150,15 @@ loadRsyncRepository logger topPath objectStore = do
 
         process tx = \case
           Left (e :: SomeException) -> 
-            logError_ logger [i|An error reading the object: #e|]
+            logError_ logger [i|An error reading the object: #{e}|]
           Right (SError e) -> 
-            logError_ logger [i|An error parsing or serialising the object: #e|]
+            logError_ logger [i|An error parsing or serialising the object: #{e}|]
           Right (SObject so@(StorableObject ro _)) -> do
             let h = getHash ro
             getByHash tx objectStore h >>= \case 
-                Nothing -> putObject tx objectStore h so
+                Nothing -> do
+                  putObject tx objectStore h so
+                  void $ atomicModifyIORef counter (\c -> (c + 1, ()))
                 Just _  ->
                     -- TODO Add location
                     logInfo_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]

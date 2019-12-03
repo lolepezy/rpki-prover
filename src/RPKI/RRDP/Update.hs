@@ -203,7 +203,7 @@ processRrdp repository objectStore = do
                     pure (u,a)
                 
                 writeObject tx (u, a) = Unlift.wait a >>= \case                        
-                    SError e   -> logError_ logger [i|Couldn't parse object #u, error #e |]
+                    SError e   -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
                     SObject so@(StorableObject ro _) -> putObject tx objectStore (getHash ro) so
 
         saveDelta :: AppLogger -> Delta -> IO (Maybe SomeError)
@@ -222,29 +222,29 @@ processRrdp repository objectStore = do
                     Left (_, h)           -> deleteObject tx objectStore h
                     Right (u, Nothing, a) -> 
                         Unlift.wait a >>= \case
-                            SError e -> logError_ logger [i|Couldn't parse object #u, error #e |]
+                            SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
                             SObject so@(StorableObject ro _) -> do
                                 let h = getHash ro
                                 getByHash tx objectStore h >>= \case
                                     Nothing -> putObject tx objectStore h so
                                     Just _ ->
                                         -- TODO Add location
-                                        logWarn_ logger [i|There's an existing object with hash #h |]
+                                        logWarn_ logger [i|There's an existing object with hash #{h} |]
                     Right (u, Just oldHash, a) -> 
                         Unlift.wait a >>= \case
-                            SError e -> logError_ logger [i|Couldn't parse object #u, error #e |]
+                            SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
                             SObject so@(StorableObject ro _) -> do
                                 let newHash = getHash ro
                                 getByHash tx objectStore oldHash >>= \case 
                                     Nothing -> 
-                                        logWarn_ logger [i|No object with hash #oldHash nothing to replace|]
+                                        logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
                                     Just _ -> do 
                                         deleteObject tx objectStore oldHash
                                         getByHash tx objectStore newHash >>= \case 
                                             Nothing -> putObject tx objectStore newHash so
                                             Just _  -> 
                                                 -- TODO Add location
-                                                logWarn_ logger [i|There's an existing object with hash: #newHash|]
+                                                logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
 
         asStorable (URI u) b64 = case parsed of
             Left e   -> SError e
