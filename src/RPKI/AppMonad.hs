@@ -32,21 +32,24 @@ lift3 :: (MonadTrans t1, MonadTrans t2, MonadTrans t3, Monad m,
         m a -> t1 (t2 (t3 m)) a
 lift3 = lift . lift . lift
 
-fromIOEither :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
-                m (Either e a) -> t1 (ExceptT e (t2 m)) a
+fromIOEither :: Monad m => m (Either SomeError r) -> ValidatorT conf m r
 fromIOEither = lift . ExceptT . lift 
 
-fromTry :: (MonadTrans t1, MonadTrans t2, Monad (t2 IO), Exception exc) =>
-            (exc -> e) -> IO t -> t1 (ExceptT e (t2 IO)) t
+-- TODO Make it not so ugly
+fromIOEitherSt :: Monad m => m (Either SomeError r, [ValidationWarning]) -> ValidatorT conf m r
+fromIOEitherSt s = lift $ ExceptT $ do
+                        (v, w) <- lift s
+                        put w
+                        pure v
+
+fromTry :: Exception exc => (exc -> SomeError) -> IO r -> ValidatorT conf IO r
 fromTry mapErr t = fromIOEither $ first mapErr <$> try t
 
-fromEither :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
-            Either e a -> t1 (ExceptT e (t2 m)) a
+fromEither :: Monad m => Either SomeError r -> ValidatorT conf m r
 fromEither = fromIOEither . pure
 
-fromTryEither :: (MonadTrans t1, MonadTrans t2, Monad (t1 (ExceptT e (t2 IO))), 
-                  Monad (t2 IO), Exception exc) =>
-                 (exc -> e) -> IO (Either e b) -> t1 (ExceptT e (t2 IO)) b
+fromTryEither :: Exception exc =>
+                 (exc -> SomeError) -> IO (Either SomeError r) -> ValidatorT conf IO r
 fromTryEither mapErr t = fromEither =<< fromTry mapErr t
 
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)

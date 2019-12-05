@@ -243,3 +243,6 @@ hexHash (Hash bs) = show $ hex bs
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
+
+getCMSContent :: CMS a -> a
+getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so

@@ -15,6 +15,7 @@ import           Data.String.Interpolate
 import           Data.Foldable
 
 import qualified Data.ByteString            as B
+import qualified Data.Text                  as T
 import           Data.Has
 import qualified Data.List.NonEmpty         as NE
 
@@ -59,20 +60,42 @@ validateTA tal taStore = do
 
 
 -- | Do top-down validation starting from the given object
-validateTree :: (Has RsyncConf conf, Has AppLogger conf, Storage s) =>
+validateTree :: (Has AppLogger conf, Storage s) =>
                 RpkiObject ->
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
-validateTree (RpkiObject meta (CerRO cert@(CerObject (ResourceCert rc)))) objectStore = do
-  -- find children
-  -- findByAKI objectStore $ toAKI $ ski meta
+validateTree ro@(RpkiObject meta (CerRO cert@(CerObject (ResourceCert rc)))) objectStore = do
+
+  logger :: AppLogger <- asks getter
+  let aki = toAKI $ ski meta
+
   -- find MFT
-  -- find CRL
-  -- 
-  pure ()
+  mftCms <- fromIOEitherSt $ roTx objectStore $ \tx -> 
+    runValidatorT () $ do      
+      children <- lift3 $ findMftsByAKI tx objectStore aki
+      case children of 
+        []        -> validatorError $ NoMFT aki (getLocations ro)
+        (mft : _) -> pure mft
+
+  -- find CRL  
+  let crls = filter (\(name, hash) -> ".crl" `T.isSuffixOf` name) $ 
+        mftEntries $ getCMSContent mftCms
+
+  (crlName, crlHash) <- case crls of 
+    []    -> validatorError $ NoCRLOnMFT aki (getLocations ro)    
+    [crl] -> pure crl
+    _     -> validatorError $ MoreThanOneCRLOnMFT aki (getLocations ro)    
+
+  crlOnbject <- lift3 $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
+  case crlOnbject of 
+    Nothing -> validatorError $ NoCRLExists aki (getLocations ro)    
+    Just crl -> do
+
+      pure ()
+  
 
 
-  -- | Fetch TA certificate based on TAL location(s)
+  -- | Fetch TA certificate based on TAL location(s 
 fetchTACertificate :: (Has RsyncConf conf, Has AppLogger conf) => 
                       TAL -> ValidatorT conf IO (URI, RpkiObject)
 fetchTACertificate tal = 

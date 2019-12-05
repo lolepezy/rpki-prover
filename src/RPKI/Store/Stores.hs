@@ -27,8 +27,7 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
   storage = storage . objects
 
 
-getByHash :: Storage s => 
-              Tx s m -> RpkiObjectStore s -> Hash -> IO (Maybe RpkiObject)
+getByHash :: Storage s => Tx s m -> RpkiObjectStore s -> Hash -> IO (Maybe RpkiObject)
 getByHash tx store h = (fromSValue <$>) <$> SM.get tx (objects store) h
 
 putObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> Hash -> StorableObject RpkiObject -> IO ()
@@ -43,8 +42,11 @@ deleteObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> Hash -> IO ()
 deleteObject tx store h = SM.delete tx (objects store) h
 
 
-findByAKI :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe StoredTA)
-findByAKI tx (TAStore s) name = SM.get tx s name
+findByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [RpkiObject]
+findByAKI tx (RpkiObjectStore s _) aki = pure []
+
+findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
+findMftsByAKI tx (RpkiObjectStore s _) aki = pure []
 
 
 newtype TAStore s = TAStore (SMap s TaName StoredTA)

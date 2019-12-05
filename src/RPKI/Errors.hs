@@ -8,6 +8,8 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
 
+import Data.List.NonEmpty
+
 import Control.DeepSeq
 import Control.Exception
 
@@ -26,15 +28,19 @@ data ValidationError = InvalidCert !T.Text |
                         NoAKIinManifest |
                         ROACannotBeAParent |
                         NoAKI | 
-                        SPKIMismatch EncodedBase64 EncodedBase64 |
+                        SPKIMismatch !EncodedBase64 !EncodedBase64 |
                         UnknownObjectAsTACert |
                         TACertificateIsTooSmall !Int |
                         TACertificateIsTooBig !Int |
-                        TACertificateLocalIsNewer Serial Serial |
+                        TACertificateLocalIsNewer !Serial !Serial |
                         InvalidSignature !T.Text |                        
                         AKIIsNotEmpty |
                         CertNoPolicyExtension |
-                        CertWrongPolicyExtension B.ByteString
+                        CertWrongPolicyExtension !B.ByteString |
+                        NoMFT !AKI !(NonEmpty URI) |
+                        NoCRLOnMFT !AKI !(NonEmpty URI) |
+                        MoreThanOneCRLOnMFT !AKI !(NonEmpty URI) |
+                        NoCRLExists !AKI !(NonEmpty URI)
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 
@@ -54,13 +60,13 @@ data RrdpError = BrokenXml !T.Text |
                  BadPublish !B.ByteString |
                  NoHashInWithdraw |
                  ContentInWithdraw !B.ByteString |
-                 LocalSerialBiggerThanRemote Serial Serial |
-                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
-                 CantDownloadNotification String |
-                 CantDownloadSnapshot String |
-                 CantDownloadDelta String |
-                 SnapshotHashMismatch Hash Hash |
-                 DeltaHashMismatch Hash Hash Serial
+                 LocalSerialBiggerThanRemote !Serial !Serial |
+                 NonConsecutiveDeltaSerials ![(Serial, Serial)] |
+                 CantDownloadNotification !String |
+                 CantDownloadSnapshot !String |
+                 CantDownloadDelta !String |
+                 SnapshotHashMismatch !Hash !Hash |
+                 DeltaHashMismatch !Hash !Hash !Serial
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data RsyncError = RsyncProcessError !Int !BL.ByteString |
