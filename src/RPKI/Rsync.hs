@@ -142,7 +142,7 @@ loadRsyncRepository logger config topPath objectStore = do
 
     saveObjects counter chanOut = 
       first (StorageError . U.fmtEx) <$> 
-        try (rwTx (storage objectStore) go)
+        try (rwTx objectStore go)
       where 
         go tx = 
           Chan.readChan chanOut >>= \case 

@@ -191,7 +191,7 @@ processRrdp repository objectStore = do
     logger :: AppLogger   <- asks getter 
     fromIOEither $ updateRrdpRepo repository (saveSnapshot logger) (saveDelta logger)
     where
-        rwTx_ = rwTx $ storage objectStore
+        rwTx_ = rwTx objectStore
         saveSnapshot :: AppLogger -> Snapshot -> IO (Maybe SomeError)
         saveSnapshot logger (Snapshot _ _ _ ps) = do
             logInfo_ logger [i|Using snapshot for the repository: #{repository} |]

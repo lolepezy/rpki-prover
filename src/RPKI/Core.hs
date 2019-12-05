@@ -40,7 +40,7 @@ validateTA tal taStore = do
   (u, ro) <- fetchTACertificate tal
   cert <- pureToValidatorT $ validateTACert tal u ro  
   fromTryEither (StorageE . StorageError . fmtEx) $ 
-    rwTx (storage taStore) $ \tx -> do
+    rwTx taStore $ \tx -> do
       let newMeta = getMeta ro
       -- It has to be IO a, so return IO (Either SomeError ()) here
       getTA tx taStore (getTaName tal) >>= \case

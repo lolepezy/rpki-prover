@@ -39,8 +39,8 @@ toROTx = coerce
 
 instance WithTx LmdbStore where    
     data Tx LmdbStore (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
-    roTx LmdbStore {..} f = withTransaction env (f . LmdbTx . readonly)
-    rwTx LmdbStore {..} f = withTransaction env (f . LmdbTx)
+    readOnlyTx LmdbStore {..} f = withTransaction env (f . LmdbTx . readonly)
+    readWriteTx LmdbStore {..} f = withTransaction env (f . LmdbTx)
 
 -- | Basic storage implemented using LMDB
 instance Storage LmdbStore where    
