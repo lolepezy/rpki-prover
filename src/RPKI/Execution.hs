@@ -24,7 +24,6 @@ import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores
-import           RPKI.Validation.Cert
 import           RPKI.Util                  (convert, fmtEx)
 
 

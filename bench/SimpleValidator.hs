@@ -77,7 +77,7 @@ import           RPKI.Store.Base.MultiMap
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Rsync
-import           RPKI.Validation.Cert
+import           RPKI.Validation.Objects
 import qualified RPKI.Util  as U
 
 

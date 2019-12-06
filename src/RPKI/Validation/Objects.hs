@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
-module RPKI.Validation.Cert where
+module RPKI.Validation.Objects where
 
 import Control.Monad
 
@@ -31,7 +31,7 @@ import RPKI.Util (convert)
     - check it's not revoked (needs CRL)
  -}
 validateResourceCert :: CerObject -> PureValidator CerObject
-validateResourceCert cert@(CerObject (ResourceCert rc)) = 
+validateResourceCert cert@(ResourceCert rc) = 
   validateHasCriticalExtensions $ getX509Cert $ withRFC rc certX509     
   where
     validateHasCriticalExtensions x509cert = do
@@ -53,16 +53,18 @@ validateResourceCert cert@(CerObject (ResourceCert rc)) =
                 
                 
 -- | 
-validateTACert :: TAL -> URI -> RpkiObject -> PureValidator CerObject
-validateTACert tal u ro@(RpkiObject RpkiMeta {..}  (CerRO cert@(CerObject (ResourceCert taCert)))) = do
+validateTACert :: TAL -> URI -> RpkiObject -> PureValidator (WithMeta CerObject)
+validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(ResourceCert taCert)))) = do
     let spki = subjectPublicKeyInfo $ getX509Cert $ withRFC taCert certX509
     pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
     pureErrorIfNot (isNothing aki) AKIIsNotEmpty
     -- It's self-signed, so use itself as a parent to check the signature
     case validateSignature ro cert of
       SignatureFailed f -> pureError $ InvalidSignature $ convert $ show f
-      SignaturePass     -> validateResourceCert cert
+      SignaturePass     -> WithMeta m <$> validateResourceCert cert
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
 
 
+validateCrl :: CrlMeta -> CrlObject -> PureValidator CrlObject
+validateCrl _ crl = pure crl
