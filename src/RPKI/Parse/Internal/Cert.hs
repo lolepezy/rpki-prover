@@ -52,7 +52,7 @@ parseResourceCertificate bs = do
             locations = location :| [], 
             serial = Serial (certSerial x509)          
           }
-        pure $ \location -> (meta location, CerObject r)
+        pure $ \location -> (meta location, r)
     Nothing -> (Left . fmtErr) "No SKI extension"
 
 

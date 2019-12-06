@@ -258,7 +258,7 @@ testSignature = do
 
   putStrLn $ "roa blob = " ++ show bs
 
-  let rr@(RpkiObject (RpkiMeta { aki = Just (AKI ki)}) (RoaRO cms@(CMS so))) = roa
+  let rr@(RpkiObject (WithMeta (RpkiMeta { aki = Just (AKI ki)}) (RoaRO cms@(CMS so)))) = roa
   let CertificateWithSignature 
         _ 
         (SignatureAlgorithmIdentifier signAlgorithm) 
@@ -267,7 +267,7 @@ testSignature = do
   putStrLn $ "encoded = " ++ show encoded
 
   let skiMap = bySKIMap objects
-  let [x@(RpkiObject _ (CerRO cer@(CerObject (ResourceCert parentCert))))] = MultiMap.lookup (SKI ki) skiMap
+  let [x@(RpkiObject (WithMeta _ (CerRO cer@(ResourceCert parentCert))))] = MultiMap.lookup (SKI ki) skiMap
 
   let s = validateSignature rr cer
 
@@ -284,48 +284,48 @@ testSignature = do
   putStrLn $ "validateCMSSignature = " ++ (show $ validateCMSSignature cms)
 
   
-testCrl :: IO ()
-testCrl = do
+-- testCrl :: IO ()
+-- testCrl = do
   
-  bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
-  -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/lacnic/repository/lacnic/0043f52c-eeee-4d62-97e6-44c83c8beb9f/3c4a28de1ccccd1e98eb95feb157d61c6659de78.crl"  
-  -- putStrLn $ "asns = " <> show (decodeASN1' BER bs)
+--   bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
+--   -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/lacnic/repository/lacnic/0043f52c-eeee-4d62-97e6-44c83c8beb9f/3c4a28de1ccccd1e98eb95feb157d61c6659de78.crl"  
+--   -- putStrLn $ "asns = " <> show (decodeASN1' BER bs)
   
-  parsed <- readRepo
-  let objects = [ o | (_, Right o) <- parsed ]  
+--   parsed <- readRepo
+--   let objects = [ o | (_, Right o) <- parsed ]  
 
-  case parseCrl bs of
-    Left e  -> putStrLn $ "x = " <> show e
-    Right x -> do
-      let (CrlMeta { aki = AKI ki }, CrlObject crl) = x $ URI "rsync://bla"
-      putStrLn $ "aki = " <> show ki
-      let SignCRL {
-            signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
-            signatureValue = (SignatureValue sign), 
-            encodedValue = encoded 
-          } = crl
+--   case parseCrl bs of
+--     Left e  -> putStrLn $ "x = " <> show e
+--     Right x -> do
+--       let (CrlMeta { aki = AKI ki }, crl) = x $ URI "rsync://bla"
+--       putStrLn $ "aki = " <> show ki
+--       let SignCRL {
+--             signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
+--             signatureValue = (SignatureValue sign), 
+--             encodedValue = encoded 
+--           } = crl
 
-      let skiMap = bySKIMap objects
-      let xx = MultiMap.lookup (SKI ki) skiMap
-      putStrLn $ "xx = " <> show xx
-      let [x@(RpkiObject _ (CerRO cer@(CerObject (ResourceCert parentCert))))] = xx
+--       let skiMap = bySKIMap objects
+--       let xx = MultiMap.lookup (SKI ki) skiMap
+--       putStrLn $ "xx = " <> show xx
+--       let [x@(RpkiObject _ (CerRO cer@(ResourceCert parentCert)))] = xx
 
-      let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
+--       let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
 
-      let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
-      let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
-      putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]
+--       let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
+--       let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
+--       putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]
 
-      putStrLn $ "verify = " <> (show $ verifySignature signAlgorithm pubKey encoded sign)
+--       putStrLn $ "verify = " <> (show $ verifySignature signAlgorithm pubKey encoded sign)
       
 
 validateKeys :: [RpkiObject] -> Either String [SignatureVerification]
 validateKeys objects = 
-  case [ ro | ro@(RpkiObject RpkiMeta { aki = Nothing } _) <- objects ] of
+  case [ ro | ro@(RpkiObject (WithMeta RpkiMeta { aki = Nothing } _)) <- objects ] of
     []      -> Left $ "No TA certificate"    
-    taCerts -> Right $ concat [ validateChildren meta ro | RpkiObject meta ro <- taCerts ]
+    taCerts -> Right $ concat [ validateChildren meta ro | RpkiObject (WithMeta meta ro) <- taCerts ]
   where    
-    validateChildren :: RpkiMeta -> RO -> [SignatureVerification]
+    validateChildren :: RpkiMeta -> RpkiSpecific -> [SignatureVerification]
     validateChildren meta (CerRO parentCert) = concat childrenVerification 
       where 
         childrenVerification = parMap strategy (validateChildParent parentCert) $ children meta
@@ -333,10 +333,10 @@ validateKeys objects =
     validateChildren _ _ = []
 
     validateChildParent parentCert = \case 
-      ro@(RpkiObject _ (MftRO cms@(CMS _))) -> eeSignAndCMSSign ro cms 
-      ro@(RpkiObject _ (RoaRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
-      ro@(RpkiObject _ (GbrRO cms@(CMS _))) -> eeSignAndCMSSign ro cms
-      ro@(RpkiObject m cer@(CerRO _))       -> 
+      ro@(RpkiObject (WithMeta _ (MftRO cms@(CMS _)))) -> eeSignAndCMSSign ro cms 
+      ro@(RpkiObject (WithMeta _ (RoaRO cms@(CMS _)))) -> eeSignAndCMSSign ro cms
+      ro@(RpkiObject (WithMeta _ (GbrRO cms@(CMS _)))) -> eeSignAndCMSSign ro cms
+      ro@(RpkiObject (WithMeta m cer@(CerRO _)))       -> 
         [validateSignature ro parentCert] <> validateChildren m cer      
       where
         eeSignAndCMSSign  :: RpkiObject -> CMS a -> [SignatureVerification]
@@ -350,10 +350,10 @@ validateKeys objects =
     
 
 bySKIMap :: [RpkiObject] -> MultiMap SKI RpkiObject
-bySKIMap ros = MultiMap.fromList [ (ski, ro) | ro@(RpkiObject RpkiMeta {..} _) <- ros ]
+bySKIMap ros = MultiMap.fromList [ (ski, ro) | ro@(RpkiObject (WithMeta RpkiMeta {..} _)) <- ros ]
 
 byAKIMap :: [RpkiObject] -> MultiMap AKI RpkiObject
-byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject RpkiMeta { aki = Just a } _) <- ros ]
+byAKIMap ros = MultiMap.fromList [ (a, ro) | ro@(RpkiObject (WithMeta RpkiMeta { aki = Just a } _)) <- ros ]
 
 parseWithTmp :: FilePath -> (BL.ByteString -> IO a) -> IO a
 parseWithTmp filename f = --BL.readFile filename >>= f
@@ -409,8 +409,8 @@ validatorUpdateRRDPRepo lmdb = do
               True -> pure ()
               False -> LmdbMap.repsert' tx m h bs
 
-      toBytes_ o@(RpkiObject RpkiMeta {..} _) = (hash, BL.toStrict $ Serialise.serialise o)
-      toBytes_ c@(RpkiCrl CrlMeta {..} _)     = (hash, BL.toStrict $ Serialise.serialise c)
+      toBytes_ o@(RpkiObject (WithMeta RpkiMeta {..} _)) = (hash, BL.toStrict $ Serialise.serialise o)
+      toBytes_ c@(RpkiCrl (CrlMeta {..}, _))     = (hash, BL.toStrict $ Serialise.serialise c)
     
       -- readAll :: Database Hash RpkiObject -> IO [RpkiObject]
       -- readAll db = withReadOnlyTransaction lmdb $ do

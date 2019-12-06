@@ -19,7 +19,7 @@ import           RPKI.Parse.Internal.Common
 import           RPKI.SignTypes
 
 
-parseCrl :: B.ByteString -> ParseResult (URI -> (CrlMeta, CrlObject))
+parseCrl :: B.ByteString -> ParseResult (URI -> CrlObject)
 parseCrl bs = do
   asns                <- first (fmtErr . show) $ decodeASN1' BER bs
   (x509crl, signCrlF) <- first fmtErr $ runParseASN1 getCrl asns  
@@ -47,7 +47,7 @@ parseCrl bs = do
       aki = AKI $ KI aki',
       hash = U.sha256s bs
     }
-  pure $ \location -> (meta location, CrlObject $ signCrlF crlNumber')
+  pure $ \location -> (meta location, signCrlF crlNumber')
   where  
     getCrl = onNextContainer Sequence $ do
       (asns, crl') <- getNextContainerMaybe Sequence >>= \case 
@@ -59,8 +59,8 @@ parseCrl bs = do
       signatureVal <- parseSignature
       let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
       pure (crl', 
-        \crlNumber -> 
-          SignCRL crl' (SignatureAlgorithmIdentifier signatureId) signatureVal encoded crlNumber)
+        \crlNumber' -> 
+          SignCRL crl' (SignatureAlgorithmIdentifier signatureId) signatureVal encoded crlNumber')
       
     getCrlContent = do        
       x509Crl    <- parseX509CRL

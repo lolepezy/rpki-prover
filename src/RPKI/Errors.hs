@@ -40,7 +40,8 @@ data ValidationError = InvalidCert !T.Text |
                         NoMFT !AKI !(NonEmpty URI) |
                         NoCRLOnMFT !AKI !(NonEmpty URI) |
                         MoreThanOneCRLOnMFT !AKI !(NonEmpty URI) |
-                        NoCRLExists !AKI !(NonEmpty URI)
+                        NoCRLExists !AKI !(NonEmpty URI) |
+                        CRLHashPointsToAnotherObject !Hash !(NonEmpty URI)
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 

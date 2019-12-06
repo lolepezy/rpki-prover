@@ -78,9 +78,11 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 
 newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
 
-newtype CerObject = CerObject ResourceCert deriving (Show, Eq, Typeable, Generic)
-newtype CrlObject = CrlObject SignCRL deriving (Show, Eq, Typeable, Generic)
+data WithMeta a = WithMeta !RpkiMeta !a
+    deriving (Show, Eq, Typeable, Generic)
 
+type CrlObject = (CrlMeta, SignCRL)
+type CerObject = ResourceCert
 type MftObject = CMS Manifest
 type RoaObject = CMS [Roa]
 type GbrObject = CMS Gbr
@@ -99,16 +101,18 @@ data RpkiMeta = RpkiMeta {
     serial    :: Serial
 } deriving (Show, Eq, Ord, Typeable, Generic)
 
-data RO = CerRO CerObject 
-        | MftRO MftObject
-        | RoaRO RoaObject
-        | GbrRO GbrObject
+data RpkiSpecific = CerRO !CerObject 
+                  | MftRO !MftObject
+                  | RoaRO !RoaObject
+                  | GbrRO !GbrObject
     deriving (Show, Eq, Typeable, Generic)
 
-data RpkiObject = RpkiObject RpkiMeta RO 
-                | RpkiCrl CrlMeta CrlObject
+data RpkiObject = RpkiObject !(WithMeta RpkiSpecific)
+                | RpkiCrl !CrlObject
     deriving (Show, Eq, Typeable, Generic)
 
+-- data RpkiCrl = RpkiCrl !CrlMeta !CrlObject
+--     deriving (Show, Eq, Typeable, Generic)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
     certX509    :: X509.SignedExact X509.Certificate, 
@@ -167,7 +171,7 @@ data TA = TA {
   , taSpki        :: SPKI
 } deriving (Show, Eq, Generic, Serialise)
 
-data RepoType = Rsync | Rrdp
+-- data RepoType = Rsync | Rrdp
 
 data RsyncRepository = RsyncRepository {
     uri :: URI    
@@ -197,18 +201,18 @@ instance Serialise AKI
 instance Serialise SKI
 instance Serialise KI
 instance Serialise Serial
-instance Serialise RO
+instance Serialise RpkiSpecific
 instance Serialise Manifest
 instance Serialise Roa
 instance Serialise Gbr
 instance Serialise ASN
 instance Serialise a => Serialise (CMS a)
-instance Serialise CerObject
-instance Serialise CrlObject
+-- instance Serialise CerObject
+-- instance Serialise CrlObject
 instance Serialise SignCRL
 instance Serialise ResourceCert
 instance Serialise RpkiObject
-
+instance Serialise a => Serialise (WithMeta a)
 instance Serialise (WithRFC 'Strict_ ResourceCertificate)
 instance Serialise (ResourceCertificate 'Strict_)
 instance Serialise (IpResourceSet 'Strict_)
@@ -224,19 +228,20 @@ instance Serialise AsResource
 
 -- 
 getHash :: RpkiObject -> Hash
-getHash (RpkiObject RpkiMeta {..} _) = hash
-getHash (RpkiCrl CrlMeta {..} _)     = hash
+getHash (RpkiObject (WithMeta RpkiMeta {..} _)) = hash
+getHash (RpkiCrl (CrlMeta {..}, _)) = hash
 
 getLocations :: RpkiObject -> NonEmpty URI
-getLocations (RpkiObject RpkiMeta {..} _) = locations
-getLocations (RpkiCrl CrlMeta {..} _) = locations
+getLocations (RpkiObject (WithMeta RpkiMeta {..} _)) = locations
+getLocations (RpkiCrl (CrlMeta {..}, _)) = locations
 
 getAKI :: RpkiObject -> Maybe AKI
-getAKI (RpkiObject RpkiMeta {..} _) = aki
-getAKI (RpkiCrl CrlMeta {..} _) = Just aki
+getAKI (RpkiObject (WithMeta RpkiMeta {..} _)) = aki
+getAKI (RpkiCrl (CrlMeta {..}, _)) = Just aki
 
-getMeta :: RpkiObject -> RpkiMeta
-getMeta (RpkiObject m _) = m
+getMeta :: RpkiObject -> Maybe RpkiMeta
+getMeta (RpkiObject (WithMeta m _)) = Just m
+getMeta _                           = Nothing
 
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs

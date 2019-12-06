@@ -41,12 +41,12 @@ readObject name content = do
     "crl" -> do
         f <- parseCrl content
         let (meta, o) = f u
-        pure $ RpkiCrl meta o
+        pure $ RpkiCrl (meta, o)
 
     _     -> Left $ fmtErr $ "Unknown object type: " <> show name
     where
         parse_ u p constructor bs = do
             f <- p bs
             let (meta, o) = f u
-            pure $ (RpkiObject meta . constructor) o
+            pure $ (RpkiObject . WithMeta meta . constructor) o
 

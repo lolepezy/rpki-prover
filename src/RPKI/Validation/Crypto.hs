@@ -12,20 +12,20 @@ import RPKI.SignTypes
     
 -- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification
-validateSignature rpkiObject (CerObject (ResourceCert parentCert)) = 
+validateSignature rpkiObject (ResourceCert parentCert) = 
     verifySignature signAlgorithm pubKey signData sign
     where        
         (signAlgorithm, signData, sign) = getSign rpkiObject
         pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
 
-        getSign (RpkiObject _ (CerRO (CerObject (ResourceCert resourceCert)))) = 
+        getSign (RpkiObject (WithMeta _ (CerRO (ResourceCert resourceCert)))) = 
             (signedAlg $ getSigned signedExact, 
             getSignedData signedExact, 
             signedSignature $ getSigned signedExact)
             where    
                 signedExact = withRFC resourceCert certX509     
                 
-        getSign (RpkiCrl _ (CrlObject signCrl)) = (algorithm, encoded, signature)
+        getSign (RpkiCrl (_, signCrl)) = (algorithm, encoded, signature)
             where
                 SignCRL { 
                     signatureAlgorithm = (SignatureAlgorithmIdentifier algorithm),
@@ -33,9 +33,9 @@ validateSignature rpkiObject (CerObject (ResourceCert parentCert)) =
                     encodedValue = encoded 
                 } = signCrl                
 
-        getSign (RpkiObject _ (MftRO (CMS signObject))) = getSignCMS signObject
-        getSign (RpkiObject _ (RoaRO (CMS signObject))) = getSignCMS signObject
-        getSign (RpkiObject _ (GbrRO (CMS signObject))) = getSignCMS signObject        
+        getSign (RpkiObject (WithMeta _ (MftRO (CMS signObject)))) = getSignCMS signObject
+        getSign (RpkiObject (WithMeta _ (RoaRO (CMS signObject)))) = getSignCMS signObject
+        getSign (RpkiObject (WithMeta _ (GbrRO (CMS signObject)))) = getSignCMS signObject        
 
         getSignCMS :: SignedObject a -> (SignatureALG, B.ByteString, B.ByteString)
         getSignCMS signObject = (algorithm, encodedCert, signature)

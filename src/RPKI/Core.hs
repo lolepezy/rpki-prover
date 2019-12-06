@@ -28,7 +28,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Util                  (fmtEx)
-import           RPKI.Validation.Cert
+import           RPKI.Validation.Objects
 
 
 -- | Valiidate TAL
@@ -39,24 +39,20 @@ validateTA :: (Has RsyncConf conf, Has AppLogger conf, Storage s) =>
 validateTA tal taStore = do
   logger :: AppLogger <- asks getter
   (u, ro) <- fetchTACertificate tal
-  cert <- pureToValidatorT $ validateTACert tal u ro  
-  fromTryEither (StorageE . StorageError . fmtEx) $ 
-    rwTx taStore $ \tx -> do
-      let newMeta = getMeta ro
-      -- It has to be IO a, so return IO (Either SomeError ()) here
+  WithMeta newMeta cert <- pureToValidatorT $ validateTACert tal u ro  
+  fromTry (StorageE . StorageError . fmtEx) $ 
+    rwTx taStore $ \tx -> do      
       getTA tx taStore (getTaName tal) >>= \case
-        Nothing -> Right <$> do
+        Nothing -> do
+          -- it's a new TA, store it
           logInfo_ logger [i| Storing new #{getTaName tal} |]
           putTA tx taStore (StoredTA tal cert newMeta)
           -- TODO Trigger tree validation
         Just (StoredTA _ _ oldMeta) -> 
-          if serial oldMeta < serial newMeta 
-          then Right <$> do            
+          when (serial oldMeta /= serial newMeta) $ do            
             logInfo_ logger [i| Updating TA certificate for #{getTaName tal} |]
             putTA tx taStore (StoredTA tal cert newMeta)            
-            -- TODO Trigger tree validation
-          else 
-            pure $ Left $ ValidationE $ TACertificateLocalIsNewer (serial oldMeta) (serial newMeta)
+            -- TODO Trigger tree validation          
 
 
 -- | Do top-down validation starting from the given object
@@ -64,34 +60,34 @@ validateTree :: (Has AppLogger conf, Storage s) =>
                 RpkiObject ->
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
-validateTree ro@(RpkiObject meta (CerRO cert@(CerObject (ResourceCert rc)))) objectStore = do
+validateTree ro@(RpkiObject (WithMeta meta (CerRO cert@(ResourceCert rc)))) objectStore = do
 
   logger :: AppLogger <- asks getter
   let aki = toAKI $ ski meta
 
-  -- find MFT
   mftCms <- fromIOEitherSt $ roTx objectStore $ \tx -> 
-    runValidatorT () $ do      
-      children <- lift3 $ findMftsByAKI tx objectStore aki
-      case children of 
+    runValidatorT () $
+      lift3 (findMftsByAKI tx objectStore aki) >>= \case
         []        -> validatorError $ NoMFT aki (getLocations ro)
         (mft : _) -> pure mft
 
-  -- find CRL  
-  let crls = filter (\(name, hash) -> ".crl" `T.isSuffixOf` name) $ 
+  let crls = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
         mftEntries $ getCMSContent mftCms
 
-  (crlName, crlHash) <- case crls of 
+  (_, crlHash) <- case crls of 
     []    -> validatorError $ NoCRLOnMFT aki (getLocations ro)    
     [crl] -> pure crl
     _     -> validatorError $ MoreThanOneCRLOnMFT aki (getLocations ro)    
 
-  crlOnbject <- lift3 $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
-  case crlOnbject of 
-    Nothing -> validatorError $ NoCRLExists aki (getLocations ro)    
-    Just crl -> do
-
+  crlObject <- lift3 $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
+  case crlObject of 
+    Nothing              -> validatorError $ NoCRLExists aki (getLocations ro)        
+    Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash (getLocations ro)
+    Just crl@(RpkiCrl _) -> do
       pure ()
+
+  
+  
   
 
 
