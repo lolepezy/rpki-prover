@@ -15,6 +15,7 @@ import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 
+import           System.Hourglass         (dateCurrent)
 import           Data.Hourglass           (DateTime)
 import           Data.X509.Validation     hiding (InvalidSignature)
 
@@ -30,6 +31,9 @@ import           RPKI.Validation.Crypto
 -- | Current time that is to be passed into the environment of validating functions
 newtype Now = Now DateTime
   deriving (Show, Eq, Ord)
+
+now :: IO Now 
+now = Now <$> dateCurrent
 
 {- 
     TODO Make is more consistent.
@@ -61,8 +65,7 @@ validateResourceCertItself cert@(ResourceCert rc) =
                     End Sequence
                   ] | oid == id_cp_ipAddr_asNumber -> pure cert
                 _ -> pureError $ CertWrongPolicyExtension bs
-                
-                
+                                
 -- | 
 validateTACert :: TAL -> URI -> RpkiObject -> PureValidator conf (WithMeta CerObject)
 validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(ResourceCert taCert)))) = do
@@ -70,31 +73,58 @@ validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(Res
     pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
     pureErrorIfNot (isNothing aki) $ TACertAKIIsNotEmpty u
     -- It's self-signed, so use itself as a parent to check the signature
-    case validateSignature ro cert of
-      SignatureFailed f -> pureError $ InvalidSignature (convert $ show f)
-      SignaturePass     -> WithMeta m <$> validateResourceCertItself cert
+    signatureCheck $ validateSignature ro cert
+    WithMeta m <$> validateResourceCertItself cert
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
+
+
+validateResourceCert :: WithMeta CerObject -> WithMeta CerObject -> PureValidator conf (WithMeta CerObject)
+validateResourceCert cert parentCert = pure cert
 
 
 -- | Validate CRL object with the parent certificate
 validateCrl :: Has Now conf => 
               CrlObject -> CerObject -> PureValidator conf CrlObject
 validateCrl crlObject@(CrlMeta {..}, SignCRL {..}) parentCert = do
-  case validateCRLSignature crlObject parentCert of
-    SignatureFailed f -> pureError $ InvalidSignature (convert $ show f)
-    SignaturePass     -> validateNexUpdate
-  where
-    validateNexUpdate = do 
-      Now now <- asks getter
-      case crlNextUpdate crl of
-        Nothing -> pureError CRLNextUpdateTimeNotSet
-        Just nextUpdateTime 
-          | nextUpdateTime < now -> pureError $ CRLNextUpdateTimeIsBeforeNow nextUpdateTime
-          | otherwise            -> pure crlObject
+  signatureCheck $ validateCRLSignature crlObject parentCert
+  void $ validateNexUpdate (crlNextUpdate crl)
+  pure crlObject  
 
 
+-- TODO Validate other stuff, validate resource certificate, etc.
 validateMft :: Has Now conf => 
-              WithMeta MftObject -> CerObject -> PureValidator conf (WithMeta MftObject)
-validateMft wm@(WithMeta m mft) parentCert = do
-  pure wm
+               WithMeta MftObject -> CerObject -> CrlObject -> PureValidator conf (WithMeta MftObject)
+validateMft wmft@(WithMeta RpkiMeta {..} mft) parentCert crl = do
+  signatureCheck $ validateCMSSignature mft
+  signatureCheck $ validateCMS'EECertSignature mft parentCert
+  void $ validateNexUpdate $ Just $ nextTime $ getCMSContent mft
+  when (isRevoked wmft crl) $ 
+    pureError $ RevokedEECertificate locations
+  pure wmft  
+
+
+-- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
+validateNexUpdate :: Has Now conf => 
+                    Maybe DateTime -> PureValidator conf DateTime
+validateNexUpdate nextUpdateTime = do 
+    Now now' <- asks getter
+    case nextUpdateTime of
+      Nothing -> pureError NextUpdateTimeNotSet
+      Just nextUpdate 
+        | nextUpdate < now' -> pureError $ NextUpdateTimeIsBeforeNow nextUpdate
+        | otherwise         -> pure nextUpdate
+
+
+-- | Check if CMS is on the revocation list
+isRevoked :: WithMeta (CMS so) -> CrlObject -> Bool
+isRevoked (WithMeta RpkiMeta {..} _) (_, SignCRL {..}) = 
+  null $ filter
+    (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial) $ 
+      crlRevokedCertificates crl
+    
+
+signatureCheck :: SignatureVerification -> PureValidator conf ()
+signatureCheck sv = case sv of
+    SignatureFailed e -> pureError $ InvalidSignature $ convert $ show e
+    SignaturePass     -> pure ()        

@@ -44,6 +44,7 @@ validateSignature rpkiObject (ResourceCert parentCert) =
                     (SignatureValue signature) 
                     encodedCert = scCertificate $ soContent signObject
 
+
 -- | Validate the signature of a CRL object
 validateCRLSignature :: CrlObject -> CerObject -> SignatureVerification                
 validateCRLSignature (_, signCrl) (ResourceCert parentCert) = 
@@ -56,7 +57,7 @@ validateCRLSignature (_, signCrl) (ResourceCert parentCert) =
             encodedValue = encoded 
         } = signCrl
 
-
+ 
 -- | Validate that the CMS is signed by the public key of the EE certficate at has
 validateCMSSignature :: CMS a -> SignatureVerification
 validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData sign    
@@ -68,3 +69,17 @@ validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData si
             _ _ = scCertificate $ soContent so
         pubKey = certPubKey eeCertificate
         SignedAttributes _ signData = signedAttrs $ scSignerInfos $ soContent so        
+
+
+-- | Validate the signature of CMS's EE certificate
+validateCMS'EECertSignature :: CMS a -> CerObject -> SignatureVerification
+validateCMS'EECertSignature (CMS so) (ResourceCert parentCert) = 
+    verifySignature signAlgorithm pubKey encodedCert signature    
+    where
+        CertificateWithSignature
+            _
+            (SignatureAlgorithmIdentifier signAlgorithm) 
+            (SignatureValue signature) 
+            encodedCert = scCertificate $ soContent so
+        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509
+        

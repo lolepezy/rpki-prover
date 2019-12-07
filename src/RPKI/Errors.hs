@@ -44,8 +44,9 @@ data ValidationError = InvalidCert !T.Text |
                         MoreThanOneCRLOnMFT !AKI !(NonEmpty URI) |
                         NoCRLExists !AKI !(NonEmpty URI) |
                         CRLHashPointsToAnotherObject !Hash !(NonEmpty URI) |
-                        CRLNextUpdateTimeNotSet |
-                        CRLNextUpdateTimeIsBeforeNow !DateTime
+                        NextUpdateTimeNotSet |
+                        NextUpdateTimeIsBeforeNow !DateTime |
+                        RevokedEECertificate !(NonEmpty URI)
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 

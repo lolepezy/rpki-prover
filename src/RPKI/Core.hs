@@ -56,7 +56,7 @@ validateTA tal taStore = do
 
 
 -- | Do top-down validation starting from the given object
-validateTree :: (Has AppLogger conf, Storage s) =>
+validateTree :: (Has AppLogger conf, Has Now conf, Storage s) =>
                 WithMeta CerObject ->
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
@@ -65,7 +65,7 @@ validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
   logger :: AppLogger <- asks getter
   let childrenAki = toAKI ski
 
-  mftCms <- fromIOEitherSt $ roTx objectStore $ \tx -> 
+  wmft@(WithMeta m mftCms) <- fromIOEitherSt $ roTx objectStore $ \tx -> 
     runValidatorT () $
       lift3 (findMftsByAKI tx objectStore childrenAki) >>= \case
         []        -> validatorError $ NoMFT childrenAki locations
@@ -85,13 +85,23 @@ validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
   case crlObject of 
     Nothing              -> validatorError $ NoCRLExists childrenAki locations
     Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash locations
-    Just crl@(RpkiCrl _) -> do
-      -- validate CRL object
+    Just (RpkiCrl crl) -> do      
+      pureToValidatorT $ do 
+        validateCrl crl cert
+        validateMft wmft cert crl
       -- go down on children
+      allChildren <- lift3 $ roTx objectStore $ \tx -> findByAKI tx objectStore childrenAki
+
+      {- TODO narrow down children traversal to the ones that  
+        1) Are on the manifest
+        or
+        2) Are (or include as EEE) the latest 
+        certificates with the unique (non-overlaping) set of reseources        
+      -}
+            
+
       pure ()
 
-  
-  
   
 
 

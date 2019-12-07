@@ -45,7 +45,7 @@ deleteObject tx store h = SM.delete tx (objects store) h
 findByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [RpkiObject]
 findByAKI tx (RpkiObjectStore s _) aki = pure []
 
-findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
+findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [WithMeta MftObject]
 findMftsByAKI tx (RpkiObjectStore s _) aki = pure []
 
 
