@@ -1,23 +1,25 @@
-{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
 
 module RPKI.Errors where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text as T
+import qualified Data.Text            as T
 
-import Data.List.NonEmpty
+import           Data.List.NonEmpty
 
-import Control.DeepSeq
-import Control.Exception
+import           Control.DeepSeq
+import           Control.Exception
 
-import Data.Data (Typeable)
+import           Data.Data            (Typeable)
+import           Data.Hourglass       (DateTime)
 
-import GHC.Generics
+import           GHC.Generics
 
-import RPKI.Domain
+import           RPKI.Domain
+
 
 
 newtype ParseError s = ParseError s
@@ -34,14 +36,16 @@ data ValidationError = InvalidCert !T.Text |
                         TACertificateIsTooBig !Int |
                         TACertificateLocalIsNewer !Serial !Serial |
                         InvalidSignature !T.Text |                        
-                        AKIIsNotEmpty |
+                        TACertAKIIsNotEmpty !URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension !B.ByteString |
                         NoMFT !AKI !(NonEmpty URI) |
                         NoCRLOnMFT !AKI !(NonEmpty URI) |
                         MoreThanOneCRLOnMFT !AKI !(NonEmpty URI) |
                         NoCRLExists !AKI !(NonEmpty URI) |
-                        CRLHashPointsToAnotherObject !Hash !(NonEmpty URI)
+                        CRLHashPointsToAnotherObject !Hash !(NonEmpty URI) |
+                        CRLNextUpdateTimeNotSet |
+                        CRLNextUpdateTimeIsBeforeNow !DateTime
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 

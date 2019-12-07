@@ -57,33 +57,37 @@ validateTA tal taStore = do
 
 -- | Do top-down validation starting from the given object
 validateTree :: (Has AppLogger conf, Storage s) =>
-                RpkiObject ->
+                WithMeta CerObject ->
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
-validateTree ro@(RpkiObject (WithMeta meta (CerRO cert@(ResourceCert rc)))) objectStore = do
+validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
 
   logger :: AppLogger <- asks getter
-  let aki = toAKI $ ski meta
+  let childrenAki = toAKI ski
 
   mftCms <- fromIOEitherSt $ roTx objectStore $ \tx -> 
     runValidatorT () $
-      lift3 (findMftsByAKI tx objectStore aki) >>= \case
-        []        -> validatorError $ NoMFT aki (getLocations ro)
+      lift3 (findMftsByAKI tx objectStore childrenAki) >>= \case
+        []        -> validatorError $ NoMFT childrenAki locations
         (mft : _) -> pure mft
+
+  -- validate MFT object
 
   let crls = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
         mftEntries $ getCMSContent mftCms
 
   (_, crlHash) <- case crls of 
-    []    -> validatorError $ NoCRLOnMFT aki (getLocations ro)    
+    []    -> validatorError $ NoCRLOnMFT childrenAki locations
     [crl] -> pure crl
-    _     -> validatorError $ MoreThanOneCRLOnMFT aki (getLocations ro)    
+    _     -> validatorError $ MoreThanOneCRLOnMFT childrenAki locations
 
   crlObject <- lift3 $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
   case crlObject of 
-    Nothing              -> validatorError $ NoCRLExists aki (getLocations ro)        
-    Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash (getLocations ro)
+    Nothing              -> validatorError $ NoCRLExists childrenAki locations
+    Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash locations
     Just crl@(RpkiCrl _) -> do
+      -- validate CRL object
+      -- go down on children
       pure ()
 
   
@@ -106,7 +110,7 @@ fetchTACertificate tal =
       go uris
 
 
-validateSize :: B.ByteString -> PureValidator B.ByteString
+validateSize :: B.ByteString -> PureValidator c B.ByteString
 validateSize bs = 
   case () of _
               | len < 10         -> pureError $ TACertificateIsTooSmall len

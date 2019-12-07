@@ -16,7 +16,7 @@ validateSignature rpkiObject (ResourceCert parentCert) =
     verifySignature signAlgorithm pubKey signData sign
     where        
         (signAlgorithm, signData, sign) = getSign rpkiObject
-        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
+        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509
 
         getSign (RpkiObject (WithMeta _ (CerRO (ResourceCert resourceCert)))) = 
             (signedAlg $ getSigned signedExact, 
@@ -25,13 +25,11 @@ validateSignature rpkiObject (ResourceCert parentCert) =
             where    
                 signedExact = withRFC resourceCert certX509     
                 
-        getSign (RpkiCrl (_, signCrl)) = (algorithm, encoded, signature)
-            where
-                SignCRL { 
-                    signatureAlgorithm = (SignatureAlgorithmIdentifier algorithm),
-                    signatureValue = (SignatureValue signature),
-                    encodedValue = encoded 
-                } = signCrl                
+        getSign (RpkiCrl (_, SignCRL { 
+                signatureAlgorithm = (SignatureAlgorithmIdentifier algorithm),
+                signatureValue = (SignatureValue signature),
+                encodedValue = encoded 
+            })) = (algorithm, encoded, signature)
 
         getSign (RpkiObject (WithMeta _ (MftRO (CMS signObject)))) = getSignCMS signObject
         getSign (RpkiObject (WithMeta _ (RoaRO (CMS signObject)))) = getSignCMS signObject
@@ -45,6 +43,18 @@ validateSignature rpkiObject (ResourceCert parentCert) =
                     (SignatureAlgorithmIdentifier algorithm) 
                     (SignatureValue signature) 
                     encodedCert = scCertificate $ soContent signObject
+
+-- | Validate the signature of a CRL object
+validateCRLSignature :: CrlObject -> CerObject -> SignatureVerification                
+validateCRLSignature (_, signCrl) (ResourceCert parentCert) = 
+    verifySignature signAlgorithm pubKey encoded signature
+    where
+        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509
+        SignCRL { 
+            signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
+            signatureValue = (SignatureValue signature),
+            encodedValue = encoded 
+        } = signCrl
 
 
 -- | Validate that the CMS is signed by the public key of the EE certficate at has

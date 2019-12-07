@@ -18,10 +18,10 @@ import RPKI.Errors
 -- Application monad stack
 type ValidatorT conf m r = ReaderT conf (ExceptT SomeError (StateT [ValidationWarning] m)) r
 
-type PureValidator r = ExceptT SomeError (State [ValidationWarning]) r
+type PureValidator conf r = ReaderT conf (ExceptT SomeError (State [ValidationWarning])) r
 
-pureToValidatorT :: Monad m => PureValidator r -> ValidatorT conf m r
-pureToValidatorT p = lift $ hoist (hoist generalize) p
+pureToValidatorT :: Monad m => PureValidator conf r -> ValidatorT conf m r
+pureToValidatorT = hoist $ hoist $ hoist generalize
 
 lift2 :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
         m a -> t1 (t2 m) a
@@ -55,8 +55,8 @@ fromTryEither mapErr t = fromEither =<< fromTry mapErr t
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runPureValidator :: PureValidator r -> (Either SomeError r, [ValidationWarning])
-runPureValidator p = (runState $ runExceptT p) mempty
+runPureValidator :: conf -> PureValidator conf r -> (Either SomeError r, [ValidationWarning])
+runPureValidator conf w = (runState $ runExceptT $ runReaderT w conf) mempty
 
 runValidatorT  :: conf -> ValidatorT conf m r -> m (Either SomeError r, [ValidationWarning])
 runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
@@ -69,11 +69,11 @@ validatorWarning = pureToValidatorT . pureWarning
 validatorError :: Monad m => ValidationError -> ValidatorT conf m r
 validatorError = pureToValidatorT . pureError
 
-pureWarning :: ValidationWarning -> PureValidator ()
+pureWarning :: ValidationWarning -> PureValidator conf ()
 pureWarning w = lift $ modify' (w:)
 
-pureError :: ValidationError -> PureValidator r
-pureError e = throwE $ ValidationE e
+pureError :: ValidationError -> PureValidator conf r
+pureError e = lift $ throwE $ ValidationE e
 
-pureErrorIfNot :: Bool -> ValidationError -> PureValidator ()
-pureErrorIfNot b e = if b then pure () else throwE $ ValidationE e
+pureErrorIfNot :: Bool -> ValidationError -> PureValidator conf ()
+pureErrorIfNot b e = if b then pure () else lift $ throwE $ ValidationE e

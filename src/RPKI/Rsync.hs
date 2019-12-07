@@ -48,7 +48,7 @@ newtype RsyncConf = RsyncConf {
 -- | Download one file using rsync
 rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) => 
               URI -> 
-              (B.ByteString -> PureValidator B.ByteString) ->
+              (B.ByteString -> PureValidator conf B.ByteString) ->
               ValidatorT conf IO RpkiObject
 rsyncFile (URI uri) validateBinary = do
   RsyncConf {..} <- asks getter
