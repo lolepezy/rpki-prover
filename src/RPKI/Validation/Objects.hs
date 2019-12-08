@@ -35,18 +35,8 @@ newtype Now = Now DateTime
 now :: IO Now 
 now = Now <$> dateCurrent
 
-{- 
-    TODO Make is more consistent.
-
-    In general, resource certifcate validation is:
-
-    - check the signature (with the parent)
-    - check all the needed extensions and expiration times
-    - check the resource set (needs the parent as well)
-    - check it's not revoked (needs CRL)
- -}
-validateResourceCertItself :: CerObject -> PureValidator conf CerObject
-validateResourceCertItself cert@(ResourceCert rc) = 
+validateResourceCertExtensions :: CerObject -> PureValidator conf CerObject
+validateResourceCertExtensions cert@(ResourceCert rc) = 
   validateHasCriticalExtensions $ getX509Cert $ withRFC rc certX509     
   where
     validateHasCriticalExtensions x509cert = do
@@ -74,13 +64,33 @@ validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(Res
     pureErrorIfNot (isNothing aki) $ TACertAKIIsNotEmpty u
     -- It's self-signed, so use itself as a parent to check the signature
     signatureCheck $ validateSignature ro cert
-    WithMeta m <$> validateResourceCertItself cert
+    WithMeta m <$> validateResourceCertExtensions cert
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
 
+{- |
+    In general, resource certifcate validation is:
 
-validateResourceCert :: WithMeta CerObject -> WithMeta CerObject -> PureValidator conf (WithMeta CerObject)
-validateResourceCert cert parentCert = pure cert
+    - check the signature (with the parent)
+    - check all the needed extensions and expiration times
+    - check the resource set (needs the parent as well)
+    - check it's not revoked (needs CRL)
+ -}
+validateResourceCert :: WithMeta CerObject -> 
+                        WithMeta CerObject -> 
+                        CrlObject ->
+                        PureValidator conf (WithMeta CerObject)
+validateResourceCert wcer@(WithMeta RpkiMeta {..} cert) (WithMeta _ parentCert) crl = do
+  signatureCheck $ validateCertSignature cert parentCert
+  when (isRevoked wcer crl) $ 
+    pureError $ RevokedResourceCertificate locations
+  validateResourceCertExtensions cert
+  validateResourceSet cert parentCert
+  pure wcer
+  where 
+    -- TODO Implement it
+    validateResourceSet cert parentCert = pure ()
+    
 
 
 -- | Validate CRL object with the parent certificate
@@ -117,7 +127,7 @@ validateNexUpdate nextUpdateTime = do
 
 
 -- | Check if CMS is on the revocation list
-isRevoked :: WithMeta (CMS so) -> CrlObject -> Bool
+isRevoked :: WithMeta a -> CrlObject -> Bool
 isRevoked (WithMeta RpkiMeta {..} _) (_, SignCRL {..}) = 
   null $ filter
     (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial) $ 
