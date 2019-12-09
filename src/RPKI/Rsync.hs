@@ -59,9 +59,9 @@ rsyncFile (URI uri) validateBinary = do
   case exitCode of  
     ExitFailure errorCode -> do
       lift3 $ logError_ logger [i|Rsync process failed: #rsync 
-                                  with code #errorCode, 
-                                  stderr = #stderr, 
-                                  stdout = #stdout|]        
+                                  with code #{errorCode}, 
+                                  stderr = #{stderr}, 
+                                  stdout = #{stdout}|]        
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
     ExitSuccess -> do
         bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ B.readFile destination
@@ -159,7 +159,7 @@ loadRsyncRepository logger config topPath objectStore = do
             getByHash tx objectStore h >>= \case 
                 Nothing -> do
                   putObject tx objectStore h so
-                  void $ atomicModifyIORef counter (\c -> (c + 1, ()))
+                  void $ atomicModifyIORef counter $ \c -> (c + 1, ())
                 Just _  ->
                     -- TODO Add location
                     logInfo_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]

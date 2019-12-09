@@ -24,6 +24,7 @@ put :: (Serialise k, Serialise v, Storage s) =>
         Tx s 'RW -> SMultiMap s k v -> k -> v -> IO ()
 put tx (SMMap s) k v = S.put tx s (storableKey k) (storableValue v)    
 
+-- TODO Implement
 get :: (Serialise k, Serialise v, Storage s) =>
         Tx s m -> SMultiMap s k v -> k -> IO [v]
 get tx (SMMap s) k = do

@@ -37,8 +37,18 @@ storableValue = SValue . toStorable
 storableKey :: Serialise v => v -> SKey
 storableKey = SKey . toStorable
 
+-- TODO Consider having type-safe storage errors
+-- 
+-- fromStorable :: Serialise t => Storable -> Either StorageError t
+-- fromStorable (Storable b) = first (DeserialisationError . fmtEx) $ 
+--     deserialiseOrFail $ BL.fromStrict b
+
+-- fromSValue :: Serialise t => SValue -> Either StorageError t
+-- fromSValue (SValue b) = fromStorable b
+
 fromStorable :: Serialise t => Storable -> t
 fromStorable (Storable b) = deserialise $ BL.fromStrict b
 
 fromSValue :: Serialise t => SValue -> t
 fromSValue (SValue b) = fromStorable b
+

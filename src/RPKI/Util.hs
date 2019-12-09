@@ -88,21 +88,3 @@ txFunnel poolSize as produce withTx consume = do
       forM as $ \_ -> 
         consume tx =<< liftIO (Chan.readChan chanOut)
 
--- pipeToTx :: (Traversable t, MonadUnliftIO m) => 
---         Int ->
---         t a -> 
---         (a (Chan.Chan )-> m b) -> 
---         ((tx -> m (t c)) -> m (t c)) ->
---         (tx -> b -> m c) -> m (t c)
--- pipeToTx poolSize as f withTx g = do
---   (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
---   snd <$> Unlift.concurrently (f chanIn) (readAll chanOut)
---   where
---     writeAll chanIn = forM_ as $
---       liftIO . Chan.writeChan chanIn <=< f
---     readAll chanOut = withTx go 
---       where 
---         go tx =
---           liftIO (Chan.readChan chanOut) >>= \case
---             Nothing -> pure ()
---             Just a -> g tx a    -- 

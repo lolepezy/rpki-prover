@@ -197,11 +197,11 @@ processRrdp repository objectStore = do
             updateRrdpRepo config repository saveSnapshot saveDelta
           where
             rwTx_ = rwTx objectStore        
-            saveSnapshot (Snapshot _ _ _ ps) = do
+            saveSnapshot (Snapshot _ _ _ snapshotItems) = do
                 logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
                 either Just (const Nothing) . 
                     first (StorageE . StorageError . U.fmtEx) <$> 
-                        try (U.txFunnel (parallelism config) ps storableToChan rwTx_ chanToStorage)
+                        try (U.txFunnel (parallelism config) snapshotItems storableToChan rwTx_ chanToStorage)
                 where
                     storableToChan (SnapshotPublish u encodedb64) = do
                         a <- Unlift.async $ pure $! asStorable u encodedb64
@@ -211,10 +211,10 @@ processRrdp repository objectStore = do
                         SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
                         SObject so@(StorableObject ro _) -> putObject tx objectStore (getHash ro) so
             
-            saveDelta (Delta _ _ _ ds) = 
+            saveDelta (Delta _ _ _ deltaItems) = 
                 either Just (const Nothing) . 
                     first (StorageE . StorageError . U.fmtEx) <$> 
-                        try (U.txFunnel (parallelism config) ds storableToChan rwTx_ chanToStorage)
+                        try (U.txFunnel (parallelism config) deltaItems storableToChan rwTx_ chanToStorage)
                 where
                     storableToChan (DP (DeltaPublish u h encodedb64)) = do 
                         a <- Unlift.async $ pure $! asStorable u encodedb64
