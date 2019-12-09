@@ -276,7 +276,7 @@ testSignature = do
 
   let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
 
-  let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
+  let pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509              
   let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
 
   putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]

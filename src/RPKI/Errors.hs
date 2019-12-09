@@ -9,7 +9,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text            as T
 
 import           Data.List.NonEmpty
-
+import          Codec.Serialise
 import           Control.DeepSeq
 import           Control.Exception
 
@@ -81,7 +81,8 @@ data RsyncError = RsyncProcessError !Int !BL.ByteString |
                   RsyncDirError !T.Text
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-data StorageError = StorageError T.Text 
+data StorageError = StorageError !T.Text |
+                    DeserialisationError !T.Text
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 newtype TALError = TALError T.Text 

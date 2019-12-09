@@ -17,7 +17,7 @@ import Data.ASN1.BitArray
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
-import Data.X509
+import Data.X509 as X509
 
 import RPKI.IP
 import RPKI.Domain
@@ -115,8 +115,8 @@ getExts certificate = fromMaybe [] extensions
   where
     Extensions extensions = certExtensions certificate
 
-getExtsSign :: SignedExact Certificate -> [ExtensionRaw]
-getExtsSign = getExts . signedObject . getSigned
+getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
+getExtsSign = getExts . cwsX509certificate
 
 parseKI :: B.ByteString -> ParseResult KI
 parseKI bs = case decodeASN1' BER bs of
@@ -136,3 +136,11 @@ parseSignature = getNext >>= \case
           BitString (BitArray _ sig) -> pure $ SignatureValue sig
           s                          -> throwParseError $ "Unknown signature value : " <> show s
   
+
+unifyCert :: SignedExact X509.Certificate -> CertificateWithSignature
+unifyCert signedExact = CertificateWithSignature {
+      cwsX509certificate = signedObject $ getSigned signedExact,
+      cwsSignatureAlgorithm = SignatureAlgorithmIdentifier $ signedAlg $ getSigned signedExact,
+      cwsSignature = SignatureValue $ signedSignature $ getSigned signedExact,
+      cwsEncoded = getSignedData signedExact      
+  }

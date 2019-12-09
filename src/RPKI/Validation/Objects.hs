@@ -8,21 +8,25 @@ import qualified Data.ByteString          as B
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Maybe
 
+import           Data.Data                (Typeable)
 import           Data.Has
 
-import           Data.X509
+import           GHC.Generics
+
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
+import           Data.X509
 
-import           System.Hourglass         (dateCurrent)
 import           Data.Hourglass           (DateTime)
 import           Data.X509.Validation     hiding (InvalidSignature)
+import           System.Hourglass         (dateCurrent)
 
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
+import           RPKI.SignTypes
 import           RPKI.TAL
 import           RPKI.Util                (convert)
 import           RPKI.Validation.Crypto
@@ -32,12 +36,16 @@ import           RPKI.Validation.Crypto
 newtype Now = Now DateTime
   deriving (Show, Eq, Ord)
 
+newtype Validated a = Validated a
+  deriving (Show, Eq, Typeable, Generic)
+
+
 now :: IO Now 
 now = Now <$> dateCurrent
 
 validateResourceCertExtensions :: CerObject -> PureValidator conf CerObject
 validateResourceCertExtensions cert@(ResourceCert rc) = 
-  validateHasCriticalExtensions $ getX509Cert $ withRFC rc certX509     
+  validateHasCriticalExtensions $ cwsX509certificate $ withRFC rc certX509     
   where
     validateHasCriticalExtensions x509cert = do
       let exts = getExts x509cert
@@ -59,7 +67,7 @@ validateResourceCertExtensions cert@(ResourceCert rc) =
 -- | 
 validateTACert :: TAL -> URI -> RpkiObject -> PureValidator conf (WithMeta CerObject)
 validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(ResourceCert taCert)))) = do
-    let spki = subjectPublicKeyInfo $ getX509Cert $ withRFC taCert certX509
+    let spki = subjectPublicKeyInfo $ cwsX509certificate $ withRFC taCert certX509
     pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
     pureErrorIfNot (isNothing aki) $ TACertAKIIsNotEmpty u
     -- It's self-signed, so use itself as a parent to check the signature
@@ -68,21 +76,23 @@ validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(Res
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
 
+
 {- |
     In general, resource certifcate validation is:
 
     - check the signature (with the parent)
+    - check if it's revoked
     - check all the needed extensions and expiration times
     - check the resource set (needs the parent as well)
     - check it's not revoked (needs CRL)
  -}
 validateResourceCert :: WithMeta CerObject -> 
                         WithMeta CerObject -> 
-                        CrlObject ->
+                        Validated CrlObject ->
                         PureValidator conf (WithMeta CerObject)
-validateResourceCert wcer@(WithMeta RpkiMeta {..} cert) (WithMeta _ parentCert) crl = do
+validateResourceCert wcer@(WithMeta RpkiMeta {..} cert) (WithMeta _ parentCert) vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
-  when (isRevoked wcer crl) $ 
+  when (isRevoked wcer vcrl) $ 
     pureError $ RevokedResourceCertificate locations
   validateResourceCertExtensions cert
   validateResourceSet cert parentCert
@@ -95,16 +105,18 @@ validateResourceCert wcer@(WithMeta RpkiMeta {..} cert) (WithMeta _ parentCert) 
 
 -- | Validate CRL object with the parent certificate
 validateCrl :: Has Now conf => 
-              CrlObject -> CerObject -> PureValidator conf CrlObject
+              CrlObject -> CerObject -> PureValidator conf (Validated CrlObject)
 validateCrl crlObject@(CrlMeta {..}, SignCRL {..}) parentCert = do
   signatureCheck $ validateCRLSignature crlObject parentCert
   void $ validateNexUpdate (crlNextUpdate crl)
-  pure crlObject  
+  pure $ Validated crlObject  
 
 
 -- TODO Validate other stuff, validate resource certificate, etc.
 validateMft :: Has Now conf => 
-               WithMeta MftObject -> CerObject -> CrlObject -> PureValidator conf (WithMeta MftObject)
+               WithMeta MftObject -> 
+               CerObject -> 
+               Validated CrlObject -> PureValidator conf (WithMeta MftObject)
 validateMft wmft@(WithMeta RpkiMeta {..} mft) parentCert crl = do
   signatureCheck $ validateCMSSignature mft
   signatureCheck $ validateCMS'EECertSignature mft parentCert
@@ -127,8 +139,8 @@ validateNexUpdate nextUpdateTime = do
 
 
 -- | Check if CMS is on the revocation list
-isRevoked :: WithMeta a -> CrlObject -> Bool
-isRevoked (WithMeta RpkiMeta {..} _) (_, SignCRL {..}) = 
+isRevoked :: WithMeta a -> Validated CrlObject -> Bool
+isRevoked (WithMeta RpkiMeta {..} _) (Validated (_, SignCRL {..})) = 
   null $ filter
     (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial) $ 
       crlRevokedCertificates crl

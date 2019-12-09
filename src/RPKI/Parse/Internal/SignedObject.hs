@@ -23,6 +23,7 @@ import RPKI.Parse.Internal.Common
 import qualified RPKI.Util as U
 
 {- 
+  https://tools.ietf.org/html/rfc6488#section-2
 
     contentType ContentType,
     content [0] EXPLICIT ANY DEFINED BY contentType
@@ -87,13 +88,15 @@ parseSignedObject eContentParse =
           Nothing   -> throwParseError "No EE certificate"
           Just asns -> 
             case runParseASN1 getObject asns of
-              Left e       -> throwParseError $ show e
-              Right eeCert -> CertificateWithSignature eeCert <$> 
-                                parseSignatureAlgorithm <*> 
-                                parseSignature <*> 
-                                pure encodedCert
-                                where 
-                                  encodedCert = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]                                
+              Left e              -> throwParseError $ show e
+              Right eeCertificate -> CertificateWithSignature 
+                                      eeCertificate <$> 
+                                      parseSignatureAlgorithm <*> 
+                                      parseSignature <*> 
+                                      pure encodedCert
+                                      where 
+                                        encodedCert = encodeASN1' DER $ 
+                                          [Start Sequence] <> asns <> [End Sequence]                                
 
     parseSignerInfo = SignerInfos <$>
       parseVersion <*>

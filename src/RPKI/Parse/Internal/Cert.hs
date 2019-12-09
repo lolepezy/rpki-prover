@@ -23,6 +23,7 @@ import           Data.ASN1.Types
 import           Data.X509
 
 import           RPKI.Domain
+import           RPKI.SignTypes
 import           RPKI.IP
 import qualified RPKI.IP                  as IP
 import qualified RPKI.Util                as U
@@ -37,10 +38,11 @@ parseResourceCertificate :: B.ByteString ->
 parseResourceCertificate bs = do
   certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
   let x509 = getX509Cert certificate
-  let exts = getExtsSign certificate  
+  let signedCertificate = unifyCert certificate
+  let exts = getExtsSign signedCertificate
   case extVal exts id_subjectKeyId of
     Just s -> do
-        r <- parseResources certificate
+        r <- parseResources signedCertificate
         ki <- parseKI s
         aki' <- case extVal exts id_authorityKeyId of
                 Nothing -> pure Nothing
@@ -57,7 +59,7 @@ parseResourceCertificate bs = do
 
 
 
-parseResources :: SignedExact Certificate -> ParseResult ResourceCert
+parseResources :: CertificateWithSignature -> ParseResult ResourceCert
 parseResources x509cert = do    
       let ext' = extVal $ getExtsSign x509cert
       case (ext' id_pe_ipAddrBlocks,

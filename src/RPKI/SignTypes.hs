@@ -22,12 +22,13 @@ data SignedObject a = SignedObject {
     soContent     :: SignedData a
 } deriving (Show, Eq, Typeable, Generic)
 
-data CertificateWithSignature = CertificateWithSignature 
-    X509.Certificate
-    SignatureAlgorithmIdentifier
-    SignatureValue
-    B.ByteString
-  deriving (Show, Eq, Typeable, Generic)
+
+data CertificateWithSignature = CertificateWithSignature {
+    cwsX509certificate :: X509.Certificate,
+    cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
+    cwsSignature :: SignatureValue,
+    cwsEncoded :: B.ByteString
+  } deriving (Show, Eq, Typeable, Generic)
 
 {- 
       SignedData ::= SEQUENCE {

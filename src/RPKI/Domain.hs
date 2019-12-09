@@ -115,7 +115,7 @@ data RpkiObject = RpkiObject !(WithMeta RpkiSpecific)
 --     deriving (Show, Eq, Typeable, Generic)
 
 data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
-    certX509    :: X509.SignedExact X509.Certificate, 
+    certX509    :: CertificateWithSignature, 
     ipResources :: Maybe (IpResourceSet rfc), 
     asResources :: Maybe (ResourceSet AsResource rfc)
 } deriving (Show, Eq, Typeable, Generic)
@@ -171,7 +171,6 @@ data TA = TA {
   , taSpki        :: SPKI
 } deriving (Show, Eq, Generic, Serialise)
 
--- data RepoType = Rsync | Rrdp
 
 data RsyncRepository = RsyncRepository {
     uri :: URI    

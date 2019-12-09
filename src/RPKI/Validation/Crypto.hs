@@ -16,18 +16,20 @@ validateSignature rpkiObject (ResourceCert parentCert) =
     verifySignature signAlgorithm pubKey signData sign
     where        
         (signAlgorithm, signData, sign) = getSign rpkiObject
-        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509
+        pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
 
         getSign (RpkiObject (WithMeta _ (CerRO (ResourceCert resourceCert)))) = 
-            (signedAlg $ getSigned signedExact, 
-            getSignedData signedExact, 
-            signedSignature $ getSigned signedExact)
+            (algorithm, signedData, signature)
             where    
-                signedExact = withRFC resourceCert certX509     
+                CertificateWithSignature {
+                    cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
+                    cwsSignature = SignatureValue signature,
+                    cwsEncoded = signedData
+                } = withRFC resourceCert certX509     
                 
         getSign (RpkiCrl (_, SignCRL { 
-                signatureAlgorithm = (SignatureAlgorithmIdentifier algorithm),
-                signatureValue = (SignatureValue signature),
+                signatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
+                signatureValue = SignatureValue signature,
                 encodedValue = encoded 
             })) = (algorithm, encoded, signature)
 
@@ -48,13 +50,14 @@ validateSignature rpkiObject (ResourceCert parentCert) =
 -- | Validate the signature of a CRL object
 validateCertSignature :: CerObject -> CerObject -> SignatureVerification                
 validateCertSignature (ResourceCert cert) (ResourceCert parentCert) = 
-    verifySignature signAlgorithm pubKey signData signature    
+    verifySignature algorithm pubKey signedData signature1    
     where
-        signAlgorithm = signedAlg $ getSigned signedExact
-        signData = getSignedData signedExact 
-        signature = signedSignature $ getSigned signedExact
-        signedExact = withRFC cert certX509    
-        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509    
+        CertificateWithSignature {
+            cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
+            cwsSignature = SignatureValue signature1,
+            cwsEncoded = signedData
+        } = withRFC cert certX509             
+        pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509    
 
 
 -- | Validate the signature of a CRL object
@@ -62,7 +65,7 @@ validateCRLSignature :: CrlObject -> CerObject -> SignatureVerification
 validateCRLSignature (_, signCrl) (ResourceCert parentCert) = 
     verifySignature signAlgorithm pubKey encoded signature
     where
-        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509
+        pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
         SignCRL { 
             signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
             signatureValue = (SignatureValue signature),
@@ -93,5 +96,5 @@ validateCMS'EECertSignature (CMS so) (ResourceCert parentCert) =
             (SignatureAlgorithmIdentifier signAlgorithm) 
             (SignatureValue signature) 
             encodedCert = scCertificate $ soContent so
-        pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509
+        pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
         

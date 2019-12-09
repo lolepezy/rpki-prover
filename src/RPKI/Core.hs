@@ -87,18 +87,18 @@ validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
     Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash locations
     Just (RpkiCrl crl) -> do      
       pureToValidatorT $ do 
-        validateCrl crl cert
-        validateMft wmft cert crl
+        crl' <- validateCrl crl cert
+        validateMft wmft cert crl'
       -- go down on children
       allChildren <- lift3 $ roTx objectStore $ \tx -> findByAKI tx objectStore childrenAki
 
       {- TODO narrow down children traversal to the ones that  
         1) Are on the manifest
         or
-        2) Are (or include as EEE) the latest 
+        2) Are (or include as EE) the latest 
         certificates with the unique (non-overlaping) set of reseources        
       -}
-            
+
 
       pure ()
 
