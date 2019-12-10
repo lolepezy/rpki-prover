@@ -21,7 +21,6 @@ import Data.X509 as X509
 
 import RPKI.IP
 import RPKI.Domain
-import RPKI.SignTypes
 import RPKI.Errors
 
 type ParseResult a = Either (ParseError T.Text) a

@@ -24,8 +24,12 @@ import GHC.Generics
 
 import qualified Data.X509 as X509
 
+import Data.ASN1.OID
+import Data.ASN1.Types
+
 import RPKI.IP    
-import RPKI.SignTypes
+import RPKI.Serialise.Orphans
+
 
 newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
@@ -76,7 +80,9 @@ newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NF
 
 -- | Objects
 
-newtype CMS a = CMS (SignedObject a) deriving (Show, Eq, Typeable, Generic)
+newtype CMS a = CMS {
+    unCMS :: SignedObject a
+ } deriving (Show, Eq, Typeable, Generic)
 
 data WithMeta a = WithMeta !RpkiMeta !a
     deriving (Show, Eq, Typeable, Generic)
@@ -97,8 +103,7 @@ data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI, 
     hash      :: Hash, 
     aki       :: Maybe AKI, 
-    ski       :: SKI, 
-    serial    :: Serial
+    ski       :: SKI
 } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RpkiSpecific = CerRO !CerObject 
@@ -148,6 +153,106 @@ data SignCRL = SignCRL {
 data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
 
 
+-- Types for the signed object template 
+
+data SignedObject a = SignedObject {
+    soContentType :: ContentType, 
+    soContent     :: SignedData a
+} deriving (Show, Eq, Typeable, Generic)
+
+
+data CertificateWithSignature = CertificateWithSignature {
+    cwsX509certificate :: X509.Certificate,
+    cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
+    cwsSignature :: SignatureValue,
+    cwsEncoded :: B.ByteString
+  } deriving (Show, Eq, Typeable, Generic)
+
+{- 
+      SignedData ::= SEQUENCE {
+        version CMSVersion,
+        digestAlgorithms DigestAlgorithmIdentifiers,
+        encapContentInfo EncapsulatedContentInfo,
+        certificates [0] IMPLICIT CertificateSet OPTIONAL,
+        crls [1] IMPLICIT RevocationInfoChoices OPTIONAL,
+        signerInfos SignerInfos }
+
+      DigestAlgorithmIdentifiers ::= SET OF DigestAlgorithmIdentifier
+
+      SignerInfos ::= SET OF SignerInfo
+-}
+data SignedData a = SignedData {
+      scVersion          :: CMSVersion, 
+      scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
+      scEncapContentInfo :: EncapsulatedContentInfo a, 
+      scCertificate      :: ResourceCert, 
+      scSignerInfos      :: SignerInfos
+  } deriving (Show, Eq, Typeable, Generic)
+  
+  {- 
+      EncapsulatedContentInfo ::= SEQUENCE {
+          eContentType ContentType,
+          eContent [0] EXPLICIT OCTET STRING OPTIONAL }
+  -}
+data EncapsulatedContentInfo a = EncapsulatedContentInfo {
+      eContentType :: ContentType, 
+      cContent     :: a    
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+  
+  {-
+      SignerInfo ::= SEQUENCE {
+            version CMSVersion,
+            sid SignerIdentifier,
+            digestAlgorithm DigestAlgorithmIdentifier,
+            signedAttrs [0] IMPLICIT SignedAttributes OPTIONAL,
+            signatureAlgorithm SignatureAlgorithmIdentifier,
+            signature SignatureValue,
+            unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
+  -}
+data SignerInfos = SignerInfos {
+      siVersion          :: CMSVersion, 
+      siSid              :: SignerIdentifier, 
+      digestAlgorithm    :: DigestAlgorithmIdentifiers, 
+      signedAttrs        :: SignedAttributes, 
+      signatureAlgorithm :: SignatureAlgorithmIdentifier, 
+      signature          :: SignatureValue
+  } deriving (Show, Eq, Typeable, Generic)
+  
+newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text 
+  deriving (Eq, Ord, Show)
+  
+newtype SignerIdentifier = SignerIdentifier B.ByteString 
+  deriving (Show, Eq, Ord, Typeable, Generic)
+  
+newtype ContentType = ContentType OID 
+  deriving (Show, Eq, Ord, Typeable, Generic)
+newtype CMSVersion = CMSVersion Int 
+  deriving (Show, Eq, Ord, Typeable, Generic)
+
+newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
+  deriving (Show, Eq, Ord, Typeable, Generic)
+
+newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
+  deriving (Show, Eq, Typeable, Generic)
+
+newtype SignatureValue = SignatureValue B.ByteString 
+  deriving (Show, Eq, Ord, Typeable, Generic)  
+
+
+-- Axccording to https://tools.ietf.org/html/rfc5652#page-16
+-- there has to be DER encoded signedAttribute set
+data SignedAttributes = SignedAttributes [Attribute] B.ByteString
+  deriving (Show, Eq, Typeable, Generic)
+
+data Attribute = ContentTypeAttr ContentType 
+            | MessageDigest B.ByteString
+            | SigningTime DateTime (Maybe TimezoneOffset)
+            | BinarySigningTime Integer 
+            | UnknownAttribute OID [ASN1]
+      deriving (Show, Eq, Typeable, Generic)
+
+
+
 -- Subject Public Key Info
 newtype SPKI = SPKI EncodedBase64
     deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
@@ -186,9 +291,6 @@ data Repository =
     RrdpRepo RrdpRepository 
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-data Invalid = Error | Warning
-    deriving (Show, Eq, Ord, Typeable, Generic)
-
         
 
 -- serialisation
@@ -206,8 +308,6 @@ instance Serialise Roa
 instance Serialise Gbr
 instance Serialise ASN
 instance Serialise a => Serialise (CMS a)
--- instance Serialise CerObject
--- instance Serialise CrlObject
 instance Serialise SignCRL
 instance Serialise ResourceCert
 instance Serialise RpkiObject
@@ -224,6 +324,20 @@ instance Serialise (ResourceSet AsResource 'Strict_)
 instance Serialise (ResourceSet AsResource 'Reconsidered)
 instance Serialise AsResource
 
+
+instance Serialise ContentType
+instance Serialise a => Serialise (EncapsulatedContentInfo a)
+instance Serialise a => Serialise (SignedObject a)
+instance Serialise a => Serialise (SignedData a)
+instance Serialise CMSVersion
+instance Serialise DigestAlgorithmIdentifiers
+instance Serialise SignatureAlgorithmIdentifier
+instance Serialise SignatureValue
+instance Serialise SignerIdentifier
+instance Serialise SignedAttributes
+instance Serialise Attribute
+instance Serialise CertificateWithSignature
+instance Serialise SignerInfos
 
 -- 
 getHash :: RpkiObject -> Hash
@@ -242,6 +356,10 @@ getMeta :: RpkiObject -> Maybe RpkiMeta
 getMeta (RpkiObject (WithMeta m _)) = Just m
 getMeta _                           = Nothing
 
+getSerial :: CerObject -> Serial
+getSerial rc = Serial $ X509.certSerial $ cwsX509certificate $ withRFC cert certX509 
+    where ResourceCert cert = rc
+
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs
 
@@ -250,3 +368,11 @@ toAKI (SKI ki) = AKI ki
 
 getCMSContent :: CMS a -> a
 getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so
+
+getEEResourceCert :: SignedObject a -> ResourceCert
+getEEResourceCert = scCertificate . soContent
+
+getEECert :: SignedObject a -> CertificateWithSignature
+getEECert so = withRFC rc certX509 
+    where
+        ResourceCert rc = scCertificate $ soContent so

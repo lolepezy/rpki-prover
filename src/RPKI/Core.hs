@@ -39,19 +39,19 @@ validateTA :: (Has RsyncConf conf, Has AppLogger conf, Storage s) =>
 validateTA tal taStore = do
   logger :: AppLogger <- asks getter
   (u, ro) <- fetchTACertificate tal
-  WithMeta newMeta cert <- pureToValidatorT $ validateTACert tal u ro  
+  WithMeta newMeta newCert <- pureToValidatorT $ validateTACert tal u ro  
   fromTry (StorageE . StorageError . fmtEx) $ 
     rwTx taStore $ \tx -> do      
       getTA tx taStore (getTaName tal) >>= \case
         Nothing -> do
           -- it's a new TA, store it
           logInfo_ logger [i| Storing new #{getTaName tal} |]
-          putTA tx taStore (StoredTA tal cert newMeta)
+          putTA tx taStore (StoredTA tal newCert newMeta)
           -- TODO Trigger tree validation
-        Just (StoredTA _ _ oldMeta) -> 
-          when (serial oldMeta /= serial newMeta) $ do            
+        Just (StoredTA _ oldCert _) -> 
+          when (getSerial oldCert /= getSerial newCert) $ do            
             logInfo_ logger [i| Updating TA certificate for #{getTaName tal} |]
-            putTA tx taStore (StoredTA tal cert newMeta)            
+            putTA tx taStore (StoredTA tal newCert newMeta)            
             -- TODO Trigger tree validation          
 
 
@@ -88,7 +88,7 @@ validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
     Just (RpkiCrl crl) -> do      
       pureToValidatorT $ do 
         crl' <- validateCrl crl cert
-        validateMft wmft cert crl'
+        validateMft mftCms cert crl'
       -- go down on children
       allChildren <- lift3 $ roTx objectStore $ \tx -> findByAKI tx objectStore childrenAki
 

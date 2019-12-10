@@ -23,7 +23,6 @@ import           Data.ASN1.Types
 import           Data.X509
 
 import           RPKI.Domain
-import           RPKI.SignTypes
 import           RPKI.IP
 import qualified RPKI.IP                  as IP
 import qualified RPKI.Util                as U
@@ -36,27 +35,35 @@ import           RPKI.Parse.Internal.Common
 parseResourceCertificate :: B.ByteString ->
                             ParseResult (URI -> (RpkiMeta, CerObject))
 parseResourceCertificate bs = do
-  certificate :: SignedExact Certificate <- mapParseErr $ decodeSignedObject bs  
-  let x509 = getX509Cert certificate
+  certificate <- mapParseErr $ decodeSignedObject bs  
   let signedCertificate = unifyCert certificate
-  let exts = getExtsSign signedCertificate
-  case extVal exts id_subjectKeyId of
-    Just s -> do
-        r <- parseResources signedCertificate
-        ki <- parseKI s
-        aki' <- case extVal exts id_authorityKeyId of
-                Nothing -> pure Nothing
-                Just a  -> Just . AKI <$> parseKI a
-        let meta location = RpkiMeta {
-            aki  = aki', 
-            ski  = SKI ki, 
-            hash = U.sha256s bs, 
-            locations = location :| [], 
-            serial = Serial (certSerial x509)          
-          }
-        pure $ \location -> (meta location, r)
-    Nothing -> (Left . fmtErr) "No SKI extension"
+  (rc, ski_, aki_) <- parseResourceCert signedCertificate  
+  let meta location = RpkiMeta {
+      aki  = aki_,
+      ski  = ski_,
+      hash = U.sha256s bs,
+      locations = location :| []
+  }
+  pure $ \location -> (meta location, rc)
 
+
+toResourceCert :: CertificateWithSignature -> ParseResult CerObject
+toResourceCert sc = do 
+  (rc, _, _) <- parseResourceCert sc
+  pure rc
+
+parseResourceCert :: CertificateWithSignature -> ParseResult (CerObject, SKI, Maybe AKI)
+parseResourceCert certificate = do  
+  let exts = getExtsSign certificate
+  case extVal exts id_subjectKeyId of
+    Just s  -> do
+      rc <- parseResources certificate    
+      ki <- parseKI s
+      aki' <- case extVal exts id_authorityKeyId of
+            Nothing -> pure Nothing
+            Just a  -> Just . AKI <$> parseKI a
+      pure (rc, SKI ki, aki')
+    Nothing -> Left $ fmtErr "No SKI extension"
 
 
 parseResources :: CertificateWithSignature -> ParseResult ResourceCert

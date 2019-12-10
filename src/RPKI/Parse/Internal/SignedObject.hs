@@ -17,8 +17,8 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.X509
 
 import RPKI.Domain
-import RPKI.SignTypes
 import RPKI.Parse.Internal.Common
+import RPKI.Parse.Internal.Cert
 
 import qualified RPKI.Util as U
 
@@ -89,14 +89,16 @@ parseSignedObject eContentParse =
           Just asns -> 
             case runParseASN1 getObject asns of
               Left e              -> throwParseError $ show e
-              Right eeCertificate -> CertificateWithSignature 
-                                      eeCertificate <$> 
-                                      parseSignatureAlgorithm <*> 
-                                      parseSignature <*> 
-                                      pure encodedCert
-                                      where 
-                                        encodedCert = encodeASN1' DER $ 
-                                          [Start Sequence] <> asns <> [End Sequence]                                
+              Right eeCertificate -> do
+                  sigAlgorithm <- parseSignatureAlgorithm
+                  signature    <- parseSignature
+                  let certWithSig = CertificateWithSignature eeCertificate sigAlgorithm signature encodedCert
+                  case toResourceCert certWithSig of
+                    Left e  -> throwParseError $ "EE certificate is broken" <> show e
+                    Right c -> pure c
+                  where 
+                    encodedCert = encodeASN1' DER $ 
+                      [Start Sequence] <> asns <> [End Sequence]                                
 
     parseSignerInfo = SignerInfos <$>
       parseVersion <*>
@@ -143,7 +145,8 @@ parseSignedObject eContentParse =
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
 getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
-getMetaFromSigned obj bs = 
+getMetaFromSigned so bs = do
+  let exts = getExts $ cwsX509certificate $ getEECert so
   case extVal exts id_subjectKeyId of
     Nothing -> Left . fmtErr $ "SKI is absent" 
     Just s  -> do
@@ -156,9 +159,6 @@ getMetaFromSigned obj bs =
               aki  = aki',
               ski  = SKI ki,
               hash = U.sha256s bs,
-              locations = location :| [],
-              serial = Serial (certSerial x509)    
-          }            
-  where
-    exts = getExts x509  
-    CertificateWithSignature x509 _ _ _ = scCertificate $ soContent obj
+              locations = location :| []              
+          }
+    

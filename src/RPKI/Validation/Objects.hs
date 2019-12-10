@@ -26,7 +26,6 @@ import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
-import           RPKI.SignTypes
 import           RPKI.TAL
 import           RPKI.Util                (convert)
 import           RPKI.Validation.Crypto
@@ -86,17 +85,17 @@ validateTACert _ _ _ = pureError UnknownObjectAsTACert
     - check the resource set (needs the parent as well)
     - check it's not revoked (needs CRL)
  -}
-validateResourceCert :: WithMeta CerObject -> 
-                        WithMeta CerObject -> 
+validateResourceCert :: CerObject -> 
+                        CerObject -> 
                         Validated CrlObject ->
-                        PureValidator conf (WithMeta CerObject)
-validateResourceCert wcer@(WithMeta RpkiMeta {..} cert) (WithMeta _ parentCert) vcrl = do
+                        PureValidator conf (Validated CerObject)
+validateResourceCert cert parentCert vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
-  when (isRevoked wcer vcrl) $ 
-    pureError $ RevokedResourceCertificate locations
+  when (isRevoked cert vcrl) $ 
+    pureError RevokedResourceCertificate
   validateResourceCertExtensions cert
   validateResourceSet cert parentCert
-  pure wcer
+  pure $ Validated cert
   where 
     -- TODO Implement it
     validateResourceSet cert parentCert = pure ()
@@ -114,16 +113,17 @@ validateCrl crlObject@(CrlMeta {..}, SignCRL {..}) parentCert = do
 
 -- TODO Validate other stuff, validate resource certificate, etc.
 validateMft :: Has Now conf => 
-               WithMeta MftObject -> 
+               MftObject -> 
                CerObject -> 
-               Validated CrlObject -> PureValidator conf (WithMeta MftObject)
-validateMft wmft@(WithMeta RpkiMeta {..} mft) parentCert crl = do
+               Validated CrlObject -> PureValidator conf (Validated MftObject)
+validateMft mft parentCert crl = do
   signatureCheck $ validateCMSSignature mft
-  signatureCheck $ validateCMS'EECertSignature mft parentCert
+  let eeCert = getEEResourceCert $ unCMS mft  
+  validateResourceCert eeCert parentCert crl
   void $ validateNexUpdate $ Just $ nextTime $ getCMSContent mft
-  when (isRevoked wmft crl) $ 
-    pureError $ RevokedEECertificate locations
-  pure wmft  
+  when (isRevoked eeCert crl) $ 
+    pureError $ RevokedEECertificate
+  pure $ Validated mft
 
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
@@ -139,11 +139,14 @@ validateNexUpdate nextUpdateTime = do
 
 
 -- | Check if CMS is on the revocation list
-isRevoked :: WithMeta a -> Validated CrlObject -> Bool
-isRevoked (WithMeta RpkiMeta {..} _) (Validated (_, SignCRL {..})) = 
+isRevoked :: CerObject -> Validated CrlObject -> Bool
+isRevoked rc (Validated (_, SignCRL {..})) = 
   null $ filter
     (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial) $ 
       crlRevokedCertificates crl
+  where
+    serial = Serial (certSerial $ cwsX509certificate $ withRFC cert certX509)
+    ResourceCert cert = rc
     
 
 signatureCheck :: SignatureVerification -> PureValidator conf ()

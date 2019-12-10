@@ -162,23 +162,23 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{
         | otherwise ->
             case (deltas, nonConsecutive) of
                 ([], _) -> Right $ UseSnapshot snapshotInfo
-                (_, []) | nextSerial repoSerial < head (map getSerial sortedDeltas) ->
+                (_, []) | nextSerial repoSerial < head (map deltaSerial sortedDeltas) ->
                            -- we are too far behind
                            Right $ UseSnapshot snapshotInfo
                         | otherwise ->
                            Right $ UseDeltas chosenDeltas
                 (_, nc) -> Left $ NonConsecutiveDeltaSerials nc
             where
-                sortedSerials = map getSerial sortedDeltas
-                sortedDeltas = L.sortOn getSerial deltas
-                chosenDeltas = filter ((> repoSerial) . getSerial) sortedDeltas
+                sortedSerials = map deltaSerial sortedDeltas
+                sortedDeltas = L.sortOn deltaSerial deltas
+                chosenDeltas = filter ((> repoSerial) . deltaSerial) sortedDeltas
 
                 nonConsecutive = L.filter (\(s, s') -> nextSerial s /= s') $
                     L.zip sortedSerials (tail sortedSerials)
 
 
-getSerial :: DeltaInfo -> Serial
-getSerial (DeltaInfo _ _ s) = s
+deltaSerial :: DeltaInfo -> Serial
+deltaSerial (DeltaInfo _ _ s) = s
 
 nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1

@@ -46,8 +46,8 @@ data ValidationError = InvalidCert !T.Text |
                         CRLHashPointsToAnotherObject !Hash !(NonEmpty URI) |
                         NextUpdateTimeNotSet |
                         NextUpdateTimeIsBeforeNow !DateTime |
-                        RevokedEECertificate !(NonEmpty URI) |
-                        RevokedResourceCertificate !(NonEmpty URI)
+                        RevokedEECertificate |
+                        RevokedResourceCertificate
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 

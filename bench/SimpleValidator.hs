@@ -25,7 +25,6 @@ import Data.X509.Validation
 import RPKI.AppMonad
 import RPKI.Domain
 import RPKI.Errors
-import RPKI.SignTypes
 import RPKI.Validation.Crypto
 import RPKI.Parse.Parse
 
@@ -262,7 +261,7 @@ testSignature = do
   let CertificateWithSignature 
         _ 
         (SignatureAlgorithmIdentifier signAlgorithm) 
-        (SignatureValue sign) encoded = scCertificate $ soContent so
+        (SignatureValue sign) encoded = getEECert so
 
   putStrLn $ "encoded = " ++ show encoded
 

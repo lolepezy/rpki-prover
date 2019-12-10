@@ -16,7 +16,6 @@ import Data.X509
 import           RPKI.Domain
 import qualified RPKI.Util as U
 import           RPKI.Parse.Internal.Common
-import           RPKI.SignTypes
 
 
 parseCrl :: B.ByteString -> ParseResult (URI -> CrlObject)

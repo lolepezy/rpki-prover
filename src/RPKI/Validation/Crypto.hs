@@ -8,7 +8,6 @@ import Data.X509.Validation hiding (InvalidSignature)
 
 import RPKI.Domain
 import RPKI.Parse.Parse
-import RPKI.SignTypes
     
 -- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification
@@ -44,7 +43,7 @@ validateSignature rpkiObject (ResourceCert parentCert) =
                     _
                     (SignatureAlgorithmIdentifier algorithm) 
                     (SignatureValue signature) 
-                    encodedCert = scCertificate $ soContent signObject
+                    encodedCert = getEECert signObject
 
 
 -- | Validate the signature of a CRL object
@@ -81,7 +80,7 @@ validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData si
         CertificateWithSignature
             eeCertificate
             (SignatureAlgorithmIdentifier signAlgorithm) 
-            _ _ = scCertificate $ soContent so
+            _ _ = getEECert so
         pubKey = certPubKey eeCertificate
         SignedAttributes _ signData = signedAttrs $ scSignerInfos $ soContent so        
 
@@ -95,6 +94,6 @@ validateCMS'EECertSignature (CMS so) (ResourceCert parentCert) =
             _
             (SignatureAlgorithmIdentifier signAlgorithm) 
             (SignatureValue signature) 
-            encodedCert = scCertificate $ soContent so
+            encodedCert = getEECert so
         pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
         
