@@ -88,7 +88,7 @@ data WithMeta a = WithMeta !RpkiMeta !a
     deriving (Show, Eq, Typeable, Generic)
 
 type CrlObject = (CrlMeta, SignCRL)
-type CerObject = ResourceCert
+type CerObject = ResourceCertificate
 type MftObject = CMS Manifest
 type RoaObject = CMS [Roa]
 type GbrObject = CMS Gbr
@@ -116,16 +116,13 @@ data RpkiObject = RpkiObject !(WithMeta RpkiSpecific)
                 | RpkiCrl !CrlObject
     deriving (Show, Eq, Typeable, Generic)
 
--- data RpkiCrl = RpkiCrl !CrlMeta !CrlObject
---     deriving (Show, Eq, Typeable, Generic)
-
-data ResourceCertificate (rfc :: ValidationRFC) = ResourceCertificate {
+data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
     certX509    :: CertificateWithSignature, 
     ipResources :: Maybe (IpResourceSet rfc), 
     asResources :: Maybe (ResourceSet AsResource rfc)
 } deriving (Show, Eq, Typeable, Generic)
 
-newtype ResourceCert = ResourceCert (AnRFC ResourceCertificate)
+newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving (Show, Eq, Typeable, Generic)
 
 data Roa = Roa     
@@ -185,7 +182,7 @@ data SignedData a = SignedData {
       scVersion          :: CMSVersion, 
       scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
       scEncapContentInfo :: EncapsulatedContentInfo a, 
-      scCertificate      :: ResourceCert, 
+      scCertificate      :: ResourceCertificate, 
       scSignerInfos      :: SignerInfos
   } deriving (Show, Eq, Typeable, Generic)
   
@@ -271,7 +268,7 @@ newtype TaName = TaName T.Text
 
 data TA = TA {
     taName        :: TaName
-  , taCertificate :: Maybe ResourceCert
+  , taCertificate :: Maybe ResourceCertificate
   , taUri         :: URI
   , taSpki        :: SPKI
 } deriving (Show, Eq, Generic, Serialise)
@@ -309,17 +306,17 @@ instance Serialise Gbr
 instance Serialise ASN
 instance Serialise a => Serialise (CMS a)
 instance Serialise SignCRL
-instance Serialise ResourceCert
+instance Serialise ResourceCertificate
 instance Serialise RpkiObject
 instance Serialise a => Serialise (WithMeta a)
-instance Serialise (WithRFC 'Strict_ ResourceCertificate)
-instance Serialise (ResourceCertificate 'Strict_)
+instance Serialise (WithRFC 'Strict_ ResourceCert)
+instance Serialise (ResourceCert 'Strict_)
 instance Serialise (IpResourceSet 'Strict_)
 instance Serialise (ResourceSet IpResource 'Strict_)
-instance Serialise (ResourceCertificate 'Reconsidered)
+instance Serialise (ResourceCert 'Reconsidered)
 instance Serialise (IpResourceSet 'Reconsidered)
 instance Serialise (ResourceSet IpResource 'Reconsidered)
-instance Serialise (WithRFC 'Reconsidered ResourceCertificate)
+instance Serialise (WithRFC 'Reconsidered ResourceCert)
 instance Serialise (ResourceSet AsResource 'Strict_)
 instance Serialise (ResourceSet AsResource 'Reconsidered)
 instance Serialise AsResource
@@ -358,7 +355,7 @@ getMeta _                           = Nothing
 
 getSerial :: CerObject -> Serial
 getSerial rc = Serial $ X509.certSerial $ cwsX509certificate $ withRFC cert certX509 
-    where ResourceCert cert = rc
+    where ResourceCertificate cert = rc
 
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs
@@ -369,10 +366,10 @@ toAKI (SKI ki) = AKI ki
 getCMSContent :: CMS a -> a
 getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so
 
-getEEResourceCert :: SignedObject a -> ResourceCert
+getEEResourceCert :: SignedObject a -> ResourceCertificate
 getEEResourceCert = scCertificate . soContent
 
 getEECert :: SignedObject a -> CertificateWithSignature
 getEECert so = withRFC rc certX509 
     where
-        ResourceCert rc = scCertificate $ soContent so
+        ResourceCertificate rc = scCertificate $ soContent so

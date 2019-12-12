@@ -11,13 +11,13 @@ import RPKI.Parse.Parse
     
 -- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification
-validateSignature rpkiObject (ResourceCert parentCert) = 
+validateSignature rpkiObject (ResourceCertificate parentCert) = 
     verifySignature signAlgorithm pubKey signData sign
     where        
         (signAlgorithm, signData, sign) = getSign rpkiObject
         pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
 
-        getSign (RpkiObject (WithMeta _ (CerRO (ResourceCert resourceCert)))) = 
+        getSign (RpkiObject (WithMeta _ (CerRO (ResourceCertificate resourceCert)))) = 
             (algorithm, signedData, signature)
             where    
                 CertificateWithSignature {
@@ -48,7 +48,7 @@ validateSignature rpkiObject (ResourceCert parentCert) =
 
 -- | Validate the signature of a CRL object
 validateCertSignature :: CerObject -> CerObject -> SignatureVerification                
-validateCertSignature (ResourceCert cert) (ResourceCert parentCert) = 
+validateCertSignature (ResourceCertificate cert) (ResourceCertificate parentCert) = 
     verifySignature algorithm pubKey signedData signature1    
     where
         CertificateWithSignature {
@@ -61,7 +61,7 @@ validateCertSignature (ResourceCert cert) (ResourceCert parentCert) =
 
 -- | Validate the signature of a CRL object
 validateCRLSignature :: CrlObject -> CerObject -> SignatureVerification                
-validateCRLSignature (_, signCrl) (ResourceCert parentCert) = 
+validateCRLSignature (_, signCrl) (ResourceCertificate parentCert) = 
     verifySignature signAlgorithm pubKey encoded signature
     where
         pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
@@ -87,7 +87,7 @@ validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData si
 
 -- | Validate the signature of CMS's EE certificate
 validateCMS'EECertSignature :: CMS a -> CerObject -> SignatureVerification
-validateCMS'EECertSignature (CMS so) (ResourceCert parentCert) = 
+validateCMS'EECertSignature (CMS so) (ResourceCertificate parentCert) = 
     verifySignature signAlgorithm pubKey encodedCert signature    
     where
         CertificateWithSignature

@@ -32,10 +32,10 @@ import           RPKI.Validation.Objects
 
 
 -- | Valiidate TAL
-validateTA :: (Has RsyncConf conf, Has AppLogger conf, Storage s) =>
+validateTA :: (Has RsyncConf env, Has AppLogger env, Storage s) =>
               TAL -> 
               TAStore s ->
-              ValidatorT conf IO ()
+              ValidatorT env IO ()
 validateTA tal taStore = do
   logger :: AppLogger <- asks getter
   (u, ro) <- fetchTACertificate tal
@@ -56,25 +56,29 @@ validateTA tal taStore = do
 
 
 -- | Do top-down validation starting from the given object
-validateTree :: (Has AppLogger conf, Has Now conf, Storage s) =>
-                WithMeta CerObject ->
+validateTree :: (Has AppLogger env, 
+                 Has Now env, 
+                 Has ValidationContext env,
+                 Storage s) =>
                 RpkiObjectStore s -> 
-                ValidatorT conf IO ()
-validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
+                RpkiObject ->                
+                ValidatorT env IO ()
+validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(ResourceCertificate cert)))) = do
 
-  logger :: AppLogger <- asks getter
+  logger :: AppLogger  <- asks getter
+  now :: Now           <- asks getter
+  validationContext :: ValidationContext <- asks getter
+
   let childrenAki = toAKI ski
 
-  wmft@(WithMeta m mftCms) <- fromIOEitherSt $ roTx objectStore $ \tx -> 
-    runValidatorT () $
+  WithMeta _ mft <- validatorT $ roTx objectStore $ \tx -> 
+    runValidatorT validationContext $
       lift3 (findMftsByAKI tx objectStore childrenAki) >>= \case
         []        -> validatorError $ NoMFT childrenAki locations
         (mft : _) -> pure mft
 
-  -- validate MFT object
-
   let crls = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
-        mftEntries $ getCMSContent mftCms
+        mftEntries $ getCMSContent mft
 
   (_, crlHash) <- case crls of 
     []    -> validatorError $ NoCRLOnMFT childrenAki locations
@@ -86,28 +90,38 @@ validateTree (WithMeta RpkiMeta {..} cert@(ResourceCert rc)) objectStore = do
     Nothing              -> validatorError $ NoCRLExists childrenAki locations
     Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash locations
     Just (RpkiCrl crl) -> do      
-      pureToValidatorT $ do 
-        crl' <- validateCrl crl cert
-        validateMft mftCms cert crl'
+      crl' <- pureToValidatorT $ do
+        validatedCrl <- validateCrl crl rc
+        validateMft mft rc validatedCrl
+        pure validatedCrl
       -- go down on children
-      allChildren <- lift3 $ roTx objectStore $ \tx -> findByAKI tx objectStore childrenAki
+      allChildren :: [RpkiObject] <- lift3 $ roTx objectStore $ \tx -> 
+        findByAKI tx objectStore childrenAki
 
       {- TODO narrow down children traversal to the ones that  
         1) Are on the manifest
         or
         2) Are (or include as EE) the latest 
         certificates with the unique (non-overlaping) set of reseources        
-      -}
+      -}      
+      let childContext = (logger, now, )
+      let x = map (validateChild childContext) allChildren
 
 
-      pure ()
+      pure ()      
+      where        
+        validateChild childContext cer@(RpkiObject (WithMeta m (CerRO _))) = 
+          let
+            childVC = vContext $ NE.head $ getLocations cer
+            in runValidatorT (childContext childVC) $ validateTree objectStore cer
+        
 
   
 
 
   -- | Fetch TA certificate based on TAL location(s 
-fetchTACertificate :: (Has RsyncConf conf, Has AppLogger conf) => 
-                      TAL -> ValidatorT conf IO (URI, RpkiObject)
+fetchTACertificate :: (Has RsyncConf env, Has AppLogger env) => 
+                      TAL -> ValidatorT env IO (URI, RpkiObject)
 fetchTACertificate tal = 
   go $ NE.toList $ certLocations tal
   where

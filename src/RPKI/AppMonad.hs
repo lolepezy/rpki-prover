@@ -11,16 +11,21 @@ import Control.Monad.Reader
 import Control.Exception
 import Control.Monad.Morph
 
+import Data.Has
+
 import Data.Bifunctor
 import RPKI.Errors
 
 
 -- Application monad stack
-type ValidatorT conf m r = ReaderT conf (ExceptT SomeError (StateT [ValidationWarning] m)) r
+type ValidatorT env m r = Has ValidationContext env => 
+        ReaderT env (ExceptT SomeError (StateT [ValidationWarning] m)) r
 
-type PureValidator conf r = ReaderT conf (ExceptT SomeError (State [ValidationWarning])) r
+type PureValidator env r = Has ValidationContext env =>
+        ReaderT env (ExceptT SomeError (State [ValidationWarning])) r
 
-pureToValidatorT :: Monad m => PureValidator conf r -> ValidatorT conf m r
+pureToValidatorT :: (Monad m, Has ValidationContext env) => 
+                    PureValidator env r -> ValidatorT env m r
 pureToValidatorT = hoist $ hoist $ hoist generalize
 
 lift2 :: (MonadTrans t1, MonadTrans t2, Monad m, Monad (t2 m)) =>
@@ -32,48 +37,50 @@ lift3 :: (MonadTrans t1, MonadTrans t2, MonadTrans t3, Monad m,
         m a -> t1 (t2 (t3 m)) a
 lift3 = lift . lift . lift
 
-fromIOEither :: Monad m => m (Either SomeError r) -> ValidatorT conf m r
+fromIOEither :: Monad m => m (Either SomeError r) -> ValidatorT env m r
 fromIOEither = lift . ExceptT . lift 
 
 -- TODO Make it not so ugly
-fromIOEitherSt :: Monad m => m (Either SomeError r, [ValidationWarning]) -> ValidatorT conf m r
-fromIOEitherSt s = lift $ ExceptT $ do
+validatorT :: Monad m => m (Either SomeError r, [ValidationWarning]) -> ValidatorT env m r
+validatorT s = lift $ ExceptT $ do
                         (v, w) <- lift s
                         put w
                         pure v
 
-fromTry :: Exception exc => (exc -> SomeError) -> IO r -> ValidatorT conf IO r
+fromTry :: Exception exc => (exc -> SomeError) -> IO r -> ValidatorT env IO r
 fromTry mapErr t = fromIOEither $ first mapErr <$> try t
 
-fromEither :: Monad m => Either SomeError r -> ValidatorT conf m r
+fromEither :: Monad m => Either SomeError r -> ValidatorT env m r
 fromEither = fromIOEither . pure
 
 fromTryEither :: Exception exc =>
-                 (exc -> SomeError) -> IO (Either SomeError r) -> ValidatorT conf IO r
+                 (exc -> SomeError) -> IO (Either SomeError r) -> ValidatorT env IO r
 fromTryEither mapErr t = fromEither =<< fromTry mapErr t
 
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runPureValidator :: conf -> PureValidator conf r -> (Either SomeError r, [ValidationWarning])
-runPureValidator conf w = (runState $ runExceptT $ runReaderT w conf) mempty
+runPureValidator :: Has ValidationContext env =>
+                    env -> PureValidator env r -> (Either SomeError r, [ValidationWarning])
+runPureValidator env w = (runState $ runExceptT $ runReaderT w env) mempty
 
-runValidatorT  :: conf -> ValidatorT conf m r -> m (Either SomeError r, [ValidationWarning])
-runValidatorT conf w = (runStateT $ runExceptT $ runReaderT w conf) mempty
+runValidatorT :: Has ValidationContext env =>
+                 env -> ValidatorT env m r -> m (Either SomeError r, [ValidationWarning])
+runValidatorT env w = (runStateT $ runExceptT $ runReaderT w env) mempty
 
 -- TODO Introduce some sort of error/warning context, an 
 -- URI of the object the error is related to
-validatorWarning :: Monad m => ValidationWarning -> ValidatorT conf m ()
+validatorWarning :: Monad m => ValidationWarning -> ValidatorT env m ()
 validatorWarning = pureToValidatorT . pureWarning
 
-validatorError :: Monad m => ValidationError -> ValidatorT conf m r
+validatorError :: Monad m => ValidationError -> ValidatorT env m r
 validatorError = pureToValidatorT . pureError
 
-pureWarning :: ValidationWarning -> PureValidator conf ()
+pureWarning :: ValidationWarning -> PureValidator env ()
 pureWarning w = lift $ modify' (w:)
 
-pureError :: ValidationError -> PureValidator conf r
+pureError :: ValidationError -> PureValidator env r
 pureError e = lift $ throwE $ ValidationE e
 
-pureErrorIfNot :: Bool -> ValidationError -> PureValidator conf ()
+pureErrorIfNot :: Bool -> ValidationError -> PureValidator env ()
 pureErrorIfNot b e = if b then pure () else lift $ throwE $ ValidationE e

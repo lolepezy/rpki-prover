@@ -66,7 +66,7 @@ parseResourceCert certificate = do
     Nothing -> Left $ fmtErr "No SKI extension"
 
 
-parseResources :: CertificateWithSignature -> ParseResult ResourceCert
+parseResources :: CertificateWithSignature -> ParseResult ResourceCertificate
 parseResources x509cert = do    
       let ext' = extVal $ getExtsSign x509cert
       case (ext' id_pe_ipAddrBlocks,
@@ -77,11 +77,11 @@ parseResources x509cert = do
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns, Nothing) -> ResourceCert . Left . WithRFC <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> ResourceCert . Right . WithRFC <$> cert' x509cert ips asns
+        (ips, Nothing, asns, Nothing) -> ResourceCertificate . Left . WithRFC <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> ResourceCertificate . Right . WithRFC <$> cert' x509cert ips asns
     where
       broken = Left . fmtErr
-      cert' x509c ips asns = ResourceCertificate x509c <$>
+      cert' x509c ips asns = ResourceCert x509c <$>
             traverse (parseR parseIpExt) ips <*>
             traverse (parseR parseAsnExt) asns
 

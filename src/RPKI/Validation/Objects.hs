@@ -43,7 +43,7 @@ now :: IO Now
 now = Now <$> dateCurrent
 
 validateResourceCertExtensions :: CerObject -> PureValidator conf CerObject
-validateResourceCertExtensions cert@(ResourceCert rc) = 
+validateResourceCertExtensions cert@(ResourceCertificate rc) = 
   validateHasCriticalExtensions $ cwsX509certificate $ withRFC rc certX509     
   where
     validateHasCriticalExtensions x509cert = do
@@ -65,7 +65,7 @@ validateResourceCertExtensions cert@(ResourceCert rc) =
                                 
 -- | 
 validateTACert :: TAL -> URI -> RpkiObject -> PureValidator conf (WithMeta CerObject)
-validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(ResourceCert taCert)))) = do
+validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(ResourceCertificate taCert)))) = do
     let spki = subjectPublicKeyInfo $ cwsX509certificate $ withRFC taCert certX509
     pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
     pureErrorIfNot (isNothing aki) $ TACertAKIIsNotEmpty u
@@ -113,17 +113,32 @@ validateCrl crlObject@(CrlMeta {..}, SignCRL {..}) parentCert = do
 
 -- TODO Validate other stuff, validate resource certificate, etc.
 validateMft :: Has Now conf => 
-               MftObject -> 
+              MftObject -> CerObject -> Validated CrlObject -> 
+              PureValidator conf (Validated MftObject)
+validateMft mft parentCert crl = 
+  validateCms mft parentCert crl $ \m -> do
+      void $ validateNexUpdate $ Just $ nextTime $ getCMSContent m
+      pure m  
+
+validateRoa :: Has Now conf => 
+              RoaObject -> CerObject -> Validated CrlObject -> 
+              PureValidator conf (Validated RoaObject)
+validateRoa roa parentCert crl = validateCms roa parentCert crl pure
+
+validateCms :: Has Now conf => 
+               CMS a -> 
                CerObject -> 
-               Validated CrlObject -> PureValidator conf (Validated MftObject)
-validateMft mft parentCert crl = do
-  signatureCheck $ validateCMSSignature mft
-  let eeCert = getEEResourceCert $ unCMS mft  
+               Validated CrlObject -> 
+               (CMS a -> PureValidator conf (CMS a)) ->
+               PureValidator conf (Validated (CMS a))
+validateCms cms parentCert crl extraValidation = do
+  signatureCheck $ validateCMSSignature cms
+  let eeCert = getEEResourceCert $ unCMS cms  
   validateResourceCert eeCert parentCert crl
-  void $ validateNexUpdate $ Just $ nextTime $ getCMSContent mft
   when (isRevoked eeCert crl) $ 
-    pureError $ RevokedEECertificate
-  pure $ Validated mft
+    pureError RevokedEECertificate
+  extraValidation cms
+  pure $ Validated cms
 
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
@@ -146,7 +161,7 @@ isRevoked rc (Validated (_, SignCRL {..})) =
       crlRevokedCertificates crl
   where
     serial = Serial (certSerial $ cwsX509certificate $ withRFC cert certX509)
-    ResourceCert cert = rc
+    ResourceCertificate cert = rc
     
 
 signatureCheck :: SignatureVerification -> PureValidator conf ()

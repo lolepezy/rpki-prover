@@ -266,7 +266,7 @@ testSignature = do
   putStrLn $ "encoded = " ++ show encoded
 
   let skiMap = bySKIMap objects
-  let [x@(RpkiObject (WithMeta _ (CerRO cer@(ResourceCert parentCert))))] = MultiMap.lookup (SKI ki) skiMap
+  let [x@(RpkiObject (WithMeta _ (CerRO cer@(ResourceCertificate parentCert))))] = MultiMap.lookup (SKI ki) skiMap
 
   let s = validateSignature rr cer
 
@@ -307,7 +307,7 @@ testSignature = do
 --       let skiMap = bySKIMap objects
 --       let xx = MultiMap.lookup (SKI ki) skiMap
 --       putStrLn $ "xx = " <> show xx
---       let [x@(RpkiObject _ (CerRO cer@(ResourceCert parentCert)))] = xx
+--       let [x@(RpkiObject _ (CerRO cer@(ResourceCertificate parentCert)))] = xx
 
 --       let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
 
@@ -374,10 +374,12 @@ validatorUpdateRRDPRepo lmdb = do
   --   "https://rrdp.ripe.net/670de3e5-de83-4d77-bede-9d8a78454151/1585/snapshot.xml" 
   --   (\s -> Q.writeFile "snapshot.xml")  
   --   show
-  
-  parseWithTmp "snapshot.xml" $ \xml -> fileToDb m xml  
+  counter <- newIORef (0 :: Int)
+  parseWithTmp "snapshot.xml" $ \xml -> fileToDb m xml counter
+  c <- readIORef counter
+  say $ "saved " <> show c <> " objects."
     where
-      fileToDb m xml =
+      fileToDb m xml counter =
         -- say $ "xml = " <> show xml
         case parseSnapshot xml of
           Left e -> putStrLn $ "error = " <> show e
@@ -385,7 +387,7 @@ validatorUpdateRRDPRepo lmdb = do
             (chanIn, chanOut) <- Chan.newChan 20
             x <- first (\(e :: SomeException) -> e) <$> (try $ Unlift.concurrently 
               (write_ chanIn ps) 
-              (withTransaction lmdb $ \tx -> read_ chanOut tx m ps))
+              (withTransaction lmdb $ \tx -> read_ chanOut counter tx m ps))
             case x of 
               Left e -> say $ "error = " <> show e
               Right _ -> pure ()
@@ -399,11 +401,12 @@ validatorUpdateRRDPRepo lmdb = do
           a <- async $ pure $!! (u,) . toBytes_ <$> mkObject u encodedb64          
           Chan.writeChan chanIn (u, a)
 
-      read_ chanOut tx m x = forM x $ \_ -> do
+      read_ chanOut counter tx m x = forM x $ \_ -> do
         (u, a) <- Chan.readChan chanOut
         wait a >>= \case
           Left e             -> putStrLn $ "error = " <> show e <> ", u = " <> show u
-          Right (_, (h, bs)) -> 
+          Right (_, (h, bs)) -> do
+            void $ atomicModifyIORef counter $ \c -> (c + 1, ())
             LmdbMap.insertSuccess' tx m h bs >>= \case 
               True -> pure ()
               False -> LmdbMap.repsert' tx m h bs
@@ -426,7 +429,7 @@ processRRDP env = do
     say "begin"  
     lmdbStorage <- LMDB.create env "objects"
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
-    let conf = (createLogger, Config getParallelism)
+    let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     let store = RpkiObjectStore {
       objects = SIxMap lmdbStorage [],
       byAKI = SMMap lmdbStorage
@@ -437,7 +440,7 @@ processRRDP env = do
 saveRsyncRepo env = do
   lmdbStorage <- LMDB.create env "objects"
   let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
-  let conf = (createLogger, RsyncConf "/tmp/rsync", Config getParallelism)
+  let conf = (createLogger, RsyncConf "/tmp/rsync", Config getParallelism, vContext $ URI "something.cer")
   let store = RpkiObjectStore {
     objects = SIxMap lmdbStorage [],
     byAKI = SMMap lmdbStorage
@@ -447,13 +450,13 @@ saveRsyncRepo env = do
 saveRsync env = do
     say "begin"  
     let logAction = logTextStdout
-    let conf = (createLogger, RsyncConf "/tmp/rsync")
+    let conf = (createLogger, RsyncConf "/tmp/rsync", vContext $ URI "something.cer")
     e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
     say $ "done " <> show e
 
 processTAL = do
   say "begin"  
-  let conf = (createLogger, RsyncConf "/tmp/rsync")
+  let conf = (createLogger, RsyncConf "/tmp/rsync", vContext $ URI "something.cer")
   result <- runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
       B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
@@ -464,7 +467,7 @@ processTAL = do
   say $ "done " <> show result
 
 getTACert = do
-  let conf = (createLogger, RsyncConf "/tmp/rsync")
+  let conf = (createLogger, RsyncConf "/tmp/rsync", vContext $ URI "something.cer")
   runValidatorT conf $ do
     t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
       B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
@@ -482,7 +485,8 @@ main = do
   -- mkLmdb >>= saveOriginal
   -- usingLoggerT (LogAction putStrLn) $ lift app
   -- processTAL
-  mkLmdb >>= void . saveRsyncRepo
+  -- mkLmdb >>= void . saveRsyncRepo
+  mkLmdb >>= validatorUpdateRRDPRepo
   -- testSignature
 
 say :: String -> IO ()
