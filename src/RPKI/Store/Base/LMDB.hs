@@ -65,7 +65,11 @@ instance Storage LmdbStore where
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
 
-    -- iterateOver 
+    iterateOver (LmdbTx tx) LmdbStore {..} f =
+        void $ withCursor tx db $ \c -> 
+            runEffect $ LMap.firstForward c >-> do
+                Lmdb.KeyValue k v <- await
+                lift $ f (SKey $ Storable k) (SValue $ Storable v)
 
 
 -- | Basic storage implemented using LMDB
@@ -80,18 +84,13 @@ instance MultiStorage LmdbMultiStore where
 
     deleteAll (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
         -- LMMap.delete' tx db ks        
-        pure ()
+        pure ()    
 
-    get (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = do
-        -- TODO 
-        -- void $ withMultiCursor tx db $ \c -> Pipes.toListM $ LMMap.lookupValues c ks   
-        -- (SValue . Storable <$>) <$> LMMap.lookup' (toROTx tx) db ks 
-        pure []
-
-    -- iterateOver :: Tx s m -> s -> SKey -> (SKey -> SValue -> IO r) -> IO [r]
-    iterateOver tx LmdbMultiStore {..} (SKey (Storable ks)) f = do 
-        -- TODO
-        pure []
+    iterateOver (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f =
+        void $ withMultiCursor tx db $ \c -> 
+            runEffect $ LMMap.lookupValues c ks >-> do
+                v <- await
+                lift $ f key (SValue $ Storable v)
 
 
 

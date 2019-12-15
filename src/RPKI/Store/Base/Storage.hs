@@ -13,7 +13,7 @@ class WithTx s where
 
 class WithTx s => Storage s where        
     get :: Tx s m -> s -> SKey -> IO (Maybe SValue)    
-    iterateOver :: Tx s m -> s -> (SKey -> SValue -> IO r) -> IO [r]
+    iterateOver :: Tx s m -> s -> (SKey -> SValue -> IO ()) -> IO ()
     put :: Tx s 'RW -> s -> SKey -> SValue -> IO ()
     delete :: Tx s 'RW -> s -> SKey -> IO ()
 
