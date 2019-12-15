@@ -125,6 +125,11 @@ validateRoa :: Has Now conf =>
               PureValidator conf (Validated RoaObject)
 validateRoa roa parentCert crl = validateCms roa parentCert crl pure
 
+validateGbr :: Has Now conf => 
+              GbrObject -> CerObject -> Validated CrlObject -> 
+              PureValidator conf (Validated GbrObject)
+validateGbr gbr parentCert crl = validateCms gbr parentCert crl pure
+
 validateCms :: Has Now conf => 
                CMS a -> 
                CerObject -> 

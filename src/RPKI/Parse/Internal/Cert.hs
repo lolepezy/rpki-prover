@@ -77,8 +77,8 @@ parseResources x509cert = do
         (_, _, Just _, Just _)   -> broken "Both ASN extensions"
         (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns, Nothing) -> ResourceCertificate . Left . WithRFC <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> ResourceCertificate . Right . WithRFC <$> cert' x509cert ips asns
+        (ips, Nothing, asns, Nothing) -> strictCert <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> reconcideredCert <$> cert' x509cert ips asns
     where
       broken = Left . fmtErr
       cert' x509c ips asns = ResourceCert x509c <$>

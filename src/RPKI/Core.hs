@@ -63,7 +63,7 @@ validateTree :: (Has AppLogger env,
                 RpkiObjectStore s -> 
                 RpkiObject ->                
                 ValidatorT env IO ()
-validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(ResourceCertificate cert)))) = do
+validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(ResourceCertificate _)))) = do
 
   logger :: AppLogger  <- asks getter
   now :: Now           <- asks getter
@@ -90,7 +90,7 @@ validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(Resource
     Nothing              -> validatorError $ NoCRLExists childrenAki locations
     Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash locations
     Just (RpkiCrl crl) -> do      
-      crl' <- pureToValidatorT $ do
+      validatedCrl <- pureToValidatorT $ do
         validatedCrl <- validateCrl crl rc
         validateMft mft rc validatedCrl
         pure validatedCrl
@@ -105,17 +105,21 @@ validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(Resource
         certificates with the unique (non-overlaping) set of reseources        
       -}      
       let childContext = (logger, now, )
-      let x = map (validateChild childContext) allChildren
+      let x = map (validateChild childContext validatedCrl) allChildren
 
 
       pure ()      
       where        
-        validateChild childContext cer@(RpkiObject (WithMeta m (CerRO _))) = 
-          let
-            childVC = vContext $ NE.head $ getLocations cer
-            in runValidatorT (childContext childVC) $ validateTree objectStore cer
-        
-
+        validateChild childContext crl ro = case ro of 
+          cer@(RpkiObject (WithMeta _ (CerRO _))) -> 
+            runValidatorT childValidationContext $ validateTree objectStore cer
+          RpkiObject (WithMeta _ (RoaRO roa)) -> 
+            pure $ runPureValidator childValidationContext $ void $ validateRoa roa rc crl
+          RpkiObject (WithMeta _ (GbrRO gbr)) -> 
+            pure $ runPureValidator childValidationContext $ void $ validateGbr gbr rc crl
+          _ -> valid
+          where
+            childValidationContext = childContext $ vContext $ NE.head $ getLocations ro
   
 
 

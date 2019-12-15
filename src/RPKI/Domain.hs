@@ -40,17 +40,21 @@ data AsResource =  AS !ASN
                     {-# UNPACK #-} !ASN
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
-data ValidationRFC = Strict_ | Reconsidered
+data ValidationRFC = Strict_ | Reconsidered_
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-type AnRFC r = Either (WithRFC 'Strict_ r) (WithRFC 'Reconsidered r)
+type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
+
+data WithRFC_ s r = WithStrict_ {-# UNPACK #-} !s 
+                   | WithReconsidered_ {-# UNPACK #-} !r
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
-withRFC (Left (WithRFC a)) f = f a
-withRFC (Right (WithRFC a)) f = f a  
+withRFC (WithStrict_ (WithRFC a)) f = f a
+withRFC (WithReconsidered_ (WithRFC a)) f = f a  
 
 newtype IpResources = IpResources (AnRFC IpResourceSet)    
     deriving (Show, Eq, Ord, Typeable, Generic)
@@ -309,16 +313,17 @@ instance Serialise SignCRL
 instance Serialise ResourceCertificate
 instance Serialise RpkiObject
 instance Serialise a => Serialise (WithMeta a)
+instance (Serialise s, Serialise r) => Serialise (WithRFC_ s r)
 instance Serialise (WithRFC 'Strict_ ResourceCert)
 instance Serialise (ResourceCert 'Strict_)
 instance Serialise (IpResourceSet 'Strict_)
 instance Serialise (ResourceSet IpResource 'Strict_)
-instance Serialise (ResourceCert 'Reconsidered)
-instance Serialise (IpResourceSet 'Reconsidered)
-instance Serialise (ResourceSet IpResource 'Reconsidered)
-instance Serialise (WithRFC 'Reconsidered ResourceCert)
+instance Serialise (ResourceCert 'Reconsidered_)
+instance Serialise (IpResourceSet 'Reconsidered_)
+instance Serialise (ResourceSet IpResource 'Reconsidered_)
+instance Serialise (WithRFC 'Reconsidered_ ResourceCert)
 instance Serialise (ResourceSet AsResource 'Strict_)
-instance Serialise (ResourceSet AsResource 'Reconsidered)
+instance Serialise (ResourceSet AsResource 'Reconsidered_)
 instance Serialise AsResource
 
 
@@ -336,7 +341,8 @@ instance Serialise Attribute
 instance Serialise CertificateWithSignature
 instance Serialise SignerInfos
 
--- 
+
+-- Small utility functions that don't have anywhere else to go
 getHash :: RpkiObject -> Hash
 getHash (RpkiObject (WithMeta RpkiMeta {..} _)) = hash
 getHash (RpkiCrl (CrlMeta {..}, _)) = hash
@@ -373,3 +379,10 @@ getEECert :: SignedObject a -> CertificateWithSignature
 getEECert so = withRFC rc certX509 
     where
         ResourceCertificate rc = scCertificate $ soContent so
+
+
+strictCert :: ResourceCert 'Strict_ -> ResourceCertificate
+strictCert = ResourceCertificate . WithStrict_ . WithRFC
+
+reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
+reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC

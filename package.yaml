@@ -73,6 +73,7 @@ dependencies:
 - multimap
 - parallel
 - pem
+- pipes
 - primitive
 - semigroups
 - serialise
