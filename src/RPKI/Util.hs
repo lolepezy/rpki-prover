@@ -1,22 +1,17 @@
 module RPKI.Util where
 
-import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
-import           Control.Monad
 import           Control.Exception
 
 import qualified Crypto.Hash.SHA256      as S256
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Char8   as C
 import qualified Data.ByteString.Lazy    as BL
+import           Data.Char
 import qualified Data.String.Conversions as SC
 import qualified Data.Text               as T
-import           Data.Char
 import           Data.Word
 
-import Data.Char (isAlpha)
-
-import UnliftIO
-import qualified UnliftIO.Async as Unlift
+import           Data.Char               (isAlpha)
 
 import           RPKI.Domain
 
@@ -30,61 +25,15 @@ convert :: SC.ConvertibleStrings s1 s2 => s1 -> s2
 convert = SC.cs
 
 normalizeUri :: T.Text -> T.Text
-normalizeUri = T.map (\c -> if isOkForAFile c then c else '_') 
+normalizeUri = T.map (\c -> if isOkForAFile c then c else '_')
   where
     isOkForAFile c = isAlpha c || isDigit c || c == '.'
 
 trim :: B.ByteString -> B.ByteString
-trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)    
+trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
 
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
 fmtEx :: SomeException -> T.Text
-fmtEx = T.pack . show 
-
-
--- FIXME Do something about 'wait' throwing an exception
-parallel :: (Traversable t, MonadUnliftIO m) => 
-            Int -> 
-            (a -> m b) -> t a -> m (t b)
-parallel poolSize f as = do
-  (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
-  snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
-  where
-    writeAll chanIn  = forM_ as $ \a ->
-      Unlift.async (f a) >>= liftIO . Chan.writeChan chanIn
-    readAll chanOut = forM as $ \_ -> 
-      Unlift.wait =<< liftIO (Chan.readChan chanOut)
-
-boundedFunnel :: (Traversable t, MonadUnliftIO m) => 
-            Int ->
-            t a -> 
-            (a -> m b) -> 
-            (b -> m c) -> m (t c)
-boundedFunnel poolSize as f g = do
-  (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
-  snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
-  where
-    writeAll chanIn  = forM_ as $
-      liftIO . Chan.writeChan chanIn <=< f
-    readAll chanOut = forM as $ \_ -> 
-      g =<< liftIO (Chan.readChan chanOut)
-
-
-txFunnel :: (Traversable t, MonadUnliftIO m) => 
-            Int ->
-            t a -> 
-            (a -> m b) -> 
-            ((tx -> m (t c)) -> m (t c)) ->
-            (tx -> b -> m c) -> m (t c)
-txFunnel poolSize as produce withTx consume = do
-  (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
-  snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
-  where
-    writeAll chanIn = forM_ as $
-      liftIO . Chan.writeChan chanIn <=< produce
-    readAll chanOut = withTx $ \tx -> 
-      forM as $ \_ -> 
-        consume tx =<< liftIO (Chan.readChan chanOut)
-
+fmtEx = T.pack . show

@@ -34,6 +34,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Stores
 import qualified RPKI.Util                      as U
+import           RPKI.Parallel
 
 import qualified Data.ByteString.Streaming      as Q
 import           Data.ByteString.Streaming.HTTP
@@ -86,7 +87,7 @@ updateRrdpRepo config repo@(RrdpRepository repoUri _) handleSnapshot handleDelta
                                 maybe (Right $ repoFromSnapshot s) Left <$> handleSnapshot s
 
         useDeltas sortedDeltas notification = do
-            deltas <- U.parallel (parallelism config) processDelta sortedDeltas            
+            deltas <- parallel (parallelism config) processDelta sortedDeltas            
             foldM foldDeltas' ([], Nothing) deltas >>= \case 
                 (ds, Nothing) -> pure $ Right (repoFromDeltas ds notification, Nothing)
                 ([], Just e)  -> pure $ Left e
@@ -201,7 +202,7 @@ processRrdp repository objectStore = do
                 logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
                 either Just (const Nothing) . 
                     first (StorageE . StorageError . U.fmtEx) <$> 
-                        try (U.txFunnel (parallelism config) snapshotItems storableToChan rwTx_ chanToStorage)
+                        try (txFunnel (parallelism config) snapshotItems storableToChan rwTx_ chanToStorage)
                 where
                     storableToChan (SnapshotPublish u encodedb64) = do
                         a <- Unlift.async $ pure $! asStorable u encodedb64
@@ -214,7 +215,7 @@ processRrdp repository objectStore = do
             saveDelta (Delta _ _ _ deltaItems) = 
                 either Just (const Nothing) . 
                     first (StorageE . StorageError . U.fmtEx) <$> 
-                        try (U.txFunnel (parallelism config) deltaItems storableToChan rwTx_ chanToStorage)
+                        try (txFunnel (parallelism config) deltaItems storableToChan rwTx_ chanToStorage)
                 where
                     storableToChan (DP (DeltaPublish u h encodedb64)) = do 
                         a <- Unlift.async $ pure $! asStorable u encodedb64
