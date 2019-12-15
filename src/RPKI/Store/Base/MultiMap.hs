@@ -12,7 +12,6 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
 import qualified RPKI.Store.Base.Storage as S
 
-
 -- TODO Implement it!
 data SMultiMap s k v where
     SMMap :: Storage s => s -> SMultiMap s k v

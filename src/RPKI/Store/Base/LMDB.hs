@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -19,6 +20,7 @@ import qualified Lmdb.Map as LMap
 import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
 
+import Pipes
 
 data LmdbStore = LmdbStore { 
     env :: Lmdb.Environment 'Lmdb.ReadWrite,
@@ -37,10 +39,20 @@ type family LmdbTxMode (m :: TxMode) :: Lmdb.Mode where
 toROTx :: Lmdb.Transaction (m :: Lmdb.Mode) -> Lmdb.Transaction 'Lmdb.ReadOnly
 toROTx = coerce
 
-instance WithTx LmdbStore where    
-    data Tx LmdbStore (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
-    readOnlyTx LmdbStore {..} f = withTransaction env (f . LmdbTx . readonly)
-    readWriteTx LmdbStore {..} f = withTransaction env (f . LmdbTx)
+class WithLmdb lmdb where
+    getEnv :: lmdb -> Lmdb.Environment 'Lmdb.ReadWrite
+    
+instance WithLmdb lmdb => WithTx lmdb where    
+    data Tx lmdb (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
+    readOnlyTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx . readonly)
+    readWriteTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx)
+
+instance WithLmdb LmdbStore where
+    getEnv (LmdbStore {..}) = env
+
+instance WithLmdb LmdbMultiStore where
+    getEnv (LmdbMultiStore {..}) = env
+
 
 -- | Basic storage implemented using LMDB
 instance Storage LmdbStore where    
@@ -53,35 +65,54 @@ instance Storage LmdbStore where
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
 
+    -- iterateOver 
+
 
 -- | Basic storage implemented using LMDB
-instance MultiStorage LmdbStore where    
-    put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
+instance MultiStorage LmdbMultiStore where    
+    put (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
         pure ()
         -- LMMap.insert' tx db ks bs
 
-    delete (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =         
+    delete (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =         
         pure ()
         -- LMMap.delete' tx db ks
 
-    deleteAll (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable vs)) = 
-        LMap.delete' tx db ks        
+    deleteAll (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
+        -- LMMap.delete' tx db ks        
+        pure ()
 
-    -- TODO 
-    get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
+    get (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = do
+        -- TODO 
+        -- void $ withMultiCursor tx db $ \c -> Pipes.toListM $ LMMap.lookupValues c ks   
         -- (SValue . Storable <$>) <$> LMMap.lookup' (toROTx tx) db ks 
         pure []
+
+    -- iterateOver :: Tx s m -> s -> SKey -> (SKey -> SValue -> IO r) -> IO [r]
+    iterateOver tx LmdbMultiStore {..} (SKey (Storable ks)) f = do 
+        -- TODO
+        pure []
+
 
 
 create :: Lmdb.Environment 'Lmdb.ReadWrite -> String -> IO LmdbStore
 create env name = do
     db <- withTransaction env $ \tx -> openDatabase tx (Just name) dbSettings 
     pure $ LmdbStore env db
+    where
+        dbSettings = makeSettings 
+            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+            byteString byteString
 
--- createMulti :: Lmdb.Environment 'Lmdb.ReadWrite -> String -> IO LmdbMultiStore
--- createMulti env name = do
---     db <- withTransaction env $ \tx -> openMultiDatabase tx (Just name) dbSettings 
---     pure $ LmdbMultiStore $ env db
+createMulti :: Lmdb.Environment 'Lmdb.ReadWrite -> String -> IO LmdbMultiStore
+createMulti env name = do
+    db <- withTransaction env $ \tx -> openMultiDatabase tx (Just name) dbSettings 
+    pure $ LmdbMultiStore env db
+    where
+        dbSettings :: Lmdb.MultiDatabaseSettings B.ByteString B.ByteString
+        dbSettings = makeMultiSettings 
+            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+            byteString byteString
     
-        
-dbSettings = makeSettings (Lmdb.SortNative Lmdb.NativeSortLexographic) byteString byteString
+    
