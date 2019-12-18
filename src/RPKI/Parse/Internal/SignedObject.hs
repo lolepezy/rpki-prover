@@ -144,7 +144,7 @@ parseSignedObject eContentParse =
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
-getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> RpkiMeta)
+getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> FullMeta)
 getMetaFromSigned so bs = do
   let exts = getExts $ cwsX509certificate $ getEECert so
   case extVal exts id_subjectKeyId of
@@ -155,10 +155,11 @@ getMetaFromSigned so bs = do
                   Nothing -> pure Nothing
                   Just a  -> Just . AKI <$> parseKI a
         pure $ 
-          \location -> RpkiMeta {        
-              aki  = aki',
-              ski  = SKI ki,
-              hash = U.sha256s bs,
-              locations = location :| []              
-          }
+          \location -> let 
+            meta = RpkiMeta {        
+                aki  = aki',
+                hash = U.sha256s bs,
+                locations = location :| []              
+            } 
+            in FullMeta meta (SKI ki)
     

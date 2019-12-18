@@ -11,13 +11,13 @@ import RPKI.Parse.Parse
     
 -- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification
-validateSignature rpkiObject (ResourceCertificate parentCert) = 
+validateSignature rpkiObject (_, ResourceCertificate parentCert) = 
     verifySignature signAlgorithm pubKey signData sign
     where        
         (signAlgorithm, signData, sign) = getSign rpkiObject
         pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
 
-        getSign (RpkiObject (WithMeta _ (CerRO (ResourceCertificate resourceCert)))) = 
+        getSign (CerRO (_, ResourceCertificate resourceCert)) = 
             (algorithm, signedData, signature)
             where    
                 CertificateWithSignature {
@@ -26,15 +26,15 @@ validateSignature rpkiObject (ResourceCertificate parentCert) =
                     cwsEncoded = signedData
                 } = withRFC resourceCert certX509     
                 
-        getSign (RpkiCrl (_, SignCRL { 
-                signatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
-                signatureValue = SignatureValue signature,
-                encodedValue = encoded 
-            })) = (algorithm, encoded, signature)
+        getSign (CrlRO (_, SignCRL { 
+                    signatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
+                    signatureValue = SignatureValue signature,
+                    encodedValue = encoded 
+                })) = (algorithm, encoded, signature)
 
-        getSign (RpkiObject (WithMeta _ (MftRO (CMS signObject)))) = getSignCMS signObject
-        getSign (RpkiObject (WithMeta _ (RoaRO (CMS signObject)))) = getSignCMS signObject
-        getSign (RpkiObject (WithMeta _ (GbrRO (CMS signObject)))) = getSignCMS signObject        
+        getSign (MftRO (_, CMS signObject)) = getSignCMS signObject
+        getSign (RoaRO (_, CMS signObject)) = getSignCMS signObject
+        getSign (GbrRO (_, CMS signObject)) = getSignCMS signObject        
 
         getSignCMS :: SignedObject a -> (SignatureALG, B.ByteString, B.ByteString)
         getSignCMS signObject = (algorithm, encodedCert, signature)
@@ -47,7 +47,8 @@ validateSignature rpkiObject (ResourceCertificate parentCert) =
 
 
 -- | Validate the signature of a CRL object
-validateCertSignature :: CerObject -> CerObject -> SignatureVerification                
+validateCertSignature :: ResourceCertificate -> 
+                         ResourceCertificate -> SignatureVerification                
 validateCertSignature (ResourceCertificate cert) (ResourceCertificate parentCert) = 
     verifySignature algorithm pubKey signedData signature1    
     where
@@ -60,8 +61,8 @@ validateCertSignature (ResourceCertificate cert) (ResourceCertificate parentCert
 
 
 -- | Validate the signature of a CRL object
-validateCRLSignature :: CrlObject -> CerObject -> SignatureVerification                
-validateCRLSignature (_, signCrl) (ResourceCertificate parentCert) = 
+validateCRLSignature :: SignCRL -> ResourceCertificate -> SignatureVerification                
+validateCRLSignature signCrl (ResourceCertificate parentCert) = 
     verifySignature signAlgorithm pubKey encoded signature
     where
         pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509
@@ -87,7 +88,7 @@ validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData si
 
 -- | Validate the signature of CMS's EE certificate
 validateCMS'EECertSignature :: CMS a -> CerObject -> SignatureVerification
-validateCMS'EECertSignature (CMS so) (ResourceCertificate parentCert) = 
+validateCMS'EECertSignature (CMS so) (_, ResourceCertificate parentCert) = 
     verifySignature signAlgorithm pubKey encodedCert signature    
     where
         CertificateWithSignature

@@ -21,7 +21,7 @@ import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
 
-parseRoa :: B.ByteString -> ParseResult (URI -> (RpkiMeta, RoaObject))
+parseRoa :: B.ByteString -> ParseResult (URI -> RoaObject)
 parseRoa bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
     signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoas') asns

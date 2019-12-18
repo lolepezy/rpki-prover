@@ -6,6 +6,7 @@
 module RPKI.Core where
 
 import           Control.Applicative
+import           Control.Concurrent.Async
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Except
@@ -39,19 +40,19 @@ validateTA :: (Has RsyncConf env, Has AppLogger env, Storage s) =>
 validateTA tal taStore = do
   logger :: AppLogger <- asks getter
   (u, ro) <- fetchTACertificate tal
-  WithMeta newMeta newCert <- pureToValidatorT $ validateTACert tal u ro  
+  newCert <- pureToValidatorT $ validateTACert tal u ro  
   fromTry (StorageE . StorageError . fmtEx) $ 
     rwTx taStore $ \tx -> do      
       getTA tx taStore (getTaName tal) >>= \case
         Nothing -> do
           -- it's a new TA, store it
           logInfo_ logger [i| Storing new #{getTaName tal} |]
-          putTA tx taStore (StoredTA tal newCert newMeta)
+          putTA tx taStore (StoredTA tal newCert)
           -- TODO Trigger tree validation
-        Just (StoredTA _ oldCert _) -> 
+        Just (StoredTA _ oldCert) -> 
           when (getSerial oldCert /= getSerial newCert) $ do            
             logInfo_ logger [i| Updating TA certificate for #{getTaName tal} |]
-            putTA tx taStore (StoredTA tal newCert newMeta)            
+            putTA tx taStore (StoredTA tal newCert)            
             -- TODO Trigger tree validation          
 
 
@@ -63,22 +64,23 @@ validateTree :: (Has AppLogger env,
                 RpkiObjectStore s -> 
                 RpkiObject ->                
                 ValidatorT env IO ()
-validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(ResourceCertificate _)))) = do
+validateTree objectStore (CerRO rc) = do
 
   logger :: AppLogger  <- asks getter
   now :: Now           <- asks getter
   validationContext :: ValidationContext <- asks getter
 
-  let childrenAki = toAKI ski
+  let childrenAki = toAKI $ getSKI rc
+  let RpkiMeta {..} = getMeta rc
 
-  WithMeta _ mft <- validatorT $ roTx objectStore $ \tx -> 
+  mft <- validatorT $ roTx objectStore $ \tx -> 
     runValidatorT validationContext $
       lift3 (findMftsByAKI tx objectStore childrenAki) >>= \case
         []        -> validatorError $ NoMFT childrenAki locations
         (mft : _) -> pure mft
 
   let crls = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
-        mftEntries $ getCMSContent mft
+        mftEntries $ getCMSContent $ snd mft
 
   (_, crlHash) <- case crls of 
     []    -> validatorError $ NoCRLOnMFT childrenAki locations
@@ -87,36 +89,42 @@ validateTree objectStore (RpkiObject (WithMeta RpkiMeta {..} (CerRO rc@(Resource
 
   crlObject <- lift3 $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
   case crlObject of 
-    Nothing              -> validatorError $ NoCRLExists childrenAki locations
-    Just (RpkiObject _ ) -> validatorError $ CRLHashPointsToAnotherObject crlHash locations
-    Just (RpkiCrl crl) -> do      
-      validatedCrl <- pureToValidatorT $ do
-        validatedCrl <- validateCrl crl rc
-        validateMft mft rc validatedCrl
-        pure validatedCrl
-      -- go down on children
-      allChildren :: [RpkiObject] <- lift3 $ roTx objectStore $ \tx -> 
-        findByAKI tx objectStore childrenAki
-
-      {- TODO narrow down children traversal to the ones that  
-        1) Are on the manifest
-        or
-        2) Are (or include as EE) the latest 
-        certificates with the unique (non-overlaping) set of reseources        
-      -}      
-      let childContext = (logger, now, )
-      let x = map (validateChild childContext validatedCrl) allChildren
-
-
-      pure ()      
-      where        
+    Nothing          -> validatorError $ NoCRLExists childrenAki locations    
+    Just (CrlRO crl) -> do      
+        validatedCrl <- pureToValidatorT $ do
+          vCrl <- validateCrl crl (snd rc)
+          validateMft mft (snd rc) vCrl
+          pure vCrl
+  
+        let manifestChildren = map snd $ mftEntries $ getCMSContent $ snd mft
+  
+        -- go down on children
+        allChildren :: [RpkiObject] <- lift3 $ roTx objectStore $ \tx -> 
+          findByAKI tx objectStore childrenAki
+  
+        {- TODO narrow down children traversal to the ones that  
+          1) Are on the manifest
+          or
+          2) Are (or include as EE) the latest 
+          certificates with the unique (non-overlaping) set of reseources        
+        -}      
+        let childContext = (logger, now, )
+        let x = map (validateChild childContext validatedCrl) allChildren
+        lift3 $ forM_ manifestChildren $ \h -> do
+          a <- async $ do
+            ro <- roTx objectStore $ \tx -> getByHash tx objectStore h
+  
+            pure ()
+          pure ()
+    Just _  -> validatorError $ CRLHashPointsToAnotherObject crlHash locations        
+    where              
         validateChild childContext crl ro = case ro of 
-          cer@(RpkiObject (WithMeta _ (CerRO _))) -> 
+          cer@(CerRO _) -> 
             runValidatorT childValidationContext $ validateTree objectStore cer
-          RpkiObject (WithMeta _ (RoaRO roa)) -> 
-            pure $ runPureValidator childValidationContext $ void $ validateRoa roa rc crl
-          RpkiObject (WithMeta _ (GbrRO gbr)) -> 
-            pure $ runPureValidator childValidationContext $ void $ validateGbr gbr rc crl
+          RoaRO roa -> 
+            pure $ runPureValidator childValidationContext $ void $ validateRoa roa (snd rc) crl
+          GbrRO gbr -> 
+            pure $ runPureValidator childValidationContext $ void $ validateGbr gbr (snd rc) crl
           _ -> valid
           where
             childValidationContext = childContext $ vContext $ NE.head $ getLocations ro

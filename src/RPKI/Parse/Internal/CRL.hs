@@ -41,9 +41,9 @@ parseCrl bs = do
   numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
   crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
-  let meta location = CrlMeta {
+  let meta location = RpkiMeta {
       locations = location :| [],
-      aki = AKI $ KI aki',
+      aki = Just $ AKI $ KI aki',
       hash = U.sha256s bs
     }
   pure $ \location -> (meta location, signCrlF crlNumber')

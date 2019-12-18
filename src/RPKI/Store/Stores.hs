@@ -45,7 +45,7 @@ deleteObject tx store h = SM.delete tx (objects store) h
 findByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [RpkiObject]
 findByAKI tx (RpkiObjectStore s _) aki = pure []
 
-findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [WithMeta MftObject]
+findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
 findMftsByAKI tx (RpkiObjectStore s _) aki = pure []
 
 
@@ -56,8 +56,7 @@ instance Storage s => WithStorage s (TAStore s) where
 
 data StoredTA = StoredTA {
   tal        :: TAL,
-  taCert     :: CerObject,
-  taCertMeta :: RpkiMeta
+  taCert     :: CerObject
 } deriving (Show, Eq, Generic, Serialise)
 
 putTA :: Storage s => Tx s 'RW -> TAStore s -> StoredTA -> IO ()

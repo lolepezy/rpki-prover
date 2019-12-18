@@ -88,37 +88,53 @@ newtype CMS a = CMS {
     unCMS :: SignedObject a
  } deriving (Show, Eq, Typeable, Generic)
 
-data WithMeta a = WithMeta !RpkiMeta !a
-    deriving (Show, Eq, Typeable, Generic)
+class WithMeta a where
+    getMeta :: a -> RpkiMeta
 
-type CrlObject = (CrlMeta, SignCRL)
-type CerObject = ResourceCertificate
-type MftObject = CMS Manifest
-type RoaObject = CMS [Roa]
-type GbrObject = CMS Gbr
-    
-data CrlMeta = CrlMeta {
-    locations :: NonEmpty URI, 
-    hash      :: Hash, 
-    aki       :: AKI    
-} deriving (Show, Eq, Ord, Typeable, Generic)
+class WithSKI a where
+    getSKI :: a -> SKI
+
+class (WithSKI a, WithMeta a) => WithFullMeta a
+
+type CrlObject = (RpkiMeta, SignCRL)
+type CerObject = (FullMeta, ResourceCertificate)
+type MftObject = (FullMeta, CMS Manifest)
+type RoaObject = (FullMeta, CMS [Roa])
+type GbrObject = (FullMeta, CMS Gbr) 
 
 data RpkiMeta = RpkiMeta {
     locations :: NonEmpty URI, 
     hash      :: Hash, 
-    aki       :: Maybe AKI, 
-    ski       :: SKI
+    aki       :: Maybe AKI
 } deriving (Show, Eq, Ord, Typeable, Generic)
 
-data RpkiSpecific = CerRO !CerObject 
-                  | MftRO !MftObject
-                  | RoaRO !RoaObject
-                  | GbrRO !GbrObject
+data FullMeta = FullMeta !RpkiMeta !SKI 
+    deriving (Show, Eq, Ord, Typeable, Generic)
+
+data RpkiObject = CerRO !CerObject 
+                | MftRO !MftObject
+                | RoaRO !RoaObject
+                | GbrRO !GbrObject
+                | CrlRO !CrlObject
     deriving (Show, Eq, Typeable, Generic)
 
-data RpkiObject = RpkiObject !(WithMeta RpkiSpecific)
-                | RpkiCrl !CrlObject
-    deriving (Show, Eq, Typeable, Generic)
+instance WithMeta (FullMeta, a) where
+    getMeta (FullMeta m _, _) = m
+
+instance WithMeta (RpkiMeta, a) where
+    getMeta (m, _) = m    
+
+instance WithSKI (FullMeta, a) where
+    getSKI (FullMeta _ ski, _) = ski    
+
+
+instance WithMeta RpkiObject where
+    getMeta (CerRO c) = getMeta c
+    getMeta (MftRO c) = getMeta c
+    getMeta (RoaRO c) = getMeta c
+    getMeta (GbrRO c) = getMeta c
+    getMeta (CrlRO c) = getMeta c
+    
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
     certX509    :: CertificateWithSignature, 
@@ -151,10 +167,13 @@ data SignCRL = SignCRL {
   crlNumber          :: Integer
 } deriving (Show, Eq, Typeable, Generic)
 
+-- TODO Define it
 data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
 
 
--- Types for the signed object template 
+
+-- | Types for the signed object template 
+-- https://tools.ietf.org/html/rfc5652
 
 data SignedObject a = SignedObject {
     soContentType :: ContentType, 
@@ -240,7 +259,7 @@ newtype SignatureValue = SignatureValue B.ByteString
   deriving (Show, Eq, Ord, Typeable, Generic)  
 
 
--- Axccording to https://tools.ietf.org/html/rfc5652#page-16
+-- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] B.ByteString
   deriving (Show, Eq, Typeable, Generic)
@@ -297,13 +316,14 @@ data Repository =
 -- serialisation
 instance Serialise Hash
 instance Serialise RpkiMeta
-instance Serialise CrlMeta
+instance Serialise FullMeta
+-- instance Serialise CrlMeta
 instance Serialise URI
 instance Serialise AKI
 instance Serialise SKI
 instance Serialise KI
 instance Serialise Serial
-instance Serialise RpkiSpecific
+-- instance Serialise RpkiSpecific
 instance Serialise Manifest
 instance Serialise Roa
 instance Serialise Gbr
@@ -312,7 +332,7 @@ instance Serialise a => Serialise (CMS a)
 instance Serialise SignCRL
 instance Serialise ResourceCertificate
 instance Serialise RpkiObject
-instance Serialise a => Serialise (WithMeta a)
+-- instance Serialise a => Serialise (WithMeta a)
 instance (Serialise s, Serialise r) => Serialise (WithRFC_ s r)
 instance Serialise (WithRFC 'Strict_ ResourceCert)
 instance Serialise (ResourceCert 'Strict_)
@@ -344,24 +364,17 @@ instance Serialise SignerInfos
 
 -- Small utility functions that don't have anywhere else to go
 getHash :: RpkiObject -> Hash
-getHash (RpkiObject (WithMeta RpkiMeta {..} _)) = hash
-getHash (RpkiCrl (CrlMeta {..}, _)) = hash
+getHash = hash . getMeta
 
 getLocations :: RpkiObject -> NonEmpty URI
-getLocations (RpkiObject (WithMeta RpkiMeta {..} _)) = locations
-getLocations (RpkiCrl (CrlMeta {..}, _)) = locations
+getLocations = locations . getMeta
 
 getAKI :: RpkiObject -> Maybe AKI
-getAKI (RpkiObject (WithMeta RpkiMeta {..} _)) = aki
-getAKI (RpkiCrl (CrlMeta {..}, _)) = Just aki
-
-getMeta :: RpkiObject -> Maybe RpkiMeta
-getMeta (RpkiObject (WithMeta m _)) = Just m
-getMeta _                           = Nothing
+getAKI = aki . getMeta
 
 getSerial :: CerObject -> Serial
 getSerial rc = Serial $ X509.certSerial $ cwsX509certificate $ withRFC cert certX509 
-    where ResourceCertificate cert = rc
+    where (_, ResourceCertificate cert) = rc
 
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs

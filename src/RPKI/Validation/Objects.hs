@@ -42,9 +42,9 @@ newtype Validated a = Validated a
 now :: IO Now 
 now = Now <$> dateCurrent
 
-validateResourceCertExtensions :: CerObject -> PureValidator conf CerObject
-validateResourceCertExtensions cert@(ResourceCertificate rc) = 
-  validateHasCriticalExtensions $ cwsX509certificate $ withRFC rc certX509     
+validateResourceCertExtensions :: ResourceCertificate -> PureValidator conf ResourceCertificate
+validateResourceCertExtensions rc@(ResourceCertificate cert) = 
+  validateHasCriticalExtensions $ cwsX509certificate $ withRFC cert certX509     
   where
     validateHasCriticalExtensions x509cert = do
       let exts = getExts x509cert
@@ -60,18 +60,19 @@ validateResourceCertExtensions cert@(ResourceCertificate rc) =
                     OID oid,
                     End Sequence,
                     End Sequence
-                  ] | oid == id_cp_ipAddr_asNumber -> pure cert
+                  ] | oid == id_cp_ipAddr_asNumber -> pure rc
                 _ -> pureError $ CertWrongPolicyExtension bs
                                 
 -- | 
-validateTACert :: TAL -> URI -> RpkiObject -> PureValidator conf (WithMeta CerObject)
-validateTACert tal u ro@(RpkiObject (WithMeta m@(RpkiMeta {..}) (CerRO cert@(ResourceCertificate taCert)))) = do
+validateTACert :: TAL -> URI -> RpkiObject -> PureValidator conf CerObject
+validateTACert tal u (CerRO cert@(_, rc@(ResourceCertificate taCert))) = do
     let spki = subjectPublicKeyInfo $ cwsX509certificate $ withRFC taCert certX509
     pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki    
-    pureErrorIfNot (isNothing aki) $ TACertAKIIsNotEmpty u
+    pureErrorIfNot (isNothing $ aki $ getMeta cert) $ TACertAKIIsNotEmpty u
     -- It's self-signed, so use itself as a parent to check the signature
-    signatureCheck $ validateSignature ro cert
-    WithMeta m <$> validateResourceCertExtensions cert
+    signatureCheck $ validateCertSignature rc rc
+    validateResourceCertExtensions rc
+    pure cert
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
 
@@ -85,10 +86,10 @@ validateTACert _ _ _ = pureError UnknownObjectAsTACert
     - check the resource set (needs the parent as well)
     - check it's not revoked (needs CRL)
  -}
-validateResourceCert :: CerObject -> 
-                        CerObject -> 
+validateResourceCert :: ResourceCertificate -> 
+                        ResourceCertificate -> 
                         Validated CrlObject ->
-                        PureValidator conf (Validated CerObject)
+                        PureValidator conf (Validated ResourceCertificate)
 validateResourceCert cert parentCert vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
   when (isRevoked cert vcrl) $ 
@@ -104,35 +105,40 @@ validateResourceCert cert parentCert vcrl = do
 
 -- | Validate CRL object with the parent certificate
 validateCrl :: Has Now conf => 
-              CrlObject -> CerObject -> PureValidator conf (Validated CrlObject)
-validateCrl crlObject@(CrlMeta {..}, SignCRL {..}) parentCert = do
-  signatureCheck $ validateCRLSignature crlObject parentCert
+              CrlObject -> ResourceCertificate -> PureValidator conf (Validated CrlObject)
+validateCrl x@(_, s@SignCRL {..}) parentCert = do
+  signatureCheck $ validateCRLSignature s parentCert
   void $ validateNexUpdate (crlNextUpdate crl)
-  pure $ Validated crlObject  
+  pure $ Validated x
 
 
 -- TODO Validate other stuff, validate resource certificate, etc.
 validateMft :: Has Now conf => 
-              MftObject -> CerObject -> Validated CrlObject -> 
+              MftObject -> ResourceCertificate -> Validated CrlObject -> 
               PureValidator conf (Validated MftObject)
-validateMft mft parentCert crl = 
-  validateCms mft parentCert crl $ \m -> do
+validateMft mft@(_, cms) parentCert crl = do
+  validateCms cms parentCert crl $ \m -> do
       void $ validateNexUpdate $ Just $ nextTime $ getCMSContent m
-      pure m  
+      pure m
+  pure $ Validated mft
 
 validateRoa :: Has Now conf => 
-              RoaObject -> CerObject -> Validated CrlObject -> 
+              RoaObject -> ResourceCertificate -> Validated CrlObject -> 
               PureValidator conf (Validated RoaObject)
-validateRoa roa parentCert crl = validateCms roa parentCert crl pure
+validateRoa roa@(_, cms) parentCert crl = do
+  validateCms cms parentCert crl pure
+  pure $ Validated roa
 
 validateGbr :: Has Now conf => 
-              GbrObject -> CerObject -> Validated CrlObject -> 
+              GbrObject -> ResourceCertificate -> Validated CrlObject -> 
               PureValidator conf (Validated GbrObject)
-validateGbr gbr parentCert crl = validateCms gbr parentCert crl pure
+validateGbr gbr@(_, cms) parentCert crl = do
+  validateCms cms parentCert crl pure
+  pure $ Validated gbr
 
 validateCms :: Has Now conf => 
                CMS a -> 
-               CerObject -> 
+               ResourceCertificate -> 
                Validated CrlObject -> 
                (CMS a -> PureValidator conf (CMS a)) ->
                PureValidator conf (Validated (CMS a))
@@ -159,14 +165,13 @@ validateNexUpdate nextUpdateTime = do
 
 
 -- | Check if CMS is on the revocation list
-isRevoked :: CerObject -> Validated CrlObject -> Bool
-isRevoked rc (Validated (_, SignCRL {..})) = 
+isRevoked :: ResourceCertificate -> Validated CrlObject -> Bool
+isRevoked (ResourceCertificate cert) (Validated (_, SignCRL {..})) = 
   null $ filter
     (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial) $ 
       crlRevokedCertificates crl
   where
     serial = Serial (certSerial $ cwsX509certificate $ withRFC cert certX509)
-    ResourceCertificate cert = rc
     
 
 signatureCheck :: SignatureVerification -> PureValidator conf ()
