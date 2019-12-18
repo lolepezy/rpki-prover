@@ -5,15 +5,11 @@
 
 module RPKI.Core where
 
-import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Monad.Except
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Except
 
 import           Data.String.Interpolate
-
-import           Data.Foldable
 
 import qualified Data.ByteString            as B
 import qualified Data.Text                  as T
@@ -98,10 +94,6 @@ validateTree objectStore (CerRO rc) = do
   
         let manifestChildren = map snd $ mftEntries $ getCMSContent $ snd mft
   
-        -- go down on children
-        allChildren :: [RpkiObject] <- lift3 $ roTx objectStore $ \tx -> 
-          findByAKI tx objectStore childrenAki
-  
         {- TODO narrow down children traversal to the ones that  
           1) Are on the manifest
           or
@@ -109,22 +101,22 @@ validateTree objectStore (CerRO rc) = do
           certificates with the unique (non-overlaping) set of reseources        
         -}      
         let childContext = (logger, now, )
-        let x = map (validateChild childContext validatedCrl) allChildren
         lift3 $ forM_ manifestChildren $ \h -> do
-          a <- async $ do
-            ro <- roTx objectStore $ \tx -> getByHash tx objectStore h
-  
-            pure ()
+          ro <- roTx objectStore $ \tx -> getByHash tx objectStore h
+          case ro of 
+            Nothing  -> runValidatorT validationContext $ vWarn $ ManifestEntryDontExist h
+            Just ro' -> validateChild childContext validatedCrl ro'
           pure ()
     Just _  -> validatorError $ CRLHashPointsToAnotherObject crlHash locations        
     where              
-        validateChild childContext crl ro = case ro of 
+        validateChild childContext validatedCrl ro = case ro of 
           cer@(CerRO _) -> 
             runValidatorT childValidationContext $ validateTree objectStore cer
-          RoaRO roa -> 
-            pure $ runPureValidator childValidationContext $ void $ validateRoa roa (snd rc) crl
-          GbrRO gbr -> 
-            pure $ runPureValidator childValidationContext $ void $ validateGbr gbr (snd rc) crl
+          RoaRO roa -> pure $ runPureValidator childValidationContext $ 
+            void $ validateRoa roa (snd rc) validatedCrl
+          GbrRO gbr -> pure $ runPureValidator childValidationContext $ 
+            void $ validateGbr gbr (snd rc) validatedCrl
+          -- TODO Anything else?
           _ -> valid
           where
             childValidationContext = childContext $ vContext $ NE.head $ getLocations ro

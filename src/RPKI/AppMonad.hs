@@ -88,3 +88,7 @@ pureErrorIfNot b e = if b then pure () else lift $ throwE $ ValidationE e
 valid :: Applicative m =>
         m (Either SomeError (), [ValidationWarning])
 valid = pure (Right (), [])
+
+vWarn :: (Monad m, Has ValidationContext env) =>
+        ValidationError -> ValidatorT env m ()
+vWarn = validatorWarning . ValidationWarning . ValidationE

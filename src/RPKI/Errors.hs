@@ -47,7 +47,8 @@ data ValidationError = InvalidCert !T.Text |
                         NextUpdateTimeNotSet |
                         NextUpdateTimeIsBeforeNow !DateTime |
                         RevokedEECertificate |
-                        RevokedResourceCertificate
+                        RevokedResourceCertificate |
+                        ManifestEntryDontExist !Hash
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     
 data RrdpError = BrokenXml !T.Text | 
