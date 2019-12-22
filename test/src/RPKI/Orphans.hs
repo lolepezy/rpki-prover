@@ -32,26 +32,18 @@ import           RPKI.Domain
 import           RPKI.IP
 import           RPKI.RRDP.Types
 
-import           RPKI.Serialise.Orphans
-
 import           Time.Types
 
 import           Crypto.Error
-import           Data.ASN1.BitArray
 import           Data.Hourglass
 
 import qualified Crypto.PubKey.Curve25519              as X25519
 import qualified Crypto.PubKey.Curve448                as X448
-import           Crypto.PubKey.DSA                     (Params (..),
-                                                        PublicKey (..))
 import qualified Crypto.PubKey.DSA                     as DSA
 import qualified Crypto.PubKey.Ed25519                 as Ed25519
 import qualified Crypto.PubKey.Ed448                   as Ed448
 import qualified Crypto.PubKey.RSA                     as RSA
-import           Crypto.PubKey.RSA.Types               (PublicKey (..))
-
 import           Crypto.PubKey.ECC.Types
-
 
 import           RPKI.Util                             (convert)
 
@@ -65,7 +57,6 @@ instance Arbitrary URI where
 
 instance Arbitrary Hash where
   arbitrary = Hash . B.pack <$> replicateM 32 arbitrary
-  shrink = genericShrink
 
 instance Arbitrary Serial where
   arbitrary = genericArbitrary
@@ -74,7 +65,6 @@ instance Arbitrary Serial where
 instance Arbitrary SessionId where
   arbitrary = SessionId . convert <$>
     (listOf1 $ elements $ ['a'..'z'] ++ ['0'..'9'])
-  shrink = genericShrink
 
 instance Arbitrary Version where
   arbitrary = genericArbitrary
@@ -93,8 +83,7 @@ instance Arbitrary DeltaItem where
   shrink = genericShrink
 
 instance Arbitrary DecodedBase64 where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+  arbitrary = DecodedBase64 <$> arbitrary
 
 instance Arbitrary EncodedBase64 where
     arbitrary = do 
@@ -552,5 +541,5 @@ instance Arbitrary CRL where
                     <*> arbitrary
                     <*> arbitrary
 
-
+arbitraryBS :: Int -> Int -> Gen B.ByteString
 arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> (B.pack <$> replicateM l arbitrary)
