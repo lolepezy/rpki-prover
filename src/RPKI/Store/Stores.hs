@@ -8,8 +8,6 @@ import Codec.Serialise
 
 import GHC.Generics
 
-import Data.Maybe
-
 import RPKI.Domain
 import RPKI.TAL
 import RPKI.Store.Base.Map (SMap(..))
@@ -19,7 +17,6 @@ import qualified RPKI.Store.Base.Map as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import RPKI.Store.Base.Storage
 import RPKI.Store.Base.Storable
-
 
 
 data RpkiObjectStore s = RpkiObjectStore {
@@ -54,21 +51,20 @@ deleteObject tx store h = do
       MM.put tx (byAKI store) aki' h
       case ro of
         MftRO _ -> MM.put tx (mftByAKI store) aki' h
-        _       -> pure ()
-
-
-findByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [RpkiObject]
-findByAKI tx store aki = pure []
-
-findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
-findMftsByAKI tx store aki' = do 
-  ros <- findByAKI tx store aki'
-  pure [ mft | MftRO mft <- ros ]
+        _       -> pure ()      
 
 findLatestMftByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO (Maybe MftObject)
-findLatestMftByAKI tx store aki' = do   
-  ros <- findByAKI tx store aki'
-  pure $ listToMaybe $ [ mft | MftRO mft <- ros ]
+findLatestMftByAKI tx store aki' = 
+    MM.fold tx (mftByAKI store) aki' f Nothing
+    where
+      f latest _ h = latestMft <$> getByHash tx store h
+        where
+          latestMft = \case
+            Just (MftRO mft) -> case latest of
+              Nothing -> Just mft
+              Just lat | getMftNumber mft > getMftNumber lat -> Just mft
+              Just lat | getMftNumber mft <= getMftNumber lat -> Just lat
+            _ -> Nothing
 
 
 newtype TAStore s = TAStore (SMap "trust-anchors" s TaName StoredTA)

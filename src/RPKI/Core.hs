@@ -71,9 +71,9 @@ validateTree objectStore (CerRO rc) = do
 
   mft <- validatorT $ roTx objectStore $ \tx -> 
     runValidatorT validationContext $
-      lift3 (findMftsByAKI tx objectStore childrenAki) >>= \case
-        []        -> validatorError $ NoMFT childrenAki locations
-        (mft : _) -> pure mft
+      lift3 (findLatestMftByAKI tx objectStore childrenAki) >>= \case
+        Nothing  -> validatorError $ NoMFT childrenAki locations
+        Just mft -> pure mft
 
   let crls = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
         mftEntries $ getCMSContent $ snd mft

@@ -112,8 +112,6 @@ instance Storage LmdbStorage where
             readIORef z
 
 
-
-
 create :: forall name . KnownSymbol name => 
             Env -> IO (LmdbStore name)
 create env = do

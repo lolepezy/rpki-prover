@@ -19,7 +19,7 @@ data SMultiMap (name :: Symbol) s k v where
 instance Storage s => WithStorage s (SMultiMap name s k v) where
     storage (SMMap s _) = s
  
-put :: (Serialise k, Serialise v, Storage s) =>
+put :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
 put tx (SMMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
 
@@ -31,3 +31,8 @@ deleteAll :: (Serialise k, Serialise v) =>
          Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
 deleteAll tx (SMMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
+fold :: (Serialise k, Serialise v) =>
+        Tx s m -> SMultiMap name s k v -> k -> (a -> k -> v -> IO a) -> a -> IO a
+fold tx (SMMap _ s) k f a = S.foldMu tx s (storableKey k) f' a
+    where
+        f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)

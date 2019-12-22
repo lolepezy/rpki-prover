@@ -317,13 +317,11 @@ data Repository =
 instance Serialise Hash
 instance Serialise RpkiMeta
 instance Serialise FullMeta
--- instance Serialise CrlMeta
 instance Serialise URI
 instance Serialise AKI
 instance Serialise SKI
 instance Serialise KI
 instance Serialise Serial
--- instance Serialise RpkiSpecific
 instance Serialise Manifest
 instance Serialise Roa
 instance Serialise Gbr
@@ -332,7 +330,6 @@ instance Serialise a => Serialise (CMS a)
 instance Serialise SignCRL
 instance Serialise ResourceCertificate
 instance Serialise RpkiObject
--- instance Serialise a => Serialise (WithMeta a)
 instance (Serialise s, Serialise r) => Serialise (WithRFC_ s r)
 instance Serialise (WithRFC 'Strict_ ResourceCert)
 instance Serialise (ResourceCert 'Strict_)
@@ -399,3 +396,6 @@ strictCert = ResourceCertificate . WithStrict_ . WithRFC
 
 reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
 reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
+
+getMftNumber :: MftObject -> Int
+getMftNumber (_, cms) = mftNumber $ getCMSContent cms 
