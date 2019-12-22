@@ -206,7 +206,7 @@ processRrdp repository objectStore = do
                 where
                     storableToChan (SnapshotPublish u encodedb64) = do
                         a <- Unlift.async $ pure $! asStorable u encodedb64
-                        pure (u,a)
+                        pure (u, a)
                     
                     chanToStorage tx (u, a) = Unlift.wait a >>= \case                        
                         SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]

@@ -435,25 +435,17 @@ validatorUpdateRRDPRepo lmdb = do
 
 processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
-    say "begin"  
-    lmdbStorage <- LMDB.create env "objects"
+    say "begin"      
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
-    let store = RpkiObjectStore {
-      objects = SIxMap lmdbStorage [],
-      byAKI = SMMap lmdbStorage
-    }    
+    store <- createObjectStore env
     e <- runValidatorT conf $ processRrdp repo store
     say $ "resulve " <> show e
   
-saveRsyncRepo env = do
-  lmdbStorage <- LMDB.create env "objects"
+saveRsyncRepo env = do  
   let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
   let conf = (createLogger, RsyncConf "/tmp/rsync", Config getParallelism, vContext $ URI "something.cer")
-  let store = RpkiObjectStore {
-    objects = SIxMap lmdbStorage [],
-    byAKI = SMMap lmdbStorage
-  }
+  store <- createObjectStore env
   runValidatorT conf $ processRsync repo store
 
 saveRsync env = do
@@ -486,6 +478,40 @@ getTACert = do
     pure (ro, x)
 
 
+validateTreeFromTA :: Environment 'ReadWrite -> IO ()
+validateTreeFromTA env = do  
+  let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
+  nu <- now
+  let conf = (createLogger, RsyncConf "/tmp/rsync", 
+              Config getParallelism, 
+              vContext $ URI "something.cer", 
+              nu)              
+  store <- createObjectStore env
+  x <- runValidatorT conf $ do
+    taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+    processRsync repo store
+    validateTree store taCert
+
+  say $ "x = " <> show x
+
+  pure ()
+
+validateTreeFromStore :: Environment 'ReadWrite -> IO ()
+validateTreeFromStore env = do    
+    nu <- now
+    let conf = (createLogger, RsyncConf "/tmp/rsync", 
+                Config getParallelism, 
+                vContext $ URI "something.cer", 
+                nu)              
+    store <- createObjectStore env
+    x <- runValidatorT conf $ do
+      taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+      validateTree store taCert
+  
+    say $ "x = " <> show x
+  
+    pure ()  
+
 main :: IO ()
 main = do 
   -- testCrl
@@ -507,5 +533,18 @@ say s = do
 createLogger :: AppLogger
 createLogger = AppLogger fullMessageAction
   where
-    richMessageAction = cmapM fmtRichMessageDefault logTextStdout
-    fullMessageAction = upgradeMessageAction defaultFieldMap richMessageAction
+    fullMessageAction = upgradeMessageAction defaultFieldMap $ 
+      cmapM fmtRichMessageDefault logTextStdout
+
+createObjectStore :: Environment 'ReadWrite -> IO (RpkiObjectStore LMDB.LmdbStorage)
+createObjectStore env = do
+    let lmdb = LMDB.LmdbStorage env
+    objMap <- LMDB.create env
+    akiIndex <- LMDB.createMulti env
+    mftAkiIndex <- LMDB.createMulti env
+    
+    return $ RpkiObjectStore {
+      objects = SIxMap lmdb objMap,
+      byAKI = SMMap lmdb akiIndex,
+      mftByAKI = SMMap lmdb mftAkiIndex
+    }    

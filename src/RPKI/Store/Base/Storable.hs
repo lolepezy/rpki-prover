@@ -20,6 +20,7 @@ newtype SValue = SValue Storable
 newtype SKey = SKey Storable
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
+-- Strictness here is important
 data StorableUnit a e = SObject !(StorableObject a) | SError !e
 
 data StorableObject a = StorableObject !a !SValue

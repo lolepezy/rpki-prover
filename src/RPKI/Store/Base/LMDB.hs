@@ -3,7 +3,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.Store.Base.LMDB where
 
@@ -12,7 +14,11 @@ import Data.Coerce (coerce)
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
-import RPKI.Store.Base.MultiStorage
+
+import Data.IORef
+
+import GHC.TypeLits
+import Data.Proxy as P
 
 import Lmdb.Connection
 import Lmdb.Codec (byteString)
@@ -22,13 +28,17 @@ import qualified Lmdb.Types as Lmdb
 
 import Pipes
 
-data LmdbStore = LmdbStore { 
-    env :: Lmdb.Environment 'Lmdb.ReadWrite,
-    db :: Lmdb.Database B.ByteString B.ByteString
+type Env = Lmdb.Environment 'Lmdb.ReadWrite
+type DB = Lmdb.Database B.ByteString B.ByteString
+
+
+data LmdbStore (name :: Symbol) = LmdbStore { 
+    env :: Env,
+    db  :: DB
 }
 
-data LmdbMultiStore = LmdbMultiStore { 
-    env :: Lmdb.Environment 'Lmdb.ReadWrite,
+data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
+    env :: Env,
     db :: Lmdb.MultiDatabase B.ByteString B.ByteString
 }
 
@@ -40,22 +50,24 @@ toROTx :: Lmdb.Transaction (m :: Lmdb.Mode) -> Lmdb.Transaction 'Lmdb.ReadOnly
 toROTx = coerce
 
 class WithLmdb lmdb where
-    getEnv :: lmdb -> Lmdb.Environment 'Lmdb.ReadWrite
-    
-instance WithLmdb lmdb => WithTx lmdb where    
-    data Tx lmdb (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
+    getEnv :: lmdb -> Env
+
+newtype LmdbStorage = LmdbStorage { unEnv :: Env }
+
+instance WithLmdb LmdbStorage where
+    getEnv = unEnv
+
+
+instance WithTx LmdbStorage where    
+    data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
     readOnlyTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx . readonly)
     readWriteTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx)
 
-instance WithLmdb LmdbStore where
-    getEnv (LmdbStore {..}) = env
-
-instance WithLmdb LmdbMultiStore where
-    getEnv (LmdbMultiStore {..}) = env
-
-
 -- | Basic storage implemented using LMDB
-instance Storage LmdbStore where    
+instance Storage LmdbStorage where    
+    type SMap' LmdbStorage = LmdbStore
+    type MSMap' LmdbStorage = LmdbMultiStore
+
     put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
         LMap.insert' tx db ks bs
 
@@ -65,47 +77,59 @@ instance Storage LmdbStore where
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
 
-    iterateOver (LmdbTx tx) LmdbStore {..} f =
-        void $ withCursor tx db $ \c -> 
+    fold (LmdbTx tx) LmdbStore {..} f a0 =
+        withCursor tx db $ \c -> do
+            z <- newIORef a0
             runEffect $ LMap.firstForward c >-> do
                 Lmdb.KeyValue k v <- await
-                lift $ f (SKey $ Storable k) (SValue $ Storable v)
+                lift $ do
+                    a <- readIORef z
+                    a' <- f a (SKey $ Storable k) (SValue $ Storable v)
+                    writeIORef z $! a'
+            readIORef z
 
-
--- | Basic storage implemented using LMDB
-instance MultiStorage LmdbMultiStore where    
-    put (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
+    putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
         pure ()
         -- LMMap.insert' tx db ks bs
 
-    delete (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =         
+    deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =         
         pure ()
         -- LMMap.delete' tx db ks
 
-    deleteAll (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
+    deleteAllMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
         -- LMMap.delete' tx db ks        
         pure ()    
 
-    iterateOver (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f =
-        void $ withMultiCursor tx db $ \c -> 
+    foldMu (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f a0 =
+        withMultiCursor tx db $ \c -> do
+            z <- newIORef a0
             runEffect $ LMMap.lookupValues c ks >-> do
                 v <- await
-                lift $ f key (SValue $ Storable v)
+                lift $ do 
+                    a <- readIORef z
+                    a' <- f a key (SValue $ Storable v)
+                    writeIORef z $! a'
+            readIORef z
 
 
 
-create :: Lmdb.Environment 'Lmdb.ReadWrite -> String -> IO LmdbStore
-create env name = do
-    db <- withTransaction env $ \tx -> openDatabase tx (Just name) dbSettings 
+
+create :: forall name . KnownSymbol name => 
+            Env -> IO (LmdbStore name)
+create env = do
+    let name' = symbolVal (P.Proxy :: P.Proxy name)
+    db <- withTransaction env $ \tx -> openDatabase tx (Just name') dbSettings 
     pure $ LmdbStore env db
     where
         dbSettings = makeSettings 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             byteString byteString
 
-createMulti :: Lmdb.Environment 'Lmdb.ReadWrite -> String -> IO LmdbMultiStore
-createMulti env name = do
-    db <- withTransaction env $ \tx -> openMultiDatabase tx (Just name) dbSettings 
+createMulti :: forall name . KnownSymbol name =>  
+                Env -> IO (LmdbMultiStore name)
+createMulti env = do
+    let name' = symbolVal (P.Proxy :: P.Proxy name)
+    db <- withTransaction env $ \tx -> openMultiDatabase tx (Just name') dbSettings 
     pure $ LmdbMultiStore env db
     where
         dbSettings :: Lmdb.MultiDatabaseSettings B.ByteString B.ByteString

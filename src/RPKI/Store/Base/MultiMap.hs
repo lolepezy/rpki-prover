@@ -8,35 +8,26 @@ module RPKI.Store.Base.MultiMap where
 
 import           Codec.Serialise
 
-import           RPKI.Store.Base.Storage
-import           RPKI.Store.Base.Storable
-import qualified RPKI.Store.Base.Storage as S
+import GHC.TypeLits
 
--- TODO Implement it!
-data SMultiMap s k v where
-    SMMap :: Storage s => s -> SMultiMap s k v
+import RPKI.Store.Base.Storable
+import RPKI.Store.Base.Storage as S
 
-instance Storage s => WithStorage s (SMultiMap s k v) where
-    storage (SMMap s) = s
+data SMultiMap (name :: Symbol) s k v where
+    SMMap :: Storage s => s -> MSMap' s name -> SMultiMap name s k v
+
+instance Storage s => WithStorage s (SMultiMap name s k v) where
+    storage (SMMap s _) = s
  
 put :: (Serialise k, Serialise v, Storage s) =>
-        Tx s 'RW -> SMultiMap s k v -> k -> v -> IO ()
-put tx (SMMap s) k v = S.put tx s (storableKey k) (storableValue v)    
+        Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
+put tx (SMMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
 
--- TODO Implement
-get :: (Serialise k, Serialise v, Storage s) =>
-        Tx s m -> SMultiMap s k v -> k -> IO [v]
-get tx (SMMap s) k = do
-    msv <- S.get tx s (storableKey k)
-    pure []
-    -- pure $ fromStorable . (\(SValue z) -> z) <$> msv
+delete :: (Serialise k, Serialise v) =>
+         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
+delete tx (SMMap _ s) k v = S.deleteMu tx s (storableKey k) (storableValue v)
 
-delete :: (Serialise k, Serialise v, Storage s) =>
-         Tx s 'RW -> SMultiMap s k v -> k -> IO ()
-delete tx (SMMap s) k = S.delete tx s (storableKey k)
-
--- This is wrong
-deleteAll :: (Serialise k, Serialise v, Storage s) =>
-         Tx s 'RW -> SMultiMap s k v -> k -> IO ()
-deleteAll tx (SMMap s) k = S.delete tx s (storableKey k)
+deleteAll :: (Serialise k, Serialise v) =>
+         Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
+deleteAll tx (SMMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
