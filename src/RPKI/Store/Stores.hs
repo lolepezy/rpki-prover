@@ -27,13 +27,14 @@ data RpkiObjectStore s = RpkiObjectStore {
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
   storage = storage . objects
-
+  
 
 getByHash :: Storage s => Tx s m -> RpkiObjectStore s -> Hash -> IO (Maybe RpkiObject)
 getByHash tx store h = (fromSValue <$>) <$> M.get tx (objects store) h
 
-putObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> Hash -> StorableObject RpkiObject -> IO ()
-putObject tx store h (StorableObject ro sv) = do
+putObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> IO ()
+putObject tx store (StorableObject ro sv) = do
+  let h = getHash ro
   M.put tx (objects store) h sv  
   ifJust (getAKI ro) $ \aki' -> do 
     MM.put tx (byAKI store) aki' h
@@ -48,9 +49,9 @@ deleteObject tx store h = do
   ifJust ro' $ \ro -> do 
     M.delete tx (objects store) h
     ifJust (getAKI ro) $ \aki' -> do 
-      MM.put tx (byAKI store) aki' h
+      MM.delete tx (byAKI store) aki' h
       case ro of
-        MftRO _ -> MM.put tx (mftByAKI store) aki' h
+        MftRO _ -> MM.delete tx (mftByAKI store) aki' h
         _       -> pure ()      
 
 findLatestMftByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO (Maybe MftObject)
@@ -63,9 +64,14 @@ findLatestMftByAKI tx store aki' =
             Just (MftRO mft) -> case latest of
               Nothing -> Just mft
               Just lat | getMftNumber mft > getMftNumber lat -> Just mft
-              Just lat | getMftNumber mft <= getMftNumber lat -> Just lat
+              Just lat | otherwise                           -> Just lat
             _ -> Nothing
 
+-- This is for testing purposes mostly
+getAll :: Storage s => Tx s m -> RpkiObjectStore s -> IO [RpkiObject]
+getAll tx store = reverse <$> M.fold tx (objects store) f []
+  where
+    f ros _ v = pure $ fromSValue v : ros
 
 newtype TAStore s = TAStore (SMap "trust-anchors" s TaName StoredTA)
 

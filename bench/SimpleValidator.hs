@@ -80,15 +80,8 @@ import           RPKI.TAL
 import           RPKI.Rsync
 import           RPKI.Validation.Objects
 import qualified RPKI.Util  as U
+import RPKI.Store.Util
 
-
-
-mkLmdb :: IO (Environment 'ReadWrite)
-mkLmdb = initializeReadWriteEnvironment mapSize readerNum maxDatabases "./data"
-  where 
-    mapSize = 8*1000*1000*1000
-    readerNum = 120
-    maxDatabases = 120    
 
 makeLmdbMap :: ModeBool e => Environment e -> IO (Database Hash B.ByteString)
 makeLmdbMap env = 
@@ -534,17 +527,4 @@ createLogger :: AppLogger
 createLogger = AppLogger fullMessageAction
   where
     fullMessageAction = upgradeMessageAction defaultFieldMap $ 
-      cmapM fmtRichMessageDefault logTextStdout
-
-createObjectStore :: Environment 'ReadWrite -> IO (RpkiObjectStore LMDB.LmdbStorage)
-createObjectStore env = do
-    let lmdb = LMDB.LmdbStorage env
-    objMap <- LMDB.create env
-    akiIndex <- LMDB.createMulti env
-    mftAkiIndex <- LMDB.createMulti env
-    
-    return $ RpkiObjectStore {
-      objects = SIxMap lmdb objMap,
-      byAKI = SMMap lmdb akiIndex,
-      mftByAKI = SMMap lmdb mftAkiIndex
-    }    
+      cmapM fmtRichMessageDefault logTextStdout  

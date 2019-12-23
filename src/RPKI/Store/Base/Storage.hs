@@ -14,17 +14,17 @@ class WithTx s where
     readWriteTx :: s -> (Tx s 'RW -> IO a) -> IO a
 
 class WithTx s => Storage s where        
-    type SMap' s :: Symbol -> *
-    type MSMap' s :: Symbol -> *
-    get :: Tx s m -> SMap' s name -> SKey -> IO (Maybe SValue)    
-    fold :: Tx s m -> SMap' s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
-    put :: Tx s 'RW -> SMap' s name -> SKey -> SValue -> IO ()
-    delete :: Tx s 'RW -> SMap' s name -> SKey -> IO ()
+    type SMapImpl s :: Symbol -> *
+    type SMultiMapImpl s :: Symbol -> *
+    get :: Tx s m -> SMapImpl s name -> SKey -> IO (Maybe SValue)    
+    fold :: Tx s m -> SMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
+    put :: Tx s 'RW -> SMapImpl s name -> SKey -> SValue -> IO ()
+    delete :: Tx s 'RW -> SMapImpl s name -> SKey -> IO ()
 
-    putMu :: Tx s 'RW -> MSMap' s name -> SKey -> SValue -> IO ()
-    foldMu :: Tx s m -> MSMap' s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
-    deleteMu :: Tx s 'RW -> MSMap' s name -> SKey -> SValue -> IO ()
-    deleteAllMu :: Tx s 'RW -> MSMap' s name -> SKey -> IO ()
+    putMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
+    foldMu :: Tx s m -> SMultiMapImpl s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
+    deleteMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
+    deleteAllMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> IO ()
 
 class Storage s => WithStorage s ws where
     storage :: ws -> s

@@ -65,8 +65,8 @@ instance WithTx LmdbStorage where
 
 -- | Basic storage implemented using LMDB
 instance Storage LmdbStorage where    
-    type SMap' LmdbStorage = LmdbStore
-    type MSMap' LmdbStorage = LmdbMultiStore
+    type SMapImpl LmdbStorage = LmdbStore
+    type SMultiMapImpl LmdbStorage = LmdbMultiStore
 
     put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
         LMap.insert' tx db ks bs

@@ -14,25 +14,25 @@ import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage as S
 
 data SMultiMap (name :: Symbol) s k v where
-    SMMap :: Storage s => s -> MSMap' s name -> SMultiMap name s k v
+    SMultiMap :: Storage s => s -> SMultiMapImpl s name -> SMultiMap name s k v
 
 instance Storage s => WithStorage s (SMultiMap name s k v) where
-    storage (SMMap s _) = s
+    storage (SMultiMap s _) = s
  
 put :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
-put tx (SMMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
+put tx (SMultiMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
 
 delete :: (Serialise k, Serialise v) =>
          Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
-delete tx (SMMap _ s) k v = S.deleteMu tx s (storableKey k) (storableValue v)
+delete tx (SMultiMap _ s) k v = S.deleteMu tx s (storableKey k) (storableValue v)
 
 deleteAll :: (Serialise k, Serialise v) =>
          Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
-deleteAll tx (SMMap _ s) k = S.deleteAllMu tx s (storableKey k)
+deleteAll tx (SMultiMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
 fold :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> k -> (a -> k -> v -> IO a) -> a -> IO a
-fold tx (SMMap _ s) k f a = S.foldMu tx s (storableKey k) f' a
+fold tx (SMultiMap _ s) k f a = S.foldMu tx s (storableKey k) f' a
     where
         f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)

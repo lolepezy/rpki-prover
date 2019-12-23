@@ -158,7 +158,7 @@ loadRsyncRepository logger config topPath objectStore = do
             let h = getHash ro
             getByHash tx objectStore h >>= \case 
                 Nothing -> do
-                  putObject tx objectStore h so
+                  putObject tx objectStore so
                   void $ atomicModifyIORef counter $ \c -> (c + 1, ())
                 Just _  ->
                     -- TODO Add location

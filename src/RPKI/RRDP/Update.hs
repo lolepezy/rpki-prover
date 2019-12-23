@@ -209,8 +209,8 @@ processRrdp repository objectStore = do
                         pure (u, a)
                     
                     chanToStorage tx (u, a) = Unlift.wait a >>= \case                        
-                        SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                        SObject so@(StorableObject ro _) -> putObject tx objectStore (getHash ro) so
+                        SError e   -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                        SObject so -> putObject tx objectStore so
             
             saveDelta (Delta _ _ _ deltaItems) = 
                 either Just (const Nothing) . 
@@ -231,7 +231,7 @@ processRrdp repository objectStore = do
                                 SObject so@(StorableObject ro _) -> do
                                     let h = getHash ro
                                     getByHash tx objectStore h >>= \case
-                                        Nothing -> putObject tx objectStore h so
+                                        Nothing -> putObject tx objectStore so
                                         Just _ ->
                                             -- TODO Add location
                                             logWarn_ logger [i|There's an existing object with hash #{h} |]
@@ -246,7 +246,7 @@ processRrdp repository objectStore = do
                                         Just _ -> do 
                                             deleteObject tx objectStore oldHash
                                             getByHash tx objectStore newHash >>= \case 
-                                                Nothing -> putObject tx objectStore newHash so
+                                                Nothing -> putObject tx objectStore so
                                                 Just _  -> 
                                                     -- TODO Add location
                                                     logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
