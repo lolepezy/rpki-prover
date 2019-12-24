@@ -4,6 +4,7 @@ module RPKI.Store.StoresSpec where
 
 import           Control.Monad
 import           Data.Maybe
+import           Data.List
 
 import           System.IO.Temp
 import           System.Directory
@@ -28,11 +29,11 @@ objectStoreGroup = lmdbTree $ \io -> testGroup "Rpki object LMDB storage test"
   [
     QC.testProperty
       "Store object and check if it's there"
-      (prop_stored_object_is_in_the_store io)
+      (prop_stored_object_is_in_the_store io),
 
-    -- QC.testProperty
-    --   "Store object and check if it's there, also check by AKI"
-    --   (prop_stored_object_is_in_the_store_taken_by_aki io)
+    QC.testProperty
+      "Store object and check if it's there, also check by AKI"
+      (prop_stored_object_is_in_the_store_taken_by_aki io)
   ]
 
 prop_stored_object_is_in_the_store :: IO ((a, Env), RpkiObjectStore LmdbStorage) -> QC.Property
@@ -48,19 +49,27 @@ prop_stored_object_is_in_the_store io = monadicIO $ do
   assert $ isNothing ro'
 
 
-prop_stored_object_is_in_the_store_taken_by_aki :: IO (Env, RpkiObjectStore LmdbStorage) -> QC.Property
+prop_stored_object_is_in_the_store_taken_by_aki :: IO ((a, Env), RpkiObjectStore LmdbStorage) -> QC.Property
 prop_stored_object_is_in_the_store_taken_by_aki io = monadicIO $ do  
   (_, objectStore) <- run io
   ro <- pick arbitrary
-  run $ rwTx objectStore $ \tx -> putObject tx objectStore $ toStorableObject ro
+  run $ rwTx objectStore $ \tx -> putObject tx objectStore $ toStorableObject ro  
   case ro of  
     MftRO _ -> 
       case getAKI ro of
         Just aki' -> do
-          ro' <- run $ roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki'
-          assert $ Just ro == (MftRO <$> ro')
+          checkLatestMft aki' objectStore          
+          run $ rwTx objectStore $ \tx -> deleteObject tx objectStore (getHash ro)
+          checkLatestMft aki' objectStore
         Nothing -> pure ()
     _ -> pure () 
+    where
+      checkLatestMft aki' objectStore = do
+          mftLatest <- run $ roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki'
+          objects <- run $ roTx objectStore $ \tx -> getAll tx objectStore 
+          case sortOn (negate . getMftNumber) [ mft | MftRO mft <- objects ] of 
+            [] -> assert $ isNothing mftLatest
+            mft : _ -> assert $ Just mft == mftLatest
     
   
 
