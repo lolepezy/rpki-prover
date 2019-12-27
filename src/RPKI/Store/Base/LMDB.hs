@@ -9,6 +9,8 @@
 
 module RPKI.Store.Base.LMDB where
 
+import Control.Monad (forever)
+
 import qualified Data.ByteString as B
 import Data.Coerce (coerce)
 
@@ -78,39 +80,50 @@ instance Storage LmdbStorage where
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
 
     fold (LmdbTx tx) LmdbStore {..} f a0 =
-        withCursor tx db $ \c -> do
-            z <- newIORef a0
-            runEffect $ LMap.firstForward c >-> do
-                Lmdb.KeyValue k v <- await
-                lift $ do
-                    a <- readIORef z
-                    a' <- f a (SKey $ Storable k) (SValue $ Storable v)
-                    writeIORef z $! a'
-            readIORef z
+        foldGeneric tx db f a0 withCursor LMap.firstForward        
 
     putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
-        pure ()
-        -- LMMap.insert' tx db ks bs
+        withMultiCursor tx db $ \c -> LMMap.insert c ks bs
 
     deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =         
-        pure ()
-        -- LMMap.delete' tx db ks
+        deleteGeneric tx db ks LMMap.delete        
 
     deleteAllMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
-        -- LMMap.delete' tx db ks        
-        pure ()    
+        deleteGeneric tx db ks LMMap.deleteValues        
 
-    foldMu (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f a0 =
+    foldMuForKey (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f a0 =
         withMultiCursor tx db $ \c -> do
             z <- newIORef a0
             runEffect $ LMMap.lookupValues c ks >-> do
-                v <- await
-                lift $ do 
-                    a <- readIORef z
-                    a' <- f a key (SValue $ Storable v)
-                    writeIORef z $! a'
+                forever $ do
+                    v <- await
+                    lift $ do 
+                        a <- readIORef z
+                        a' <- f a key (SValue $ Storable v)
+                        writeIORef z $! a'
             readIORef z
 
+    foldMu (LmdbTx tx) LmdbMultiStore {..} f a0 =
+        foldGeneric tx db f a0 withMultiCursor LMMap.firstForward
+
+-- TODO Add some nice type signature here
+foldGeneric tx db f a0 withC makeProducer =
+    withC tx db $ \c -> do
+        z <- newIORef a0
+        runEffect $ makeProducer c >-> do
+            forever $ do
+                Lmdb.KeyValue k v <- await
+                lift $ do 
+                    a <- readIORef z
+                    a' <- f a (SKey $ Storable k) (SValue $ Storable v)
+                    writeIORef z $! a'
+        readIORef z
+
+deleteGeneric tx db ks deleteFunc =         
+  withMultiCursor tx db $ \c -> do
+    LMMap.lookupFirstValue c ks >>= \case
+        Nothing -> pure ()
+        Just _  -> deleteFunc c
 
 create :: forall name . KnownSymbol name => 
             Env -> IO (LmdbStore name)

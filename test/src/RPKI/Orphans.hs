@@ -143,10 +143,10 @@ instance Arbitrary FullMeta where
   shrink = genericShrink
 
 instance Arbitrary AKI where
-  arbitrary = AKI <$> arbitrary
+  arbitrary = AKI . KI <$> B.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary SKI where
-  arbitrary = SKI <$> arbitrary  
+  arbitrary = SKI . KI <$> B.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary KI where
   arbitrary = KI <$> arbitrary  

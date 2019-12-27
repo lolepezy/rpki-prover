@@ -160,16 +160,16 @@ loadRsyncRepository logger config topPath objectStore = do
                 Nothing -> do
                   putObject tx objectStore so
                   void $ atomicModifyIORef counter $ \c -> (c + 1, ())
-                Just _  ->
+                (Just _ :: Maybe RpkiObject) ->
                     -- TODO Add location
                     logInfo_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
               
 
-data RsyncCL = RsyncOneFile | RsyncDirectory
+data RsyncMode = RsyncOneFile | RsyncDirectory
 
-rsyncProcess :: URI -> FilePath -> RsyncCL -> ProcessConfig () () ()
-rsyncProcess (URI uri) destination rsyncCL = 
-  let extraOptions = case rsyncCL of 
+rsyncProcess :: URI -> FilePath -> RsyncMode -> ProcessConfig () () ()
+rsyncProcess (URI uri) destination rsyncMode = 
+  let extraOptions = case rsyncMode of 
         RsyncOneFile   -> []
         RsyncDirectory -> ["--recursive", "--delete", "--copy-links" ]
       options = [ "--timeout=300",  "--update",  "--times" ] ++ extraOptions

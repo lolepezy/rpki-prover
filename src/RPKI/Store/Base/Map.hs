@@ -38,3 +38,6 @@ fold :: (Serialise k, Serialise v) =>
 fold tx (SMap _ s) f a = S.fold tx s f' a
     where
         f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
+
+size :: Tx s m -> SMap name s k v -> IO Int
+size tx (SMap _ s) = S.fold tx s (\a _ _ -> pure $! a + 1) 0

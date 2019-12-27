@@ -26,8 +26,8 @@ createObjectStore e = do
       mftByAKI = SMultiMap lmdb mftAkiIndex
     }   
 
-mkLmdb :: IO Env
-mkLmdb = initializeReadWriteEnvironment mapSize readerNum maxDatabases "./data"
+mkLmdb :: FilePath -> IO Env
+mkLmdb path = initializeReadWriteEnvironment mapSize readerNum maxDatabases path
   where 
     mapSize = 8*1024*1024*1024
     readerNum = 120

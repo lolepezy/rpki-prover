@@ -22,7 +22,8 @@ class WithTx s => Storage s where
     delete :: Tx s 'RW -> SMapImpl s name -> SKey -> IO ()
 
     putMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
-    foldMu :: Tx s m -> SMultiMapImpl s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
+    foldMuForKey :: Tx s m -> SMultiMapImpl s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
+    foldMu :: Tx s m -> SMultiMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     deleteMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
     deleteAllMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> IO ()
 

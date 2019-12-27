@@ -33,6 +33,9 @@ deleteAll tx (SMultiMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
 fold :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> k -> (a -> k -> v -> IO a) -> a -> IO a
-fold tx (SMultiMap _ s) k f a = S.foldMu tx s (storableKey k) f' a
+fold tx (SMultiMap _ s) k f a = S.foldMuForKey tx s (storableKey k) f' a
     where
         f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
+
+size :: Tx s m -> SMultiMap name s k v -> IO Int
+size tx (SMultiMap _ s) = S.foldMu tx s (\a _ _ -> pure $! a + 1) 0

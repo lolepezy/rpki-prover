@@ -27,7 +27,7 @@ data RpkiObjectStore s = RpkiObjectStore {
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
   storage = storage . objects
-  
+
 
 getByHash :: Storage s => Tx s m -> RpkiObjectStore s -> Hash -> IO (Maybe RpkiObject)
 getByHash tx store h = (fromSValue <$>) <$> M.get tx (objects store) h

@@ -494,7 +494,7 @@ validateTreeFromStore env = do
     nu <- now
     let conf = (createLogger, RsyncConf "/tmp/rsync", 
                 Config getParallelism, 
-                vContext $ URI "something.cer", 
+                vContext $ URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer", 
                 nu)              
     store <- createObjectStore env
     x <- runValidatorT conf $ do
@@ -514,7 +514,7 @@ main = do
   -- usingLoggerT (LogAction putStrLn) $ lift app
   -- processTAL
   -- mkLmdb >>= void . saveRsyncRepo
-  mkLmdb >>= validatorUpdateRRDPRepo
+  mkLmdb "./data" >>= validatorUpdateRRDPRepo
   -- testSignature
 
 say :: String -> IO ()

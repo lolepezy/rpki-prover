@@ -232,22 +232,22 @@ processRrdp repository objectStore = do
                                     let h = getHash ro
                                     getByHash tx objectStore h >>= \case
                                         Nothing -> putObject tx objectStore so
-                                        Just _ ->
+                                        (Just _ :: Maybe RpkiObject) ->
                                             -- TODO Add location
                                             logWarn_ logger [i|There's an existing object with hash #{h} |]
                         Right (u, Just oldHash, a) -> 
                             Unlift.wait a >>= \case
                                 SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                                SObject so@(StorableObject ro _) -> do
-                                    let newHash = getHash ro
+                                SObject so@(StorableObject ro _) -> do                                    
                                     getByHash tx objectStore oldHash >>= \case 
                                         Nothing -> 
                                             logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
-                                        Just _ -> do 
+                                        (Just _ :: Maybe RpkiObject) -> do 
                                             deleteObject tx objectStore oldHash
+                                            let newHash = getHash ro
                                             getByHash tx objectStore newHash >>= \case 
                                                 Nothing -> putObject tx objectStore so
-                                                Just _  -> 
+                                                (Just _ :: Maybe RpkiObject)  -> 
                                                     -- TODO Add location
                                                     logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
 
