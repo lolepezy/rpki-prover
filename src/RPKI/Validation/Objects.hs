@@ -71,7 +71,7 @@ validateTACert tal u (CerRO cert@(_, rc@(ResourceCertificate taCert))) = do
     pureErrorIfNot (isNothing $ aki $ getMeta cert) $ TACertAKIIsNotEmpty u
     -- It's self-signed, so use itself as a parent to check the signature
     signatureCheck $ validateCertSignature rc rc
-    validateResourceCertExtensions rc
+    void $ validateResourceCertExtensions rc
     pure cert
 
 validateTACert _ _ _ = pureError UnknownObjectAsTACert
@@ -94,7 +94,7 @@ validateResourceCert cert parentCert vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
   when (isRevoked cert vcrl) $ 
     pureError RevokedResourceCertificate
-  validateResourceCertExtensions cert
+  void $ validateResourceCertExtensions cert
   validateResourceSet cert parentCert
   pure $ Validated cert
   where 

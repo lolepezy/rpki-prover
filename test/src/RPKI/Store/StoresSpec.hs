@@ -50,47 +50,7 @@ sizes objectStore =
     (,,) <$> M.size tx (objects objectStore)
          <*> MM.size tx (byAKI objectStore)
          <*> MM.size tx (mftByAKI objectStore)
-
--- prop_stored_object_is_in_the_store :: IO ((a, Env), RpkiObjectStore LmdbStorage) -> QC.Property
--- prop_stored_object_is_in_the_store io = monadicIO $ do  
---   (_, objectStore) <- run io
---   ro :: RpkiObject <- pick arbitrary
---   (s1, s2, s3) <- run $ sizes objectStore
---   run $ rwTx objectStore $ \tx -> putObject tx objectStore $ toStorableObject ro
---   ro' <- run $ roTx objectStore $ \tx -> getByHash tx objectStore (getHash ro)
---   assert $ Just ro == ro'
---   (s1', s2', s3') <- run $ sizes objectStore
---   run $ putStrLn $ "s = " <> show (s1, s2, s3) <> ", " <> show (s1', s2', s3')
---   assert $ s1' == s1 + 1
-  
---   run $ rwTx objectStore $ \tx -> deleteObject tx objectStore (getHash ro)
---   ro' :: Maybe RpkiObject <- run $ roTx objectStore $ \tx -> getByHash tx objectStore (getHash ro)
---   assert $ isNothing ro'
-
-
--- prop_stored_object_is_in_the_store_taken_by_aki :: IO ((a, Env), RpkiObjectStore LmdbStorage) -> QC.Property
--- prop_stored_object_is_in_the_store_taken_by_aki io = monadicIO $ do  
---   (_, objectStore) <- run io
---   ro <- pick arbitrary
---   run $ rwTx objectStore $ \tx -> putObject tx objectStore $ toStorableObject ro  
---   case ro of  
---     MftRO _ -> 
---       case getAKI ro of
---         Just aki' -> do
---           checkLatestMft aki' objectStore          
---           run $ rwTx objectStore $ \tx -> deleteObject tx objectStore (getHash ro)
---           checkLatestMft aki' objectStore
---         Nothing -> pure ()
---     _ -> pure () 
---     where
---       checkLatestMft aki' objectStore = do
---           mftLatest <- run $ roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki'
---           objects <- run $ roTx objectStore $ \tx -> getAll tx objectStore 
---           case sortOn (negate . getMftNumber) [ mft | MftRO mft <- objects ] of 
---             [] -> assert $ isNothing mftLatest
---             mft : _ -> assert $ Just mft == mftLatest
-    
-            
+                     
 
 should_insert_and_get_all_back :: IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back io = do  
