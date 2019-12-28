@@ -167,7 +167,7 @@ validateNexUpdate nextUpdateTime = do
 -- | Check if CMS is on the revocation list
 isRevoked :: ResourceCertificate -> Validated CrlObject -> Bool
 isRevoked (ResourceCertificate cert) (Validated (_, SignCRL {..})) = 
-  null $ filter
+  not $ null $ filter
     (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial) $ 
       crlRevokedCertificates crl
   where
