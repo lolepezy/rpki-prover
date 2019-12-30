@@ -1,5 +1,12 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE AllowAmbiguousTypes       #-}
+{-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE DuplicateRecordFields     #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE NumericUnderscores        #-}
+{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE TypeApplications          #-}
 
 module RPKI.Store.StoresSpec where
 
@@ -7,17 +14,11 @@ import Control.Exception (bracket)
 import           Control.Monad
 import           Data.Maybe
 import           Data.List as L
-import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text            as T
+
+import Control.Lens
 
 import           System.IO.Temp
-
 import           System.Directory
-
-import Data.Data (Typeable)
-import Data.List.NonEmpty
-import GHC.Generics
 
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Monadic
@@ -76,13 +77,7 @@ should_insert_and_get_all_back io = do
   
   compareLatestMfts objectStore ros1 aki1
   compareLatestMfts objectStore ros2 aki2  
-  where 
-    -- setAKI a (CerRO (FullMeta m s, x)) = CerRO (FullMeta m { aki = Just a } s, x)
-    -- setAKI a (MftRO (FullMeta m s, x)) = MftRO (FullMeta m { aki = Just a } s, x)
-    -- setAKI a (RoaRO (FullMeta m s, x)) = RoaRO (FullMeta m { aki = Just a } s, x)
-    -- setAKI a (GbrRO (FullMeta m s, x)) = GbrRO (FullMeta m { aki = Just a } s, x)
-    -- setAKI a (CrlRO (m, x)) = CrlRO (m { aki = Just a }, x)
-
+  where
     compareLatestMfts objectStore ros a = do
       mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a
       let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber) $
@@ -115,5 +110,17 @@ releaseLmdb ((dir, e), _) = do
 
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
-replaceAKI a (CerRO c) = CerRO $ withContent c (\_ w -> withMeta w (\_ _ -> Just a))
--- TODO Implement the rest
+replaceAKI a = go 
+  where
+    go (CerRO c) = CerRO $ withContent c (\_ w -> withMeta w (\_ _ -> Just a))
+    go (CrlRO c) = CrlRO $ withContent c (\_ w -> withMeta w (\_ _ -> a))
+    go (MftRO c) = MftRO $ withContent c (\_ cms -> mapCms cms)
+    go (RoaRO c) = RoaRO $ withContent c (\_ cms -> mapCms cms)
+    go (GbrRO c) = GbrRO $ withContent c (\_ cms -> mapCms cms)
+
+    mapCms :: CMS a -> CMS a
+    mapCms (CMS so) = CMS $ so { soContent = sc { scCertificate = ee' } }
+      where 
+        ee = scCertificate sc
+        sc = soContent so
+        ee' = withMeta ee (\_ _ -> a)        

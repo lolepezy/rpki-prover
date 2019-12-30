@@ -6,7 +6,6 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE OverlappingInstances       #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -113,17 +112,6 @@ data IdentityMeta = IdentityMeta
     {-# UNPACK #-} !(NonEmpty URI)
     deriving (Show, Eq, Ord, Typeable, Generic)
 
--- data RpkiMeta = RpkiMeta {
---     locations :: NonEmpty URI, 
---     hash      :: Hash, 
---     aki       :: Maybe AKI
--- } deriving (Show, Eq, Ord, Typeable, Generic)
-
--- data FullMeta = FullMeta 
---     {-# UNPACK #-} !RpkiMeta 
---                    !SKI 
---     deriving (Show, Eq, Ord, Typeable, Generic)
-
 data With meta content = With  
     {-# UNPACK #-} !meta
     {-# UNPACK #-} !content 
@@ -132,10 +120,10 @@ data With meta content = With
 class Contains_ a b where
     extract :: a -> b
 
-instance Contains_ whole part => Contains_ (With meta whole) part where
+instance {-# OVERLAPPING #-} Contains_ whole part => Contains_ (With meta whole) part where
     extract (With _ b) = extract b
 
-instance (a ~ b) => Contains_ a b where
+instance {-# OVERLAPPING #-} (a ~ b) => Contains_ a b where
     extract = id
 
 type CrlObject = With IdentityMeta (With AKI SignCRL)
@@ -161,25 +149,25 @@ instance WithHash (With IdentityMeta a) where
 instance WithLocations (With IdentityMeta a) where
     getLocations (With (IdentityMeta _ loc) _) = loc
     
-instance WithSKI a => WithSKI (With m a) where
+instance {-# OVERLAPPING #-} WithSKI a => WithSKI (With m a) where
     getSKI (With _ a) = getSKI a    
 
-instance WithAKI a => WithAKI (With m a) where
+instance {-# OVERLAPPING #-} WithAKI a => WithAKI (With m a) where
     getAKI (With _ a) = getAKI a    
 
-instance WithSKI (With SKI a) where
+instance {-# OVERLAPPING #-} WithSKI (With SKI a) where
     getSKI (With ski _) = ski    
 
-instance WithAKI (With (Maybe AKI) a) where
+instance {-# OVERLAPPING #-} WithAKI (With (Maybe AKI) a) where
     getAKI (With aki _) = aki
 
-instance WithAKI (With AKI a) where
+instance {-# OVERLAPPING #-} WithAKI (With AKI a) where
     getAKI (With aki _) = Just aki
 
-instance WithAKI (With x (CMS a)) where
+instance {-# OVERLAPPING #-} WithAKI (With x (CMS a)) where
     getAKI (With _ (CMS signedObject)) = getAKI $ getEEResourceCert signedObject
 
-instance WithSKI (With x (CMS a)) where
+instance {-# OVERLAPPING #-} WithSKI (With x (CMS a)) where
     getSKI (With _ (CMS signedObject)) = getSKI $ getEEResourceCert signedObject
         
 instance WithResourceCertificate CerObject where
