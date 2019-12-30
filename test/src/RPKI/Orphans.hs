@@ -133,15 +133,6 @@ instance Arbitrary a => Arbitrary (NE.NonEmpty a) where
   arbitrary = genericArbitrary
   shrink = genericShrink
   
-
-instance Arbitrary RpkiMeta where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary FullMeta where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
 instance Arbitrary AKI where
   arbitrary = AKI . KI <$> B.pack <$> replicateM 20 arbitrary
 
@@ -180,6 +171,14 @@ instance Arbitrary ResourceCertificate where
   shrink = genericShrink
 
 instance Arbitrary RpkiObject where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance Arbitrary IdentityMeta where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance (Arbitrary m, Arbitrary a) => Arbitrary (With m a) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 

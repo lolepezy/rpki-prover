@@ -1,9 +1,15 @@
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes        #-}
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverlappingInstances       #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module RPKI.Domain where
 
@@ -11,6 +17,7 @@ import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 
+import Control.Lens
 import Control.DeepSeq
 import Codec.Serialise
 import Data.Hex (hex)
@@ -35,9 +42,7 @@ newtype ASN = ASN Int
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data AsResource =  AS !ASN
-                 | ASRange  
-                    {-# UNPACK #-} !ASN 
-                    {-# UNPACK #-} !ASN
+                 | ASRange !ASN !ASN
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 data ValidationRFC = Strict_ | Reconsidered_
@@ -62,7 +67,7 @@ newtype IpResources = IpResources (AnRFC IpResourceSet)
 newtype RSet r = RSet (AnRFC (ResourceSet r))
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-data ResourceSet r (rfc :: ValidationRFC) = RS (S.Set r) | Inherit
+data ResourceSet r (rfc :: ValidationRFC) = RS !(S.Set r) | Inherit
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype IpResourceSet (rfc :: ValidationRFC) = 
@@ -82,34 +87,65 @@ newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable, Generic, NFDa
 newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NFData)
 
 
--- | Objects
+-- | Domain objects
 
 newtype CMS a = CMS {
     unCMS :: SignedObject a
  } deriving (Show, Eq, Typeable, Generic)
 
-class WithMeta a where
-    getMeta :: a -> RpkiMeta
+class WithAKI a where
+    getAKI :: a -> Maybe AKI
+
+class WithLocations a where
+    getLocations :: a -> NonEmpty URI 
+
+class WithHash a where
+    getHash :: a -> Hash
 
 class WithSKI a where
     getSKI :: a -> SKI
 
-class (WithSKI a, WithMeta a) => WithFullMeta a
+class WithResourceCertificate a where
+    getRC :: a -> ResourceCertificate
 
-type CrlObject = (RpkiMeta, SignCRL)
-type CerObject = (FullMeta, ResourceCertificate)
-type MftObject = (FullMeta, CMS Manifest)
-type RoaObject = (FullMeta, CMS [Roa])
-type GbrObject = (FullMeta, CMS Gbr) 
-
-data RpkiMeta = RpkiMeta {
-    locations :: NonEmpty URI, 
-    hash      :: Hash, 
-    aki       :: Maybe AKI
-} deriving (Show, Eq, Ord, Typeable, Generic)
-
-data FullMeta = FullMeta !RpkiMeta !SKI 
+data IdentityMeta = IdentityMeta 
+                   !Hash 
+    {-# UNPACK #-} !(NonEmpty URI)
     deriving (Show, Eq, Ord, Typeable, Generic)
+
+-- data RpkiMeta = RpkiMeta {
+--     locations :: NonEmpty URI, 
+--     hash      :: Hash, 
+--     aki       :: Maybe AKI
+-- } deriving (Show, Eq, Ord, Typeable, Generic)
+
+-- data FullMeta = FullMeta 
+--     {-# UNPACK #-} !RpkiMeta 
+--                    !SKI 
+--     deriving (Show, Eq, Ord, Typeable, Generic)
+
+data With meta content = With  
+    {-# UNPACK #-} !meta
+    {-# UNPACK #-} !content 
+    deriving (Show, Eq, Ord, Typeable, Generic)
+
+class Contains_ a b where
+    extract :: a -> b
+
+instance Contains_ whole part => Contains_ (With meta whole) part where
+    extract (With _ b) = extract b
+
+instance (a ~ b) => Contains_ a b where
+    extract = id
+
+type CrlObject = With IdentityMeta (With AKI SignCRL)
+type CerObject = With IdentityMeta (With (Maybe AKI) (With SKI ResourceCertificate))
+type MftObject = With IdentityMeta (CMS Manifest)
+type RoaObject = With IdentityMeta (CMS [Roa])
+type GbrObject = With IdentityMeta (CMS Gbr) 
+
+type EECerObject = With AKI (With SKI ResourceCertificate)
+
 
 data RpkiObject = CerRO !CerObject 
                 | MftRO !MftObject
@@ -118,23 +154,64 @@ data RpkiObject = CerRO !CerObject
                 | CrlRO !CrlObject
     deriving (Show, Eq, Typeable, Generic)
 
-instance WithMeta (FullMeta, a) where
-    getMeta (FullMeta m _, _) = m
 
-instance WithMeta (RpkiMeta, a) where
-    getMeta (m, _) = m    
+instance WithHash (With IdentityMeta a) where
+    getHash (With (IdentityMeta h _) _) = h    
 
-instance WithSKI (FullMeta, a) where
-    getSKI (FullMeta _ ski, _) = ski    
-
-
-instance WithMeta RpkiObject where
-    getMeta (CerRO c) = getMeta c
-    getMeta (MftRO c) = getMeta c
-    getMeta (RoaRO c) = getMeta c
-    getMeta (GbrRO c) = getMeta c
-    getMeta (CrlRO c) = getMeta c
+instance WithLocations (With IdentityMeta a) where
+    getLocations (With (IdentityMeta _ loc) _) = loc
     
+instance WithSKI a => WithSKI (With m a) where
+    getSKI (With _ a) = getSKI a    
+
+instance WithAKI a => WithAKI (With m a) where
+    getAKI (With _ a) = getAKI a    
+
+instance WithSKI (With SKI a) where
+    getSKI (With ski _) = ski    
+
+instance WithAKI (With (Maybe AKI) a) where
+    getAKI (With aki _) = aki
+
+instance WithAKI (With AKI a) where
+    getAKI (With aki _) = Just aki
+
+instance WithAKI (With x (CMS a)) where
+    getAKI (With _ (CMS signedObject)) = getAKI $ getEEResourceCert signedObject
+
+instance WithSKI (With x (CMS a)) where
+    getSKI (With _ (CMS signedObject)) = getSKI $ getEEResourceCert signedObject
+        
+instance WithResourceCertificate CerObject where
+    getRC = extract
+
+instance WithResourceCertificate EECerObject where
+    getRC = extract
+
+
+instance WithAKI RpkiObject where
+    getAKI (CerRO c) = getAKI c
+    getAKI (MftRO c) = getAKI c
+    getAKI (RoaRO c) = getAKI c
+    getAKI (GbrRO c) = getAKI c
+    getAKI (CrlRO c) = getAKI c
+
+instance WithHash RpkiObject where
+    getHash (CerRO c) = getHash c
+    getHash (MftRO c) = getHash c
+    getHash (RoaRO c) = getHash c
+    getHash (GbrRO c) = getHash c
+    getHash (CrlRO c) = getHash c
+
+instance WithLocations RpkiObject where
+    getLocations (CerRO c) = getLocations c
+    getLocations (MftRO c) = getLocations c
+    getLocations (RoaRO c) = getLocations c
+    getLocations (GbrRO c) = getLocations c
+    getLocations (CrlRO c) = getLocations c
+    
+    
+-- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
     certX509    :: CertificateWithSignature, 
@@ -205,7 +282,7 @@ data SignedData a = SignedData {
       scVersion          :: CMSVersion, 
       scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
       scEncapContentInfo :: EncapsulatedContentInfo a, 
-      scCertificate      :: ResourceCertificate, 
+      scCertificate      :: EECerObject, 
       scSignerInfos      :: SignerInfos
   } deriving (Show, Eq, Typeable, Generic)
   
@@ -315,8 +392,10 @@ data Repository =
 
 -- serialisation
 instance Serialise Hash
-instance Serialise RpkiMeta
-instance Serialise FullMeta
+-- instance Serialise RpkiMeta
+-- instance Serialise FullMeta
+instance Serialise IdentityMeta
+instance (Serialise a, Serialise b) => Serialise (With a b)
 instance Serialise URI
 instance Serialise AKI
 instance Serialise SKI
@@ -360,18 +439,10 @@ instance Serialise SignerInfos
 
 
 -- Small utility functions that don't have anywhere else to go
-getHash :: RpkiObject -> Hash
-getHash = hash . getMeta
 
-getLocations :: RpkiObject -> NonEmpty URI
-getLocations = locations . getMeta
-
-getAKI :: RpkiObject -> Maybe AKI
-getAKI = aki . getMeta
-
-getSerial :: CerObject -> Serial
+getSerial :: WithResourceCertificate a => a -> Serial
 getSerial rc = Serial $ X509.certSerial $ cwsX509certificate $ withRFC cert certX509 
-    where (_, ResourceCertificate cert) = rc
+    where ResourceCertificate cert = getRC rc
 
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs
@@ -382,13 +453,16 @@ toAKI (SKI ki) = AKI ki
 getCMSContent :: CMS a -> a
 getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so
 
-getEEResourceCert :: SignedObject a -> ResourceCertificate
+getEEResourceCert :: SignedObject a -> EECerObject
 getEEResourceCert = scCertificate . soContent
+
+getCertWithSignature :: WithResourceCertificate a => a -> CertificateWithSignature
+getCertWithSignature cert = withRFC rc certX509 
+    where ResourceCertificate rc = getRC cert
 
 getEECert :: SignedObject a -> CertificateWithSignature
 getEECert so = withRFC rc certX509 
-    where
-        ResourceCertificate rc = scCertificate $ soContent so
+    where ResourceCertificate rc = extract $ scCertificate $ soContent so
 
 
 strictCert :: ResourceCert 'Strict_ -> ResourceCertificate
@@ -398,4 +472,19 @@ reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
 reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
 
 getMftNumber :: MftObject -> Int
-getMftNumber (_, cms) = mftNumber $ getCMSContent cms 
+getMftNumber mft = mftNumber $ getCMSContent $ extract mft
+
+withContent :: With a b -> (a -> b -> c) -> With a c
+withContent (With a b) f = With a (f a b)
+
+withMeta :: With a b -> (a -> b -> c) -> With c b
+withMeta (With a b) f = With (f a b) b
+
+makeCrl :: URI -> AKI -> Hash -> SignCRL -> CrlObject
+makeCrl u a h sc = With (IdentityMeta h (u :| [])) $ With a sc
+
+makeCert :: URI -> Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
+makeCert u a s h rc = With (IdentityMeta h (u :| [])) $ With a $ With s rc
+
+makeEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
+makeEECert a s rc = With a $ With s rc

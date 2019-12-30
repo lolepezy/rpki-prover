@@ -20,9 +20,9 @@ parseMft :: B.ByteString -> ParseResult (URI -> MftObject)
 parseMft bs = do
   asns      <- first (fmtErr . show) $ decodeASN1' BER bs
   signedMft <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
-  meta      <- getMetaFromSigned signedMft bs
-  pure $ \location -> (meta location, CMS signedMft)
-  where    
+  identityMeta <- getMetaFromSigned signedMft bs
+  pure $ \location -> With (identityMeta location) (CMS signedMft)
+  where
     parseManifest :: ParseASN1 Manifest
     parseManifest = onNextContainer Sequence $
       (,,) <$> getNext <*> getNext <*> getNext >>= \case

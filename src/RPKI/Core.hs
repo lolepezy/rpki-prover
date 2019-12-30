@@ -60,14 +60,16 @@ validateTree :: (Has AppLogger env,
                 RpkiObjectStore s -> 
                 RpkiObject ->                
                 ValidatorT env IO ()
-validateTree objectStore (CerRO rc) = do
+validateTree objectStore (CerRO certificate) = do
+
+  -- TODO Validate with parent certificate
 
   logger :: AppLogger  <- asks getter
   now :: Now           <- asks getter
   validationContext :: ValidationContext <- asks getter
 
-  let childrenAki = toAKI $ getSKI rc
-  let RpkiMeta {..} = getMeta rc
+  let childrenAki = toAKI $ getSKI certificate
+  let locations = getLocations certificate
 
   mft <- validatorT $ roTx objectStore $ \tx -> 
     runValidatorT validationContext $
@@ -76,7 +78,7 @@ validateTree objectStore (CerRO rc) = do
         Just mft -> pure mft
 
   let crls = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
-        mftEntries $ getCMSContent $ snd mft
+        mftEntries $ getCMSContent $ extract mft
 
   (_, crlHash) <- case crls of 
     []    -> validatorError $ NoCRLOnMFT childrenAki locations
@@ -88,11 +90,11 @@ validateTree objectStore (CerRO rc) = do
     Nothing          -> validatorError $ NoCRLExists childrenAki locations    
     Just (CrlRO crl) -> do      
         validatedCrl <- pureToValidatorT $ do
-          vCrl <- validateCrl crl (snd rc)
-          validateMft mft (snd rc) vCrl
+          vCrl <- validateCrl crl certificate
+          validateMft mft certificate vCrl
           pure vCrl
   
-        let manifestChildren = map snd $ mftEntries $ getCMSContent $ snd mft
+        let manifestChildren = map snd $ mftEntries $ getCMSContent $ extract mft
   
         {- TODO narrow down children traversal to the ones that  
           1) Are on the manifest
@@ -113,9 +115,9 @@ validateTree objectStore (CerRO rc) = do
           cer@(CerRO _) -> 
             runValidatorT childValidationContext $ validateTree objectStore cer
           RoaRO roa -> pure $ runPureValidator childValidationContext $ 
-            void $ validateRoa roa (snd rc) validatedCrl
+            void $ validateRoa roa certificate validatedCrl
           GbrRO gbr -> pure $ runPureValidator childValidationContext $ 
-            void $ validateGbr gbr (snd rc) validatedCrl
+            void $ validateGbr gbr certificate validatedCrl
           -- TODO Anything else?
           _ -> valid
           where

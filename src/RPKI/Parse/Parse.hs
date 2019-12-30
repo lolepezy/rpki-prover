@@ -38,15 +38,10 @@ readObject name content = do
     "cer" -> parse_ u parseResourceCertificate CerRO content            
     "mft" -> parse_ u parseMft MftRO content
     "roa" -> parse_ u parseRoa RoaRO content            
-    "crl" -> do
-        f <- parseCrl content
-        let (meta, o) = f u
-        pure $ CrlRO (meta, o)
-
+    "crl" -> parse_ u parseCrl CrlRO content            
     _     -> Left $ fmtErr $ "Unknown object type: " <> show name
     where
-        parse_ u p constructor bs = do
-            f <- p bs
-            let (meta, o) = f u
-            pure $ constructor $ (meta, o)
+        parse_ u parse constructor bs = do
+            f <- parse bs
+            pure $ constructor (f u)
 

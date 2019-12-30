@@ -1,21 +1,20 @@
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Parse.Internal.CRL where
 
-import qualified Data.ByteString          as B
+import qualified Data.ByteString            as B
 
-import           Data.ASN1.Types
-import Data.Bifunctor (first)
-import Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
+import           Data.ASN1.Types
+import           Data.Bifunctor             (first)
 
-import Data.X509
+import           Data.X509
 
 import           RPKI.Domain
-import qualified RPKI.Util as U
 import           RPKI.Parse.Internal.Common
+import qualified RPKI.Util                  as U
 
 
 parseCrl :: B.ByteString -> ParseResult (URI -> CrlObject)
@@ -34,19 +33,14 @@ parseCrl bs = do
             Right [Start Sequence, Other Context 0 ki, End Sequence] -> Right ki
             Right s -> Left $ fmtErr $ "Unknown AKI format: " <> show s
  
-  crlNumberBS :: B.ByteString <- case extVal exts id_crlNumber of
+  crlNumberBS :: B.ByteString  <- case extVal exts id_crlNumber of
             Nothing -> Left $ fmtErr "No CRL number in CRL"
             Just n  -> Right n
 
   numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
   crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
-  let meta location = RpkiMeta {
-      locations = location :| [],
-      aki = Just $ AKI $ KI aki',
-      hash = U.sha256s bs
-    }
-  pure $ \location -> (meta location, signCrlF crlNumber')
+  pure $ \location -> makeCrl location (AKI $ KI aki') (U.sha256s bs) (signCrlF crlNumber')
   where  
     getCrl = onNextContainer Sequence $ do
       (asns, crl') <- getNextContainerMaybe Sequence >>= \case 

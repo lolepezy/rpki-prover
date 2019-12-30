@@ -94,8 +94,9 @@ parseSignedObject eContentParse =
                   signature    <- parseSignature
                   let certWithSig = CertificateWithSignature eeCertificate sigAlgorithm signature encodedCert
                   case toResourceCert certWithSig of
-                    Left e  -> throwParseError $ "EE certificate is broken" <> show e
-                    Right c -> pure c
+                    Left e                    -> throwParseError $ "EE certificate is broken " <> show e
+                    Right (_, ski, Nothing)   -> throwParseError $ "EE certificate doesn't have an AKI"
+                    Right (rc, ski, Just aki) -> pure $ makeEECert aki ski rc
                   where 
                     encodedCert = encodeASN1' DER $ 
                       [Start Sequence] <> asns <> [End Sequence]                                
@@ -144,22 +145,5 @@ parseSignedObject eContentParse =
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
-getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> FullMeta)
-getMetaFromSigned so bs = do
-  let exts = getExts $ cwsX509certificate $ getEECert so
-  case extVal exts id_subjectKeyId of
-    Nothing -> Left . fmtErr $ "SKI is absent" 
-    Just s  -> do
-        ki <- parseKI s
-        aki' <- case extVal exts id_authorityKeyId of
-                  Nothing -> pure Nothing
-                  Just a  -> Just . AKI <$> parseKI a
-        pure $ 
-          \location -> let 
-            meta = RpkiMeta {        
-                aki  = aki',
-                hash = U.sha256s bs,
-                locations = location :| []              
-            } 
-            in FullMeta meta (SKI ki)
-    
+getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> IdentityMeta)
+getMetaFromSigned _ bs = pure $ \location -> IdentityMeta (U.sha256s bs) (location :| [])

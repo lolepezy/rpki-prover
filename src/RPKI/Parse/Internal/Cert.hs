@@ -37,22 +37,12 @@ parseResourceCertificate :: B.ByteString ->
 parseResourceCertificate bs = do
   certificate <- mapParseErr $ decodeSignedObject bs  
   let signedCertificate = unifyCert certificate
-  (rc, ski_, aki_) <- parseResourceCert signedCertificate  
-  let meta location = RpkiMeta {
-          aki  = aki_,
-          hash = U.sha256s bs,
-          locations = location :| []
-      } 
-  pure $ \location -> (FullMeta (meta location) ski_, rc)
+  (rc, ski_, aki_) <- toResourceCert signedCertificate    
+  pure $ \location -> makeCert location aki_ ski_ (U.sha256s bs) rc
 
 
-toResourceCert :: CertificateWithSignature -> ParseResult ResourceCertificate
-toResourceCert sc = do 
-  (rc, _, _) <- parseResourceCert sc
-  pure rc
-
-parseResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, SKI, Maybe AKI)
-parseResourceCert certificate = do  
+toResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, SKI, Maybe AKI)
+toResourceCert certificate = do  
   let exts = getExtsSign certificate
   case extVal exts id_subjectKeyId of
     Just s  -> do

@@ -50,7 +50,7 @@ sizes objectStore =
     (,,) <$> M.size tx (objects objectStore)
          <*> MM.size tx (byAKI objectStore)
          <*> MM.size tx (mftByAKI objectStore)
-                     
+
 
 should_insert_and_get_all_back :: IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back io = do  
@@ -61,8 +61,8 @@ should_insert_and_get_all_back io = do
   let n = L.length ros
   let (firstHalf, secondHalf) = L.splitAt (n `div` 2) ros
 
-  let ros1 = L.map (setAKI aki1) firstHalf
-  let ros2 = L.map (setAKI aki2) secondHalf
+  let ros1 = L.map (replaceAKI aki1) firstHalf
+  let ros2 = L.map (replaceAKI aki2) secondHalf
   let ros' = ros1 <> ros2 
 
   rwTx objectStore $ \tx -> do
@@ -72,21 +72,21 @@ should_insert_and_get_all_back io = do
   (s1, s2, s3) <- sizes objectStore
 
   extracted <- roTx objectStore $ \tx -> getAll tx objectStore
-  HU.assert $ sortOn (hash . getMeta) extracted == sortOn (hash . getMeta) ros'
+  HU.assert $ sortOn getHash extracted == sortOn getHash ros'
   
   compareLatestMfts objectStore ros1 aki1
   compareLatestMfts objectStore ros2 aki2  
   where 
-    setAKI a (CerRO (FullMeta m s, x)) = CerRO (FullMeta m { aki = Just a } s, x)
-    setAKI a (MftRO (FullMeta m s, x)) = MftRO (FullMeta m { aki = Just a } s, x)
-    setAKI a (RoaRO (FullMeta m s, x)) = RoaRO (FullMeta m { aki = Just a } s, x)
-    setAKI a (GbrRO (FullMeta m s, x)) = GbrRO (FullMeta m { aki = Just a } s, x)
-    setAKI a (CrlRO (m, x)) = CrlRO (m { aki = Just a }, x)
+    -- setAKI a (CerRO (FullMeta m s, x)) = CerRO (FullMeta m { aki = Just a } s, x)
+    -- setAKI a (MftRO (FullMeta m s, x)) = MftRO (FullMeta m { aki = Just a } s, x)
+    -- setAKI a (RoaRO (FullMeta m s, x)) = RoaRO (FullMeta m { aki = Just a } s, x)
+    -- setAKI a (GbrRO (FullMeta m s, x)) = GbrRO (FullMeta m { aki = Just a } s, x)
+    -- setAKI a (CrlRO (m, x)) = CrlRO (m { aki = Just a }, x)
 
     compareLatestMfts objectStore ros a = do
       mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a
       let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber) $
-            [ mft | MftRO mft@(FullMeta RpkiMeta { aki = Just a } _, _) <- ros ]      
+            [ mft | MftRO mft <- ros, getAKI mft == Just a ]
       HU.assert $ mftLatest == mftLatest'
 
 generateSomeObjects :: IO [RpkiObject]
@@ -113,3 +113,7 @@ releaseLmdb ((dir, e), _) = do
   removeDirectoryRecursive dir
   putStrLn $ "Closed LMDB in " <> show dir
 
+
+replaceAKI :: AKI -> RpkiObject -> RpkiObject
+replaceAKI a (CerRO c) = CerRO $ withContent c (\_ w -> withMeta w (\_ _ -> Just a))
+-- TODO Implement the rest
