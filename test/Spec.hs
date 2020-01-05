@@ -12,7 +12,7 @@ import RPKI.Parse.ObjectParseSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
-    -- rrdpXmlLazyParsingGroup,
-    -- rrdpUpdateSpec,
+    rrdpXmlLazyParsingGroup,
+    rrdpUpdateSpec,
     objectStoreGroup
   ]  

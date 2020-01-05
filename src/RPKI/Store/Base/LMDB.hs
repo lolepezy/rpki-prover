@@ -85,11 +85,14 @@ instance Storage LmdbStorage where
     putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
         withMultiCursor tx db $ \c -> LMMap.insert c ks bs
 
-    deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =         
-        deleteGeneric tx db ks LMMap.delete        
+    deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =   
+        LMMap.deleteKV tx db ks vs
 
     deleteAllMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
-        deleteGeneric tx db ks LMMap.deleteValues        
+        withMultiCursor tx db $ \c -> do
+            LMMap.lookupFirstValue c ks >>= \case
+                Nothing -> pure ()
+                Just _  -> LMMap.deleteValues c
 
     foldMuForKey (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f a0 =
         withMultiCursor tx db $ \c -> do
@@ -118,12 +121,7 @@ foldGeneric tx db f a0 withC makeProducer =
                     a' <- f a (SKey $ Storable k) (SValue $ Storable v)
                     writeIORef z $! a'
         readIORef z
-
-deleteGeneric tx db ks deleteFunc =         
-  withMultiCursor tx db $ \c -> do
-    LMMap.lookupFirstValue c ks >>= \case
-        Nothing -> pure ()
-        Just _  -> deleteFunc c
+  
 
 create :: forall name . KnownSymbol name => 
             Env -> IO (LmdbStore name)

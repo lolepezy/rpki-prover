@@ -39,9 +39,9 @@ import           RPKI.Store.Util
 
 
 objectStoreGroup :: TestTree
-objectStoreGroup = lmdbTree $ \io -> testGroup "Rpki object LMDB storage test"
+objectStoreGroup = withObjectStore $ \io -> testGroup "Rpki object LMDB storage test"
   [
-    HU.testCase "Should insert and get" (should_insert_and_get_all_back io)
+    HU.testCase "Should insert and get" (should_insert_and_get_all_back_from_object_store io)
   ]
 
 sizes :: Storage s =>
@@ -53,14 +53,14 @@ sizes objectStore =
          <*> MM.size tx (mftByAKI objectStore)
 
 
-should_insert_and_get_all_back :: IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> HU.Assertion
-should_insert_and_get_all_back io = do  
+should_insert_and_get_all_back_from_object_store :: IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> HU.Assertion
+should_insert_and_get_all_back_from_object_store io = do  
   (_, objectStore) <- io
   aki1 :: AKI <- QC.generate arbitrary
   aki2 :: AKI <- QC.generate arbitrary
-  ros :: [RpkiObject] <- generateSomeObjects
-  let n = L.length ros
-  let (firstHalf, secondHalf) = L.splitAt (n `div` 2) ros
+  ros :: [RpkiObject] <- removeMftNumberDuplicates <$> generateSomeObjects
+
+  let (firstHalf, secondHalf) = L.splitAt (L.length ros `div` 2) ros
 
   let ros1 = L.map (replaceAKI aki1) firstHalf
   let ros2 = L.map (replaceAKI aki2) secondHalf
@@ -70,43 +70,65 @@ should_insert_and_get_all_back io = do
     forM_ ros' $ \ro -> 
       putObject tx objectStore $ toStorableObject ro  
   
-  (s1, s2, s3) <- sizes objectStore
+  sizes1 <- sizes objectStore
 
   extracted <- roTx objectStore $ \tx -> getAll tx objectStore
   HU.assert $ sortOn getHash extracted == sortOn getHash ros'
   
   compareLatestMfts objectStore ros1 aki1
   compareLatestMfts objectStore ros2 aki2  
+  
+  let (toDelete, toKeep) = L.splitAt (L.length ros1 `div` 2) ros1
+
+  rwTx objectStore $ \tx -> 
+    forM_ toDelete $ \ro -> 
+      deleteObject tx objectStore (getHash ro)
+
+  sizes2 <- sizes objectStore
+
+  compareLatestMfts objectStore toKeep aki1
+  compareLatestMfts objectStore ros2 aki2  
+
   where
+    removeMftNumberDuplicates ros = L.nubBy sameMftNumber ros
+      where 
+        sameMftNumber ro1 ro2 = 
+          case (ro1, ro2) of
+            (MftRO mft1, MftRO mft2) -> getMftNumber mft1 == getMftNumber mft2
+            _ -> False
+
     compareLatestMfts objectStore ros a = do
-      mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a
+      mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a         
+      
       let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber) $
             [ mft | MftRO mft <- ros, getAKI mft == Just a ]
+            
       HU.assert $ mftLatest == mftLatest'
 
 generateSomeObjects :: IO [RpkiObject]
-generateSomeObjects = go
-  where 
-    go = do  
-      ros :: [RpkiObject] <- QC.generate arbitrary
-      if (L.length ros < 10) 
-        then go 
-        else pure ros 
+generateSomeObjects = forM [1..2000] $ const $ QC.generate arbitrary      
+      
 
-lmdbTree :: (IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> TestTree) -> TestTree
-lmdbTree testTree = withResource makeLmdbStuff releaseLmdb testTree
+withObjectStore :: (IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> TestTree) -> TestTree
+withObjectStore testTree = withResource (makeLmdbStuff createObjectStore) releaseLmdb testTree
 
-makeLmdbStuff = do 
+withMM :: (IO ((FilePath, Env), SMultiMap "testMM" LmdbStorage Int String) -> TestTree) -> TestTree
+withMM testTree = withResource (makeLmdbStuff mkMMap) releaseLmdb testTree
+  where
+    mkMMap e = do   
+      mm <- createMulti e
+      return $ SMultiMap (LmdbStorage e) mm
+
+
+makeLmdbStuff mkStore = do 
   dir <- createTempDirectory "/tmp" "lmdb-test"
-  putStrLn $ "Creating LMDB in " <> show dir
   e <- mkLmdb dir
-  objectStore <- createObjectStore e
-  pure ((dir, e), objectStore)
+  store <- mkStore e
+  pure ((dir, e), store)
 
 releaseLmdb ((dir, e), _) = do   
   closeLmdb e
   removeDirectoryRecursive dir
-  putStrLn $ "Closed LMDB in " <> show dir
 
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject

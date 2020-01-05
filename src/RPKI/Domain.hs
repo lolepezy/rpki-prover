@@ -176,7 +176,6 @@ instance WithResourceCertificate CerObject where
 instance WithResourceCertificate EECerObject where
     getRC = extract
 
-
 instance WithAKI RpkiObject where
     getAKI (CerRO c) = getAKI c
     getAKI (MftRO c) = getAKI c

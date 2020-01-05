@@ -53,7 +53,6 @@ deleteObject tx store h = do
       case ro of
         MftRO _ -> MM.delete tx (mftByAKI store) aki' h
         _       -> pure ()      
-
 findLatestMftByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO (Maybe MftObject)
 findLatestMftByAKI tx store aki' = 
     MM.fold tx (mftByAKI store) aki' f Nothing
@@ -66,6 +65,16 @@ findLatestMftByAKI tx store aki' =
               Just lat | getMftNumber mft > getMftNumber lat -> Just mft
               Just lat | otherwise                           -> Just lat
             _ -> Nothing
+
+findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
+findMftsByAKI tx store aki' = 
+    MM.fold tx (mftByAKI store) aki' f []
+    where
+      f mfts _ h = accumulate <$> getByHash tx store h
+        where 
+          accumulate = \case          
+            Just (MftRO mft) -> mft : mfts
+            _ -> mfts            
 
 -- This is for testing purposes mostly
 getAll :: Storage s => Tx s m -> RpkiObjectStore s -> IO [RpkiObject]
