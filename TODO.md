@@ -1,8 +1,7 @@
-- Put capability (CPU count) into Has conf
+- Register new publication points while validating
+- do validation concurrently
+- 
 - Use ValidatorT wherever it makes sense
-
-- verify EE Certificates
-- validate certificates/objects with regards to CRLs
 - implement all the validations according to the RFCs (time, digests, etc.)
 - implement resource set
 
