@@ -48,6 +48,7 @@ data ValidationError = InvalidCert !T.Text |
                         NextUpdateTimeIsBeforeNow !DateTime |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
+                        AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
                         ManifestEntryDontExist !Hash
     deriving (Show, Eq, Ord, Typeable, Generic, NFData)
     

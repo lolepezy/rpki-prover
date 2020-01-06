@@ -58,18 +58,16 @@ validateTree :: (Has AppLogger env,
                  Has ValidationContext env,
                  Storage s) =>
                 RpkiObjectStore s -> 
-                RpkiObject ->                
+                CerObject ->
                 ValidatorT env IO ()
-validateTree objectStore (CerRO certificate) = do
-
-  -- TODO Validate with parent certificate
+validateTree objectStore certificate = do  
 
   logger :: AppLogger  <- asks getter
   now :: Now           <- asks getter
-  validationContext :: ValidationContext <- asks getter
+  validationContext :: ValidationContext <- asks getter  
 
   let childrenAki = toAKI $ getSKI certificate
-  let locations = getLocations certificate
+  let locations = getLocations certificate  
 
   mft <- validatorT $ roTx objectStore $ \tx -> 
     runValidatorT validationContext $
@@ -89,10 +87,10 @@ validateTree objectStore (CerRO certificate) = do
   case crlObject of 
     Nothing          -> validatorError $ NoCRLExists childrenAki locations    
     Just (CrlRO crl) -> do      
-        validatedCrl <- pureToValidatorT $ do
+        validatedCrl <- pureToValidatorT $ do          
           vCrl <- validateCrl crl certificate
           validateMft mft certificate vCrl
-          pure vCrl
+          pure vCrl        
   
         let manifestChildren = map snd $ mftEntries $ getCMSContent $ extract mft
   
@@ -107,13 +105,13 @@ validateTree objectStore (CerRO certificate) = do
           ro <- roTx objectStore $ \tx -> getByHash tx objectStore h
           case ro of 
             Nothing  -> runValidatorT validationContext $ vWarn $ ManifestEntryDontExist h
-            Just ro' -> validateChild childContext validatedCrl ro'
-          pure ()
+            Just ro' -> validateChild childContext validatedCrl ro'            
     Just _  -> validatorError $ CRLHashPointsToAnotherObject crlHash locations        
     where              
         validateChild childContext validatedCrl ro = case ro of 
-          cer@(CerRO _) -> 
-            runValidatorT childValidationContext $ validateTree objectStore cer
+          CerRO cert -> runValidatorT childValidationContext $ do
+            pureToValidatorT $ validateResourceCert cert certificate validatedCrl
+            validateTree objectStore cert
           RoaRO roa -> pure $ runPureValidator childValidationContext $ 
             void $ validateRoa roa certificate validatedCrl
           GbrRO gbr -> pure $ runPureValidator childValidationContext $ 

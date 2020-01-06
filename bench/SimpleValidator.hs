@@ -481,7 +481,7 @@ validateTreeFromTA env = do
               nu)              
   store <- createObjectStore env
   x <- runValidatorT conf $ do
-    taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+    CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
     processRsync repo store
     validateTree store taCert
 
@@ -498,8 +498,9 @@ validateTreeFromStore env = do
                 nu)              
     store <- createObjectStore env
     x <- runValidatorT conf $ do
-      taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
-      validateTree store taCert
+      CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+      lift3 $ say $ "starting tree validation"
+      validateTree store taCert      
   
     say $ "x = " <> show x
   
@@ -514,7 +515,8 @@ main = do
   -- usingLoggerT (LogAction putStrLn) $ lift app
   -- processTAL
   -- mkLmdb >>= void . saveRsyncRepo
-  mkLmdb "./data" >>= validatorUpdateRRDPRepo
+  -- mkLmdb "./data" >>= validatorUpdateRRDPRepo
+  mkLmdb "./data/" >>= validateTreeFromStore
   -- testSignature
 
 say :: String -> IO ()

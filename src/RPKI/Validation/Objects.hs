@@ -97,8 +97,8 @@ validateResourceCert cert parentCert vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
   when (isRevoked cert vcrl) $ 
     pureError RevokedResourceCertificate
-  when (correctSkiAki cert parentCert) $ 
-    pureError RevokedResourceCertificate
+  when (not (correctSkiAki cert parentCert)) $ 
+    pureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
   void $ validateResourceCertExtensions cert
   validateResourceSet cert parentCert
   pure $ Validated cert
