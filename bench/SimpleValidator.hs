@@ -401,7 +401,7 @@ validatorUpdateRRDPRepo lmdb = do
 
       write_ chanIn ps = 
         forM_ ps $ \(SnapshotPublish (URI u) encodedb64) -> do 
-          a <- async $ pure $!! (u,) . toBytes_ <$> mkObject u encodedb64          
+          a <- async $ pure $! (u,) . toBytes_ <$> mkObject u encodedb64          
           Chan.writeChan chanIn (u, a)
 
       read_ chanOut counter tx m x = forM x $ \_ -> do

@@ -21,7 +21,7 @@ newtype SKey = SKey Storable
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 -- Strictness here is important
-data StorableUnit a e = SObject !(StorableObject a) | SError !e
+data StorableUnit a e = SObject {-# UNPACK #-} !(StorableObject a) | SError !e
 
 data StorableObject a = StorableObject !a !SValue
     deriving (Show, Eq, Typeable, Generic)

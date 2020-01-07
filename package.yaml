@@ -97,6 +97,7 @@ dependencies:
 - x509-validation
 - xeno
 - QuickCheck
+- quickcheck-instances
 - tasty
 - tasty-hunit
 - tasty-quickcheck    
@@ -105,10 +106,14 @@ dependencies:
 - unagi-chan
 - unliftio
 - unliftio-core
+- vector
 - xml-types
 - xml-conduit
 
-# ghc-options:
+ghc-options:
+  # - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
+  - -j4 +RTS -A32m -AL128m -n4m -qb0 -qn6 -RTS
+
 #   - -with-rtsopts=-N    
 #   - -O2
 

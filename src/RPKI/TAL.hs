@@ -35,7 +35,7 @@ data TAL = PropertiesTAL {
 } | RFC_TAL {
   certificateLocations :: NonEmpty URI,
   publicKeyInfo        :: EncodedBase64
-} deriving (Show, Eq, Ord, Typeable, Generic, Serialise, NFData)
+} deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 certLocations :: TAL -> NonEmpty URI
 certLocations PropertiesTAL {..} = certificateLocation :| []

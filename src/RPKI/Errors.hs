@@ -23,7 +23,7 @@ import           RPKI.Domain
 
 
 newtype ParseError s = ParseError s
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ValidationError = InvalidCert !T.Text |
                         ParentDoesntHaveResources |
@@ -50,7 +50,7 @@ data ValidationError = InvalidCert !T.Text |
                         RevokedResourceCertificate |
                         AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
                         ManifestEntryDontExist !Hash
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RrdpError = BrokenXml !T.Text | 
                  BrokenSerial !B.ByteString |
@@ -76,23 +76,23 @@ data RrdpError = BrokenXml !T.Text |
                  CantDownloadDelta !String |
                  SnapshotHashMismatch !Hash !Hash |
                  DeltaHashMismatch !Hash !Hash !Serial
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RsyncError = RsyncProcessError !Int !BL.ByteString |
                   FileReadError !T.Text |
                   RsyncDirError !T.Text
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data StorageError = StorageError !T.Text |
                     DeserialisationError !T.Text
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype TALError = TALError T.Text 
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
     deriving newtype Semigroup
 
 newtype ValidationContext = ValidationContext T.Text 
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SomeError = ParseE (ParseError T.Text) | 
                    TAL_E TALError | 
@@ -100,12 +100,12 @@ data SomeError = ParseE (ParseError T.Text) |
                    RsyncE RsyncError |
                    StorageE StorageError | 
                    ValidationE ValidationError
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 instance Exception SomeError
 
 newtype ValidationWarning = ValidationWarning SomeError
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 vContext :: URI -> ValidationContext
 vContext (URI u) = ValidationContext u
