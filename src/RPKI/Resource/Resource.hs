@@ -1,9 +1,14 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE UndecidableInstances, FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-} 
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
-module RPKI.IP where
+module RPKI.Resource.Resource where
 
 import Codec.Serialise
+
+import Control.DeepSeq
 
 import qualified Data.ByteString as B  
 import qualified Data.List as L
@@ -49,6 +54,13 @@ newtype ARange = ARange IpRange
 data IpResource = IpP !IpPrefix | IpR !IpRange
   deriving (Show, Eq, Ord, Typeable, Generic)
 
+newtype ASN = ASN Int
+  deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
+data AsResource =  AS !ASN
+               | ASRange !ASN !ASN
+  deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
 mkIpv4Block w32 nonZeroBits = Ipv4Prefix (V4.IpBlock (V4.IpAddress w32) (V4.IpNetMask nonZeroBits))
 
@@ -80,7 +92,7 @@ mkV6Prefix bs nonZeroBits =
 
 fourW8sToW32 :: [Word8] -> Word32
 fourW8sToW32 ws = fst $ L.foldl' foldW8toW32 (0 :: Word32, 24) ws
-  where
+  where 
     foldW8toW32 (w32, shift') w8 = (
           w32 + (fromIntegral w8 :: Word32) `shiftL` shift', 
           shift' - 8)       
@@ -88,11 +100,15 @@ fourW8sToW32 ws = fst $ L.foldl' foldW8toW32 (0 :: Word32, 24) ws
 someW8ToW128 :: [Word8] -> (Word32, Word32, Word32, Word32)
 someW8ToW128 ws = (
     fourW8sToW32 (take 4 unpacked),
-    fourW8sToW32 (take 4 (drop 4 unpacked)),
-    fourW8sToW32 (take 4 (drop 8 unpacked)),
-    fourW8sToW32 (take 4 (drop 12 unpacked))
+    fourW8sToW32 (take 4 drop4),
+    fourW8sToW32 (take 4 drop8),
+    fourW8sToW32 (take 4 drop12)
   ) 
-  where unpacked = rightPad 16 0 ws  
+  where 
+    unpacked = rightPad 16 0 ws  
+    drop4 = drop 4 unpacked
+    drop8 = drop 4 drop4
+    drop12 = drop 4 drop8
 
 rightPad :: Int -> a -> [a] -> [a]
 rightPad n a = go 0

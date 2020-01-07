@@ -16,8 +16,6 @@ import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 
-import Control.Lens
-import Control.DeepSeq
 import Codec.Serialise
 import Data.Hex (hex)
 
@@ -33,19 +31,13 @@ import qualified Data.X509 as X509
 import Data.ASN1.OID
 import Data.ASN1.Types
 
-import RPKI.IP    
+import RPKI.Resource.Resource
+import RPKI.Resource.Set
 import RPKI.Serialise.Orphans
 
 
-newtype ASN = ASN Int
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-
-data AsResource =  AS !ASN
-                 | ASRange !ASN !ASN
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-
 data ValidationRFC = Strict_ | Reconsidered_
-    deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving (Show, Eq, Ord, Typeable, Generic)
@@ -63,10 +55,7 @@ withRFC (WithReconsidered_ (WithRFC a)) f = f a
 newtype IpResources = IpResources (AnRFC IpResourceSet)    
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-newtype RSet r = RSet (AnRFC (ResourceSet r))
-    deriving (Show, Eq, Ord, Typeable, Generic)
-
-data ResourceSet r (rfc :: ValidationRFC) = RS !(S.Set r) | Inherit
+data ResourceSet r (rfc :: ValidationRFC) = RS !(SmallSet r) | Inherit
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype IpResourceSet (rfc :: ValidationRFC) = 
@@ -74,16 +63,16 @@ newtype IpResourceSet (rfc :: ValidationRFC) =
     deriving (Show, Eq, Ord, Typeable, Generic)                    
 
 -- TODO Use library type?
-newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
 
-newtype URI  = URI { unURI :: T.Text } deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype URI  = URI { unURI :: T.Text } deriving (Show, Eq, Ord, Typeable, Generic)
+newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
+newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable, Generic)
+newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable, Generic)
 
-newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable, Generic, NFData)
-newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic, NFData)
+newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
+newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable, Generic)
+newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic)
 
 
 -- | Domain objects
@@ -342,16 +331,16 @@ newtype SPKI = SPKI EncodedBase64
     deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 newtype EncodedBase64 = EncodedBase64 B.ByteString
-    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
+    deriving (Show, Eq, Ord, Generic, Serialise)
     deriving newtype (Monoid, Semigroup)
   
 newtype DecodedBase64 = DecodedBase64 B.ByteString
-    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
+    deriving (Show, Eq, Ord, Generic, Serialise)
     deriving newtype (Monoid, Semigroup)
   
 
 newtype TaName = TaName T.Text
-    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
+    deriving (Show, Eq, Ord, Generic, Serialise)
 
 data TA = TA {
     taName        :: TaName
@@ -379,8 +368,6 @@ data Repository =
 
 -- serialisation
 instance Serialise Hash
--- instance Serialise RpkiMeta
--- instance Serialise FullMeta
 instance Serialise IdentityMeta
 instance (Serialise a, Serialise b) => Serialise (With a b)
 instance Serialise URI

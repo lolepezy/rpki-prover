@@ -1,15 +1,14 @@
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Parse.Internal.Cert where
 
 import           Control.Applicative
 
-import qualified Data.ByteString          as B
-import qualified Data.ByteString.Base64   as B64
+import qualified Data.ByteString            as B
+import qualified Data.ByteString.Base64     as B64
 
-import qualified Data.List                as L
-import           Data.List.NonEmpty       (NonEmpty ((:|)))
-import qualified Data.Set                 as S
+import qualified Data.List                  as L
+import           Data.List.NonEmpty         (NonEmpty ((:|)))
 
 import           Data.Bifunctor
 import           Data.Bits
@@ -23,11 +22,12 @@ import           Data.ASN1.Types
 import           Data.X509
 
 import           RPKI.Domain
-import           RPKI.IP
-import qualified RPKI.IP                  as IP
-import qualified RPKI.Util                as U
+import           RPKI.Resource.Resource     as IP
+import           RPKI.Resource.Set          as S
+import qualified RPKI.Util                  as U
 
 import           RPKI.Parse.Internal.Common
+
 
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.

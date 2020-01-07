@@ -15,6 +15,7 @@ import qualified Data.List.NonEmpty as NE
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Instances.ByteString
+import           Test.QuickCheck.Instances.Vector
 import           Test.QuickCheck.Instances.Text
 import           Test.QuickCheck.Monadic
 
@@ -29,7 +30,8 @@ import           HaskellWorks.Data.Network.Ip.Validity
 import           HaskellWorks.Data.Network.Ip.Word128
 
 import           RPKI.Domain
-import           RPKI.IP
+import           RPKI.Resource.Resource
+import           RPKI.Resource.Set
 import           RPKI.RRDP.Types
 
 import           Time.Types
@@ -199,6 +201,10 @@ instance Arbitrary (IpResourceSet 'Strict_) where
   shrink = genericShrink
 
 instance Arbitrary (ResourceSet IpResource 'Strict_) where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance Arbitrary a => Arbitrary (SmallSet a) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
