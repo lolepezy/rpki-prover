@@ -6,10 +6,10 @@ module RPKI.Resource.Set where
 
 import           Codec.Serialise
 
-import Prelude hiding (elem, filter)
+import Prelude hiding (elem, filter, subtract)
 
 import           Data.Data              (Typeable)
-import           Data.List (nub)
+import qualified Data.List as L
 import           Data.Kind
 import           Data.Maybe (isJust)
 import qualified Data.Vector            as V
@@ -43,8 +43,8 @@ newtype AsResources (rfc :: ValidationRFC) = AsResources (RSet (SmallSet AsResou
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 
-fromList :: Eq a => [a] -> SmallSet a
-fromList = SS . V.fromList . nub
+fromList :: [a] -> SmallSet a
+fromList = SS . V.fromList
 
 toList :: SmallSet a -> [a]
 toList (SS v) = V.toList v
@@ -65,31 +65,74 @@ elem :: Eq a => a -> SmallSet a -> Bool
 elem a = isJust . find (==a)
 
 
-data ResourseCheck = NestedReconsidered | Overclaiming { 
-    interesection :: !IpSet,
-    overclaiming :: !IpSet   
-}
+data ResourseCheckReconsidered = 
+    NestedReconsidered 
+  | OverclaimingReconsidered { 
+        interesection :: !IpSet,
+        overclaiming :: !IpSet   
+    }
 
-data ResourseCheckStrict = NestedStrict | ResourseCheckStrict { overclaiming :: !IpSet }
+data ResourseCheckStrict = 
+    NestedStrict 
+  | ResourseCheckStrict { overclaiming :: !IpSet }
 
 class ResourceCheck (rfc :: ValidationRFC) where
     type Check rfc :: Type
     check :: IpResources rfc -> IpResources rfc -> Check rfc
 
-
 -- TODO Implement resource set subtraction
-subsetStrict :: IpResources 'Strict_ -> IpResources 'Strict_ -> ResourseCheckStrict
-subsetStrict smaller@(IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) = 
-    case (checkSet s4 b4, checkSet s6 b6) of
-        (Nothing, Nothing) -> NestedStrict
-        (overV4, overV6)   -> ResourseCheckStrict $ IpSet (toRS overV4) (toRS overV6)                
+instance ResourceCheck 'Strict_ where
+    type Check 'Strict_ = ResourseCheckStrict
+    check (IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) = 
+        case (checkSet s4 b4, checkSet s6 b6) of
+            (Nothing, Nothing)               -> NestedStrict
+            (overclaimingV4, overclaimingV6) -> 
+                ResourseCheckStrict $ IpSet (toRS overclaimingV4) (toRS overclaimingV6)                
+        where
+            toRS = maybe (RS empty) RS            
+            checkSet s b = case (s, b) of
+                (Inherit, Inherit) -> Nothing
+                (RS ss,   Inherit) -> Just ss
+                (Inherit, RS _)    -> Nothing
+                (RS ss,   RS bs)   -> Just $ filter notInBigOne ss
+                    where 
+                        notInBigOne p = not $ isJust $ find (\bp -> p `contains` bp) bs
+
+instance ResourceCheck 'Reconsidered_ where
+    type Check 'Reconsidered_ = ResourseCheckReconsidered
+    check (IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) = 
+        case (checkSet s4 b4, checkSet s6 b6) of
+            (Nothing, Nothing)               -> NestedReconsidered
+            (overclaimingV4, overclaimingV6) -> 
+                OverclaimingReconsidered
+                    (IpSet (toRS overclaimingV4) (toRS overclaimingV6))
+                    (IpSet (toRS overclaimingV4) (toRS overclaimingV6))
+        where
+            toRS = maybe (RS empty) RS            
+            checkSet s b = case (s, b) of
+                (Inherit, Inherit) -> Nothing
+                (RS ss,   Inherit) -> Just ss
+                (Inherit, RS _)    -> Nothing
+                (RS ss,   RS bs)   -> Just $ filter notInBigOne ss
+                    where 
+                        notInBigOne p = not $ isJust $ find (\bp -> p `contains` bp) bs
+
+
+newtype Intersection a = Intersection (SmallSet a)
+newtype Overclaiming a = Overclaiming (SmallSet a)
+
+intersectionAndOverclaimed :: (Eq a, Prefix a) =>    
+                            SmallSet a -> SmallSet a -> 
+                            (Intersection a, Overclaiming a)
+intersectionAndOverclaimed smaller bigger = (Intersection smaller, Overclaiming empty)
     where
-        toRS = maybe (RS empty) RS            
-        checkSet s b = case (s, b) of
-            (Inherit, Inherit) -> Nothing
-            (RS s, Inherit)    -> Just s
-            (Inherit, RS _)    -> Nothing
-            (RS ss, RS bs)     -> Just $ filter notInBigOne ss
-                where 
-                    notInBigOne p = not $ isJust $ find (\bp -> p `contains` bp) bs
+        -- TODO This is vety inefficient for large sets, 
+        -- but it's not going to be large very often
+        xx = map overcleamingPart $ toList smaller
+        biggerList = toList bigger
+        overcleamingPart prefix = map zz biggerList
+        zz prefix biggerPrefix = 
+            if biggerPrefix `contains` prefix 
+                then Left (prefix, biggerPrefix `subtract` prefix)
+                else Right prefix
 
