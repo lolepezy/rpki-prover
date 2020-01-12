@@ -71,13 +71,13 @@ parseResources x509cert = do
     where
       broken = Left . fmtErr
       cert' x509c ips asns = ResourceCert x509c <$>
-            traverse (parseR parseIpExt) ips <*>
-            traverse (parseR parseAsnExt) asns
+            (maybe (pure emptyIpResources) (parseR parseIpExt) ips) <*>
+            (maybe (pure emptyAsResources) (parseR parseAsnExt) asns)
 
       parseR :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
-      parseR f ext = f =<< first fmt decoded
-        where decoded = decodeASN1' BER ext
-              fmt err = fmtErr $ "Couldn't parse IP address extension:" ++ show err
+      parseR f bs = f =<< first fmt decoded
+        where decoded = decodeASN1' BER bs
+              fmt err = fmtErr $ "Couldn't parse IP address extension: " <> show err
 
 {-
   Parse IP address extension.
@@ -104,54 +104,47 @@ parseResources x509cert = do
 
    IPAddress           ::= BIT STRING
 -}
-parseIpExt :: [ASN1] -> ParseResult (IpResourceSet rfc)
-parseIpExt addrBlocks = mapParseErr $
-  flip runParseASN1 addrBlocks $ do
+parseIpExt :: [ASN1] -> ParseResult (IpResources rfc)
+parseIpExt asns = mapParseErr $
+  flip runParseASN1 asns $ do
     afs <- onNextContainer Sequence (getMany addrFamily)    
-    pure $ IpResourceSet $ rs $ [ af | Left  af <- afs ] <> [ af | Right af <- afs ]
+    pure $ IpResources $ IpSet
+      (rs [ af | Left  af <- afs ]) 
+      (rs [ af | Right af <- afs ])
     where
       rs []       = RS S.empty
       rs (af : _) = af
       addrFamily = onNextContainer Sequence $
-        getAddressFamily  "Expected an address family here" >>= \case
+        getAddressFamily "Expected an address family here" >>= \case
           Right IP.Ipv4F -> Left  <$> ipResourceSet ipv4Address
           Right IP.Ipv6F -> Right <$> ipResourceSet ipv6Address
-          Left af        -> throwParseError $ "Unsupported address family " ++ show af
+          Left af        -> throwParseError $ "Unsupported address family " <> show af
         where
           ipResourceSet address =
             getNull_ (pure Inherit) <|>
-            onNextContainer Sequence (RS . S.fromList <$> getMany address)
+            onNextContainer Sequence (RS . S.fromList . mconcat <$> getMany address)
 
-      ipv4Address = ipvVxAddress
-          IP.fourW8sToW32 32
-          (\bs nz -> IpP $ IP.Ipv4P $ IP.mkV4Prefix bs (fromIntegral nz))
-          (\w1 w2 -> case IP.mkIpv4 w1 w2 of
-                      Left  r -> IpR $ IP.Ipv4R r
-                      Right p -> IpP $ IP.Ipv4P p)
+      ipv4Address = ipvVxAddress IP.fourW8sToW32 32  makeOneIP IP.ipv4RangeToPrefixes
+      ipv6Address = ipvVxAddress IP.someW8ToW128 128 makeOneIP IP.ipv6RangeToPrefixes
 
-      ipv6Address = ipvVxAddress
-          IP.someW8ToW128 128
-          (\bs nz -> IpP $ IP.Ipv6P $ IP.mkV6Prefix bs (fromIntegral nz))
-          (\w1 w2 -> case IP.mkIpv6 w1 w2 of
-                      Left  r -> IpR $ IP.Ipv6R r
-                      Right p -> IpP $ IP.Ipv6P p)
+      makeOneIP bs nz = [IP.make bs (fromIntegral nz)]
 
-      ipvVxAddress wToAddr fullLength makePrefix makeRange =
+      ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
         getNextContainerMaybe Sequence >>= \case
           Nothing -> getNext >>= \case
             (BitString (BitArray nzBits bs)) ->
               pure $ makePrefix bs nzBits
-            s -> throwParseError ("Unexpected prefix representation: " ++ show s)
+            s -> throwParseError ("Unexpected prefix representation: " <> show s)
           Just [
-              BitString (BitArray _            bs1),
+              BitString (BitArray _       bs1),
               BitString (BitArray nzBits2 bs2)
             ] ->
               let w1 = wToAddr $ B.unpack bs1
                   w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
                         (fromIntegral nzBits2) fullLength
-                in pure $ makeRange w1 w2
+                in pure $ rangeToPrefixes w1 w2
 
-          s -> throwParseError ("Unexpected address representation: " ++ show s)
+          s -> throwParseError ("Unexpected address representation: " <> show s)
 
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
@@ -188,14 +181,14 @@ parseIpExt addrBlocks = mapParseErr $
 
    ASId                ::= INTEGER
 -}
-parseAsnExt :: [ASN1] -> ParseResult (ResourceSet AsResource rfc)
+parseAsnExt :: [ASN1] -> ParseResult (AsResources rfc)
 parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
     onNextContainer Sequence $
       -- we only want the first element of the sequence
-      onNextContainer (Container Context 0) $
-        getNull_ (pure Inherit) <|>
-        RS . S.fromList <$> onNextContainer Sequence (getMany asOrRange)
-  where
+      AsResources <$> (onNextContainer (Container Context 0) $
+          getNull_ (pure Inherit) <|>
+          (RS . S.fromList) <$> onNextContainer Sequence (getMany asOrRange))
+  where    
     asOrRange = getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
           IntVal asn -> pure $ AS $ as' asn

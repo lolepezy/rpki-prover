@@ -38,7 +38,7 @@ parseRoa bs = do
               Right Ipv6F -> getRoa asId ipv6
               Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
-    getRoa :: Int -> (B.ByteString -> Word64 -> APrefix) -> ParseASN1 [Roa]
+    getRoa :: Int -> (B.ByteString -> Word64 -> IpPrefix) -> ParseASN1 [Roa]
     getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
       getNextContainerMaybe Sequence >>= \case       
         Just [BitString (BitArray nzBits bs')] -> 
@@ -50,5 +50,5 @@ parseRoa bs = do
       where 
         mkRoa bs' nz = Roa (ASN asId) (mkPrefix bs' nz)
 
-    ipv4 bs' nzBits = APrefix $ Ipv4P $ mkV4Prefix bs' (fromIntegral nzBits)
-    ipv6 bs' nzBits = APrefix $ Ipv6P $ mkV6Prefix bs' (fromIntegral nzBits)
+    ipv4 bs' nzBits = Ipv4P $ make bs' (fromIntegral nzBits)
+    ipv6 bs' nzBits = Ipv6P $ make bs' (fromIntegral nzBits)

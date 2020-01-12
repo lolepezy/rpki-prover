@@ -196,39 +196,26 @@ instance Arbitrary (ResourceCert 'Strict_) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary (IpResourceSet 'Strict_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary (ResourceSet IpResource 'Strict_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary a => Arbitrary (SmallSet a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
 instance Arbitrary (ResourceCert 'Reconsidered_) where
   arbitrary = genericArbitrary
   shrink = genericShrink
-
-instance Arbitrary (IpResourceSet 'Reconsidered_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary (ResourceSet IpResource 'Reconsidered_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
 instance Arbitrary (WithRFC 'Reconsidered_ ResourceCert) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary (ResourceSet AsResource 'Strict_) where
+instance Arbitrary (AsResources 'Strict_) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary (ResourceSet AsResource 'Reconsidered_) where
+instance Arbitrary (AsResources 'Reconsidered_) where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance Arbitrary (IpResources 'Strict_) where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance Arbitrary (IpResources 'Reconsidered_) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
@@ -236,6 +223,17 @@ instance Arbitrary AsResource where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
+instance Arbitrary a => Arbitrary (RSet a) where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+  
+instance Arbitrary IpSet where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance Arbitrary a => Arbitrary (SmallSet a) where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
 
 instance Arbitrary ContentType where
   arbitrary = genericArbitrary
@@ -295,10 +293,6 @@ instance Arbitrary IpPrefix where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary IpRange where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
 instance Arbitrary Ipv4Prefix where
   arbitrary = genericArbitrary
   shrink = genericShrink
@@ -314,11 +308,6 @@ instance Arbitrary Ipv4Range where
 instance Arbitrary Ipv6Range where
   arbitrary = genericArbitrary
   shrink = genericShrink
-
-instance Arbitrary APrefix where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
 
 instance Arbitrary (V4.IpBlock Canonical) where
   arbitrary = genericArbitrary
@@ -351,11 +340,6 @@ instance Arbitrary V4.IpNetMask where
 instance Arbitrary V6.IpNetMask where
   arbitrary = genericArbitrary
   shrink = genericShrink
-
-instance Arbitrary IpResource where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
 
 --- Crypto stuff
 

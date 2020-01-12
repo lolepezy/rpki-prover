@@ -32,35 +32,21 @@ import Data.ASN1.OID
 import Data.ASN1.Types
 
 import RPKI.Resource.Resource
-import RPKI.Resource.Set
+import RPKI.Resource.Set as RS
 import RPKI.Serialise.Orphans
-
-
-data ValidationRFC = Strict_ | Reconsidered_
-    deriving (Show, Eq, Ord, Typeable, Generic)
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
-data WithRFC_ s r = WithStrict_ {-# UNPACK #-} !s 
-                   | WithReconsidered_ {-# UNPACK #-} !r
+data WithRFC_ s r = WithStrict_       !s 
+                  | WithReconsidered_ !r
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
 withRFC (WithStrict_ (WithRFC a)) f = f a
 withRFC (WithReconsidered_ (WithRFC a)) f = f a  
-
-newtype IpResources = IpResources (AnRFC IpResourceSet)    
-    deriving (Show, Eq, Ord, Typeable, Generic)
-
-data ResourceSet r (rfc :: ValidationRFC) = RS !(SmallSet r) | Inherit
-    deriving (Show, Eq, Ord, Typeable, Generic)
-
-newtype IpResourceSet (rfc :: ValidationRFC) = 
-    IpResourceSet (ResourceSet IpResource rfc)
-    deriving (Show, Eq, Ord, Typeable, Generic)                    
 
 -- TODO Use library type?
 newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
@@ -190,9 +176,9 @@ instance WithLocations RpkiObject where
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
-    certX509    :: CertificateWithSignature, 
-    ipResources :: Maybe (IpResourceSet rfc), 
-    asResources :: Maybe (ResourceSet AsResource rfc)
+    certX509  :: CertificateWithSignature, 
+    ipResources :: IpResources rfc,
+    asResources :: AsResources rfc
 } deriving (Show, Eq, Typeable, Generic)
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
@@ -200,7 +186,7 @@ newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
 
 data Roa = Roa     
     {-# UNPACK #-} !ASN 
-    !APrefix    
+    !IpPrefix    
     {-# UNPACK #-} !Int
     deriving (Show, Eq, Ord, Typeable, Generic)
 
@@ -378,7 +364,6 @@ instance Serialise Serial
 instance Serialise Manifest
 instance Serialise Roa
 instance Serialise Gbr
-instance Serialise ASN
 instance Serialise a => Serialise (CMS a)
 instance Serialise SignCRL
 instance Serialise ResourceCertificate
@@ -386,15 +371,12 @@ instance Serialise RpkiObject
 instance (Serialise s, Serialise r) => Serialise (WithRFC_ s r)
 instance Serialise (WithRFC 'Strict_ ResourceCert)
 instance Serialise (ResourceCert 'Strict_)
-instance Serialise (IpResourceSet 'Strict_)
-instance Serialise (ResourceSet IpResource 'Strict_)
 instance Serialise (ResourceCert 'Reconsidered_)
-instance Serialise (IpResourceSet 'Reconsidered_)
-instance Serialise (ResourceSet IpResource 'Reconsidered_)
+instance Serialise (IpResources 'Strict_)
+instance Serialise (IpResources 'Reconsidered_)
+instance Serialise (AsResources 'Strict_)
+instance Serialise (AsResources 'Reconsidered_)
 instance Serialise (WithRFC 'Reconsidered_ ResourceCert)
-instance Serialise (ResourceSet AsResource 'Strict_)
-instance Serialise (ResourceSet AsResource 'Reconsidered_)
-instance Serialise AsResource
 
 
 instance Serialise ContentType
@@ -444,6 +426,12 @@ strictCert = ResourceCertificate . WithStrict_ . WithRFC
 
 reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
 reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
+
+emptyIpResources :: IpResources rfc
+emptyIpResources = IpResources $ RS.emptyIpSet 
+
+emptyAsResources :: AsResources rfc
+emptyAsResources = AsResources $ RS RS.empty
 
 getMftNumber :: MftObject -> Int
 getMftNumber mft = mftNumber $ getCMSContent $ extract mft
