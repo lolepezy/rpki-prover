@@ -40,6 +40,8 @@ import           System.FilePath                       ((</>))
 import           System.Exit
 import           System.Process.Typed
 
+import System.IO.Posix.MMap (unsafeMMapFile)
+
 
 newtype RsyncConf = RsyncConf {
   rsyncRoot :: FilePath
@@ -64,7 +66,7 @@ rsyncFile (URI uri) validateBinary = do
                                   stdout = #{stdout}|]        
       lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
     ExitSuccess -> do
-        bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ B.readFile destination
+        bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ unsafeMMapFile destination
         checkedBs <- pureToValidatorT $ validateBinary bs
         fromEither $ first ParseE $ readObject (U.convert uri) checkedBs
 
