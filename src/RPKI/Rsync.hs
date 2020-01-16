@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE QuasiQuotes      #-}
 {-# LANGUAGE RecordWildCards  #-}
+{-# LANGUAGE NumericUnderscores #-}
 
 module RPKI.Rsync where
 
@@ -9,7 +10,7 @@ import           Data.Bifunctor
 import           Control.Concurrent.Async
 import           Control.Monad
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Except
+import           Control.Monad.Except
 import           UnliftIO.Exception                    hiding (fromEither)
 
 import qualified Data.ByteString                       as B
@@ -23,6 +24,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parse.Parse
+import           RPKI.Validation.Objects
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Stores
@@ -37,6 +39,7 @@ import           System.Directory                      (createDirectoryIfMissing
                                                         getDirectoryContents)
 import           System.FilePath                       ((</>))
 
+import           System.IO
 import           System.Exit
 import           System.Process.Typed
 
@@ -50,25 +53,25 @@ newtype RsyncConf = RsyncConf {
 -- | Download one file using rsync
 rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) => 
               URI -> 
-              (B.ByteString -> PureValidator conf B.ByteString) ->
               ValidatorT conf IO RpkiObject
-rsyncFile (URI uri) validateBinary = do
+rsyncFile (URI uri) = do
   RsyncConf {..} <- asks getter
   let destination = rsyncDestination rsyncRoot uri
   let rsync = rsyncProcess (URI uri) destination RsyncOneFile
-  logger :: AppLogger        <- asks getter 
-  (exitCode, stdout, stderr) <- lift3 $ readProcess rsync      
+  logger :: AppLogger  <- asks getter 
+  (exitCode, out, err) <- readProcess rsync      
   case exitCode of  
     ExitFailure errorCode -> do
       lift3 $ logError_ logger [i|Rsync process failed: #rsync 
                                   with code #{errorCode}, 
-                                  stderr = #{stderr}, 
-                                  stdout = #{stdout}|]        
-      lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
+                                  stderr = #{err}, 
+                                  stdout = #{out}|]        
+      throwError $ RsyncE $ RsyncProcessError errorCode err  
     ExitSuccess -> do
-        bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ unsafeMMapFile destination
-        checkedBs <- pureToValidatorT $ validateBinary bs
-        fromEither $ first ParseE $ readObject (U.convert uri) checkedBs
+        fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
+        pureToValidatorT $ validateSizeM fileSize
+        bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
+        fromEither $ first ParseE $ readObject (U.convert uri) bs
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
@@ -87,7 +90,7 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
   
   logger :: AppLogger   <- asks getter 
   lift3 $ logInfo_ logger [i|Going to run #{rsync}|]
-  (exitCode, stdout, stderr) <- lift $ readProcess rsync
+  (exitCode, out, err) <- lift $ readProcess rsync
   lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
   case exitCode of  
     ExitSuccess -> do
@@ -97,9 +100,9 @@ processRsync (RsyncRepository (URI uri)) objectStore = do
     ExitFailure errorCode -> do
       lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
                                   with code #{errorCode}, 
-                                  stderr = #{stderr}, 
-                                  stdout = #{stdout}|]
-      lift $ throwE $ RsyncE $ RsyncProcessError errorCode stderr  
+                                  stderr = #{err}, 
+                                  stdout = #{out}|]
+      throwError $ RsyncE $ RsyncProcessError errorCode err  
   
 
 -- | Recursively traverse given directory and save all the parseable 
@@ -133,12 +136,15 @@ loadRsyncRepository logger config topPath objectStore = do
           False -> 
             when (supportedExtension path) $ do
               a <- async $ do 
-                bs <- B.readFile path                
-                pure $! case first ParseE $ readObject path bs of
-                  Left e   -> SError e
-                  -- "toStorableObject ro" has to happen in this thread, as it is the way to 
-                  -- force computation of the serialised object and gain some parallelism
-                  Right ro -> SObject $ toStorableObject ro
+                (_, content)  <- getSizeAndContent path                
+                pure $! case content of 
+                  Left e   -> SError $ ValidationE e
+                  Right bs -> 
+                    case first ParseE $ readObject path bs of
+                      Left e   -> SError e
+                      -- "toStorableObject ro" has to happen in this thread, as it is the way to 
+                      -- force computation of the serialised object and gain some parallelism
+                      Right ro -> SObject $ toStorableObject ro
                   
               Chan.writeChan chanIn $ Just a      
 
@@ -155,6 +161,7 @@ loadRsyncRepository logger config topPath objectStore = do
           Left (e :: SomeException) -> 
             logError_ logger [i|An error reading the object: #{e}|]
           Right (SError e) -> 
+            -- TODO Do something with the validation result here
             logError_ logger [i|An error parsing or serialising the object: #{e}|]
           Right (SObject so@(StorableObject ro _)) -> do
             let h = getHash ro
@@ -173,14 +180,36 @@ rsyncProcess :: URI -> FilePath -> RsyncMode -> ProcessConfig () () ()
 rsyncProcess (URI uri) destination rsyncMode = 
   let extraOptions = case rsyncMode of 
         RsyncOneFile   -> []
-        RsyncDirectory -> ["--recursive", "--delete", "--copy-links" ]
-      options = [ "--timeout=300",  "--update",  "--times" ] ++ extraOptions
-      in proc "rsync" $ options ++ [ T.unpack uri, destination ]
+        RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]
+      options = [ "--timeout=300",  "--update",  "--times" ] <> extraOptions
+      in proc "rsync" $ options <> [ T.unpack uri, destination ]
 
 -- TODO Make it generate shorter filenames
 rsyncDestination :: FilePath -> T.Text -> FilePath
 rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
 
 
-              
+-- TODO Do something with proper error handling
+fileContent :: FilePath -> IO B.ByteString 
+fileContent path = do
+  r <- try $ unsafeMMapFile path
+  case r of
+    Right bs                  -> pure bs
+    Left (_ :: SomeException) -> B.readFile path
 
+
+getFileSize :: FilePath -> IO Integer
+getFileSize path = withFile path ReadMode hFileSize 
+
+
+-- TODO Refactor that stuff
+getSizeAndContent :: FilePath -> IO (Integer, Either ValidationError B.ByteString)
+getSizeAndContent path = withFile path ReadMode $ \h -> do
+  s <- hFileSize h
+  case validateSize s of
+    Left e  -> pure (s, Left e)
+    Right _ -> do
+      c <- if s < 65536 
+        then B.hGetContents h          
+        else fileContent path
+      pure (s, Right c)

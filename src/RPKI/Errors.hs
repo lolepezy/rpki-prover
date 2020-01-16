@@ -32,8 +32,8 @@ data ValidationError = InvalidCert !T.Text |
                         NoAKI | 
                         SPKIMismatch !EncodedBase64 !EncodedBase64 |
                         UnknownObjectAsTACert |
-                        TACertificateIsTooSmall !Int |
-                        TACertificateIsTooBig !Int |
+                        ObjectIsTooSmall !Integer |
+                        ObjectIsTooBig !Integer |
                         TACertificateLocalIsNewer !Serial !Serial |
                         InvalidSignature !T.Text |                        
                         TACertAKIIsNotEmpty !URI |

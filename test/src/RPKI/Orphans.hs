@@ -22,6 +22,8 @@ import           Test.QuickCheck.Monadic
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
 import           Data.X509                             as X509
+import           Data.Bits
+import           Data.Word
 
 import           HaskellWorks.Data.Network.Ip.Ipv4     as V4
 import           HaskellWorks.Data.Network.Ip.Ipv6     as V6
@@ -30,8 +32,7 @@ import           HaskellWorks.Data.Network.Ip.Validity
 import           HaskellWorks.Data.Network.Ip.Word128
 
 import           RPKI.Domain
-import           RPKI.Resource.Resource
-import           RPKI.Resource.Set
+import           RPKI.Resources
 import           RPKI.RRDP.Types
 
 import           Time.Types
@@ -294,19 +295,26 @@ instance Arbitrary IpPrefix where
   shrink = genericShrink
 
 instance Arbitrary Ipv4Prefix where
-  arbitrary = genericArbitrary
+  arbitrary = do
+    w1 :: Word8 <- arbitrary `suchThat` (>0)
+    w2 :: Word8 <- arbitrary `suchThat` (>0)
+    w3 :: Word8 <- arbitrary `suchThat` (>0)
+    w4 :: Word8 <- arbitrary `suchThat` (>0)
+    let w = fourW8sToW32 [w1, w2, w3, w4]
+    m :: Word8  <- choose (8, 32)
+    let x = w `shift` (32 - fromIntegral m)
+    pure $ mkIpv4Block x m
   shrink = genericShrink
 
 instance Arbitrary Ipv6Prefix where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary Ipv4Range where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary Ipv6Range where
-  arbitrary = genericArbitrary
+  arbitrary = do
+    w1 :: Word32 <- arbitrary `suchThat` (>0)
+    w2 :: Word32 <- arbitrary `suchThat` (>0)
+    w3 :: Word32 <- arbitrary `suchThat` (>0)
+    w4 :: Word32 <- arbitrary `suchThat` (>0)    
+    m :: Word8  <- choose (46, 128)
+    let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
+    pure $ mkIpv6Block x m
   shrink = genericShrink
 
 instance Arbitrary (V4.IpBlock Canonical) where

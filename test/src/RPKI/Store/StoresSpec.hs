@@ -106,7 +106,7 @@ should_insert_and_get_all_back_from_object_store io = do
       HU.assert $ mftLatest == mftLatest'
 
 generateSomeObjects :: IO [RpkiObject]
-generateSomeObjects = forM [1..1000] $ const $ QC.generate arbitrary      
+generateSomeObjects = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
       
 
 withObjectStore :: (IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> TestTree) -> TestTree

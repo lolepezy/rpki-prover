@@ -12,7 +12,6 @@
 
 module RPKI.Domain where
 
-import qualified Data.Set as S
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 
@@ -31,8 +30,7 @@ import qualified Data.X509 as X509
 import Data.ASN1.OID
 import Data.ASN1.Types
 
-import RPKI.Resource.Resource
-import RPKI.Resource.Set as RS
+import RPKI.Resources as RS
 import RPKI.Serialise.Orphans
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
@@ -372,10 +370,6 @@ instance (Serialise s, Serialise r) => Serialise (WithRFC_ s r)
 instance Serialise (WithRFC 'Strict_ ResourceCert)
 instance Serialise (ResourceCert 'Strict_)
 instance Serialise (ResourceCert 'Reconsidered_)
-instance Serialise (IpResources 'Strict_)
-instance Serialise (IpResources 'Reconsidered_)
-instance Serialise (AsResources 'Strict_)
-instance Serialise (AsResources 'Reconsidered_)
 instance Serialise (WithRFC 'Reconsidered_ ResourceCert)
 
 

@@ -5,6 +5,7 @@ module RPKI.Parse.Internal.Cert where
 import           Control.Applicative
 
 import qualified Data.ByteString            as B
+import qualified Data.ByteString.Lazy       as BL
 import qualified Data.ByteString.Base64     as B64
 
 import qualified Data.List                  as L
@@ -22,8 +23,7 @@ import           Data.ASN1.Types
 import           Data.X509
 
 import           RPKI.Domain
-import           RPKI.Resource.Resource     as IP
-import           RPKI.Resource.Set          as S
+import           RPKI.Resources    as R
 import qualified RPKI.Util                  as U
 
 import           RPKI.Parse.Internal.Common
@@ -112,22 +112,22 @@ parseIpExt asns = mapParseErr $
       (rs [ af | Left  af <- afs ]) 
       (rs [ af | Right af <- afs ])
     where
-      rs []       = RS S.empty
+      rs []       = RS R.empty
       rs (af : _) = af
       addrFamily = onNextContainer Sequence $
         getAddressFamily "Expected an address family here" >>= \case
-          Right IP.Ipv4F -> Left  <$> ipResourceSet ipv4Address
-          Right IP.Ipv6F -> Right <$> ipResourceSet ipv6Address
+          Right R.Ipv4F -> Left  <$> ipResourceSet ipv4Address
+          Right R.Ipv6F -> Right <$> ipResourceSet ipv6Address
           Left af        -> throwParseError $ "Unsupported address family " <> show af
         where
           ipResourceSet address =
             getNull_ (pure Inherit) <|>
-            onNextContainer Sequence (RS . S.fromList . mconcat <$> getMany address)
+            onNextContainer Sequence (RS . R.fromList . mconcat <$> getMany address)
 
-      ipv4Address = ipvVxAddress IP.fourW8sToW32 32  makeOneIP IP.ipv4RangeToPrefixes
-      ipv6Address = ipvVxAddress IP.someW8ToW128 128 makeOneIP IP.ipv6RangeToPrefixes
+      ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
+      ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 
-      makeOneIP bs nz = [IP.make bs (fromIntegral nz)]
+      makeOneIP bs nz = [R.make bs (fromIntegral nz)]
 
       ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
         getNextContainerMaybe Sequence >>= \case
@@ -148,7 +148,7 @@ parseIpExt asns = mapParseErr $
 
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
-        IP.rightPad (allBitsNum `div` 8) 0xFF $
+        R.rightPad (allBitsNum `div` 8) 0xFF $
           L.zipWith (curry setBits) ws (map (*8) [0..])
         where
           setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
@@ -187,7 +187,7 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
       -- we only want the first element of the sequence
       AsResources <$> (onNextContainer (Container Context 0) $
           getNull_ (pure Inherit) <|>
-          (RS . S.fromList) <$> onNextContainer Sequence (getMany asOrRange))
+          (RS . R.fromList) <$> onNextContainer Sequence (getMany asOrRange))
   where    
     asOrRange = getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case

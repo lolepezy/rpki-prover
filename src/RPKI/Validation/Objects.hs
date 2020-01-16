@@ -1,4 +1,5 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE NumericUnderscores #-}
 module RPKI.Validation.Objects where
 
 import           Control.Monad
@@ -190,3 +191,17 @@ signatureCheck :: SignatureVerification -> PureValidator conf ()
 signatureCheck sv = case sv of
     SignatureFailed e -> pureError $ InvalidSignature $ convert $ show e
     SignaturePass     -> pure ()        
+
+
+validateSizeOfBS :: B.ByteString -> PureValidator c B.ByteString
+validateSizeOfBS bs = validateSizeM (toInteger $ B.length bs) >> pure bs  
+
+validateSizeM :: Integer -> PureValidator c Integer
+validateSizeM s = pureFromEither $ validateSize s
+
+validateSize :: Integer -> Either ValidationError Integer
+validateSize s = 
+  case () of _
+              | s < 10         -> Left $ ObjectIsTooSmall s
+              | s > 10_000_000 -> Left $ ObjectIsTooBig s
+              | otherwise      -> pure s

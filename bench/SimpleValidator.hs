@@ -59,6 +59,7 @@ import qualified Data.ByteString.Base64               as B64
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
+import qualified System.IO.Posix.MMap as Mmap
 import System.IO (withFile, IOMode(..), hClose)
 import System.Directory (removeFile)
 import System.IO.Temp (withSystemTempFile)
@@ -445,8 +446,16 @@ saveRsync env = do
     say "begin"  
     let logAction = logTextStdout
     let conf = (createLogger, RsyncConf "/tmp/rsync", vContext $ URI "something.cer")
-    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+    e <- runValidatorT conf $ rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     say $ "done " <> show e
+
+loadRsync env = do
+    say "begin"  
+    let logAction = logTextStdout
+    let logger = createLogger
+    store <- createObjectStore env    
+    loadRsyncRepository logger (Config getParallelism) "/tmp/rsync/rsync___rpki.ripe.net_repository" store
+    say $ "done "
 
 processTAL = do
   say "begin"  
@@ -481,14 +490,15 @@ validateTreeFromTA env = do
               nu)              
   store <- createObjectStore env
   x <- runValidatorT conf $ do
-    CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+    CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     processRsync repo store
-    lift3 $ say $ "taCert = " <> show taCert
+    -- lift3 $ say $ "taCert = " <> show taCert
     validateTree store taCert
 
   say $ "x = " <> show x
 
   pure ()
+
 
 validateTreeFromStore :: Environment 'ReadWrite -> IO ()
 validateTreeFromStore env = do    
@@ -499,7 +509,7 @@ validateTreeFromStore env = do
                 nu)              
     store <- createObjectStore env
     x <- runValidatorT conf $ do
-      CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer") (pure . id)
+      CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
       lift3 $ say $ "taCert = " <> show taCert
       validateTree store taCert      
   
@@ -517,7 +527,8 @@ main = do
   -- processTAL
   -- mkLmdb >>= void . saveRsyncRepo
   -- mkLmdb "./data" >>= validatorUpdateRRDPRepo
-  mkLmdb "./data/" >>= validateTreeFromTA
+
+  mkLmdb "./data/" >>= loadRsync
   -- testSignature
 
 say :: String -> IO ()

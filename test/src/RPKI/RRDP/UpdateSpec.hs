@@ -82,5 +82,5 @@ makeNotification sessionId serial = Notification {
 
 makeDelta :: Serial -> DeltaInfo
 makeDelta serial@(Serial s) = DeltaInfo (URI uri) (Hash "AABBCC") serial
-  where uri = T.pack $ "http://somehost/delta" ++ show s ++ ".xml"
+  where uri = T.pack $ "http://somehost/delta" <> show s <> ".xml"
 

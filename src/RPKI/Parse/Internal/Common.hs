@@ -19,7 +19,7 @@ import Data.ASN1.BinaryEncoding
 
 import Data.X509 as X509
 
-import RPKI.Resource.Resource
+import RPKI.Resources
 import RPKI.Domain
 import RPKI.Errors
 

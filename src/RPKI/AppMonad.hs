@@ -85,6 +85,10 @@ pureError e = lift $ throwE $ ValidationE e
 pureErrorIfNot :: Bool -> ValidationError -> PureValidator env ()
 pureErrorIfNot b e = if b then pure () else lift $ throwE $ ValidationE e
 
+pureFromEither :: Either ValidationError r -> PureValidator env r
+pureFromEither (Left e) = pureError e
+pureFromEither (Right r) = pure r
+
 valid :: Applicative m =>
         m (Either SomeError (), [ValidationWarning])
 valid = pure (Right (), [])

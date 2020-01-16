@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE RecordWildCards    #-}
 
@@ -130,19 +129,10 @@ fetchTACertificate tal =
   go $ NE.toList $ certLocations tal
   where
     go []         = throwError $ TAL_E $ TALError "No certificate location could be fetched."
-    go (u : uris) = ((u,) <$> rsyncFile u validateSize) `catchError` \e -> do          
+    go (u : uris) = ((u,) <$> rsyncFile u) `catchError` \e -> do          
       logger :: AppLogger <- asks getter
       let message = [i| Failed to fetch #{u}: #{e}|]
       lift3 $ logError_ logger message
       validatorWarning $ ValidationWarning e
       go uris
-
-
-validateSize :: B.ByteString -> PureValidator c B.ByteString
-validateSize bs = 
-  case () of _
-              | len < 10         -> pureError $ TACertificateIsTooSmall len
-              | len > 10_000_000 -> pureError $ TACertificateIsTooBig len
-              | otherwise        -> pure bs
-  where len = B.length bs
-
+ 
