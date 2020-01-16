@@ -34,12 +34,14 @@ import           RPKI.Resources
 resourceGroup :: TestTree
 resourceGroup = testGroup "Resource set tests"
   [
-    QC.testProperty "Intersections and substractions" prop_intersecting_subtraction,
-    QC.testProperty "Normalise" prop_normalise
+    QC.testProperty "Normalise V4" $
+      \(ips :: [Ipv4Prefix]) -> normalise ips == (normalise $ normalise ips),
+    QC.testProperty "Normalise V6" $
+      \(ips :: [Ipv6Prefix]) -> normalise ips == (normalise $ normalise ips),
+    -- QC.testProperty "Intersections and substractions V4" prop_intersecting_subtraction_v6,
+    QC.testProperty "Intersection + subtraction" prop_intersecting_subtraction_v4
+    -- QC.testProperty "Normalise" prop_normalise_v6
   ]
 
-prop_intersecting_subtraction :: QC.Property
-prop_intersecting_subtraction = monadicIO $ assert True
-
-prop_normalise :: QC.Property
-prop_normalise = monadicIO $ assert True
+prop_intersecting_subtraction_v4 = do  
+  True
