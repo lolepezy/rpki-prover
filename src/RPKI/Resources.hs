@@ -179,8 +179,8 @@ between a (b, c) = a >= b && a < c
 
 -- | Prepare resource list for becoming a resourse set, sort, 
 -- | merge adjucent ranges and convert to prefixes
-sanitise :: Prefix a => [a] -> [a]
-sanitise p = concatMap toPrefixes $ mergeRanges $ map toRange $ S.toAscList $ S.fromList p
+normalise :: Prefix a => [a] -> [a]
+normalise p = concatMap toPrefixes $ mergeRanges $ map toRange $ S.toAscList $ S.fromList p
 
 
 fourW8sToW32 :: [Word8] -> Word32
@@ -287,8 +287,8 @@ intersectionAndOverclaimed smaller bigger =
     (Intersection $ fromList intersectionRS, 
      Overclaiming $ fromList overclaimingRS)
   where
-    intersectionRS = sanitise $ good <> concatMap fst problematic 
-    overclaimingRS = sanitise $ concatMap snd problematic
+    intersectionRS = normalise $ good <> concatMap fst problematic 
+    overclaimingRS = normalise $ concatMap snd problematic
 
     (problematic, good) = partitionEithers $ concatMap overclamingPart $ toList smaller            
 
