@@ -204,19 +204,11 @@ instance Arbitrary (WithRFC 'Reconsidered_ ResourceCert) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary (AsResources 'Strict_) where
+instance Arbitrary AsResources where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
-instance Arbitrary (AsResources 'Reconsidered_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary (IpResources 'Strict_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary (IpResources 'Reconsidered_) where
+instance Arbitrary IpResources where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
