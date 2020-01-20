@@ -104,7 +104,7 @@ parseResources x509cert = do
 
    IPAddress           ::= BIT STRING
 -}
-parseIpExt :: [ASN1] -> ParseResult (IpResources rfc)
+parseIpExt :: [ASN1] -> ParseResult IpResources
 parseIpExt asns = mapParseErr $
   flip runParseASN1 asns $ do
     afs <- onNextContainer Sequence (getMany addrFamily)    
@@ -181,7 +181,7 @@ parseIpExt asns = mapParseErr $
 
    ASId                ::= INTEGER
 -}
-parseAsnExt :: [ASN1] -> ParseResult (AsResources rfc)
+parseAsnExt :: [ASN1] -> ParseResult AsResources
 parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
     onNextContainer Sequence $
       -- we only want the first element of the sequence

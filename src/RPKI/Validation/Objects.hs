@@ -25,6 +25,7 @@ import           System.Hourglass         (dateCurrent)
 
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Resources (VerifiedRS(..), IpResources, AsResources)
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.TAL
@@ -93,7 +94,7 @@ validateResourceCert :: (WithResourceCertificate c,
                          WithAKI c) => 
                         c -> parent -> 
                         Validated CrlObject ->
-                        PureValidator conf (Validated c)
+                        PureValidator conf (Validated c, VerifiedRS IpResources, VerifiedRS AsResources)
 validateResourceCert cert parentCert vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
   when (isRevoked cert vcrl) $ 
@@ -101,15 +102,25 @@ validateResourceCert cert parentCert vcrl = do
   when (not (correctSkiAki cert parentCert)) $ 
     pureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
   void $ validateResourceCertExtensions cert
-  validateResourceSet cert parentCert
-  pure $ Validated cert
+  (vips, vasns) <- validateResourceSet cert parentCert
+  pure (Validated cert, vips, vasns)
   where 
     -- TODO Implement it
-    validateResourceSet cert parentCert = pure ()
-    correctSkiAki cert parentCert = 
-      maybe False (\(AKI a) -> a == s) $ getAKI cert
-      where
-        SKI s = getSKI parentCert
+    validateResourceSet (getRC -> ResourceCertificate cert) 
+                        (getRC -> ResourceCertificate parentCert) =
+      pure $ case forRFC cert strictCheck reconsideredCheck of
+        Left _  -> (VerifiedRS ips, VerifiedRS asns)
+        Right _ -> (VerifiedRS ips, VerifiedRS asns)
+      where 
+        strictCheck _ = (VerifiedRS ips, VerifiedRS asns)
+        reconsideredCheck _ = (VerifiedRS ips, VerifiedRS asns)
+        ips = withRFC cert ipResources
+        asns = withRFC cert asResources
+        parentIps = withRFC parentCert ipResources
+        parentAsns = withRFC parentCert asResources
+      
+    correctSkiAki cert (getSKI -> SKI s) = 
+      maybe False (\(AKI a) -> a == s) $ getAKI cert      
     
 
 
@@ -123,8 +134,6 @@ validateCrl crlObject parentCert = do
   where
      SignCRL {..} = extract crlObject
 
-
--- TODO Validate other stuff, validate resource certificate, etc.
 validateMft :: (Has Now conf, WithResourceCertificate c, WithSKI c) =>
               MftObject -> c -> Validated CrlObject -> 
               PureValidator conf (Validated MftObject)

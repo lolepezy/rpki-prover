@@ -1,22 +1,21 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE BangPatterns         #-}
-
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module RPKI.Resources where
 
-import Prelude hiding (filter, subtract)
+import Prelude hiding (filter, subtract, null)
 
 import           Codec.Serialise
-
 import           Control.DeepSeq
 
 import qualified Data.ByteString                       as B
 
 import           Data.Data                             (Typeable)
-
 import           Data.Bits
 import           Data.Maybe
 import           Data.Either
@@ -35,22 +34,31 @@ import           HaskellWorks.Data.Network.Ip.Validity
 import           HaskellWorks.Data.Network.Ip.Word128
 
 data AddrFamily = Ipv4F | Ipv6F
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
+
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical) 
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
 data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
-  deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
-newtype ASN = ASN Int
-  deriving (Show, Eq, Ord, Typeable, Generic, NFData, Serialise)
+newtype ASN = ASN Word32
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass (NFData, Serialise)
+  deriving newtype Enum
 
 data AsResource =  AS !ASN
                  | ASRange !ASN !ASN
-  deriving (Show, Eq, Ord, Typeable, Generic, NFData, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
+
 
 class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p)) => Prefix p where
   type Address p :: Type
@@ -61,40 +69,53 @@ class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p)) => Prefix p where
   toRange :: p -> Range (Address p)
   toPrefixes :: Range (Address p) -> [p]
 
+
 data ValidationRFC = Strict_ | Reconsidered_
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
 
 data SmallSet a = SS !(V.Vector a)
-  deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
 data RSet r = RS !r | Inherit
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
 data IpSet = IpSet
     !(RSet (SmallSet Ipv4Prefix))
     !(RSet (SmallSet Ipv6Prefix))
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
-newtype IpResources (rfc :: ValidationRFC) = IpResources (IpSet)
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+newtype IpResources = IpResources (IpSet)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
-newtype AsResources (rfc :: ValidationRFC) = AsResources (RSet (SmallSet AsResource))
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+newtype AsResources = AsResources (RSet (SmallSet AsResource))
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
+
+type Ips = (SmallSet Ipv4Prefix, SmallSet Ipv6Prefix)
+
+newtype Intersection a = Intersection a
+newtype Overclaiming a = Overclaiming a
+
+data ResourseCheckStrict = 
+    NestedStrict 
+  | OverclaimingStrict { overclaiming :: !Ips }
+  deriving stock (Show, Eq, Ord)
 
 data ResourseCheckReconsidered = 
     NestedReconsidered 
   | OverclaimingReconsidered { 
-        interesection :: !IpSet,
-        overclaiming :: !IpSet   
-    }
+        interesection :: !Ips,
+        overclaiming  :: !Ips   
+    } 
+  deriving stock (Show, Eq, Ord)
 
-data ResourseCheckStrict = 
-    NestedStrict 
-  | ResourseCheckStrict { overclaiming :: !IpSet }
-
-class ResourceCheck (rfc :: ValidationRFC) where
-    type Check rfc :: Type
-    check :: IpResources rfc -> IpResources rfc -> Check rfc
+newtype VerifiedRS a = VerifiedRS a
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
 
 instance Prefix Ipv4Prefix where
@@ -182,6 +203,40 @@ between a (b, c) = a >= b && a < c
 normalise :: Prefix a => [a] -> [a]
 normalise p = concatMap toPrefixes $ mergeRanges $ map toRange $ S.toAscList $ S.fromList p
 
+normaliseAsns :: [AsResource] -> [AsResource]
+normaliseAsns asns = mergeAsRanges $ L.sortOn rangeStart asns
+  where
+    mergeAsRanges [] = []
+    mergeAsRanges [a] = [a]
+    mergeAsRanges (a0 : a1 : as) =  
+      case tryMerge a0 a1 of
+        Nothing     -> a0 : mergeAsRanges (a1 : as)
+        Just merged -> mergeAsRanges (merged : as)      
+      where
+        tryMerge (AS a0) (AS a1) 
+          | a0      == a1 = Just $ AS a0
+          | succ a0 == a1 = Just $ ASRange a0 a1
+          | otherwise = Nothing          
+
+        tryMerge (AS a0) r@(ASRange a10 a11) 
+          | a0 >= a10 && a0 <= a11 = Just r
+          | succ a0 == a10         = Just $ ASRange a0 a11
+          | otherwise              = Nothing 
+
+        tryMerge r@(ASRange a00 a01) (AS a1) 
+          | a1 >= a00 && a1 <= a01 = Just r        
+          | succ a01 == a1 = Just $ ASRange a00 a1
+          | otherwise = Nothing 
+
+        tryMerge (ASRange a00 a01) (ASRange a10 a11) 
+          | a01 >= a10 = Just $ ASRange a00 (max a01 a11)
+          | otherwise = Nothing 
+
+    rangeStart = \case
+      AS a        -> a 
+      ASRange a _ -> a
+  
+
 
 fourW8sToW32 :: [Word8] -> Word32
 fourW8sToW32 = \case 
@@ -235,54 +290,64 @@ filter p (SS v) = SS $ V.filter p v
 elem :: Eq a => a -> SmallSet a -> Bool   
 elem a = isJust . find (==a)
 
-
--- TODO Implement resource set subtraction
-instance ResourceCheck 'Strict_ where
-    type Check 'Strict_ = ResourseCheckStrict
-    check (IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) = 
-        case (checkSet s4 b4, checkSet s6 b6) of
-            (Nothing, Nothing)               -> NestedStrict
-            (overclaimingV4, overclaimingV6) -> 
-                ResourseCheckStrict $ IpSet (toRS overclaimingV4) (toRS overclaimingV6)                
-        where
-            toRS = maybe (RS empty) RS            
-            checkSet s b = case (s, b) of
-                (Inherit, Inherit) -> Nothing
-                (RS ss,   Inherit) -> Just ss
-                (Inherit, RS _)    -> Nothing
-                (RS ss,   RS bs)   -> Just $ filter notInBigOne ss
-                    where 
-                        notInBigOne p = not $ isJust $ find (\bp -> p `contains` bp) bs
-
-instance ResourceCheck 'Reconsidered_ where
-    type Check 'Reconsidered_ = ResourseCheckReconsidered
-    check (IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) = 
-        case (checkSet s4 b4, checkSet s6 b6) of
-            (Nothing, Nothing)               -> NestedReconsidered
-            (overclaimingV4, overclaimingV6) -> 
-                OverclaimingReconsidered
-                    (IpSet (toRS overclaimingV4) (toRS overclaimingV6))
-                    (IpSet (toRS overclaimingV4) (toRS overclaimingV6))
-        where
-            toRS = maybe (RS empty) RS            
-            checkSet s b = case (s, b) of
-                (Inherit, Inherit) -> Nothing
-                (RS ss,   Inherit) -> Just ss
-                (Inherit, RS _)    -> Nothing
-                (RS ss,   RS bs)   -> Just $ filter notInBigOne ss
-                    where 
-                        notInBigOne p = not $ isJust $ find (\bp -> p `contains` bp) bs
+null :: SmallSet a -> Bool
+null (SS v) = V.null v
 
 
-newtype Intersection a = Intersection (SmallSet a)
-newtype Overclaiming a = Overclaiming (SmallSet a)
+-- emptyIpSet :: IpSet -> Bool
+
+strictIpCheck :: IpResources -> IpResources -> ResourseCheckStrict
+strictIpCheck (IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) = 
+  case (v4check, v6check) of     
+    (Nothing, Nothing)       -> NestedStrict
+
+    (Nothing, Just (_, Overclaiming o6)) 
+        | null o6   -> NestedStrict
+        | otherwise -> OverclaimingStrict (empty, o6)    
+
+    (Just (_, Overclaiming o4), Nothing) 
+        | null o4   -> NestedStrict
+        | otherwise -> OverclaimingStrict (o4, empty)
+        
+    (Just (_, Overclaiming o4), Just (_, Overclaiming o6)) 
+        | null o4 && null o6 -> NestedStrict
+        | otherwise          -> OverclaimingStrict (o4, o6)        
+  where
+      v4check = forRS s4 b4 intersectionAndOverclaimed 
+      v6check = forRS s6 b6 intersectionAndOverclaimed  
+
+
+reconsideredIpCheck :: IpResources -> IpResources -> ResourseCheckReconsidered
+reconsideredIpCheck (IpResources (IpSet s4 s6)) (IpResources (IpSet b4 b6)) =   
+  case (v4check, v6check) of     
+    (Nothing, Nothing) -> NestedReconsidered
+
+    (Nothing, Just (Intersection i6, Overclaiming o6)) 
+        | null o6   -> NestedReconsidered
+        | otherwise -> OverclaimingReconsidered (empty, i6) (empty, o6)    
+
+    (Just (Intersection i4, Overclaiming o4), Nothing) 
+        | null o4   -> NestedReconsidered
+        | otherwise -> OverclaimingReconsidered (i4, empty) (o4, empty)
+        
+    (Just (Intersection i4, Overclaiming o4), Just (Intersection i6, Overclaiming o6)) 
+        | null o4 && null o6 -> NestedReconsidered
+        | otherwise          -> OverclaimingReconsidered (i4, i6) (o4, o6)    
+  where
+      v4check = forRS s4 b4 intersectionAndOverclaimed 
+      v6check = forRS s6 b6 intersectionAndOverclaimed    
+
+forRS :: RSet r -> RSet r -> (r -> r -> c) -> Maybe c
+forRS s b f = case (s, b) of
+  (RS ss, RS bs) -> Just $ f ss bs
+  _              -> Nothing  
 
 
 -- | For two sets, find intersecting and overclaming resource subsets
 -- 
 intersectionAndOverclaimed :: (Eq a, Prefix a) =>    
                             SmallSet a -> SmallSet a -> 
-                            (Intersection a, Overclaiming a)
+                            (Intersection (SmallSet a), Overclaiming (SmallSet a))
 intersectionAndOverclaimed smaller bigger =     
     (Intersection $ fromList intersectionRS, 
      Overclaiming $ fromList overclaimingRS)
@@ -293,10 +358,10 @@ intersectionAndOverclaimed smaller bigger =
     (problematic, good) = partitionEithers $ concatMap overclamingPart $ toList smaller            
 
     intersections prefix =       
-      L.filter (not . null . fst) $
+      L.filter (not . L.null . fst) $
       L.map (\big -> (prefix `intersection` big, big)) biggerList
 
-    overclamingPart prefix = (flip map) (intersections prefix) $ 
+    overclamingPart prefix = (flip L.map) (intersections prefix) $ 
         \(intersecting, big) ->        
             if big `contains` prefix
               then Right prefix

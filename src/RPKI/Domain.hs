@@ -34,36 +34,40 @@ import RPKI.Resources as RS
 import RPKI.Serialise.Orphans
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
 data WithRFC_ s r = WithStrict_       !s 
                   | WithReconsidered_ !r
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
 withRFC (WithStrict_ (WithRFC a)) f = f a
 withRFC (WithReconsidered_ (WithRFC a)) f = f a  
 
+forRFC :: AnRFC r -> (r 'Strict_ -> a) -> (r 'Reconsidered_ -> b) -> Either a b
+forRFC (WithStrict_ (WithRFC a))       f _ = Left $ f a
+forRFC (WithReconsidered_ (WithRFC a)) _ f = Right $ f a  
+
 -- TODO Use library type?
-newtype Hash = Hash B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
+newtype Hash = Hash B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
 
-newtype URI  = URI { unURI :: T.Text } deriving (Show, Eq, Ord, Typeable, Generic)
-newtype KI   = KI  B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
-newtype SKI  = SKI KI deriving (Show, Eq, Ord, Typeable, Generic)
-newtype AKI  = AKI KI deriving (Show, Eq, Ord, Typeable, Generic)
+newtype URI  = URI { unURI :: T.Text } deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype KI   = KI  B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype SKI  = SKI KI deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype AKI  = AKI KI deriving stock (Show, Eq, Ord, Typeable, Generic)
 
-newtype SessionId = SessionId B.ByteString deriving (Show, Eq, Ord, Typeable, Generic)
-newtype Serial = Serial Integer deriving (Show, Eq, Ord, Typeable, Generic)
-newtype Version = Version Integer deriving (Show, Eq, Ord, Typeable, Generic)
+newtype SessionId = SessionId B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype Serial = Serial Integer deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype Version = Version Integer deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 
 -- | Domain objects
 
 newtype CMS a = CMS {
     unCMS :: SignedObject a
- } deriving (Show, Eq, Typeable, Generic)
+ } deriving stock (Show, Eq, Typeable, Generic)
 
 class WithAKI a where
     getAKI :: a -> Maybe AKI
@@ -83,12 +87,12 @@ class WithResourceCertificate a where
 data IdentityMeta = IdentityMeta 
                    !Hash 
     {-# UNPACK #-} !(NonEmpty URI)
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data With meta content = With  
     {-# UNPACK #-} !meta
     {-# UNPACK #-} !content 
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 class Contains_ a b where
     extract :: a -> b
@@ -113,7 +117,7 @@ data RpkiObject = CerRO !CerObject
                 | RoaRO !RoaObject
                 | GbrRO !GbrObject
                 | CrlRO !CrlObject
-    deriving (Show, Eq, Typeable, Generic)
+    deriving stock (Show, Eq, Typeable, Generic)
 
 
 instance WithHash (With IdentityMeta a) where
@@ -175,18 +179,18 @@ instance WithLocations RpkiObject where
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
     certX509  :: CertificateWithSignature, 
-    ipResources :: IpResources rfc,
-    asResources :: AsResources rfc
-} deriving (Show, Eq, Typeable, Generic)
+    ipResources :: IpResources,
+    asResources :: AsResources
+} deriving stock (Show, Eq, Typeable, Generic)
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
-    deriving (Show, Eq, Typeable, Generic)
+    deriving stock (Show, Eq, Typeable, Generic)
 
 data Roa = Roa     
     {-# UNPACK #-} !ASN 
     !IpPrefix    
     {-# UNPACK #-} !Int
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data Manifest = Manifest {
     mftNumber   :: Int, 
@@ -194,7 +198,7 @@ data Manifest = Manifest {
     thisTime    :: DateTime, 
     nextTime    :: DateTime, 
     mftEntries  :: [(T.Text, Hash)]
-} deriving (Show, Eq, Typeable, Generic)
+} deriving stock (Show, Eq, Typeable, Generic)
 
 data SignCRL = SignCRL {
   crl                :: X509.CRL,
@@ -202,10 +206,10 @@ data SignCRL = SignCRL {
   signatureValue     :: SignatureValue,
   encodedValue       :: B.ByteString,
   crlNumber          :: Integer
-} deriving (Show, Eq, Typeable, Generic)
+} deriving stock (Show, Eq, Typeable, Generic)
 
 -- TODO Define it
-data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
+data Gbr = Gbr deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 
 
@@ -215,7 +219,7 @@ data Gbr = Gbr deriving (Show, Eq, Ord, Typeable, Generic)
 data SignedObject a = SignedObject {
     soContentType :: ContentType, 
     soContent     :: SignedData a
-} deriving (Show, Eq, Typeable, Generic)
+} deriving stock (Show, Eq, Typeable, Generic)
 
 
 data CertificateWithSignature = CertificateWithSignature {
@@ -223,7 +227,7 @@ data CertificateWithSignature = CertificateWithSignature {
     cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
     cwsSignature :: SignatureValue,
     cwsEncoded :: B.ByteString
-  } deriving (Show, Eq, Typeable, Generic)
+  } deriving stock (Show, Eq, Typeable, Generic)
 
 {- 
       SignedData ::= SEQUENCE {
@@ -244,7 +248,7 @@ data SignedData a = SignedData {
       scEncapContentInfo :: EncapsulatedContentInfo a, 
       scCertificate      :: EECerObject, 
       scSignerInfos      :: SignerInfos
-  } deriving (Show, Eq, Typeable, Generic)
+  } deriving stock (Show, Eq, Typeable, Generic)
   
   {- 
       EncapsulatedContentInfo ::= SEQUENCE {
@@ -254,7 +258,7 @@ data SignedData a = SignedData {
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
       eContentType :: ContentType, 
       cContent     :: a    
-  } deriving (Show, Eq, Ord, Typeable, Generic)
+  } deriving stock (Show, Eq, Ord, Typeable, Generic)
   
   {-
       SignerInfo ::= SEQUENCE {
@@ -273,80 +277,86 @@ data SignerInfos = SignerInfos {
       signedAttrs        :: SignedAttributes, 
       signatureAlgorithm :: SignatureAlgorithmIdentifier, 
       signature          :: SignatureValue
-  } deriving (Show, Eq, Typeable, Generic)
+  } deriving stock (Show, Eq, Typeable, Generic)
   
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text 
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
   
 newtype SignerIdentifier = SignerIdentifier B.ByteString 
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  deriving stock (Show, Eq, Ord, Typeable, Generic)
   
 newtype ContentType = ContentType OID 
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype CMSVersion = CMSVersion Int 
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
-  deriving (Show, Eq, Typeable, Generic)
+  deriving stock (Show, Eq, Typeable, Generic)
 
 newtype SignatureValue = SignatureValue B.ByteString 
-  deriving (Show, Eq, Ord, Typeable, Generic)  
+  deriving stock (Show, Eq, Ord, Typeable, Generic)  
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] B.ByteString
-  deriving (Show, Eq, Typeable, Generic)
+  deriving stock (Show, Eq, Typeable, Generic)
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest B.ByteString
             | SigningTime DateTime (Maybe TimezoneOffset)
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
-      deriving (Show, Eq, Typeable, Generic)
+      deriving stock (Show, Eq, Typeable, Generic)
 
 
 
 -- Subject Public Key Info
 newtype SPKI = SPKI EncodedBase64
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
 newtype EncodedBase64 = EncodedBase64 B.ByteString
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
   
 newtype DecodedBase64 = DecodedBase64 B.ByteString
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
   
 
 newtype TaName = TaName T.Text
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data TA = TA {
     taName        :: TaName
   , taCertificate :: Maybe ResourceCertificate
   , taUri         :: URI
   , taSpki        :: SPKI
-} deriving (Show, Eq, Generic, Serialise)
+} 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 
 data RsyncRepository = RsyncRepository {
     uri :: URI    
-} deriving (Show, Eq, Ord, Typeable, Generic)
+} deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data RrdpRepository = RrdpRepository {
     uri :: URI,
     session :: Maybe (SessionId, Serial)
-} deriving (Show, Eq, Ord, Typeable, Generic)
+} deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data Repository = 
     RsyncRepo RsyncRepository | 
     RrdpRepo RrdpRepository 
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
         
 
@@ -391,8 +401,8 @@ instance Serialise SignerInfos
 -- Small utility functions that don't have anywhere else to go
 
 getSerial :: WithResourceCertificate a => a -> Serial
-getSerial rc = Serial $ X509.certSerial $ cwsX509certificate $ withRFC cert certX509 
-    where ResourceCertificate cert = getRC rc
+getSerial (getRC -> ResourceCertificate rc) = 
+    Serial $ X509.certSerial $ cwsX509certificate $ withRFC rc certX509 
 
 hexHash :: Hash -> String
 hexHash (Hash bs) = show $ hex bs
@@ -407,12 +417,10 @@ getEEResourceCert :: SignedObject a -> EECerObject
 getEEResourceCert = scCertificate . soContent
 
 getCertWithSignature :: WithResourceCertificate a => a -> CertificateWithSignature
-getCertWithSignature cert = withRFC rc certX509 
-    where ResourceCertificate rc = getRC cert
+getCertWithSignature (getRC -> ResourceCertificate rc) = withRFC rc certX509     
 
 getEECert :: SignedObject a -> CertificateWithSignature
-getEECert so = withRFC rc certX509 
-    where ResourceCertificate rc = extract $ scCertificate $ soContent so
+getEECert (extract . scCertificate . soContent -> ResourceCertificate rc) = withRFC rc certX509     
 
 
 strictCert :: ResourceCert 'Strict_ -> ResourceCertificate
@@ -421,10 +429,10 @@ strictCert = ResourceCertificate . WithStrict_ . WithRFC
 reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
 reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
 
-emptyIpResources :: IpResources rfc
+emptyIpResources :: IpResources
 emptyIpResources = IpResources $ RS.emptyIpSet 
 
-emptyAsResources :: AsResources rfc
+emptyAsResources :: AsResources
 emptyAsResources = AsResources $ RS RS.empty
 
 getMftNumber :: MftObject -> Int

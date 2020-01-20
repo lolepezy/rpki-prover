@@ -48,7 +48,7 @@ parseRoa bs = do
         Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
         Nothing -> throwParseError "Unexpected ROA content"
       where 
-        mkRoa bs' nz = Roa (ASN asId) (mkPrefix bs' nz)
+        mkRoa bs' nz = Roa (ASN (fromIntegral asId)) (mkPrefix bs' nz)
 
     ipv4 bs' nzBits = Ipv4P $ make bs' (fromIntegral nzBits)
     ipv6 bs' nzBits = Ipv6P $ make bs' (fromIntegral nzBits)
