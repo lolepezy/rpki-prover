@@ -108,11 +108,11 @@ parseIpExt :: [ASN1] -> ParseResult IpResources
 parseIpExt asns = mapParseErr $
   flip runParseASN1 asns $ do
     afs <- onNextContainer Sequence (getMany addrFamily)    
-    pure $ IpResources $ IpSet
+    pure $ IpResources $ IpResourceSet
       (rs [ af | Left  af <- afs ]) 
       (rs [ af | Right af <- afs ])
     where
-      rs []       = RS R.empty
+      rs []       = R.emptyRS
       rs (af : _) = af
       addrFamily = onNextContainer Sequence $
         getAddressFamily "Expected an address family here" >>= \case
@@ -122,7 +122,7 @@ parseIpExt asns = mapParseErr $
         where
           ipResourceSet address =
             getNull_ (pure Inherit) <|>
-            onNextContainer Sequence (RS . R.fromList . mconcat <$> getMany address)
+            onNextContainer Sequence (R.toRS . mconcat <$> getMany address)
 
       ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
       ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
@@ -187,7 +187,7 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
       -- we only want the first element of the sequence
       AsResources <$> (onNextContainer (Container Context 0) $
           getNull_ (pure Inherit) <|>
-          (RS . R.fromList) <$> onNextContainer Sequence (getMany asOrRange))
+          R.toRS <$> onNextContainer Sequence (getMany asOrRange))
   where    
     asOrRange = getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case

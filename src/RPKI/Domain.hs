@@ -89,9 +89,7 @@ data IdentityMeta = IdentityMeta
     {-# UNPACK #-} !(NonEmpty URI)
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
-data With meta content = With  
-    {-# UNPACK #-} !meta
-    {-# UNPACK #-} !content 
+data With meta content = With !meta !content 
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 class Contains_ a b where
@@ -433,7 +431,7 @@ emptyIpResources :: IpResources
 emptyIpResources = IpResources $ RS.emptyIpSet 
 
 emptyAsResources :: AsResources
-emptyAsResources = AsResources $ RS RS.empty
+emptyAsResources = AsResources $ RS.emptyRS
 
 getMftNumber :: MftObject -> Int
 getMftNumber mft = mftNumber $ getCMSContent $ extract mft

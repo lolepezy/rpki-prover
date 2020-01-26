@@ -31,6 +31,7 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Validity
 import           HaskellWorks.Data.Network.Ip.Word128
 
+import           Common.SmallSet
 import           RPKI.Domain
 import           RPKI.Resources
 import           RPKI.RRDP.Types
@@ -220,7 +221,7 @@ instance Arbitrary a => Arbitrary (RSet a) where
   arbitrary = genericArbitrary
   shrink = genericShrink
   
-instance Arbitrary IpSet where
+instance Arbitrary IpResourceSet where
   arbitrary = genericArbitrary
   shrink = genericShrink
 
