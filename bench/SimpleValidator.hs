@@ -79,7 +79,7 @@ import           RPKI.Store.Base.MultiMap
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Rsync
-import           RPKI.Validation.Objects
+import           RPKI.Validation.ObjectValidation
 import qualified RPKI.Util  as U
 import RPKI.Store.Util
 

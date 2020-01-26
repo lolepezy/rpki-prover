@@ -24,7 +24,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parse.Parse
-import           RPKI.Validation.Objects
+import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Stores

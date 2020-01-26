@@ -24,7 +24,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Util                  (fmtEx)
-import           RPKI.Validation.Objects
+import           RPKI.Validation.ObjectValidation
 
 
 -- | Valiidate TAL

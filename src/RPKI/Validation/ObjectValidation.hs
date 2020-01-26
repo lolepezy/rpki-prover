@@ -1,6 +1,6 @@
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE NumericUnderscores #-}
-module RPKI.Validation.Objects where
+module RPKI.Validation.ObjectValidation where
 
 import           Control.Monad
 import           Control.Monad.Reader
@@ -19,17 +19,17 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import           Data.X509
 
-import           Data.Hourglass           (DateTime)
-import           Data.X509.Validation     hiding (InvalidSignature)
-import           System.Hourglass         (dateCurrent)
+import           Data.Hourglass         (DateTime)
+import           Data.X509.Validation   hiding (InvalidSignature)
+import           System.Hourglass       (dateCurrent)
 
 import           RPKI.AppMonad
 import           RPKI.Domain
-import           RPKI.Resources (VerifiedRS(..), IpResources, AsResources)
 import           RPKI.Errors
 import           RPKI.Parse.Parse
+import qualified RPKI.Resources         as R
 import           RPKI.TAL
-import           RPKI.Util                (convert)
+import           RPKI.Util              (convert)
 import           RPKI.Validation.Crypto
 
 
@@ -94,7 +94,7 @@ validateResourceCert :: (WithResourceCertificate c,
                          WithAKI c) => 
                         c -> parent -> 
                         Validated CrlObject ->
-                        PureValidator conf (Validated c, VerifiedRS IpResources, VerifiedRS AsResources)
+                        PureValidator conf (Validated c, R.VerifiedRS R.AllResources)
 validateResourceCert cert parentCert vcrl = do
   signatureCheck $ validateCertSignature cert parentCert
   when (isRevoked cert vcrl) $ 
@@ -102,18 +102,27 @@ validateResourceCert cert parentCert vcrl = do
   when (not (correctSkiAki cert parentCert)) $ 
     pureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
   void $ validateResourceCertExtensions cert
-  (vips, vasns) <- validateResourceSet cert parentCert
-  pure (Validated cert, vips, vasns)
+  verifiedResourceSet <- validateResourceSet cert parentCert
+  pure (Validated cert, verifiedResourceSet)
   where 
     -- TODO Implement it
     validateResourceSet (getRC -> ResourceCertificate cert) 
                         (getRC -> ResourceCertificate parentCert) =
-      pure $ case forRFC cert strictCheck reconsideredCheck of
-        Left _  -> (VerifiedRS ips, VerifiedRS asns)
-        Right _ -> (VerifiedRS ips, VerifiedRS asns)
-      where 
-        strictCheck _ = (VerifiedRS ips, VerifiedRS asns)
-        reconsideredCheck _ = (VerifiedRS ips, VerifiedRS asns)
+      pure $ R.VerifiedRS R.emptyAll
+      -- case forRFC cert strict reconsidered of
+      --   Left check  -> 
+      --     case check of
+      --       R.NestedStrict ips     -> pure $ R.VerifiedRS $ R.allResources ips asns
+      --       R.OverclaimingStrict o -> pureError $ ParentDoesntContainResource          
+      --   Right check ->  
+      --     case check of
+      --       R.NestedReconsidered ips -> pure $ R.VerifiedRS $ R.allResources ips asns
+      --       R.OverclaimingReconsidered ips o -> do 
+      --         pureWarning $ ValidationWarning $ ValidationE $ ParentDoesntContainResource          
+      --         pure $ R.VerifiedRS $ R.allResources ips asns
+      where
+        -- strict _ = R.strictIpCheck ips parentIps
+        -- reconsidered _ = R.reconsideredIpCheck ips parentIps
         ips = withRFC cert ipResources
         asns = withRFC cert asResources
         parentIps = withRFC parentCert ipResources

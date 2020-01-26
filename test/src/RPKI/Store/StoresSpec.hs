@@ -73,7 +73,7 @@ should_insert_and_get_all_back_from_object_store io = do
   sizes1 <- sizes objectStore
 
   extracted <- roTx objectStore $ \tx -> getAll tx objectStore
-  HU.assert $ sortOn getHash extracted == sortOn getHash ros'
+  HU.assertEqual "Not the same objects" (sortOn getHash extracted) (sortOn getHash ros')
   
   compareLatestMfts objectStore ros1 aki1
   compareLatestMfts objectStore ros2 aki2  
@@ -103,7 +103,7 @@ should_insert_and_get_all_back_from_object_store io = do
       let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber) $
             [ mft | MftRO mft <- ros, getAKI mft == Just a ]
             
-      HU.assert $ mftLatest == mftLatest'
+      HU.assertEqual "Not the same manifests" mftLatest mftLatest'
 
 generateSomeObjects :: IO [RpkiObject]
 generateSomeObjects = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      

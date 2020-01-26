@@ -49,7 +49,8 @@ data ValidationError = InvalidCert !T.Text |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
-                        ManifestEntryDontExist !Hash
+                        ManifestEntryDontExist !Hash |
+                        ParentDoesntContainResource 
     deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RrdpError = BrokenXml !T.Text | 
