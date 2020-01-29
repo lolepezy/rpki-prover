@@ -10,21 +10,25 @@ import           Control.Monad.Reader
 
 import           Data.String.Interpolate
 
-import qualified Data.ByteString            as B
-import qualified Data.Text                  as T
+import qualified Data.ByteString                  as B
 import           Data.Has
-import qualified Data.List.NonEmpty         as NE
+import qualified Data.List.NonEmpty               as NE
+import qualified Data.Text                        as T
+
+import           Data.Tuple.Ops
 
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
+import           RPKI.Resources
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores
 import           RPKI.TAL
-import           RPKI.Util                  (fmtEx)
+import           RPKI.Util                        (fmtEx)
 import           RPKI.Validation.ObjectValidation
+
 
 
 -- | Valiidate TAL
@@ -51,6 +55,10 @@ validateTA tal taStore = do
             -- TODO Trigger tree validation          
 
 
+data TopDownContext = TopDownContext {
+  verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns)
+}
+
 -- | Do top-down validation starting from the given object
 validateTree :: (Has AppLogger env, 
                  Has Now env, 
@@ -58,12 +66,13 @@ validateTree :: (Has AppLogger env,
                  Storage s) =>
                 RpkiObjectStore s -> 
                 CerObject ->
+                TopDownContext ->
                 ValidatorT env IO ()
-validateTree objectStore certificate = do  
+validateTree objectStore certificate topDownContext = do  
 
   logger :: AppLogger  <- asks getter
   now :: Now           <- asks getter
-  validationContext :: ValidationContext <- asks getter  
+  validationContext :: ValidationContext <- asks getter    
 
   let childrenAki = toAKI $ getSKI certificate
   let locations = getLocations certificate  
@@ -91,34 +100,32 @@ validateTree objectStore certificate = do
           validateMft mft certificate vCrl
           pure vCrl        
   
-        let manifestChildren = map snd $ mftEntries $ getCMSContent $ extract mft
-  
-        {- TODO narrow down children traversal to the ones that  
-          1) Are on the manifest
-          or
-          2) Are (or include as EE) the latest 
-          certificates with the unique (non-overlaping) set of reseources        
-        -}      
-        let childContext = (logger, now, )
+        let manifestChildren = map snd $ mftEntries $ getCMSContent $ extract mft    
         lift3 $ forM_ manifestChildren $ \h -> do
           ro <- roTx objectStore $ \tx -> getByHash tx objectStore h
           case ro of 
             Nothing  -> runValidatorT validationContext $ vWarn $ ManifestEntryDontExist h
-            Just ro' -> validateChild childContext validatedCrl ro'            
+            Just ro' -> validateChild (logger, now, topDownContext) validatedCrl ro'            
     Just _  -> validatorError $ CRLHashPointsToAnotherObject crlHash locations        
     where              
-        validateChild childContext validatedCrl ro = case ro of 
-          CerRO cert -> runValidatorT childValidationContext $ do
-            pureToValidatorT $ validateResourceCert cert certificate validatedCrl
-            validateTree objectStore cert
-          RoaRO roa -> pure $ runPureValidator childValidationContext $ 
-            void $ validateRoa roa certificate validatedCrl
-          GbrRO gbr -> pure $ runPureValidator childValidationContext $ 
-            void $ validateGbr gbr certificate validatedCrl
-          -- TODO Anything else?
-          _ -> valid
-          where
-            childValidationContext = childContext $ vContext $ NE.head $ getLocations ro
+        validateChild parentContext validatedCrl ro = 
+          case ro of 
+            CerRO childCert -> runValidatorT childContext $ do
+              childVerifiedResources <- pureToValidatorT $ do                 
+                validateResourceCert childCert certificate validatedCrl
+                validateResources (verifiedResources topDownContext) childCert certificate 
+              validateTree objectStore childCert 
+                (topDownContext { verifiedResources = Just childVerifiedResources })
+
+            RoaRO roa -> pure $ runPureValidator childContext $ 
+              void $ validateRoa roa certificate validatedCrl
+            GbrRO gbr -> pure $ runPureValidator childContext $ 
+              void $ validateGbr gbr certificate validatedCrl
+            -- TODO Anything else?
+            _ -> valid
+            where
+              childContext = childLocation `snocT` parentContext
+              childLocation = vContext $ NE.head $ getLocations ro
   
 
 

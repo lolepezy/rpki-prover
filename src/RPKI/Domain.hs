@@ -46,9 +46,9 @@ withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
 withRFC (WithStrict_ (WithRFC a)) f = f a
 withRFC (WithReconsidered_ (WithRFC a)) f = f a  
 
-forRFC :: AnRFC r -> (r 'Strict_ -> a) -> (r 'Reconsidered_ -> b) -> Either a b
-forRFC (WithStrict_ (WithRFC a))       f _ = Left $ f a
-forRFC (WithReconsidered_ (WithRFC a)) _ f = Right $ f a  
+forRFC :: AnRFC r -> (r 'Strict_ -> a) -> (r 'Reconsidered_ -> a) -> a
+forRFC (WithStrict_ (WithRFC a))       f _ = f a
+forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
 -- TODO Use library type?
 newtype Hash = Hash B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
@@ -177,8 +177,7 @@ instance WithLocations RpkiObject where
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
     certX509  :: CertificateWithSignature, 
-    ipResources :: IpResources,
-    asResources :: AsResources
+    resources :: AllResources
 } deriving stock (Show, Eq, Typeable, Generic)
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)

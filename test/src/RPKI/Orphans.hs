@@ -29,7 +29,6 @@ import           HaskellWorks.Data.Network.Ip.Ipv4     as V4
 import           HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Validity
-import           HaskellWorks.Data.Network.Ip.Word128
 
 import           Common.SmallSet
 import           RPKI.Domain
@@ -210,6 +209,10 @@ instance Arbitrary AsResources where
   shrink = genericShrink
 
 instance Arbitrary IpResources where
+  arbitrary = genericArbitrary
+  shrink = genericShrink
+
+instance Arbitrary AllResources where
   arbitrary = genericArbitrary
   shrink = genericShrink
 

@@ -70,9 +70,10 @@ parseResources x509cert = do
         (Nothing, ips, Nothing, asns) -> reconcideredCert <$> cert' x509cert ips asns
     where
       broken = Left . fmtErr
-      cert' x509c ips asns = ResourceCert x509c <$>
-            (maybe (pure emptyIpResources) (parseR parseIpExt) ips) <*>
-            (maybe (pure emptyAsResources) (parseR parseAsnExt) asns)
+      cert' x509c ips asns = do 
+        ips'  <- maybe (pure emptyIpResources) (parseR parseIpExt) ips
+        asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) asns
+        pure $ ResourceCert x509c $ allResources ips' asns'
 
       parseR :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
       parseR f bs = f =<< first fmt decoded

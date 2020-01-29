@@ -19,7 +19,7 @@ import           Data.Hourglass       (DateTime)
 import           GHC.Generics
 
 import           RPKI.Domain
-
+import           RPKI.Resources
 
 
 newtype ParseError s = ParseError s
@@ -50,7 +50,8 @@ data ValidationError = InvalidCert !T.Text |
                         RevokedResourceCertificate |
                         AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
                         ManifestEntryDontExist !Hash |
-                        ParentDoesntContainResource 
+                        OverclaimedResources PrefixesAndAsns |
+                        InheritWithoutParentResources 
     deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RrdpError = BrokenXml !T.Text | 

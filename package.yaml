@@ -91,6 +91,7 @@ dependencies:
 - time
 - transformers
 - temporary
+- tuple-sop
 - validation
 - wreq
 - x509

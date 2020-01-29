@@ -486,14 +486,14 @@ validateTreeFromTA env = do
   nu <- now
   let conf = (createLogger, RsyncConf "/tmp/rsync", 
               Config getParallelism, 
-              vContext $ URI "something.cer", 
+              vContext $ URI "something.cer",               
               nu)              
   store <- createObjectStore env
   x <- runValidatorT conf $ do
     CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     processRsync repo store
     -- lift3 $ say $ "taCert = " <> show taCert
-    validateTree store taCert
+    validateTree store taCert (TopDownContext Nothing)
 
   say $ "x = " <> show x
 
@@ -511,7 +511,7 @@ validateTreeFromStore env = do
     x <- runValidatorT conf $ do
       CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
       lift3 $ say $ "taCert = " <> show taCert
-      validateTree store taCert      
+      validateTree store taCert (TopDownContext Nothing)
   
     say $ "x = " <> show x
   

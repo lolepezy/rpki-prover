@@ -102,10 +102,18 @@ newtype AsResources = AsResources (RSet (SmallSet AsResource))
   deriving anyclass Serialise
 
 data AllResources = AllResources 
-  !(SmallSet Ipv4Prefix) 
-  !(SmallSet Ipv6Prefix)
-  !(SmallSet AsResource) 
+  !(RSet (SmallSet Ipv4Prefix))
+  !(RSet (SmallSet Ipv6Prefix))
+  !(RSet (SmallSet AsResource))
   deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
+
+data PrefixesAndAsns = PrefixesAndAsns 
+  !(SmallSet Ipv4Prefix)
+  !(SmallSet Ipv6Prefix)
+  !(SmallSet AsResource)
+  deriving stock (Show, Eq, Ord, Typeable, Generic) 
+  deriving anyclass Serialise
 
 newtype Nested a = Nested a
 newtype Overclaiming a = Overclaiming a
@@ -263,11 +271,14 @@ emptyRS = RS SmallSet.empty
 toRS :: [a] -> RSet (SmallSet a)
 toRS = RS . SmallSet.fromList
 
-allResources :: PrefixeSet -> SmallSet AsResource -> AllResources
-allResources (PrefixeSet i4 i6) a = AllResources i4 i6 a
+allResources :: IpResources -> AsResources -> AllResources
+allResources (IpResources (IpResourceSet i4 i6)) (AsResources a) = AllResources i4 i6 a
 
-emptyAll :: AllResources
-emptyAll = AllResources SmallSet.empty SmallSet.empty SmallSet.empty
+emptyAllRS :: AllResources
+emptyAllRS = AllResources emptyRS emptyRS emptyRS
+
+emptyAll :: PrefixesAndAsns
+emptyAll = PrefixesAndAsns SmallSet.empty SmallSet.empty SmallSet.empty
 
 
 containsAsn :: AsResource -> AsResource -> Bool
@@ -324,17 +335,17 @@ optimiseAsns = catMaybes . map f
   where 
     f (AS a) = Just $ AS a
     f r@(ASRange a b) 
-      | a == b = Just $ AS a
-      | a > b  = Nothing
+      | a == b    = Just $ AS a
+      | a > b     = Nothing
       | otherwise = Just r
 
+type ResourceCheckResult a = Either 
+    (Nested (SmallSet a)) 
+    (Nested (SmallSet a), Overclaiming (SmallSet a))
 
-prefixCheck :: (Eq a, Prefix a) =>    
-                SmallSet a -> SmallSet a -> 
-                Either 
-                  (Nested (SmallSet a)) 
-                  (Nested (SmallSet a), Overclaiming (SmallSet a))
-prefixCheck s b = 
+subsetCheck :: (Eq a, WithSetOps a) =>    
+                SmallSet a -> SmallSet a -> ResourceCheckResult a              
+subsetCheck s b = 
   if SmallSet.null o 
     then Left $ Nested i
     else Right (Nested i, Overclaiming o)
@@ -415,49 +426,3 @@ rightPad n a = go 0
                | otherwise = []  
     go !acc (x : xs) = x : go (acc + 1) xs    
 
-
--- strictIpCheck :: IpResources -> IpResources -> ResourseCheckStrict PrefixeSet
--- strictIpCheck v4 v6 =   
---   genericIpCheck v4 v6 NestedStrict (\_ o -> OverclaimingStrict o)
-
--- reconsideredIpCheck :: IpResources -> IpResources -> ResourseCheckReconsidered PrefixeSet
--- reconsideredIpCheck v4 v6 =
---   genericIpCheck v4 v6 NestedReconsidered OverclaimingReconsidered
-
-
--- genericIpCheck :: IpResources -> IpResources -> 
---                   (PrefixeSet -> c) -> 
---                   (PrefixeSet -> PrefixeSet -> c) -> c
--- genericIpCheck (IpResources (IpResourceSet s4 s6)) (IpResources (IpResourceSet b4 b6)) 
---                nestedConstructor overclaimingConstructor = 
---   case (v4check, v6check) of     
---     (Nothing, Nothing) -> nestedConstructor 
---         (PrefixeSet SmallSet.empty SmallSet.empty)
-
---     (Nothing, Just (Nested i6, Overclaiming o6)) 
---         | SmallSet.null o6 -> nestedConstructor interesections
---         | otherwise -> overclaimingConstructor interesections (PrefixeSet SmallSet.empty o6)    
---             where 
---               interesections = (PrefixeSet SmallSet.empty i6)
-
---     (Just (Nested i4, Overclaiming o4), Nothing) 
---         | SmallSet.null o4 -> nestedConstructor intersections  
---         | otherwise -> overclaimingConstructor 
---             intersections (PrefixeSet o4 SmallSet.empty)
---             where 
---               intersections = (PrefixeSet i4 SmallSet.empty)
-        
---     (Just (Nested i4, Overclaiming o4), Just (Nested i6, Overclaiming o6)) 
---         | SmallSet.null o4 && SmallSet.null o6 -> nestedConstructor intersections
---         | otherwise -> overclaimingConstructor intersections (PrefixeSet o4 o6)    
---             where 
---               intersections = (PrefixeSet i4 i6)
-
---   where
---       v4check = forRS s4 b4 intersectionAndOverclaimed
---       v6check = forRS s6 b6 intersectionAndOverclaimed  
-
--- forRS :: RSet r -> RSet r -> (r -> r -> c) -> Maybe c
--- forRS s b f = case (s, b) of
---   (RS ss, RS bs) -> Just $ f ss bs
---   _              -> Nothing  
