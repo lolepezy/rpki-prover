@@ -2,36 +2,12 @@
 {-# LANGUAGE NumericUnderscores #-}
 module RPKI.Validation.ResourceValidation where
 
-import           Control.Monad
-import           Control.Monad.Reader
-
-import qualified Data.ByteString          as B
-import qualified Data.ByteString.Lazy     as BL
-import           Data.Maybe
-
 import Common.SmallSet (SmallSet)
 import qualified Common.SmallSet as SmallSet
 
-import           Data.Data                (Typeable)
-import           Data.Has
-
-import           GHC.Generics
-
-import           Data.ASN1.BinaryEncoding
-import           Data.ASN1.Encoding
-import           Data.ASN1.Types
-import           Data.X509
-
-import           Data.Hourglass         (DateTime)
-import           Data.X509.Validation   hiding (InvalidSignature)
-import           System.Hourglass       (dateCurrent)
-
 import           RPKI.AppMonad
-import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Resources        
-
-import           RPKI.Validation.Crypto
+import           RPKI.Resources
 
 validateChildParentResources :: ValidationRFC -> 
                                 AllResources -> 
@@ -65,8 +41,8 @@ validateChildParentResources validationRFC childResources parentResources verifi
           pure $ case (c, p) of 
             (Inherit, Inherit) -> Left $ Nested (verifiedSub vr)
             (RS cs,   Inherit) -> subsetCheck cs (verifiedSub vr)
-            (Inherit, RS ps)   -> Left $ Nested ps
-            (RS cs,   RS ps)   -> subsetCheck cs (verifiedSub vr)
+            (Inherit, RS _)    -> Left $ Nested (verifiedSub vr)
+            (RS cs,   RS _)    -> subsetCheck cs (verifiedSub vr)
 
     strict q4 q6 qa = 
       case (q4, q6, qa) of
@@ -77,9 +53,11 @@ validateChildParentResources validationRFC childResources parentResources verifi
  
     reconsidered q4 q6 qa = do
       case (q4, q6, qa) of
-        (Left (Nested n4), Left (Nested n6), Left (Nested na)) -> pure ()
-        _ -> pureWarning $ ValidationWarning $ ValidationE $ OverclaimedResources $
-                PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
+        (Left (Nested _), Left (Nested _), Left (Nested _)) -> 
+          pure ()
+        _ -> 
+          pureWarning $ ValidationWarning $ ValidationE $ OverclaimedResources $
+            PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
       pure $ VerifiedRS $ PrefixesAndAsns (nested q4) (nested q6) (nested qa)          
 
     AllResources childIpv4s childIpv6s childAsns = childResources

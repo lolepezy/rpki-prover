@@ -10,7 +10,6 @@ import           Control.Monad.Reader
 
 import           Data.String.Interpolate
 
-import qualified Data.ByteString                  as B
 import           Data.Has
 import qualified Data.List.NonEmpty               as NE
 import qualified Data.Text                        as T
