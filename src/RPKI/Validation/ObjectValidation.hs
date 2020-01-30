@@ -34,6 +34,7 @@ import           RPKI.Resources
 import           RPKI.TAL
 import           RPKI.Util              (convert)
 import           RPKI.Validation.Crypto
+import           RPKI.Validation.ResourceValidation
 
 
 -- | Current time that is to be passed into the environment of validating functions
@@ -118,61 +119,14 @@ validateResources :: (WithResourceCertificate c,
                     PureValidator conf (VerifiedRS PrefixesAndAsns)
 validateResources verifiedResources
                   (getRC -> ResourceCertificate cert) 
-                  (getRC -> ResourceCertificate parentCert) = do
-  forRFC cert 
-    (const $ verify strict) 
-    (const $ verify reconsidered)
-  where    
-    verify f = do 
-      c4 <- check childIpv4s parentIpv4s (\(VerifiedRS (PrefixesAndAsns r _ _)) -> r)
-      c6 <- check childIpv6s parentIpv6s (\(VerifiedRS (PrefixesAndAsns _ r _)) -> r)
-      ca <- check childAsns parentAsns (\(VerifiedRS (PrefixesAndAsns _ _ r)) -> r)
-      f c4 c6 ca
-
-    check :: (Eq a, WithSetOps a) => 
-            (RSet (SmallSet a)) -> 
-            (RSet (SmallSet a)) -> 
-            (VerifiedRS PrefixesAndAsns -> SmallSet a) -> 
-            PureValidator conf (ResourceCheckResult a)
-    check c p verifiedSub = 
-      case verifiedResources of 
-        Nothing -> do 
-          case (c, p) of 
-            (_,       Inherit) -> pureError InheritWithoutParentResources
-            (Inherit, RS ps)   -> pure $ Left $ Nested ps
-            (RS cs,   RS ps)   -> pure $ subsetCheck cs ps
-        Just vr -> 
-          pure $ case (c, p) of 
-            (Inherit, Inherit) -> Left $ Nested (verifiedSub vr)
-            (RS cs,   Inherit) -> subsetCheck cs (verifiedSub vr)
-            (Inherit, RS ps)   -> Left $ Nested ps
-            -- TODO Check the relartion between 'ps' and 'vr'
-            (RS cs,   RS ps)   -> subsetCheck cs (verifiedSub vr)
-
-    strict q4 q6 qa = 
-      case (q4, q6, qa) of
-        (Left (Nested n4), Left (Nested n6), Left (Nested na)) -> 
-          pure $ VerifiedRS $ PrefixesAndAsns n4 n6 na
-        _ -> pureError $ OverclaimedResources $ 
-          PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
- 
-    reconsidered q4 q6 qa = do
-      case (q4, q6, qa) of
-        (Left (Nested n4), Left (Nested n6), Left (Nested na)) -> pure ()
-        _ -> pureWarning $ ValidationWarning $ ValidationE $ OverclaimedResources $
-                PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
-      pure $ VerifiedRS $ PrefixesAndAsns (nested q4) (nested q6) (nested qa)          
-
-    AllResources childIpv4s childIpv6s childAsns = withRFC cert resources
-    AllResources parentIpv4s parentIpv6s parentAsns = withRFC parentCert resources          
-
-    overclaimed (Left _) = SmallSet.empty
-    overclaimed (Right (_, Overclaiming o)) = o
-
-    nested (Left (Nested n)) = n
-    nested (Right (Nested n, _)) = n
-  
-
+                  (getRC -> ResourceCertificate parentCert) =
+  validateChildParentResources 
+    validationRFC 
+    (withRFC cert resources) 
+    (withRFC parentCert resources) 
+    verifiedResources
+    where
+      validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
 
 
 -- | Validate CRL object with the parent certificate

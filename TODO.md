@@ -1,9 +1,10 @@
-- Register new publication points while validating
-- do validation concurrently
-- 
++ implement resource set
+
+- extract SIA from certificates
+- register new publication points while validating
+- do validation concurrently 
 - Use ValidatorT wherever it makes sense
 - implement all the validations according to the RFCs (time, digests, etc.)
-- implement resource set
 
 
 Things to think about:

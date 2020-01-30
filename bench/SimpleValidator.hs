@@ -513,8 +513,7 @@ validateTreeFromStore env = do
       lift3 $ say $ "taCert = " <> show taCert
       validateTree store taCert (TopDownContext Nothing)
   
-    say $ "x = " <> show x
-  
+    say $ "x = " <> show x  
     pure ()  
 
 main :: IO ()
@@ -528,7 +527,8 @@ main = do
   -- mkLmdb >>= void . saveRsyncRepo
   -- mkLmdb "./data" >>= validatorUpdateRRDPRepo
 
-  mkLmdb "./data/" >>= loadRsync
+  -- mkLmdb "./data/" >>= loadRsync
+  mkLmdb "./data/" >>= validateTreeFromStore
   -- testSignature
 
 say :: String -> IO ()
