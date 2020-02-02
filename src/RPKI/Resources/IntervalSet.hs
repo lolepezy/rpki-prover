@@ -12,9 +12,6 @@ import Prelude hiding (subtract, null)
 
 import           Codec.Serialise
 
-import           Common.SmallSet          (SmallSet (..))
-import qualified Common.SmallSet          as SmallSet
-
 import           Data.Either              (partitionEithers)
 import           Data.Kind
 import qualified Data.List                as L
@@ -23,13 +20,13 @@ import           GHC.Generics
 import           RPKI.Resources.Types
 
 empty ::IntervalSet a
-empty = IntervalSet SmallSet.empty
+empty = IntervalSet V.empty
 
 null ::IntervalSet a -> Bool
-null (IntervalSet s) = SmallSet.null s
+null (IntervalSet s) = V.null s
 
 fromList :: WithSetOps a => [a] -> IntervalSet a
-fromList = IntervalSet . SmallSet.fromList . normalise 
+fromList = IntervalSet . V.fromList . normalise 
 
 findIntersections :: Interval a => a -> IntervalSet a -> [a]
 findIntersections a as = concatMap fst $ findFullIntersections a as
@@ -37,7 +34,7 @@ findIntersections a as = concatMap fst $ findFullIntersections a as
 -- | Use binary search to find intersections of an intetval within an interval set.
 -- | Return also the orginal intervals it intersects with.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
-findFullIntersections a (IntervalSet (SS v)) = 
+findFullIntersections a (IntervalSet v) = 
   case (V.unsafeIndex v 0) `intersection` a of
       [] -> case (V.unsafeIndex v lastIndex) `intersection` a of
         [] -> goBinary 0 lastIndex
@@ -94,7 +91,7 @@ type ResourceCheckResult a = Either
 intersectionAndOverclaimedIntervals :: Interval a =>    
                                       IntervalSet a -> IntervalSet a -> 
                                       (Nested (IntervalSet a), Overclaiming (IntervalSet a))
-intersectionAndOverclaimedIntervals (IntervalSet (SS smaller)) bigger =     
+intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =     
     (Nested $ fromList intersectionRS, Overclaiming $ fromList overclaimingRS)
   where
     intersectionRS = good <> concatMap fst problematic 

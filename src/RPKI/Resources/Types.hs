@@ -15,15 +15,13 @@ import           Control.DeepSeq
 
 import qualified Data.ByteString                       as B
 
-import Common.SmallSet (SmallSet)
-import qualified Common.SmallSet as SmallSet
-
 import           Data.Data                             (Typeable)
 import           Data.Bits
 import           Data.Maybe
 import           Data.Either
 import           Data.Kind
 import qualified Data.List                             as L
+import qualified Data.Vector                           as V
 import qualified Data.Set                              as S
 import           Data.Word
 import           GHC.Generics
@@ -57,7 +55,7 @@ newtype ASN = ASN Word32
   deriving newtype Enum
 
 data AsResource =  AS !ASN
-                 | ASRange !ASN !ASN
+                | ASRange !ASN !ASN
   deriving stock (Show, Eq, Ord, Typeable, Generic) 
   deriving anyclass Serialise
 
@@ -128,7 +126,7 @@ class (WithSetOps p, Eq (Point p), Ord (Point p)) => Interval p where
   start :: p -> (Point p)
 
 -- | Representation of the resource set
-newtype IntervalSet a = IntervalSet (SmallSet a) 
+newtype IntervalSet a = IntervalSet (V.Vector a) 
   deriving stock (Show, Eq, Ord, Generic) 
   deriving anyclass Serialise
 

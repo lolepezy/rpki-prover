@@ -9,9 +9,6 @@ import qualified Data.ByteString          as B
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Maybe
 
-import Common.SmallSet (SmallSet)
-import qualified Common.SmallSet as SmallSet
-
 import           Data.Data                (Typeable)
 import           Data.Has
 

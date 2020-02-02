@@ -30,7 +30,6 @@ import           HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Validity
 
-import           Common.SmallSet
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
@@ -232,10 +231,6 @@ instance Arbitrary a => Arbitrary (RSet a) where
   shrink = genericShrink
   
 instance Arbitrary IpResourceSet where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-
-instance Arbitrary a => Arbitrary (SmallSet a) where
   arbitrary = genericArbitrary
   shrink = genericShrink
 

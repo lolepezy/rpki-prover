@@ -15,9 +15,6 @@ import           Control.DeepSeq
 
 import qualified Data.ByteString                       as B
 
-import           Common.SmallSet                       (SmallSet)
-import qualified Common.SmallSet                       as SmallSet
-
 import           Data.Bits
 import           Data.Data                             (Typeable)
 import           Data.Either
@@ -269,36 +266,6 @@ optimiseAsns = catMaybes . map f
       | a == b    = Just $ AS a
       | a > b     = Nothing
       | otherwise = Just r
-
- -- | For two sets, find intersecting and overclaming resource subsets
--- 
--- intersectionAndOverclaimed :: (Eq a, WithSetOps a) =>    
---                             IntervalSet a -> IntervalSet a -> 
---                             (Nested (IntervalSet a), Overclaiming (IntervalSet a))
--- intersectionAndOverclaimed smaller bigger =     
---     (Nested $ IS.fromList intersectionRS, Overclaiming $ IS.fromList overclaimingRS)
---   where
---     intersectionRS = normalise $ good <> concatMap fst problematic 
---     overclaimingRS = normalise $ concatMap snd problematic
-
---     (problematic, good) = partitionEithers $ concatMap overclamingPart $ SmallSet.toList smaller            
-    
---     overclamingPart small = 
---       case intersections' of
---           [] -> [Left ([], [small])]
---           i  -> i
---       where
---         intersections' = (flip L.map) intersections $ 
---           \(intersecting, big) ->        
---               if big `contains` small
---                 then Right small
---                 else Left (intersecting, small `subtract` big)
---         intersections =       
---           L.filter (not . L.null . fst) $
---           L.map (\big -> (small `intersection` big, big)) biggerList
-
---     biggerList = SmallSet.toList bigger
-
 
 -- Bits munching
 fourW8sToW32 :: [Word8] -> Word32
