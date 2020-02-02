@@ -22,7 +22,7 @@ import RPKI.Store.Base.Storable
 data RpkiObjectStore s = RpkiObjectStore {
   objects  :: SMap "objects" s Hash SValue,
   byAKI    :: SMultiMap "byAKI" s AKI Hash,
-  mftByAKI :: SMultiMap "mftByAKI" s AKI Hash
+  mftByAKI :: SMultiMap "mftByAKI" s AKI (Hash, Int)
 }
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
@@ -39,8 +39,8 @@ putObject tx store (StorableObject ro sv) = do
   ifJust (getAKI ro) $ \aki' -> do 
     MM.put tx (byAKI store) aki' h
     case ro of
-      MftRO _ -> MM.put tx (mftByAKI store) aki' h
-      _       -> pure ()
+      MftRO mft -> MM.put tx (mftByAKI store) aki' (h, getMftNumber mft)
+      _         -> pure ()
 
 
 deleteObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> Hash -> IO ()
@@ -51,26 +51,30 @@ deleteObject tx store h = do
     ifJust (getAKI ro) $ \aki' -> do 
       MM.delete tx (byAKI store) aki' h
       case ro of
-        MftRO _ -> MM.delete tx (mftByAKI store) aki' h
-        _       -> pure ()      
+        MftRO mft -> MM.delete tx (mftByAKI store) aki' (h, getMftNumber mft)
+        _         -> pure ()      
+
 findLatestMftByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO (Maybe MftObject)
 findLatestMftByAKI tx store aki' = 
-    MM.fold tx (mftByAKI store) aki' f Nothing
+    MM.fold tx (mftByAKI store) aki' f Nothing >>= \case
+      Nothing        -> pure Nothing
+      Just (hash, _) -> do
+        getByHash tx store hash >>= \case
+          Just (MftRO mft) -> pure $ Just mft
+          _                -> pure Nothing
     where
-      f latest _ h = latestMft <$> getByHash tx store h
-        where
-          latestMft = \case
-            Just (MftRO mft) -> case latest of
-              Nothing -> Just mft
-              Just lat | getMftNumber mft > getMftNumber lat -> Just mft
-              Just lat | otherwise                           -> Just lat
-            _ -> Nothing
+      f latest _ (hash, mftNum) = 
+        pure $ case latest of 
+          Nothing -> Just (hash, mftNum)
+          Just (_, latestNum) 
+            | mftNum > latestNum -> Just (hash, mftNum)
+            | otherwise          -> latest
 
 findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
 findMftsByAKI tx store aki' = 
     MM.fold tx (mftByAKI store) aki' f []
     where
-      f mfts _ h = accumulate <$> getByHash tx store h
+      f mfts _ (h, _) = accumulate <$> getByHash tx store h
         where 
           accumulate = \case          
             Just (MftRO mft) -> mft : mfts
