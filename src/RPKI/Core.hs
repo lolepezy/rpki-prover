@@ -20,7 +20,7 @@ import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
-import           RPKI.Resources
+import           RPKI.Resources.Resources
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores
@@ -115,6 +115,12 @@ validateTree objectStore certificate topDownContext = do
                 validateResources (verifiedResources topDownContext) childCert certificate 
               validateTree objectStore childCert 
                 (topDownContext { verifiedResources = Just childVerifiedResources })
+
+              -- pureToValidatorT $ do                 
+              --   validateResourceCert childCert certificate validatedCrl
+              --   -- validateResources (verifiedResources topDownContext) childCert certificate 
+              -- validateTree objectStore childCert 
+              --   (topDownContext { verifiedResources = Nothing })
 
             RoaRO roa -> pure $ runPureValidator childContext $ 
               void $ validateRoa roa certificate validatedCrl

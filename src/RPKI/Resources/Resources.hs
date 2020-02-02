@@ -6,7 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module RPKI.Resources where
+module RPKI.Resources.Resources where
 
 import Prelude hiding (subtract)
 
@@ -118,18 +118,6 @@ data PrefixesAndAsns = PrefixesAndAsns
 newtype Nested a = Nested a
 newtype Overclaiming a = Overclaiming a
 
-data ResourseCheckStrict a = 
-    NestedStrict !a
-  | OverclaimingStrict !a
-  deriving stock (Show, Eq, Ord)
-
-data ResourseCheckReconsidered a = 
-    NestedReconsidered !a
-  | OverclaimingReconsidered { 
-        interesection :: !a,
-        overclaiming  :: !a   
-    } 
-  deriving stock (Show, Eq, Ord)
 
 newtype VerifiedRS a = VerifiedRS a
   deriving stock (Show, Eq, Ord, Typeable, Generic) 
@@ -143,7 +131,7 @@ instance WithSetOps Ipv4Prefix where
   normalise = normalisePrefixes
   subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
     where
-      ((!f1, !l1), (!f2, !l2)) = endsV4 p1 p2          
+      (!f1, !l1, !f2, !l2) = endsV4 p1 p2          
 
 instance Prefix Ipv4Prefix where
   type Address Ipv4Prefix = V4.IpAddress
@@ -159,7 +147,7 @@ instance WithSetOps Ipv6Prefix where
   normalise = normalisePrefixes
   subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
     where
-      ((!f1, !l1), (!f2, !l2)) = endsV6 p1 p2
+      (!f1, !l1, !f2, !l2) = endsV6 p1 p2
 
 instance Prefix Ipv6Prefix where
   type Address Ipv6Prefix = V6.IpAddress
@@ -172,6 +160,7 @@ instance WithSetOps AsResource where
   intersection = intersectionAsn
   subtract = subtractAsn
   normalise = normaliseAsns
+
 
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
 mkIpv4Block w32 nonZeroBits = Ipv4Prefix (V4.IpBlock (V4.IpAddress w32) (V4.IpNetMask nonZeroBits))
@@ -195,33 +184,45 @@ subtractRange f1 l1 f2 l2 r fromRange =
       | f1 >= f2 && l1 >= l2 -> fromRange (Range l2 l1)
       | f1 >= f2 && l1 < l2  -> []
 
-rangesIntersection :: Ord a => r -> r -> (r -> r -> ((a, a), (a, a))) -> (Range a -> [r]) -> [r]
+rangesIntersection :: Ord a => r -> r -> (r -> r -> (a, a, a, a)) -> (Range a -> [r]) -> [r]
 rangesIntersection p1 p2 getEnds fromRange = 
   case () of  
     _ | l1 <= f2  -> []
       | f1 >= l2  -> []
       | otherwise -> fromRange (Range (max f1 f2) (min l1 l2))
     where
-      ((!f1, !l1), (!f2, !l2)) = getEnds p1 p2
+      (!f1, !l1, !f2, !l2) = getEnds p1 p2
 
-endsV4 :: Ipv4Prefix -> Ipv4Prefix -> ((V4.IpAddress, V4.IpAddress), (V4.IpAddress, V4.IpAddress))
-endsV4 (Ipv4Prefix ip1) (Ipv4Prefix ip2) = ((f1, l1), (f2, l2))
+
+endsV4 :: Ipv4Prefix -> Ipv4Prefix -> (V4.IpAddress, V4.IpAddress, V4.IpAddress, V4.IpAddress)
+endsV4 (Ipv4Prefix ip1) (Ipv4Prefix ip2) = (f1, l1, f2, l2)
   where
     f1 = V4.firstIpAddress ip1
     l1 = V4.lastIpAddress ip1
     f2 = V4.firstIpAddress ip2
     l2 = V4.lastIpAddress ip2
+{-# INLINE endsV4 #-}    
 
-endsV6 :: Ipv6Prefix -> Ipv6Prefix -> ((V6.IpAddress, V6.IpAddress), (V6.IpAddress, V6.IpAddress))
-endsV6 (Ipv6Prefix ip1) (Ipv6Prefix ip2) = ((f1, l1), (f2, l2))
+endsV6 :: Ipv6Prefix -> Ipv6Prefix -> (V6.IpAddress, V6.IpAddress, V6.IpAddress, V6.IpAddress)
+endsV6 (Ipv6Prefix ip1) (Ipv6Prefix ip2) = (f1, l1, f2, l2)
   where
     f1 = V6.firstIpAddress ip1
     l1 = V6.lastIpAddress ip1
     f2 = V6.firstIpAddress ip2
     l2 = V6.lastIpAddress ip2
+{-# INLINE endsV6 #-}    
 
 between :: Ord a => a -> (a, a) -> Bool
 between a (b, c) = a >= b && a < c
+{-# INLINE between #-}
+
+startV4 :: Ipv4Prefix -> V4.IpAddress
+startV4 (Ipv4Prefix p) = V4.firstIpAddress p
+{-# INLINE startV4 #-}
+
+startV6 :: Ipv6Prefix -> V6.IpAddress
+startV6 (Ipv6Prefix p) = V6.firstIpAddress p
+{-# INLINE startV6 #-}
 
 -- | Prepare resource list for becoming a resourse set, sort, 
 -- | merge adjucent ranges and convert to prefixes  
@@ -256,10 +257,12 @@ normaliseAsns asns = mergeAsRanges $ L.sortOn rangeStart asns
         tryMerge (ASRange a00 a01) (ASRange a10 a11) 
           | a01 >= a10 = Just $ ASRange a00 (max a01 a11)
           | otherwise = Nothing 
+        {-# INLINE tryMerge #-}
 
     rangeStart = \case
       AS a        -> a 
       ASRange a _ -> a
+    {-# INLINE rangeStart #-}
   
 
 emptyIpSet :: IpResourceSet
@@ -405,6 +408,7 @@ fourW8sToW32 = \case
   where
     {-# INLINE toW32 #-}
     toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
+{-# INLINE fourW8sToW32 #-}
 
 someW8ToW128 :: [Word8] -> (Word32, Word32, Word32, Word32)
 someW8ToW128 ws = (
@@ -425,4 +429,4 @@ rightPad n a = go 0
     go !acc [] | acc < n  = a : go (acc + 1) []
                | otherwise = []  
     go !acc (x : xs) = x : go (acc + 1) xs    
-
+{-# INLINE rightPad #-}

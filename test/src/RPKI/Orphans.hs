@@ -32,7 +32,7 @@ import           HaskellWorks.Data.Network.Ip.Validity
 
 import           Common.SmallSet
 import           RPKI.Domain
-import           RPKI.Resources
+import           RPKI.Resources.Resources
 import           RPKI.RRDP.Types
 
 import           Time.Types
@@ -217,7 +217,13 @@ instance Arbitrary AllResources where
   shrink = genericShrink
 
 instance Arbitrary AsResource where
-  arbitrary = genericArbitrary
+  arbitrary = oneof [as, asRange]
+    where
+      as = AS . ASN <$> arbitrary
+      asRange = do
+        s <- arbitrary
+        e <- suchThat arbitrary (\w -> (fromIntegral w) > s)
+        pure $ ASRange (ASN s) (ASN e)
   shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (RSet a) where

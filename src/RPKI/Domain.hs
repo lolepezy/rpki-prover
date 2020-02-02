@@ -30,7 +30,7 @@ import qualified Data.X509 as X509
 import Data.ASN1.OID
 import Data.ASN1.Types
 
-import RPKI.Resources as RS
+import RPKI.Resources.Resources as RS
 import RPKI.Serialise.Orphans
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)

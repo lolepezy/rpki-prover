@@ -19,7 +19,7 @@ import           Data.Hourglass       (DateTime)
 import           GHC.Generics
 
 import           RPKI.Domain
-import           RPKI.Resources
+import           RPKI.Resources.Resources
 
 
 newtype ParseError s = ParseError s

@@ -23,7 +23,7 @@ import           Data.ASN1.Types
 import           Data.X509
 
 import           RPKI.Domain
-import           RPKI.Resources    as R
+import           RPKI.Resources.Resources   as R
 import qualified RPKI.Util                  as U
 
 import           RPKI.Parse.Internal.Common

@@ -23,14 +23,16 @@ import qualified Test.Tasty.QuickCheck             as QC
 
 import qualified Common.SmallSet                   as SmallSet
 import           RPKI.Orphans
-import           RPKI.Resources
+import qualified RPKI.Resources.IntervalSet        as IS
+import           RPKI.Resources.Resources
 
 
 
 resourceGroup :: TestTree
 resourceGroup = testGroup "Resources" [
     prefixPropertyGroup,
-    unitTests
+    resourcesUnitTests,
+    intervalSetUnitTests
   ]
   
 prefixPropertyGroup :: TestTree
@@ -43,12 +45,18 @@ prefixPropertyGroup = testGroup "Prefix properties tests"
     QC.testProperty "toRange and toPrefix V4" $
       \(ip :: Ipv4Prefix) -> (normalise $ toPrefixes $ toRange ip) == [ip],
     QC.testProperty "toRange and toPrefix V6" $
-      \(ip :: Ipv6Prefix) -> (normalise $ toPrefixes $ toRange ip) == [ip]
+      \(ip :: Ipv6Prefix) -> (normalise $ toPrefixes $ toRange ip) == [ip],
+    QC.testProperty "Every AS interval intersects with every of its element" $
+      \(asns :: [AsResource]) -> 
+          QC.forAll (sublistOf asns) $ \sub ->
+              let intervalSet = IS.fromList asns
+                  check as = normalise (IS.findIntersections as intervalSet) == [as]
+                in L.all check sub
   ]  
 
 
-unitTests :: TestTree
-unitTests = testGroup "AS resource unit tests" [
+resourcesUnitTests :: TestTree
+resourcesUnitTests = testGroup "AS resource unit tests" [
   HU.testCase "Should calculate intersection for ASN resource" $ do             
         intersection (AS (ASN 10)) (AS (ASN 15)) @?= []
         intersection (AS (ASN 10)) (AS (ASN 10)) @?= [AS (ASN 10)]
@@ -96,6 +104,15 @@ unitTests = testGroup "AS resource unit tests" [
       (subtractAsn (ASRange (ASN a0) (ASN a1)) (ASRange (ASN b0) (ASN b1))) @?= expected
 
 
-
-
-
+intervalSetUnitTests :: TestTree
+intervalSetUnitTests = testGroup "AS interval sets unit tests" [
+      HU.testCase "Should calculate intersection for ASN resources" $ do        
+        IS.findIntersections (AS (ASN 10)) (mkIS [AS (ASN 15)]) @?= []      
+        IS.findIntersections (AS (ASN 10)) (mkIS [AS (ASN 10)]) @?= [AS (ASN 10)]      
+        IS.findIntersections (AS (ASN 10)) (mkIS [AS (ASN 10), AS (ASN 15)]) @?= [AS (ASN 10)]      
+        IS.findIntersections (AS (ASN 10)) (mkIS [AS (ASN 10), AS (ASN 15), AS (ASN 20)]) @?= [AS (ASN 10)]      
+        IS.findIntersections (AS (ASN 30)) (mkIS [AS (ASN 10), AS (ASN 15), AS (ASN 20)]) @?= []
+        IS.findIntersections (AS (ASN 10)) (mkIS [ASRange (ASN 10) (ASN 15), AS (ASN 19), AS (ASN 20)]) @?= [AS (ASN 10)]
+  ]
+  where 
+    mkIS = IS.fromList 

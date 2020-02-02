@@ -7,7 +7,7 @@ import qualified Common.SmallSet as SmallSet
 
 import           RPKI.AppMonad
 import           RPKI.Errors
-import           RPKI.Resources
+import           RPKI.Resources.Resources
 
 validateChildParentResources :: ValidationRFC -> 
                                 AllResources -> 

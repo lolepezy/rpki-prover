@@ -30,7 +30,7 @@ import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
-import           RPKI.Resources        
+import           RPKI.Resources.Resources        
 import           RPKI.TAL
 import           RPKI.Util              (convert)
 import           RPKI.Validation.Crypto
