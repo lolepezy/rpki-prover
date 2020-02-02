@@ -62,7 +62,7 @@ instance WithLmdb LmdbStorage where
 
 instance WithTx LmdbStorage where    
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
-    readOnlyTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx . readonly)
+    readOnlyTx lmdb f = withROTransaction (getEnv lmdb) (f . LmdbTx)
     readWriteTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx)
 
 -- | Basic storage implemented using LMDB
