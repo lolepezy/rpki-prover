@@ -2,12 +2,12 @@
 {-# LANGUAGE NumericUnderscores #-}
 module RPKI.Validation.ResourceValidation where
 
-import Common.SmallSet (SmallSet)
-import qualified Common.SmallSet as SmallSet
-
 import           RPKI.AppMonad
 import           RPKI.Errors
+import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
+
 
 validateChildParentResources :: ValidationRFC -> 
                                 AllResources -> 
@@ -25,24 +25,24 @@ validateChildParentResources validationRFC childResources parentResources verifi
       ca <- check childAsns parentAsns (\(VerifiedRS (PrefixesAndAsns _ _ r)) -> r)
       f c4 c6 ca
 
-    check :: (Eq a, WithSetOps a) => 
-            (RSet (SmallSet a)) -> 
-            (RSet (SmallSet a)) -> 
-            (VerifiedRS PrefixesAndAsns -> SmallSet a) -> 
-            PureValidator conf (ResourceCheckResult a)
+    check :: Interval a => 
+            (RSet (IntervalSet a)) -> 
+            (RSet (IntervalSet a)) -> 
+            (VerifiedRS PrefixesAndAsns -> IntervalSet a) -> 
+            PureValidator conf (IS.ResourceCheckResult a)
     check c p verifiedSub = 
       case verifiedResources of 
         Nothing -> do 
           case (c, p) of 
             (_,       Inherit) -> pureError InheritWithoutParentResources
             (Inherit, RS ps)   -> pure $ Left $ Nested ps
-            (RS cs,   RS ps)   -> pure $ subsetCheck cs ps
+            (RS cs,   RS ps)   -> pure $ IS.subsetCheck cs ps
         Just vr -> 
           pure $ case (c, p) of 
             (Inherit, Inherit) -> Left $ Nested (verifiedSub vr)
-            (RS cs,   Inherit) -> subsetCheck cs (verifiedSub vr)
+            (RS cs,   Inherit) -> IS.subsetCheck cs (verifiedSub vr)
             (Inherit, RS _)    -> Left $ Nested (verifiedSub vr)
-            (RS cs,   RS _)    -> subsetCheck cs (verifiedSub vr)
+            (RS cs,   RS _)    -> IS.subsetCheck cs (verifiedSub vr)
 
     strict q4 q6 qa = 
       case (q4, q6, qa) of
@@ -63,7 +63,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
     AllResources childIpv4s childIpv6s childAsns = childResources
     AllResources parentIpv4s parentIpv6s parentAsns = parentResources
 
-    overclaimed (Left _) = SmallSet.empty
+    overclaimed (Left _) = IS.empty
     overclaimed (Right (_, Overclaiming o)) = o
 
     nested (Left (Nested n)) = n

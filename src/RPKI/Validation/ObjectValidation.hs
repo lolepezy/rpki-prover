@@ -31,6 +31,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources        
+import           RPKI.Resources.Types        
 import           RPKI.TAL
 import           RPKI.Util              (convert)
 import           RPKI.Validation.Crypto

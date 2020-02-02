@@ -32,6 +32,9 @@ fromList = SS . V.fromList
 toList :: SmallSet a -> [a]
 toList (SS v) = V.toList v
 
+toVector :: SmallSet a -> V.Vector a
+toVector (SS v) = v
+
 empty :: SmallSet a
 empty = fromList []
 

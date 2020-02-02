@@ -24,6 +24,7 @@ import           Data.X509
 
 import           RPKI.Domain
 import           RPKI.Resources.Resources   as R
+import           RPKI.Resources.Types
 import qualified RPKI.Util                  as U
 
 import           RPKI.Parse.Internal.Common
@@ -117,8 +118,8 @@ parseIpExt asns = mapParseErr $
       rs (af : _) = af
       addrFamily = onNextContainer Sequence $
         getAddressFamily "Expected an address family here" >>= \case
-          Right R.Ipv4F -> Left  <$> ipResourceSet ipv4Address
-          Right R.Ipv6F -> Right <$> ipResourceSet ipv6Address
+          Right Ipv4F -> Left  <$> ipResourceSet ipv4Address
+          Right Ipv6F -> Right <$> ipResourceSet ipv6Address
           Left af        -> throwParseError $ "Unsupported address family " <> show af
         where
           ipResourceSet address =
@@ -128,7 +129,7 @@ parseIpExt asns = mapParseErr $
       ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
       ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 
-      makeOneIP bs nz = [R.make bs (fromIntegral nz)]
+      makeOneIP bs nz = [make bs (fromIntegral nz)]
 
       ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
         getNextContainerMaybe Sequence >>= \case

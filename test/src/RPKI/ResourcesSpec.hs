@@ -25,6 +25,7 @@ import qualified Common.SmallSet                   as SmallSet
 import           RPKI.Orphans
 import qualified RPKI.Resources.IntervalSet        as IS
 import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
 
 
 
@@ -79,25 +80,25 @@ resourcesUnitTests = testGroup "AS resource unit tests" [
 
     HU.testCase "Should get intersection and overclaiming for ASNs" $ do
       let
-        asChild  = SmallSet.fromList [ASRange (ASN 10) (ASN 20)]
-        asParent = SmallSet.fromList [ASRange (ASN 15) (ASN 30)]
-        (Nested n, Overclaiming o) = intersectionAndOverclaimed asChild asParent
+        asChild  = IS.fromList [ASRange (ASN 10) (ASN 20)]
+        asParent = IS.fromList [ASRange (ASN 15) (ASN 30)]
+        (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals asChild asParent
         in do
-          n @?= SmallSet.fromList [ASRange (ASN 15) (ASN 20)]
-          o @?= (SmallSet.fromList $ normalise [ASRange (ASN 10) (ASN 14)])
+          n @?= IS.fromList [ASRange (ASN 15) (ASN 20)]
+          o @?= (IS.fromList $ normalise [ASRange (ASN 10) (ASN 14)])
       let
-        asChild  = SmallSet.fromList [
+        asChild  = IS.fromList [
             ASRange (ASN 10) (ASN 20), 
             ASRange (ASN 16) (ASN 26), 
             AS (ASN 27), 
             AS (ASN 32),
             AS (ASN 37) 
           ]
-        asParent = SmallSet.fromList [ASRange (ASN 15) (ASN 30), AS (ASN 37)]
-        (Nested n, Overclaiming o) = intersectionAndOverclaimed asChild asParent
+        asParent = IS.fromList [ASRange (ASN 15) (ASN 30), AS (ASN 37)]
+        (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals asChild asParent
         in do
-          n @?= SmallSet.fromList [ASRange (ASN 15) (ASN 27), AS (ASN 37)]
-          o @?= (SmallSet.fromList $ normalise [ASRange (ASN 10) (ASN 14), AS (ASN 32)])
+          n @?= IS.fromList [ASRange (ASN 15) (ASN 27), AS (ASN 37)]
+          o @?= (IS.fromList $ normalise [ASRange (ASN 10) (ASN 14), AS (ASN 32)])
   ]
   where 
     checkAnsSub (a0, a1) (b0, b1) expected = 

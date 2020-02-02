@@ -19,7 +19,7 @@ import           Data.Hourglass       (DateTime)
 import           GHC.Generics
 
 import           RPKI.Domain
-import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
 
 
 newtype ParseError s = ParseError s
@@ -55,34 +55,34 @@ data ValidationError = InvalidCert !T.Text |
     deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RrdpError = BrokenXml !T.Text | 
-                 BrokenSerial !B.ByteString |
-                 NoSessionId |
-                 NoSerial | 
-                 NoSnapshotHash | 
-                 NoSnapshotURI | 
-                 NoDeltaSerial | 
-                 NoDeltaURI | 
-                 NoDeltaHash |
-                 BadHash !B.ByteString |
-                 NoVersion | 
-                 BadVersion !B.ByteString | 
-                 NoPublishURI |
-                 BadBase64 String !B.ByteString |
-                 BadPublish !B.ByteString |
-                 NoHashInWithdraw |
-                 ContentInWithdraw !B.ByteString |
-                 LocalSerialBiggerThanRemote !Serial !Serial |
-                 NonConsecutiveDeltaSerials ![(Serial, Serial)] |
-                 CantDownloadNotification !String |
-                 CantDownloadSnapshot !String |
-                 CantDownloadDelta !String |
-                 SnapshotHashMismatch !Hash !Hash |
-                 DeltaHashMismatch !Hash !Hash !Serial
+                BrokenSerial !B.ByteString |
+                NoSessionId |
+                NoSerial | 
+                NoSnapshotHash | 
+                NoSnapshotURI | 
+                NoDeltaSerial | 
+                NoDeltaURI | 
+                NoDeltaHash |
+                BadHash !B.ByteString |
+                NoVersion | 
+                BadVersion !B.ByteString | 
+                NoPublishURI |
+                BadBase64 String !B.ByteString |
+                BadPublish !B.ByteString |
+                NoHashInWithdraw |
+                ContentInWithdraw !B.ByteString |
+                LocalSerialBiggerThanRemote !Serial !Serial |
+                NonConsecutiveDeltaSerials ![(Serial, Serial)] |
+                CantDownloadNotification !String |
+                CantDownloadSnapshot !String |
+                CantDownloadDelta !String |
+                SnapshotHashMismatch !Hash !Hash |
+                DeltaHashMismatch !Hash !Hash !Serial
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 data RsyncError = RsyncProcessError !Int !BL.ByteString |
-                  FileReadError !T.Text |
-                  RsyncDirError !T.Text
+                    FileReadError !T.Text |
+                    RsyncDirError !T.Text
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 data StorageError = StorageError !T.Text |
@@ -97,11 +97,11 @@ newtype ValidationContext = ValidationContext T.Text
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SomeError = ParseE (ParseError T.Text) | 
-                   TAL_E TALError | 
-                   RrdpE RrdpError |
-                   RsyncE RsyncError |
-                   StorageE StorageError | 
-                   ValidationE ValidationError
+                    TAL_E TALError | 
+                    RrdpE RrdpError |
+                    RsyncE RsyncError |
+                    StorageE StorageError | 
+                    ValidationE ValidationError
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 instance Exception SomeError

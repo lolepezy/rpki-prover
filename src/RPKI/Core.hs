@@ -21,6 +21,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Stores

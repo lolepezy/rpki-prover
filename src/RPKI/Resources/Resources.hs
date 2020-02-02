@@ -8,22 +8,22 @@
 
 module RPKI.Resources.Resources where
 
-import Prelude hiding (subtract)
+import           Prelude                               hiding (subtract)
 
 import           Codec.Serialise
 import           Control.DeepSeq
 
 import qualified Data.ByteString                       as B
 
-import Common.SmallSet (SmallSet)
-import qualified Common.SmallSet as SmallSet
+import           Common.SmallSet                       (SmallSet)
+import qualified Common.SmallSet                       as SmallSet
 
-import           Data.Data                             (Typeable)
 import           Data.Bits
-import           Data.Maybe
+import           Data.Data                             (Typeable)
 import           Data.Either
 import           Data.Kind
 import qualified Data.List                             as L
+import           Data.Maybe
 import qualified Data.Set                              as S
 import           Data.Word
 import           GHC.Generics
@@ -35,93 +35,8 @@ import           HaskellWorks.Data.Network.Ip.SafeEnum
 import           HaskellWorks.Data.Network.Ip.Validity
 import           HaskellWorks.Data.Network.Ip.Word128
 
-data AddrFamily = Ipv4F | Ipv6F
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical) 
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-newtype ASN = ASN Word32
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass (NFData, Serialise)  
-  deriving newtype Enum
-
-data AsResource =  AS !ASN
-                 | ASRange !ASN !ASN
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-
-class WithSetOps p where
-  contains :: p -> p -> Bool
-  intersection :: p -> p -> [p]
-  subtract :: p -> p -> [p]
-  normalise :: [p] -> [p]
-
-class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p), WithSetOps p) => Prefix p where
-  type Address p :: Type
-  make :: B.ByteString -> Word8 -> p
-  toRange :: p -> Range (Address p)
-  toPrefixes :: Range (Address p) -> [p]  
-
-
-data ValidationRFC = Strict_ | Reconsidered_
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-
-data RSet r = RS !r | Inherit
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-data IpResourceSet = IpResourceSet
-    !(RSet (SmallSet Ipv4Prefix))
-    !(RSet (SmallSet Ipv6Prefix))
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-data PrefixeSet = PrefixeSet 
-  !(SmallSet Ipv4Prefix) 
-  !(SmallSet Ipv6Prefix)
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-
-newtype IpResources = IpResources IpResourceSet
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-newtype AsResources = AsResources (RSet (SmallSet AsResource))
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-data AllResources = AllResources 
-  !(RSet (SmallSet Ipv4Prefix))
-  !(RSet (SmallSet Ipv6Prefix))
-  !(RSet (SmallSet AsResource))
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-data PrefixesAndAsns = PrefixesAndAsns 
-  !(SmallSet Ipv4Prefix)
-  !(SmallSet Ipv6Prefix)
-  !(SmallSet AsResource)
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
-
-newtype Nested a = Nested a
-newtype Overclaiming a = Overclaiming a
-
-
-newtype VerifiedRS a = VerifiedRS a
-  deriving stock (Show, Eq, Ord, Typeable, Generic) 
-  deriving anyclass Serialise
+import           RPKI.Resources.IntervalSet            as IS
+import           RPKI.Resources.Types
 
 
 instance WithSetOps Ipv4Prefix where
@@ -139,6 +54,9 @@ instance Prefix Ipv4Prefix where
   toRange (Ipv4Prefix p) = V4.blockToRange p
   toPrefixes = map Ipv4Prefix . V4.rangeToBlocks
 
+instance Interval Ipv4Prefix where
+  type Point Ipv4Prefix = Address Ipv4Prefix
+  start = startV4
   
 instance WithSetOps Ipv6Prefix where
   contains (Ipv6Prefix ip1) (Ipv6Prefix ip2) = 
@@ -148,6 +66,11 @@ instance WithSetOps Ipv6Prefix where
   subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
     where
       (!f1, !l1, !f2, !l2) = endsV6 p1 p2
+
+instance Interval Ipv6Prefix where
+  type Point Ipv6Prefix = Address Ipv6Prefix
+  start = startV6
+
 
 instance Prefix Ipv6Prefix where
   type Address Ipv6Prefix = V6.IpAddress
@@ -160,6 +83,11 @@ instance WithSetOps AsResource where
   intersection = intersectionAsn
   subtract = subtractAsn
   normalise = normaliseAsns
+
+instance Interval AsResource where
+  type Point AsResource = ASN
+  start (AS a) = a
+  start (ASRange a _) = a
 
 
 mkIpv4Block :: Word32 -> Word8 -> Ipv4Prefix
@@ -266,13 +194,13 @@ normaliseAsns asns = mergeAsRanges $ L.sortOn rangeStart asns
   
 
 emptyIpSet :: IpResourceSet
-emptyIpSet = IpResourceSet (RS SmallSet.empty) (RS SmallSet.empty)
+emptyIpSet = IpResourceSet (RS IS.empty) (RS IS.empty)
 
-emptyRS :: RSet (SmallSet a)
-emptyRS = RS SmallSet.empty
+emptyRS :: RSet (IntervalSet a)
+emptyRS = RS IS.empty
 
-toRS :: [a] -> RSet (SmallSet a)
-toRS = RS . SmallSet.fromList
+toRS :: WithSetOps a => [a] -> RSet (IntervalSet a)
+toRS = RS . IS.fromList
 
 allResources :: IpResources -> AsResources -> AllResources
 allResources (IpResources (IpResourceSet i4 i6)) (AsResources a) = AllResources i4 i6 a
@@ -281,7 +209,7 @@ emptyAllRS :: AllResources
 emptyAllRS = AllResources emptyRS emptyRS emptyRS
 
 emptyAll :: PrefixesAndAsns
-emptyAll = PrefixesAndAsns SmallSet.empty SmallSet.empty SmallSet.empty
+emptyAll = PrefixesAndAsns IS.empty IS.empty IS.empty
 
 
 containsAsn :: AsResource -> AsResource -> Bool
@@ -342,59 +270,34 @@ optimiseAsns = catMaybes . map f
       | a > b     = Nothing
       | otherwise = Just r
 
-type ResourceCheckResult a = Either 
-    (Nested (SmallSet a)) 
-    (Nested (SmallSet a), Overclaiming (SmallSet a))
-
-subsetCheck :: (Eq a, WithSetOps a) =>    
-                SmallSet a -> SmallSet a -> ResourceCheckResult a              
-subsetCheck s b = 
-  if SmallSet.null o 
-    then Left $ Nested i
-    else Right (Nested i, Overclaiming o)
-  where
-    (Nested i, Overclaiming o) = intersectionAndOverclaimed s b   
-
--- | For two sets, find intersecting and overclaming resource subsets
+ -- | For two sets, find intersecting and overclaming resource subsets
 -- 
-intersectionAndOverclaimed :: (Eq a, WithSetOps a) =>    
-                            SmallSet a -> SmallSet a -> 
-                            (Nested (SmallSet a), Overclaiming (SmallSet a))
-intersectionAndOverclaimed smaller bigger =     
-    (Nested $ SmallSet.fromList intersectionRS, 
-     Overclaiming $ SmallSet.fromList overclaimingRS)
-  where
-    intersectionRS = normalise $ good <> concatMap fst problematic 
-    overclaimingRS = normalise $ concatMap snd problematic
+-- intersectionAndOverclaimed :: (Eq a, WithSetOps a) =>    
+--                             IntervalSet a -> IntervalSet a -> 
+--                             (Nested (IntervalSet a), Overclaiming (IntervalSet a))
+-- intersectionAndOverclaimed smaller bigger =     
+--     (Nested $ IS.fromList intersectionRS, Overclaiming $ IS.fromList overclaimingRS)
+--   where
+--     intersectionRS = normalise $ good <> concatMap fst problematic 
+--     overclaimingRS = normalise $ concatMap snd problematic
 
-    (problematic, good) = partitionEithers $ concatMap overclamingPart $ SmallSet.toList smaller            
+--     (problematic, good) = partitionEithers $ concatMap overclamingPart $ SmallSet.toList smaller            
     
-    overclamingPart small = 
-      case intersections' of
-          [] -> [Left ([], [small])]
-          i  -> i
-      where
-        intersections' = (flip L.map) intersections $ 
-          \(intersecting, big) ->        
-              if big `contains` small
-                then Right small
-                else Left (intersecting, small `subtract` big)
-        intersections =       
-          L.filter (not . L.null . fst) $
-          L.map (\big -> (small `intersection` big, big)) biggerList
+--     overclamingPart small = 
+--       case intersections' of
+--           [] -> [Left ([], [small])]
+--           i  -> i
+--       where
+--         intersections' = (flip L.map) intersections $ 
+--           \(intersecting, big) ->        
+--               if big `contains` small
+--                 then Right small
+--                 else Left (intersecting, small `subtract` big)
+--         intersections =       
+--           L.filter (not . L.null . fst) $
+--           L.map (\big -> (small `intersection` big, big)) biggerList
 
-    biggerList = SmallSet.toList bigger
-
-
--- Serialise instances
-instance Serialise (V4.IpBlock Canonical)
-instance Serialise (V6.IpBlock Canonical)
-instance Serialise (Range V4.IpAddress)
-instance Serialise (Range V6.IpAddress)
-instance Serialise V4.IpAddress
-instance Serialise V6.IpAddress
-instance Serialise V4.IpNetMask
-instance Serialise V6.IpNetMask
+--     biggerList = SmallSet.toList bigger
 
 
 -- Bits munching
@@ -426,7 +329,7 @@ someW8ToW128 ws = (
 rightPad :: Int -> a -> [a] -> [a]
 rightPad n a = go 0
   where
-    go !acc [] | acc < n  = a : go (acc + 1) []
-               | otherwise = []  
+    go !acc []  | acc < n  = a : go (acc + 1) []
+                | otherwise = []  
     go !acc (x : xs) = x : go (acc + 1) xs    
 {-# INLINE rightPad #-}

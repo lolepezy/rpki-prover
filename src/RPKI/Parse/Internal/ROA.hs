@@ -17,6 +17,7 @@ import Data.Bifunctor
 
 import RPKI.Domain  
 import RPKI.Resources.Resources
+import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 

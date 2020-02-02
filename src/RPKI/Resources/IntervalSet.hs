@@ -8,49 +8,38 @@
 
 module RPKI.Resources.IntervalSet where
 
+import Prelude hiding (subtract, null)
+
 import           Codec.Serialise
 
-import           Common.SmallSet          (SmallSet(..))
+import           Common.SmallSet          (SmallSet (..))
 import qualified Common.SmallSet          as SmallSet
 
-import qualified Data.Vector              as V
+import           Data.Either              (partitionEithers)
 import           Data.Kind
+import qualified Data.List                as L
+import qualified Data.Vector              as V
 import           GHC.Generics
-import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
 
+empty ::IntervalSet a
+empty = IntervalSet SmallSet.empty
 
-class (WithSetOps p, Eq (Point p), Ord (Point p)) => Interval p where
-  type Point p :: Type
-  start :: p -> (Point p)
-
-
-instance Interval Ipv4Prefix where
-  type Point Ipv4Prefix = Address Ipv4Prefix
-  start = startV4
-
-instance Interval Ipv6Prefix where
-  type Point Ipv6Prefix = Address Ipv6Prefix
-  start = startV6
-
-instance Interval AsResource where
-  type Point AsResource = ASN
-  start (AS a) = a
-  start (ASRange a _) = a
-
-
--- | Representation of the resource set
-newtype IntervalSet a = IntervalSet (SmallSet a) 
-  deriving stock (Show, Eq, Ord, Generic) 
-  deriving anyclass Serialise
+null ::IntervalSet a -> Bool
+null (IntervalSet s) = SmallSet.null s
 
 fromList :: WithSetOps a => [a] -> IntervalSet a
 fromList = IntervalSet . SmallSet.fromList . normalise 
 
-
 findIntersections :: Interval a => a -> IntervalSet a -> [a]
-findIntersections a (IntervalSet (SS v)) = 
+findIntersections a as = concatMap fst $ findFullIntersections a as
+
+-- | Use binary search to find intersections of an intetval within an interval set.
+-- | Return also the orginal intervals it intersects with.
+findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
+findFullIntersections a (IntervalSet (SS v)) = 
   case (V.unsafeIndex v 0) `intersection` a of
-      [] -> case (V.unsafeIndex v (V.length v - 1)) `intersection` a of
+      [] -> case (V.unsafeIndex v lastIndex) `intersection` a of
         [] -> goBinary 0 lastIndex
         _  -> goBackwards lastIndex
       _  -> goForward 0
@@ -68,21 +57,66 @@ findIntersections a (IntervalSet (SS v)) =
             _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
       where                  
         middle = V.unsafeIndex v middleIndex
-        middleIndex = fromIntegral (((fromIntegral b :: Word) + (fromIntegral e :: Word)) `div` 2) :: Int
+        middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
+          where
+            word n = fromIntegral n :: Word
+            {-# INLINE word #-}
     
     goForward index 
       | index >= len = []
       | otherwise = 
-          case V.unsafeIndex v index `intersection` a of
+          case big `intersection` a of
             [] -> []
-            is -> is <> goForward (index + 1)
+            is -> (is, big) : goForward (index + 1)
+      where
+        big = V.unsafeIndex v index
     
     goBackwards index
       | index <= 0 = []
       | otherwise = 
-          case V.unsafeIndex v index `intersection` a of
+          case big `intersection` a of
             [] -> []
-            is -> goBackwards (index - 1) <> is
+            is -> goBackwards (index - 1) <> [(is, big)]
+      where
+        big = V.unsafeIndex v index
           
     len = V.length v
-    lastIndex = V.length v - 1        
+    lastIndex = len - 1        
+
+
+type ResourceCheckResult a = Either 
+    (Nested (IntervalSet a)) 
+    (Nested (IntervalSet a), Overclaiming (IntervalSet a))
+
+
+-- | For two sets, find intersecting and overclaming resource subsets
+-- 
+intersectionAndOverclaimedIntervals :: Interval a =>    
+                                      IntervalSet a -> IntervalSet a -> 
+                                      (Nested (IntervalSet a), Overclaiming (IntervalSet a))
+intersectionAndOverclaimedIntervals (IntervalSet (SS smaller)) bigger =     
+    (Nested $ fromList intersectionRS, Overclaiming $ fromList overclaimingRS)
+  where
+    intersectionRS = good <> concatMap fst problematic 
+    overclaimingRS = concatMap snd problematic
+
+    (problematic, good) = partitionEithers $ concatMap overclamingPart smaller
+
+    overclamingPart smallerInterval = 
+      case findFullIntersections smallerInterval bigger of
+        []             -> [Left ([], [smallerInterval])]
+        intersections  -> (flip L.map) intersections $ 
+          \(intersection, biggerInterval) ->        
+              if biggerInterval `contains` smallerInterval
+                then Right smallerInterval
+                else Left (intersection, smallerInterval `subtract` biggerInterval)       
+
+
+subsetCheck :: Interval a =>
+                IntervalSet a -> IntervalSet a -> ResourceCheckResult a              
+subsetCheck s b = 
+  if null o 
+    then Left $ Nested i
+    else Right (Nested i, Overclaiming o)
+  where
+    (Nested i, Overclaiming o) = intersectionAndOverclaimedIntervals s b                  

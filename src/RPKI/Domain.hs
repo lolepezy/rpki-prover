@@ -31,6 +31,7 @@ import Data.ASN1.OID
 import Data.ASN1.Types
 
 import RPKI.Resources.Resources as RS
+import RPKI.Resources.Types
 import RPKI.Serialise.Orphans
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
