@@ -222,7 +222,7 @@ instance Arbitrary AsResource where
       as = AS . ASN <$> arbitrary
       asRange = do
         s <- arbitrary
-        e <- suchThat arbitrary (\w -> (fromIntegral w) > s)
+        e <- suchThat arbitrary ((>s) . fromIntegral)
         pure $ ASRange (ASN s) (ASN e)
   shrink = genericShrink
 

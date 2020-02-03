@@ -26,32 +26,32 @@ newtype ParseError s = ParseError s
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ValidationError = InvalidCert !T.Text |
-                        ParentDoesntHaveResources |
-                        NoAKIinManifest |
-                        ROACannotBeAParent |
-                        NoAKI | 
-                        SPKIMismatch !EncodedBase64 !EncodedBase64 |
-                        UnknownObjectAsTACert |
-                        ObjectIsTooSmall !Integer |
-                        ObjectIsTooBig !Integer |
-                        TACertificateLocalIsNewer !Serial !Serial |
-                        InvalidSignature !T.Text |                        
-                        TACertAKIIsNotEmpty !URI |
-                        CertNoPolicyExtension |
-                        CertWrongPolicyExtension !B.ByteString |
-                        NoMFT !AKI !(NonEmpty URI) |
-                        NoCRLOnMFT !AKI !(NonEmpty URI) |
-                        MoreThanOneCRLOnMFT !AKI !(NonEmpty URI) |
-                        NoCRLExists !AKI !(NonEmpty URI) |
-                        CRLHashPointsToAnotherObject !Hash !(NonEmpty URI) |
-                        NextUpdateTimeNotSet |
-                        NextUpdateTimeIsBeforeNow !DateTime |
-                        RevokedEECertificate |
-                        RevokedResourceCertificate |
-                        AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
-                        ManifestEntryDontExist !Hash |
-                        OverclaimedResources PrefixesAndAsns |
-                        InheritWithoutParentResources 
+            ParentDoesntHaveResources |
+            NoAKIinManifest |
+            ROACannotBeAParent |
+            NoAKI | 
+            SPKIMismatch !EncodedBase64 !EncodedBase64 |
+            UnknownObjectAsTACert |
+            ObjectIsTooSmall !Integer |
+            ObjectIsTooBig !Integer |
+            TACertificateLocalIsNewer !Serial !Serial |
+            InvalidSignature !T.Text |                        
+            TACertAKIIsNotEmpty !URI |
+            CertNoPolicyExtension |
+            CertWrongPolicyExtension !B.ByteString |
+            NoMFT !AKI !Locations |
+            NoCRLOnMFT !AKI !Locations |
+            MoreThanOneCRLOnMFT !AKI !Locations |
+            NoCRLExists !AKI !Locations |
+            CRLHashPointsToAnotherObject !Hash !Locations |
+            NextUpdateTimeNotSet |
+            NextUpdateTimeIsBeforeNow !DateTime |
+            RevokedEECertificate |
+            RevokedResourceCertificate |
+            AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
+            ManifestEntryDontExist !Hash |
+            OverclaimedResources PrefixesAndAsns |
+            InheritWithoutParentResources 
     deriving (Show, Eq, Ord, Typeable, Generic)
     
 data RrdpError = BrokenXml !T.Text | 
@@ -93,7 +93,7 @@ newtype TALError = TALError T.Text
     deriving (Show, Eq, Ord, Typeable, Generic)
     deriving newtype Semigroup
 
-newtype ValidationContext = ValidationContext T.Text 
+newtype VContext = VContext T.Text 
     deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SomeError = ParseE (ParseError T.Text) | 
@@ -106,8 +106,8 @@ data SomeError = ParseE (ParseError T.Text) |
 
 instance Exception SomeError
 
-newtype ValidationWarning = ValidationWarning SomeError
+newtype VWarning = VWarning SomeError
     deriving (Show, Eq, Ord, Typeable, Generic)
 
-vContext :: URI -> ValidationContext
-vContext (URI u) = ValidationContext u
+vContext :: URI -> VContext
+vContext (URI u) = VContext u

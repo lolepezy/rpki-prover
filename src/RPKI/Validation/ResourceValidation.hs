@@ -56,7 +56,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
         (Left (Nested _), Left (Nested _), Left (Nested _)) -> 
           pure ()
         _ -> 
-          pureWarning $ ValidationWarning $ ValidationE $ OverclaimedResources $
+          pureWarning $ VWarning $ ValidationE $ OverclaimedResources $
             PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
       pure $ VerifiedRS $ PrefixesAndAsns (nested q4) (nested q6) (nested qa)          
 

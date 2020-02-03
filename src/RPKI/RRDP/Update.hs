@@ -184,7 +184,7 @@ deltaSerial (DeltaInfo _ _ s) = s
 nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1
 
--- TODO Add warnings and errors to the specific ValidationContext
+-- TODO Add warnings and errors to the specific VContext
 processRrdp :: (Has AppLogger conf, Has Config conf, Storage s) =>                 
                 RrdpRepository ->
                 RpkiObjectStore s ->

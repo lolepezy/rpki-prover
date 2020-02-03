@@ -63,6 +63,7 @@ newtype SessionId = SessionId B.ByteString deriving stock (Show, Eq, Ord, Typeab
 newtype Serial = Serial Integer deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype Version = Version Integer deriving stock (Show, Eq, Ord, Typeable, Generic)
 
+type Locations = NonEmpty URI
 
 -- | Domain objects
 
@@ -74,7 +75,7 @@ class WithAKI a where
     getAKI :: a -> Maybe AKI
 
 class WithLocations a where
-    getLocations :: a -> NonEmpty URI 
+    getLocations :: a -> Locations 
 
 class WithHash a where
     getHash :: a -> Hash
@@ -87,7 +88,7 @@ class WithResourceCertificate a where
 
 data IdentityMeta = IdentityMeta 
                    !Hash 
-    {-# UNPACK #-} !(NonEmpty URI)
+    {-# UNPACK #-} !Locations
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data With meta content = With !meta !content 

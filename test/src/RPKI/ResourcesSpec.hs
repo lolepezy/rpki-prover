@@ -21,7 +21,6 @@ import           Test.Tasty.HUnit                  ((@=?), (@?=))
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
-import qualified Common.SmallSet                   as SmallSet
 import           RPKI.Orphans
 import qualified RPKI.Resources.IntervalSet        as IS
 import           RPKI.Resources.Resources
