@@ -7,6 +7,7 @@ import Control.Monad
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
+import Data.Text.Encoding (decodeUtf8)
 
 import Data.Char (chr)
 import Data.Maybe
@@ -29,7 +30,7 @@ type ParseResult a = Either (ParseError T.Text) a
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
-id_pe_sia :: OID
+id_pe_sia, id_ad_rpki_notify, id_ad_rpki_repository :: OID
 
 oid_pkix = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
@@ -38,6 +39,9 @@ id_pe_ipAddrBlocks        = oid_pe <> [ 7 ]
 id_pe_autonomousSysIds    = oid_pe <> [ 8 ]
 id_pe_ipAddrBlocks_v2     = oid_pe <> [ 28 ]
 id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]  
+
+id_ad_rpki_notify         = oid_pkix <> [ 48, 13 ]  
+id_ad_rpki_repository     = oid_pkix <> [ 48, 5 ]  
 
 id_cp_ipAddr_asNumber :: OID
 id_cp_ipAddr_asNumber = oid_pkix <> [ 14, 2 ]
@@ -163,3 +167,8 @@ getSiaValue c oid = do
             _ -> pure Nothing
         toMaybe = either (const Nothing) Just
 
+getRrdpNotifyUri :: Certificate -> Maybe URI
+getRrdpNotifyUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_notify
+
+getRepositoryUri :: Certificate -> Maybe URI
+getRepositoryUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_repository
