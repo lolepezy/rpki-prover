@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Parse.Internal.Common where
-  
+
 import Data.Bifunctor
+import Control.Monad
 
 import qualified Data.ByteString as B  
 import qualified Data.Text as T  
@@ -28,6 +29,7 @@ type ParseResult a = Either (ParseError T.Text) a
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
+id_pe_sia :: OID
 
 oid_pkix = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
@@ -66,81 +68,98 @@ mapParseErr = first fmtErr
 
 parseError :: String -> ASN1 -> ParseASN1 a
 parseError m a = throwParseError $ case m of 
-      [] -> show a
-      m' -> m' <> "(" <> show a <> ")"
+    [] -> show a
+    m' -> m' <> "(" <> show a <> ")"
 
 getNull_ :: ParseASN1 a -> ParseASN1 a
 getNull_ f = getNull f ""
 
 getNull :: ParseASN1 a -> String -> ParseASN1 a
 getNull f m = getNext >>= \case 
-      Null -> f
-      a    -> parseError m a
+    Null -> f
+    a    -> parseError m a
 
 getInteger :: (Integer -> ParseASN1 a) -> String -> ParseASN1 a
 getInteger f m = getNext >>= \case 
-      IntVal i -> f i
-      b        -> throwParseError $ m <> "(" <> show b <> ")"
+    IntVal i -> f i
+    b        -> throwParseError $ m <> "(" <> show b <> ")"
 
 getOID :: (OID -> ParseASN1 a) -> String -> ParseASN1 a
 getOID f m = getNext >>= \case 
-      OID oid -> f oid
-      a       -> parseError m a
+    OID oid -> f oid
+    a       -> parseError m a
 
 getIA5String :: (String -> ParseASN1 a) -> String -> ParseASN1 a
 getIA5String f m = getNext >>= \case 
-      ASN1String (ASN1CharacterString IA5 bs) -> f $ map (chr .fromEnum) $ B.unpack bs
-      a                                       -> parseError m a
+    ASN1String (ASN1CharacterString IA5 bs) -> f $ map (chr . fromEnum) $ B.unpack bs
+    a                                       -> parseError m a
 
 getBitString :: (B.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
 getBitString f m = getNext >>= \case 
-      BitString (BitArray _ bs) -> f bs
-      a                         -> parseError m a
+    BitString (BitArray _ bs) -> f bs
+    a                         -> parseError m a
 
 getAddressFamily :: String -> ParseASN1 (Either B.ByteString AddrFamily)
 getAddressFamily m = getNext >>= \case 
-  (OctetString familyType) -> 
-    case familyType of 
-      "\NUL\SOH" -> pure $ Right Ipv4F
-      "\NUL\STX" -> pure $ Right Ipv6F
-      af         -> pure $ Left af 
-  a              -> parseError m a      
-  
+    (OctetString familyType) -> 
+        case familyType of 
+            "\NUL\SOH" -> pure $ Right Ipv4F
+            "\NUL\STX" -> pure $ Right Ipv6F
+            af         -> pure $ Left af 
+    a              -> parseError m a      
+
 -- Certificate utilities
 extVal :: [ExtensionRaw] -> OID -> Maybe B.ByteString
 extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 
 getExts :: Certificate -> [ExtensionRaw]
-getExts certificate = fromMaybe [] extensions 
-  where
-    Extensions extensions = certExtensions certificate
+getExts (certExtensions -> Extensions extensions) = fromMaybe [] extensions   
 
 getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
 getExtsSign = getExts . cwsX509certificate
 
 parseKI :: B.ByteString -> ParseResult KI
 parseKI bs = case decodeASN1' BER bs of
-      Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
-      Right [OctetString bytes] -> pure $ KI bytes
-      Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ KI bytes
-      Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
+    Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
+    Right [OctetString bytes] -> pure $ KI bytes
+    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ KI bytes
+    Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
 
 oid2Hash :: OID -> ParseASN1 HashALG
 oid2Hash = \case
-      oid | oid == id_sha256 -> pure HashSHA256
-          | otherwise        -> throwParseError $ "Unknown hashing algorithm OID: " <> show oid
+    oid | oid == id_sha256 -> pure HashSHA256
+        | otherwise        -> throwParseError $ "Unknown hashing algorithm OID: " <> show oid
 
 parseSignature :: ParseASN1 SignatureValue
 parseSignature = getNext >>= \case 
-          OctetString sig            -> pure $ SignatureValue sig
-          BitString (BitArray _ sig) -> pure $ SignatureValue sig
-          s                          -> throwParseError $ "Unknown signature value : " <> show s
-  
+    OctetString sig            -> pure $ SignatureValue sig
+    BitString (BitArray _ sig) -> pure $ SignatureValue sig
+    s                          -> throwParseError $ "Unknown signature value : " <> show s
 
 unifyCert :: SignedExact X509.Certificate -> CertificateWithSignature
 unifyCert signedExact = CertificateWithSignature {
-      cwsX509certificate = signedObject $ getSigned signedExact,
-      cwsSignatureAlgorithm = SignatureAlgorithmIdentifier $ signedAlg $ getSigned signedExact,
-      cwsSignature = SignatureValue $ signedSignature $ getSigned signedExact,
-      cwsEncoded = getSignedData signedExact      
-  }
+        cwsX509certificate = signedObject signed,
+        cwsSignatureAlgorithm = SignatureAlgorithmIdentifier $ signedAlg signed,
+        cwsSignature = SignatureValue $ signedSignature signed,
+        cwsEncoded = getSignedData signedExact      
+    }
+    where 
+        signed = getSigned signedExact
+
+
+getSiaValue :: Certificate -> OID -> Maybe B.ByteString
+getSiaValue c oid = do
+    sia  <- extVal (getExts c) id_pe_sia
+    asns <- toMaybe $ decodeASN1' BER sia
+    join $ toMaybe $ (flip runParseASN1) asns $ 
+            listToMaybe . catMaybes <$> (
+                onNextContainer Sequence $ getMany extractByOid)
+    where
+        extractByOid = getNextContainerMaybe Sequence >>= \case
+            Nothing -> pure Nothing
+            Just [OID oid', Other Context 6 value] 
+                | oid' == oid -> pure $ Just value
+                | otherwise   -> pure Nothing
+            _ -> pure Nothing
+        toMaybe = either (const Nothing) Just
+
