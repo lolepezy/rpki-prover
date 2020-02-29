@@ -32,16 +32,16 @@ supportedExtension filename =
 -- | Decide which parser to use based on the object's filename
 readObject :: String -> B.ByteString -> ParseResult RpkiObject
 readObject name content = do    
-  let ext = L.drop (L.length name - 3) name
-  let u = URI $ T.pack name
-  case ext of
-    "cer" -> parse_ u parseResourceCertificate CerRO content            
-    "mft" -> parse_ u parseMft MftRO content
-    "roa" -> parse_ u parseRoa RoaRO content            
-    "crl" -> parse_ u parseCrl CrlRO content            
-    _     -> Left $ fmtErr $ "Unknown object type: " <> show name
-    where
-        parse_ u parse constructor bs = do
-            f <- parse bs
-            pure $ constructor (f u)
+    let ext = L.drop (L.length name - 3) name
+    let u = URI $ T.pack name
+    case ext of
+        "cer" -> parse_ u parseResourceCertificate CerRO content            
+        "mft" -> parse_ u parseMft MftRO content
+        "roa" -> parse_ u parseRoa RoaRO content            
+        "crl" -> parse_ u parseCrl CrlRO content            
+        _     -> Left $ fmtErr $ "Unknown object type: " <> show name
+        where
+            parse_ u parse constructor bs = do
+                f <- parse bs
+                pure $ constructor (f u)
 

@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NumericUnderscores #-}
 
 import Colog hiding (extract)
 
@@ -11,11 +12,15 @@ import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
 
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TBQueue (newTBQueue)
+
 import qualified Codec.Serialise as Serialise
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
+import qualified Data.List as L
 import qualified Data.MultiMap as MultiMap
 import Data.MultiMap (MultiMap)
 
@@ -489,11 +494,14 @@ validateTreeFromTA env = do
               vContext $ URI "something.cer",               
               nu)              
   store <- createObjectStore env
+  resultStore <- createResultStore env
   x <- runValidatorT conf $ do
     CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     processRsync repo store
     -- lift3 $ say $ "taCert = " <> show taCert
-    validateTree store taCert (TopDownContext Nothing)
+    q1 <- lift3 $ atomically $ newTBQueue 100    
+    q2 <- lift3 $ atomically $ newTBQueue 100    
+    validateTree store resultStore taCert (TopDownContext Nothing q1 q2)
 
   say $ "x = " <> show x
 
@@ -508,37 +516,36 @@ validateTreeFromStore env = do
                 vContext $ URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer", 
                 nu)              
     store <- createObjectStore env
+    resultStore <- createResultStore env
     x <- runValidatorT conf $ do
-      CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
-      lift3 $ say $ "taCert = " <> show taCert
-      validateTree store taCert (TopDownContext Nothing)
-  
+        CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+        -- lift3 $ say $ "taCert = " <> show taCert
+        let e = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
+        lift3 $ say $ "taCert SIA = " <> show e
+        q1 <- lift3 $ atomically $ newTBQueue 100    
+        q2 <- lift3 $ atomically $ newTBQueue 100    
+        validateTree store resultStore taCert (TopDownContext Nothing q1 q2)
     say $ "x = " <> show x  
     pure ()  
 
 main :: IO ()
 main = do 
-  -- testCrl
-  -- runValidate  
-  -- mkLmdb >>= saveSerialised
-  -- mkLmdb >>= saveOriginal
-  -- usingLoggerT (LogAction putStrLn) $ lift app
-  -- processTAL
-  -- mkLmdb >>= void . saveRsyncRepo
-  -- mkLmdb "./data" >>= validatorUpdateRRDPRepo
+    -- mkLmdb >>= void . saveRsyncRepo
+    -- mkLmdb "./data" >>= validatorUpdateRRDPRepo
+    -- mkLmdb "./data/" >>= loadRsync
+    -- mkLmdb "./data/" >>= validateTreeFromStore
+    mkLmdb "./data/" >>= validateTreeFromTA
 
-  -- mkLmdb "./data/" >>= loadRsync
-  mkLmdb "./data/" >>= validateTreeFromStore
-  -- testSignature
+
 
 say :: String -> IO ()
 say s = do
-  let !ss = s
-  t <- getCurrentTime
-  putStrLn $ show t <> ": " <> ss
+    let !ss = s
+    t <- getCurrentTime
+    putStrLn $ show t <> ": " <> ss
 
 createLogger :: AppLogger
 createLogger = AppLogger fullMessageAction
-  where
-    fullMessageAction = upgradeMessageAction defaultFieldMap $ 
-      cmapM fmtRichMessageDefault logTextStdout  
+    where
+        fullMessageAction = upgradeMessageAction defaultFieldMap $ 
+            cmapM fmtRichMessageDefault logTextStdout  

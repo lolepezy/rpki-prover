@@ -16,8 +16,6 @@ import Data.Has
 import Data.Bifunctor
 import RPKI.Errors
 
-type VResult a = (Either SomeError a, [VWarning])
-
 -- Application monad stack
 type ValidatorT env m r = Has VContext env => 
         ReaderT env (ExceptT SomeError (StateT [VWarning] m)) r

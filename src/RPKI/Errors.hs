@@ -8,10 +8,11 @@ import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text            as T
 
-import           Data.List.NonEmpty
-import          Codec.Serialise
+import           Codec.Serialise
 import           Control.DeepSeq
 import           Control.Exception
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 
 import           Data.Data            (Typeable)
 import           Data.Hourglass       (DateTime)
@@ -23,7 +24,7 @@ import           RPKI.Resources.Types
 
 
 newtype ParseError s = ParseError s
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 data ValidationError = InvalidCert !T.Text |
             ParentDoesntHaveResources |
@@ -52,7 +53,7 @@ data ValidationError = InvalidCert !T.Text |
             ManifestEntryDontExist !Hash |
             OverclaimedResources PrefixesAndAsns |
             InheritWithoutParentResources 
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
     
 data RrdpError = BrokenXml !T.Text | 
                 BrokenSerial !B.ByteString |
@@ -78,23 +79,23 @@ data RrdpError = BrokenXml !T.Text |
                 CantDownloadDelta !String |
                 SnapshotHashMismatch !Hash !Hash |
                 DeltaHashMismatch !Hash !Hash !Serial
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 data RsyncError = RsyncProcessError !Int !BL.ByteString |
                     FileReadError !T.Text |
                     RsyncDirError !T.Text
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 data StorageError = StorageError !T.Text |
                     DeserialisationError !T.Text
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 newtype TALError = TALError T.Text 
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
     deriving newtype Semigroup
 
-newtype VContext = VContext T.Text 
-    deriving (Show, Eq, Ord, Typeable, Generic)
+newtype VContext = VContext (NE.NonEmpty URI) 
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 data SomeError = ParseE (ParseError T.Text) | 
                     TAL_E TALError | 
@@ -102,12 +103,15 @@ data SomeError = ParseE (ParseError T.Text) |
                     RsyncE RsyncError |
                     StorageE StorageError | 
                     ValidationE ValidationError
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 instance Exception SomeError
 
 newtype VWarning = VWarning SomeError
-    deriving (Show, Eq, Ord, Typeable, Generic)
+    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
 
 vContext :: URI -> VContext
-vContext (URI u) = VContext u
+vContext u = VContext $ u :| []
+
+childVContext :: VContext -> URI -> VContext
+childVContext (VContext us) u = VContext $ u `NE.cons` us

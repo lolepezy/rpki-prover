@@ -104,3 +104,23 @@ getTA tx (TAStore s) name = M.get tx s name
 
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a
+
+
+data VProblem = VErr SomeError | VWarn VWarning
+    deriving (Show, Eq, Generic, Serialise)
+
+data VResult = VResult {
+    problem :: ![VProblem],
+    path    :: !VContext
+} deriving (Show, Eq, Generic, Serialise)
+
+-- | Validation result store
+data VResultStore s = VResultStore {
+    results  :: SMap "results" s VContext VResult
+}
+
+instance Storage s => WithStorage s (VResultStore s) where
+    storage (VResultStore s) = storage s
+
+putVResult :: Storage s => Tx s 'RW -> VResultStore s -> VResult -> IO ()
+putVResult tx (VResultStore s) vr = M.put tx s (path vr) vr
