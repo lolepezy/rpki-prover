@@ -37,10 +37,10 @@ import           RPKI.Validation.ResourceValidation
 
 -- | Current time that is to be passed into the environment of validating functions
 newtype Now = Now DateTime
-  deriving (Show, Eq, Ord)
+    deriving (Show, Eq, Ord)
 
 newtype Validated a = Validated a
-  deriving (Show, Eq, Typeable, Generic)
+    deriving (Show, Eq, Typeable, Generic)
 
 
 now :: IO Now 

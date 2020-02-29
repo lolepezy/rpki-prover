@@ -31,7 +31,7 @@ fromList = IntervalSet . V.fromList . normalise
 findIntersections :: Interval a => a -> IntervalSet a -> [a]
 findIntersections a as = concatMap fst $ findFullIntersections a as
 
--- | Use binary search to find intersections of an intetval within an interval set.
+-- | Use binary search to find intersections of an interval within an interval set.
 -- | Return also the orginal intervals it intersects with.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
 findFullIntersections a (IntervalSet v) = 

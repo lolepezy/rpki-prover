@@ -127,89 +127,89 @@ loadRsyncRepository logger config topPath objectStore = do
             Chan.writeChan chanIn Nothing)        
 
     readFiles chanIn currentPath = do
-      names <- getDirectoryContents currentPath
-      let properNames = filter (`notElem` [".", ".."]) names
-      forM_ properNames $ \name -> do
-        let path = currentPath </> name
-        doesDirectoryExist path >>= \case
-          True  -> readFiles chanIn path
-          False -> 
-            when (supportedExtension path) $ do
-              a <- async $ do 
-                (_, content)  <- getSizeAndContent path                
-                pure $! case content of 
-                  Left e   -> SError $ ValidationE e
-                  Right bs -> 
-                    case first ParseE $ readObject path bs of
-                      Left e   -> SError e
-                      -- "toStorableObject ro" has to happen in this thread, as it is the way to 
-                      -- force computation of the serialised object and gain some parallelism
-                      Right ro -> SObject $ toStorableObject ro
-                  
-              Chan.writeChan chanIn $ Just a      
+        names <- getDirectoryContents currentPath
+        let properNames = filter (`notElem` [".", ".."]) names
+        forM_ properNames $ \name -> do
+            let path = currentPath </> name
+            doesDirectoryExist path >>= \case
+                True  -> readFiles chanIn path
+                False -> 
+                    when (supportedExtension path) $ do
+                        a <- async $ do 
+                            (_, content)  <- getSizeAndContent path                
+                            pure $! case content of 
+                                Left e   -> SError $ ValidationE e
+                                Right bs -> 
+                                    case first ParseE $ readObject path bs of
+                                        Left e   -> SError e
+                                        -- "toStorableObject ro" has to happen in this thread, as it is the way to 
+                                        -- force computation of the serialised object and gain some parallelism
+                                        Right ro -> SObject $ toStorableObject ro
+                        
+                        Chan.writeChan chanIn $ Just a      
 
     saveObjects counter chanOut = 
-      first (StorageError . U.fmtEx) <$> 
-        try (rwTx objectStore go)
-      where 
-        go tx = 
-          Chan.readChan chanOut >>= \case 
-            Nothing -> pure ()
-            Just a  -> try (wait a) >>= process tx >> go tx
+        first (StorageError . U.fmtEx) <$> 
+            try (rwTx objectStore go)
+        where 
+            go tx = 
+                Chan.readChan chanOut >>= \case 
+                    Nothing -> pure ()
+                    Just a  -> try (wait a) >>= process tx >> go tx
 
-        process tx = \case
-          Left (e :: SomeException) -> 
-            logError_ logger [i|An error reading the object: #{e}|]
-          Right (SError e) -> 
-            -- TODO Do something with the validation result here
-            logError_ logger [i|An error parsing or serialising the object: #{e}|]
-          Right (SObject so@(StorableObject ro _)) -> do
-            let h = getHash ro
-            getByHash tx objectStore h >>= \case 
-                Nothing -> do
-                  putObject tx objectStore so
-                  void $ atomicModifyIORef counter $ \c -> (c + 1, ())
-                (Just _ :: Maybe RpkiObject) ->
-                    -- TODO Add location
-                    logInfo_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
-              
+            process tx = \case
+                Left (e :: SomeException) -> 
+                    logError_ logger [i|An error reading the object: #{e}|]
+                Right (SError e) -> 
+                    -- TODO Do something with the validation result here
+                    logError_ logger [i|An error parsing or serialising the object: #{e}|]
+                Right (SObject so@(StorableObject ro _)) -> do
+                    let h = getHash ro
+                    getByHash tx objectStore h >>= \case 
+                        Nothing -> do
+                            putObject tx objectStore so
+                            void $ atomicModifyIORef counter $ \c -> (c + 1, ())
+                        (Just _ :: Maybe RpkiObject) ->
+                            -- TODO Add location
+                            logDebug_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
+                
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
 rsyncProcess :: URI -> FilePath -> RsyncMode -> ProcessConfig () () ()
 rsyncProcess (URI uri) destination rsyncMode = 
-  let extraOptions = case rsyncMode of 
-        RsyncOneFile   -> []
-        RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]
-      options = [ "--timeout=300",  "--update",  "--times" ] <> extraOptions
-      in proc "rsync" $ options <> [ T.unpack uri, destination ]
+    proc "rsync" $ 
+        [ "--timeout=300",  "--update",  "--times" ] <> 
+        extraOptions <> 
+        [ T.unpack uri, destination ]
+    where 
+        extraOptions = case rsyncMode of 
+            RsyncOneFile   -> []
+            RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]        
 
 -- TODO Make it generate shorter filenames
 rsyncDestination :: FilePath -> T.Text -> FilePath
 rsyncDestination root uri = root </> T.unpack (U.normalizeUri uri)
 
-
 -- TODO Do something with proper error handling
 fileContent :: FilePath -> IO B.ByteString 
 fileContent path = do
-  r <- try $ unsafeMMapFile path
-  case r of
-    Right bs                  -> pure bs
-    Left (_ :: SomeException) -> B.readFile path
-
+    r <- try $ unsafeMMapFile path
+    case r of
+        Right bs                  -> pure bs
+        Left (_ :: SomeException) -> B.readFile path
 
 getFileSize :: FilePath -> IO Integer
 getFileSize path = withFile path ReadMode hFileSize 
 
-
 -- TODO Refactor that stuff
 getSizeAndContent :: FilePath -> IO (Integer, Either ValidationError B.ByteString)
 getSizeAndContent path = withFile path ReadMode $ \h -> do
-  s <- hFileSize h
-  case validateSize s of
-    Left e  -> pure (s, Left e)
-    Right _ -> do
-      c <- if s < 65536 
-        then B.hGetContents h          
-        else fileContent path
-      pure (s, Right c)
+    s <- hFileSize h
+    case validateSize s of
+        Left e  -> pure (s, Left e)
+        Right _ -> do
+            c <- if s < 65536 
+                then B.hGetContents h          
+                else fileContent path
+            pure (s, Right c)

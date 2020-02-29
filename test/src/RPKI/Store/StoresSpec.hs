@@ -10,18 +10,14 @@
 
 module RPKI.Store.StoresSpec where
 
-import Control.Exception (bracket)
 import           Control.Monad
 import           Data.Maybe
 import           Data.List as L
-
-import Control.Lens
 
 import           System.IO.Temp
 import           System.Directory
 
 import           Test.QuickCheck.Arbitrary.Generic
-import           Test.QuickCheck.Monadic
 import           Test.Tasty
 import qualified Test.Tasty.QuickCheck             as QC
 import qualified Test.Tasty.HUnit as HU
