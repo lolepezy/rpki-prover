@@ -65,7 +65,24 @@ data TopDownContext = TopDownContext {
     repositoryQueue :: TBQueue URI
 }
 
--- | Do top-down validation starting from the given object
+
+validateCA :: Storage s => 
+            (AppLogger, VContext, Now) ->                
+            RpkiObjectStore s -> 
+            VResultStore s -> 
+            CerObject ->                
+            IO ()
+validateCA env objectStore resultStore certificate = do
+    let vContext = getter env :: VContext
+    topDownContext <- TopDownContext Nothing <$> 
+                        (atomically $ newTBQueue 100) <*>
+                        (atomically $ newTBQueue 100)
+    result <- runValidatorT env $ 
+                validateTree objectStore resultStore certificate topDownContext
+    queueVResult (topDownContext, vContext) result
+    
+
+-- | Do top-down validation starting from the given certificate
 -- TODO Resolve URL VContext to an actual URL instead of the rsync path.
 validateTree :: (Has AppLogger env, 
                 Has Now env, 
@@ -105,7 +122,7 @@ validateTree objectStore resultStore certificate topDownContext = do
                 ro <- lift3 $ roTx objectStore $ \tx -> getByHash tx objectStore h
                 case ro of 
                     Nothing  -> vWarn $ ManifestEntryDontExist h
-                    Just ro' -> lift3 $ validateChild (logger, now, topDownContext, vContext) validatedCrl ro'            
+                    Just ro' -> lift3 $ validateChild (logger, now, topDownContext, vContext) validatedCrl ro'
 
         Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations        
     where
@@ -126,21 +143,21 @@ validateTree objectStore resultStore certificate topDownContext = do
         validateChild parentContext validatedCrl ro = 
             case ro of
                 CerRO childCert -> do 
-                    queueVResult childContext $ 
-                        runValidatorT childContext $ do
-                        childVerifiedResources <- pureToValidatorT $ do                 
-                            validateResourceCert childCert certificate validatedCrl                
-                            validateResources (verifiedResources topDownContext) childCert certificate 
-                        lift3 $ logDebug_ (sel childContext :: AppLogger) 
-                            [i|Validated: #{sel childContext :: VContext}, resources: #{childVerifiedResources}.|]                
-                        validateTree objectStore resultStore childCert 
-                            (topDownContext { verifiedResources = Just childVerifiedResources })              
+                    result <- runValidatorT childContext $ do
+                            childVerifiedResources <- pureToValidatorT $ do                 
+                                validateResourceCert childCert certificate validatedCrl                
+                                validateResources (verifiedResources topDownContext) childCert certificate 
+                            lift3 $ logDebug_ (getter childContext :: AppLogger) 
+                                [i|Validated: #{getter childContext :: VContext}, resources: #{childVerifiedResources}.|]                
+                            validateTree objectStore resultStore childCert 
+                                (topDownContext { verifiedResources = Just childVerifiedResources })
+                    queueVResult childContext result
 
                 RoaRO roa -> queueVResult childContext $ 
-                                pure $ runPureValidator childContext $ 
+                                runPureValidator childContext $ 
                                     void $ validateRoa roa certificate validatedCrl
                 GbrRO gbr -> queueVResult childContext $ 
-                                pure $ runPureValidator childContext $ 
+                                runPureValidator childContext $ 
                                     void $ validateGbr gbr certificate validatedCrl
                 -- TODO Anything else?
                 _ -> pure ()
@@ -159,18 +176,20 @@ validateTree objectStore resultStore certificate topDownContext = do
                         Nothing -> pure ()
                         Just repositoryUri -> pure ()
 
-        queueVResult context f = do
-            r <- f
-            let vContext = sel context :: VContext
-            let problems = case r of            
-                    (Left e, ws)  -> map VWarn ws <> [VErr e]
-                    (Right _, ws) -> map VWarn ws
-            let q = resultQueue topDownContext
-            atomically $ Q.writeTBQueue q $ VResult problems vContext
+queueVResult :: (Has TopDownContext env, Has VContext env) => 
+                env -> (Either SomeError (), [VWarning]) -> IO ()
+queueVResult env r = do
+    let topDownContext :: TopDownContext = getter env
+    let context :: VContext = getter env
+    let problems = case r of            
+            (Left e, ws)  -> map VWarn ws <> [VErr e]
+            (Right _, ws) -> map VWarn ws
+    let q = resultQueue topDownContext
+    atomically $ Q.writeTBQueue q $ VResult problems context
 
-        writeVResult = do
-            vr <- atomically $ Q.readTBQueue $ resultQueue topDownContext
-            rwTx resultStore $ \tx -> putVResult tx resultStore vr
+writeVResult topDownContext resultStore = do
+    vr <- atomically $ Q.readTBQueue $ resultQueue topDownContext
+    rwTx resultStore $ \tx -> putVResult tx resultStore vr
 
 
 
