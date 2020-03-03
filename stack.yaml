@@ -40,18 +40,22 @@ packages:
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
 extra-deps: 
- - "../lib/hs-certificate/x509"
- - "../lib/hs-certificate/x509-validation"
- - "../lib/lmdb-high-level"
- - primitive-extras-0.7.1
- - stm-containers-1.1.0.4
- - stm-hamt-1.2.0.2
- - hw-ip-2.0.1.0
- - streaming-utils-0.2.0.0
- - json-stream-0.4.2.4 
- - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653
- - bytestring-mmap-0.2.2@sha256:d04e6bc5a158dd292757d3b9b032beb8a2c43e768777d64a8289abf89f612f67,1282
- 
+  - git: https://github.com/lolepezy/lmdb-high-level.git
+    commit: 789680c85840b5e1432bbb1384fb724c1045dbe7
+  - git: https://github.com/lolepezy/hs-certificate.git
+    commit: f094fe1a81fe57a2ba42ef919af02bbc7f0b6dcb    
+    subdirs:
+      - x509
+      - x509-validation
+  - primitive-extras-0.7.1
+  - stm-containers-1.1.0.4
+  - stm-hamt-1.2.0.2
+  - hw-ip-2.0.1.0
+  - streaming-utils-0.2.0.0
+  - json-stream-0.4.2.4 
+  - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653
+  - bytestring-mmap-0.2.2@sha256:d04e6bc5a158dd292757d3b9b032beb8a2c43e768777d64a8289abf89f612f67,1282
+
 # Override default flag values for local packages and extra-deps
 # flags: {}
 
