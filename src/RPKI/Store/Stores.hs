@@ -143,6 +143,13 @@ data RepositoryStore s = RepositoryStore {
     repositories  :: SMap "repositories" s URI SRepository
 }
 
+instance Storage s => WithStorage s (RepositoryStore s) where
+    storage (RepositoryStore s) = storage s
+
+
+newRepository :: Repository -> SRepository
+newRepository r = SRepository r NEW 
+
 putRepository :: Storage s => Tx s 'RW -> RepositoryStore s -> SRepository -> IO ()
 putRepository tx (RepositoryStore s) vr = M.put tx s (repositoryURI $ repo vr) vr
 

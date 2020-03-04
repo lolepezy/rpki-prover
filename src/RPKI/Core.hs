@@ -88,7 +88,7 @@ validateCA env stores@(objectStore, resultStore, repositoryStore) certificate = 
     let writeVResults = Concurrently $ forever $ 
             writeVResult topDownContext resultStore
     let writeRepositories = Concurrently $ forever $ 
-            writeVResult topDownContext resultStore
+            writeRepository topDownContext repositoryStore
 
     {- Write validation results and repositories in separate threads to avoid 
         blocking on the database with writing transactions during the validation process 
@@ -180,7 +180,6 @@ validateTree stores@(objectStore, resultStore, repositoryStore) certificate topD
 
 
         -- | Register URI of the repository for the given certificate if it's not there yet
-        -- TODO Implement
         registerPublicationPoint (cwsX509certificate . getCertWithSignature -> cert) = 
             lift3 $ atomically $ case getRrdpNotifyUri cert of
                 Just rrdpNotify -> 
@@ -218,6 +217,12 @@ writeVResult topDownContext resultStore = do
     vrs <- atomically $ many $ Q.readTBQueue $ resultQueue topDownContext
     rwTx resultStore $ \tx -> 
         forM_ vrs $ putVResult tx resultStore
+
+-- | Get new repositories from the queue and save it to the DB
+writeRepository topDownContext repositoryStore = do
+    vrs <- atomically $ many $ Q.readTBQueue $ repositoryQueue topDownContext
+    rwTx repositoryStore $ \tx -> 
+        forM_ vrs $ \r -> putRepository tx repositoryStore $ newRepository r
 
 
 
