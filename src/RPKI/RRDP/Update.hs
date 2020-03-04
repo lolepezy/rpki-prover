@@ -196,60 +196,60 @@ processRrdp repository objectStore = do
     where
         doIt config logger = fromIOEither $ 
             updateRrdpRepo config repository saveSnapshot saveDelta
-          where
-            rwTx_ = rwTx objectStore        
-            saveSnapshot (Snapshot _ _ _ snapshotItems) = do
-                logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
-                either Just (const Nothing) . 
-                    first (StorageE . StorageError . U.fmtEx) <$> 
-                        try (txFunnel (parallelism config) snapshotItems storableToChan rwTx_ chanToStorage)
-                where
-                    storableToChan (SnapshotPublish u encodedb64) = do
-                        a <- Unlift.async $ pure $! asStorable u encodedb64
-                        pure (u, a)
-                    
-                    chanToStorage tx (u, a) = Unlift.wait a >>= \case                        
-                        SError e   -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                        SObject so -> putObject tx objectStore so
-            
-            saveDelta (Delta _ _ _ deltaItems) = 
-                either Just (const Nothing) . 
-                    first (StorageE . StorageError . U.fmtEx) <$> 
-                        try (txFunnel (parallelism config) deltaItems storableToChan rwTx_ chanToStorage)
-                where
-                    storableToChan (DP (DeltaPublish u h encodedb64)) = do 
-                        a <- Unlift.async $ pure $! asStorable u encodedb64
-                        pure $ Right (u, h, a)
+            where
+                rwTx_ = rwTx objectStore        
+                saveSnapshot (Snapshot _ _ _ snapshotItems) = do
+                    logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
+                    either Just (const Nothing) . 
+                        first (StorageE . StorageError . U.fmtEx) <$> 
+                            try (txFunnel (parallelism config) snapshotItems storableToChan rwTx_ chanToStorage)
+                    where
+                        storableToChan (SnapshotPublish u encodedb64) = do
+                            a <- Unlift.async $ pure $! asStorable u encodedb64
+                            pure (u, a)
+                        
+                        chanToStorage tx (u, a) = Unlift.wait a >>= \case                        
+                            SError e   -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                            SObject so -> putObject tx objectStore so
+                
+                saveDelta (Delta _ _ _ deltaItems) = 
+                    either Just (const Nothing) . 
+                        first (StorageE . StorageError . U.fmtEx) <$> 
+                            try (txFunnel (parallelism config) deltaItems storableToChan rwTx_ chanToStorage)
+                    where
+                        storableToChan (DP (DeltaPublish u h encodedb64)) = do 
+                            a <- Unlift.async $ pure $! asStorable u encodedb64
+                            pure $ Right (u, h, a)
 
-                    storableToChan (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
+                        storableToChan (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
 
-                    chanToStorage tx = \case
-                        Left (_, h)           -> deleteObject tx objectStore h
-                        Right (u, Nothing, a) -> 
-                            Unlift.wait a >>= \case
-                                SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                                SObject so@(StorableObject ro _) -> do
-                                    let h = getHash ro
-                                    getByHash tx objectStore h >>= \case
-                                        Nothing -> putObject tx objectStore so
-                                        (Just _ :: Maybe RpkiObject) ->
-                                            -- TODO Add location
-                                            logWarn_ logger [i|There's an existing object with hash #{h} |]
-                        Right (u, Just oldHash, a) -> 
-                            Unlift.wait a >>= \case
-                                SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                                SObject so@(StorableObject ro _) -> do                                    
-                                    getByHash tx objectStore oldHash >>= \case 
-                                        Nothing -> 
-                                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
-                                        (Just _ :: Maybe RpkiObject) -> do 
-                                            deleteObject tx objectStore oldHash
-                                            let newHash = getHash ro
-                                            getByHash tx objectStore newHash >>= \case 
-                                                Nothing -> putObject tx objectStore so
-                                                (Just _ :: Maybe RpkiObject)  -> 
-                                                    -- TODO Add location
-                                                    logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
+                        chanToStorage tx = \case
+                            Left (_, h)           -> deleteObject tx objectStore h
+                            Right (u, Nothing, a) -> 
+                                Unlift.wait a >>= \case
+                                    SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                                    SObject so@(StorableObject ro _) -> do
+                                        let h = getHash ro
+                                        getByHash tx objectStore h >>= \case
+                                            Nothing -> putObject tx objectStore so
+                                            (Just _ :: Maybe RpkiObject) ->
+                                                -- TODO Add location
+                                                logWarn_ logger [i|There's an existing object with hash #{h} |]
+                            Right (u, Just oldHash, a) -> 
+                                Unlift.wait a >>= \case
+                                    SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                                    SObject so@(StorableObject ro _) -> do                                    
+                                        getByHash tx objectStore oldHash >>= \case 
+                                            Nothing -> 
+                                                logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
+                                            (Just _ :: Maybe RpkiObject) -> do 
+                                                deleteObject tx objectStore oldHash
+                                                let newHash = getHash ro
+                                                getByHash tx objectStore newHash >>= \case 
+                                                    Nothing -> putObject tx objectStore so
+                                                    (Just _ :: Maybe RpkiObject)  -> 
+                                                        -- TODO Add location
+                                                        logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
 
         asStorable (URI u) b64 = case parsed of
             Left e   -> SError e
@@ -258,6 +258,6 @@ processRrdp repository objectStore = do
                 parsed = do
                     DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
                     first ParseE $ readObject (T.unpack u) b
-                
+                    
 
 
