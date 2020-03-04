@@ -51,10 +51,10 @@ deleteObject tx store h = do
     ifJust ro' $ \ro -> do 
         M.delete tx (objects store) h
         ifJust (getAKI ro) $ \aki' -> do 
-        MM.delete tx (byAKI store) aki' h
-        case ro of
-            MftRO mft -> MM.delete tx (mftByAKI store) aki' (h, getMftNumber mft)
-            _         -> pure ()      
+            MM.delete tx (byAKI store) aki' h
+            case ro of
+                MftRO mft -> MM.delete tx (mftByAKI store) aki' (h, getMftNumber mft)
+                _         -> pure ()      
 
 findLatestMftByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO (Maybe MftObject)
 findLatestMftByAKI tx store aki' = 
@@ -113,6 +113,7 @@ ifJust a f = maybe (pure ()) f a
 data VProblem = VErr SomeError | VWarn VWarning
     deriving (Show, Eq, Generic, Serialise)
 
+-- TODO Add versioning here
 data VResult = VResult {
     problem :: ![VProblem],
     path    :: !VContext
@@ -128,3 +129,20 @@ instance Storage s => WithStorage s (VResultStore s) where
 
 putVResult :: Storage s => Tx s 'RW -> VResultStore s -> VResult -> IO ()
 putVResult tx (VResultStore s) vr = M.put tx s (path vr) vr
+
+
+data RepositoryStatus = NEW | FAILED | COMPLETED
+    deriving (Show, Eq, Generic, Serialise)
+
+data SRepository = SRepository {
+    repo :: Repository,
+    status :: RepositoryStatus
+} deriving (Show, Eq, Generic, Serialise)
+
+data RepositoryStore s = RepositoryStore {
+    repositories  :: SMap "repositories" s URI SRepository
+}
+
+putRepository :: Storage s => Tx s 'RW -> RepositoryStore s -> SRepository -> IO ()
+putRepository tx (RepositoryStore s) vr = M.put tx s (repositoryURI $ repo vr) vr
+

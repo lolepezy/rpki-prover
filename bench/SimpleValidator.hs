@@ -12,54 +12,57 @@ import Control.Concurrent.Async
 import Control.DeepSeq (($!!))
 import Control.Exception
 
-import Control.Concurrent.STM
-import Control.Concurrent.STM.TBQueue (newTBQueue)
+import           Control.Concurrent.STM
+import           Control.Concurrent.STM.TBQueue (newTBQueue)
 
-import qualified Codec.Serialise as Serialise
+import qualified Codec.Serialise                as Serialise
 
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text as T
-import qualified Data.List as L
-import qualified Data.MultiMap as MultiMap
-import Data.MultiMap (MultiMap)
+import qualified Data.ByteString                as B
+import qualified Data.ByteString.Lazy           as BL
+import qualified Data.List                      as L
+import           Data.Map                       (Map)
+import qualified Data.Map                       as Map
+import           Data.MultiMap                  (MultiMap)
+import qualified Data.MultiMap                  as MultiMap
+import qualified Data.Text                      as T
 
-import Data.Maybe
+import           Data.Maybe
 
-import Data.X509
-import Data.X509.Validation
+import           Data.X509
+import           Data.X509.Validation
 
-import RPKI.AppMonad
-import RPKI.Domain
-import RPKI.Errors
-import RPKI.Validation.Crypto
-import RPKI.Parse.Parse
+import           RPKI.AppMonad
+import           RPKI.Domain
+import           RPKI.Errors
+import           RPKI.Parse.Parse
+import           RPKI.Validation.Crypto
 
-import System.FilePath.Find
+import           System.FilePath.Find
 
-import Data.Time.Clock (getCurrentTime)
+import           Data.Time.Clock                (getCurrentTime)
 
-import Lmdb.Connection
-import qualified Lmdb.Map as LmdbMap
-import Lmdb.Types
-import Lmdb.Codec
+import           Lmdb.Codec
+import           Lmdb.Connection
+import qualified Lmdb.Map                       as LmdbMap
+import           Lmdb.Types
 
-import Streaming
-import qualified Streaming.Prelude as S
-import qualified Data.ByteString.Streaming as Q
-import Data.ByteString.Streaming.HTTP
-import Data.IORef
+import qualified Data.ByteString.Streaming      as Q
+import           Data.ByteString.Streaming.HTTP
+import           Data.IORef
+import           Streaming
+import qualified Streaming.Prelude              as S
 
-import Conduit
-import qualified Data.Conduit.List      as CL
-import Data.Conduit
-import Network.HTTP.Simple (httpSink)
+import           Conduit
+import           Data.Conduit
+import qualified Data.Conduit.List              as CL
+import           Network.HTTP.Simple            (httpSink)
 
-import qualified Text.XML.Stream.Parse as XC
-import Data.XML.Types (Event)
-import Text.XML
-import qualified Text.XML.Expat.SAX as X
-import qualified Data.ByteString.Base64               as B64
+import qualified Data.ByteString.Base64         as B64
+import           Data.XML.Types                 (Event)
+import           Text.XML
+import qualified Text.XML.Expat.SAX             as X
+import qualified Text.XML.Stream.Parse          as XC
+
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
@@ -493,15 +496,18 @@ validateTreeFromTA env = do
               Config getParallelism, 
               vContext $ URI "something.cer",               
               nu)              
-  store <- createObjectStore env
+  objectStore <- createObjectStore env
   resultStore <- createResultStore env
+  repositoryStore <- createRepositoryStore env
   x <- runValidatorT conf $ do
     CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
-    processRsync repo store
+    processRsync repo objectStore
     -- lift3 $ say $ "taCert = " <> show taCert
     q1 <- lift3 $ atomically $ newTBQueue 100    
     q2 <- lift3 $ atomically $ newTBQueue 100    
-    validateTree store resultStore taCert (TopDownContext Nothing q1 q2)
+    m <- lift3 $ atomically $ newTVar Map.empty
+    validateTree (objectStore, resultStore, repositoryStore) 
+        taCert (TopDownContext Nothing q1 q2 m)
 
   say $ "x = " <> show x
 
@@ -515,8 +521,9 @@ validateTreeFromStore env = do
                 Config getParallelism, 
                 vContext $ URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer", 
                 nu)              
-    store <- createObjectStore env
+    objectStore <- createObjectStore env
     resultStore <- createResultStore env
+    repositoryStore <- createRepositoryStore env
     x <- runValidatorT conf $ do
         CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
         -- lift3 $ say $ "taCert = " <> show taCert
@@ -524,15 +531,17 @@ validateTreeFromStore env = do
         lift3 $ say $ "taCert SIA = " <> show e
         q1 <- lift3 $ atomically $ newTBQueue 100    
         q2 <- lift3 $ atomically $ newTBQueue 100    
-        validateTree store resultStore taCert (TopDownContext Nothing q1 q2)
+        m <- lift3 $ atomically $ newTVar Map.empty
+        validateTree (objectStore, resultStore, repositoryStore) 
+            taCert (TopDownContext Nothing q1 q2 m)
     say $ "x = " <> show x  
     pure ()  
 
 main :: IO ()
 main = do 
-    -- mkLmdb >>= void . saveRsyncRepo
-    -- mkLmdb "./data" >>= validatorUpdateRRDPRepo
-    -- mkLmdb "./data/" >>= loadRsync
+    -- mkLmdb "./data" >>= void . saveRsyncRepo
+    -- mkLmdb "./data" >>= processRRDP
+    -- mkLmdb "./data/" >>= saveRsyncRepo
     -- mkLmdb "./data/" >>= validateTreeFromStore
     mkLmdb "./data/" >>= validateTreeFromTA
 

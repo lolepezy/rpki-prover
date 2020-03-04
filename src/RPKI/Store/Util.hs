@@ -22,6 +22,14 @@ createObjectStore e = do
         mftByAKI = SMultiMap lmdb mftAkiIndex
     }
 
+createRepositoryStore :: Env -> IO (RepositoryStore LmdbStorage)
+createRepositoryStore e = do
+    let lmdb = LmdbStorage e
+    rMap <- create e
+    pure $ RepositoryStore {
+        repositories = SMap lmdb rMap
+    }
+
 createResultStore :: Env -> IO (VResultStore LmdbStorage)
 createResultStore e = do
     let lmdb = LmdbStorage e

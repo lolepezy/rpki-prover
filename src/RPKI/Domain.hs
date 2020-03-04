@@ -396,6 +396,11 @@ instance Serialise Attribute
 instance Serialise CertificateWithSignature
 instance Serialise SignerInfos
 
+instance Serialise Repository
+instance Serialise RsyncRepository
+instance Serialise RrdpRepository
+instance Serialise SessionId
+
 
 -- Small utility functions that don't have anywhere else to go
 
@@ -451,3 +456,7 @@ makeCert u a s h rc = With (IdentityMeta h (u :| [])) $ With a $ With s rc
 
 makeEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
 makeEECert a s rc = With a $ With s rc
+
+repositoryURI :: Repository -> URI
+repositoryURI (RsyncRepo (RsyncRepository {..})) = uri
+repositoryURI (RrdpRepo (RrdpRepository{..})) =  uri
