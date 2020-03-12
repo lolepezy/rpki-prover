@@ -20,6 +20,7 @@ import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Data
 
 
 data RpkiObjectStore s = RpkiObjectStore {
@@ -95,10 +96,6 @@ newtype TAStore s = TAStore (SMap "trust-anchors" s TaName StoredTA)
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
-data StoredTA = StoredTA {
-    tal        :: TAL,
-    taCert     :: CerObject
-} deriving (Show, Eq, Generic, Serialise)
 
 putTA :: Storage s => Tx s 'RW -> TAStore s -> StoredTA -> IO ()
 putTA tx (TAStore s) ta = M.put tx s (getTaName $ tal ta) ta
@@ -109,15 +106,6 @@ getTA tx (TAStore s) name = M.get tx s name
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a
 
-
-data VProblem = VErr SomeError | VWarn VWarning
-    deriving (Show, Eq, Generic, Serialise)
-
--- TODO Add versioning here
-data VResult = VResult {
-    problem :: ![VProblem],
-    path    :: !VContext
-} deriving (Show, Eq, Generic, Serialise)
 
 -- | Validation result store
 data VResultStore s = VResultStore {
@@ -130,14 +118,6 @@ instance Storage s => WithStorage s (VResultStore s) where
 putVResult :: Storage s => Tx s 'RW -> VResultStore s -> VResult -> IO ()
 putVResult tx (VResultStore s) vr = M.put tx s (path vr) vr
 
-
-data RepositoryStatus = NEW | FAILED | COMPLETED
-    deriving (Show, Eq, Generic, Serialise)
-
-data SRepository = SRepository {
-    repo :: Repository,
-    status :: RepositoryStatus
-} deriving (Show, Eq, Generic, Serialise)
 
 data RepositoryStore s = RepositoryStore {
     repositories  :: SMap "repositories" s URI SRepository

@@ -8,6 +8,7 @@ import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Monad.Except
+import           Control.Exception
 import           Control.Monad.Reader
 
 import qualified Control.Concurrent.STM.TBQueue   as Q
@@ -30,6 +31,7 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Data
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Util                        (fmtEx)
@@ -63,38 +65,46 @@ validateTA tal taStore = do
 
 data TopDownContext = TopDownContext {
     verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns),
-    resultQueue :: TBQueue VResult,
-    repositoryQueue :: TBQueue Repository,
+    resultQueue :: TBQueue (Maybe VResult),
+    repositoryQueue :: TBQueue (Maybe Repository),
     repositoryMap :: TVar (Map URI Repository)
 }
 
 
-validateCA :: Storage s => 
-            (AppLogger, VContext, Now) ->                
+validateCA :: (Has AppLogger env, 
+            Has Now env, 
+            Has VContext env,
+            Storage s) =>
+            env ->                
             (RpkiObjectStore s, VResultStore s, RepositoryStore s) -> 
             CerObject ->                
             IO ()
 validateCA env stores@(objectStore, resultStore, repositoryStore) certificate = do
     let vContext = getter env :: VContext
+    let logger = getter env :: AppLogger
     topDownContext <- TopDownContext Nothing <$> 
                         (atomically $ newTBQueue 100) <*>
                         (atomically $ newTBQueue 100) <*>
                         (atomically $ newTVar Map.empty)
 
-    let topDown = Concurrently $ do
-        result <- runValidatorT env $ validateTree stores certificate topDownContext
-        queueVResult (topDownContext, vContext) result
+    let validateAll = do
+            result <- runValidatorT env $ validateTree stores certificate topDownContext
+            queueVResult (topDownContext, vContext) result
 
-    let writeVResults = Concurrently $ forever $ 
-            writeVResult topDownContext resultStore
-    let writeRepositories = Concurrently $ forever $ 
-            writeRepository topDownContext repositoryStore
+    let finalizeQueues = atomically $ do
+            Q.writeTBQueue (repositoryQueue topDownContext) Nothing
+            Q.writeTBQueue (resultQueue topDownContext) Nothing
+
+    let topDown = Concurrently $ validateAll `finally` finalizeQueues
+    let saveVResults = Concurrently $ writeVResults logger topDownContext resultStore
+    let saveRepositories = Concurrently $ writeRepositories logger topDownContext repositoryStore
 
     {- Write validation results and repositories in separate threads to avoid 
         blocking on the database with writing transactions during the validation process 
     -}
     void $ runConcurrently $ (,,) <$> 
-            topDown <*> writeVResults <*> writeRepositories
+            topDown <*> saveVResults <*> saveRepositories
+        
     
 
 -- | Do top-down validation starting from the given certificate
@@ -161,8 +171,8 @@ validateTree stores@(objectStore, resultStore, repositoryStore) certificate topD
                             childVerifiedResources <- pureToValidatorT $ do                 
                                 validateResourceCert childCert certificate validatedCrl                
                                 validateResources (verifiedResources topDownContext) childCert certificate 
-                            lift3 $ logDebug_ (getter childContext :: AppLogger) 
-                                [i|Validated: #{getter childContext :: VContext}, resources: #{childVerifiedResources}.|]                
+                            -- lift3 $ logDebug_ (getter childContext :: AppLogger) 
+                            --     [i|Validated: #{getter childContext :: VContext}, resources: #{childVerifiedResources}.|]                
                             validateTree stores childCert (topDownContext { verifiedResources = Just childVerifiedResources })
                     queueVResult childContext result
 
@@ -181,24 +191,25 @@ validateTree stores@(objectStore, resultStore, repositoryStore) certificate topD
 
         -- | Register URI of the repository for the given certificate if it's not there yet
         registerPublicationPoint (cwsX509certificate . getCertWithSignature -> cert) = 
-            lift3 $ atomically $ case getRrdpNotifyUri cert of
-                Just rrdpNotify -> 
-                    add rrdpNotify $ RrdpRepo $ RrdpRepository rrdpNotify Nothing
-                Nothing         -> 
-                    case getRepositoryUri cert of
-                        Nothing -> pure ()
-                        Just repositoryUri -> 
-                            add repositoryUri $ RsyncRepo $ RsyncRepository repositoryUri
-                where 
-                    add uri repo = do
-                        let tRepoMap = repositoryMap topDownContext
-                        repoMap <- readTVar tRepoMap                        
-                        case pure $ Map.lookup uri repoMap of
-                            Nothing -> do
-                                let queue = repositoryQueue topDownContext                                
-                                writeTVar tRepoMap $ Map.insert uri repo repoMap                            
-                                Q.writeTBQueue queue repo
-                            Just _ -> pure ()            
+            case repositoryObject of
+                Nothing          -> pure ()
+                Just (uri, repo) -> lift3 $ atomically $ do            
+                    let tRepoMap = repositoryMap topDownContext
+                    repoMap <- readTVar tRepoMap                        
+                    case Map.lookup uri repoMap of
+                        Nothing -> do
+                            let queue = repositoryQueue topDownContext                                
+                            writeTVar tRepoMap $ Map.insert uri repo repoMap                            
+                            Q.writeTBQueue queue $ Just repo
+                        Just _ -> pure ()            
+            where
+                repositoryObject = 
+                    case getRrdpNotifyUri cert of
+                        Just rrdpNotify -> 
+                            Just (rrdpNotify, RrdpRepo $ RrdpRepository rrdpNotify Nothing)
+                        Nothing  -> flip fmap (getRepositoryUri cert) $ \repositoryUri ->
+                            (repositoryUri, RsyncRepo $ RsyncRepository repositoryUri)
+
 
 -- | Put validation result into a queue for writing
 queueVResult :: (Has TopDownContext env, Has VContext env) => 
@@ -210,20 +221,32 @@ queueVResult env r = do
             (Left e, ws)  -> map VWarn ws <> [VErr e]
             (Right _, ws) -> map VWarn ws
     let queue = resultQueue topDownContext
-    atomically $ Q.writeTBQueue queue $ VResult problems context
+    case problems of
+        [] -> pure ()
+        ps -> atomically $ Q.writeTBQueue queue $ Just $ VResult ps context
 
 -- | Get validation result from the queue and save it to the DB
-writeVResult topDownContext resultStore = do
-    vrs <- atomically $ many $ Q.readTBQueue $ resultQueue topDownContext
-    rwTx resultStore $ \tx -> 
-        forM_ vrs $ putVResult tx resultStore
+writeVResults :: (Storage s) => AppLogger -> TopDownContext -> VResultStore s -> IO ()
+writeVResults logger topDownContext resultStore =
+    withQueue (resultQueue topDownContext) $ \vr -> do
+        logDebug_ logger [i|VResult: #{vr}.|]
+        rwTx resultStore $ \tx -> putVResult tx resultStore vr
+
 
 -- | Get new repositories from the queue and save it to the DB
-writeRepository topDownContext repositoryStore = do
-    vrs <- atomically $ many $ Q.readTBQueue $ repositoryQueue topDownContext
-    rwTx repositoryStore $ \tx -> 
-        forM_ vrs $ \r -> putRepository tx repositoryStore $ newRepository r
+writeRepositories :: (Storage s) => AppLogger -> TopDownContext -> RepositoryStore s -> IO ()
+writeRepositories logger topDownContext repositoryStore =
+    withQueue (repositoryQueue topDownContext) $ \r -> do
+        logDebug_ logger [i|Repository: #{r}.|]
+        rwTx repositoryStore $ \tx ->            
+            putRepository tx repositoryStore $ newRepository r
 
+withQueue :: TBQueue (Maybe a) -> (a -> IO ()) -> IO ()
+withQueue queue f = do
+    z <- atomically $ Q.readTBQueue queue    
+    case z of
+        Nothing -> pure ()
+        Just s  -> f s >> withQueue queue f
 
 
 -- | Fetch TA certificate based on TAL location(s 

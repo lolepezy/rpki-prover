@@ -71,7 +71,7 @@ instance Storage LmdbStorage where
     type SMultiMapImpl LmdbStorage = LmdbMultiStore
 
     put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
-        LMap.insert' tx db ks bs
+        LMap.repsert' tx db ks bs
 
     delete (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) = 
         LMap.delete' tx db ks

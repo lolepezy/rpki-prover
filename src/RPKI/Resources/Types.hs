@@ -16,13 +16,8 @@ import           Control.DeepSeq
 import qualified Data.ByteString                       as B
 
 import           Data.Data                             (Typeable)
-import           Data.Bits
-import           Data.Maybe
-import           Data.Either
 import           Data.Kind
-import qualified Data.List                             as L
 import qualified Data.Vector                           as V
-import qualified Data.Set                              as S
 import           Data.Word
 import           GHC.Generics
 
@@ -31,7 +26,6 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.SafeEnum
 import           HaskellWorks.Data.Network.Ip.Validity
-import           HaskellWorks.Data.Network.Ip.Word128
 
 data AddrFamily = Ipv4F | Ipv6F
   deriving stock (Show, Eq, Ord, Typeable, Generic) 

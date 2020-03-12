@@ -1,12 +1,14 @@
 + implement resource set
 
-- extract SIA from certificates
++ extract SIA from certificates
 - register new publication points while validating
 - save validation errors/warnings while traversing the tree
+
 - do validation concurrently 
 - Use ValidatorT wherever it makes sense
 - implement all the validations according to the RFCs (time, digests, etc.)
 
+- Do not try to find MFTs/CRLs for certificates of non-hosted CA
 
 Things to think about:
 

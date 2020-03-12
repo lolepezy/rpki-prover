@@ -19,6 +19,7 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 resolver: lts-14.27
+# resolver: lts-15.3
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -50,7 +51,6 @@ extra-deps:
   - primitive-extras-0.7.1
   - stm-containers-1.1.0.4
   - stm-hamt-1.2.0.2
-  - hw-ip-2.0.1.0
   - streaming-utils-0.2.0.0
   - json-stream-0.4.2.4 
   - unagi-chan-0.4.1.0@sha256:2fe7e9e4fd4bda0e42762824ecd9059f20069939774406ddd54f9989b47b3e1a,8653

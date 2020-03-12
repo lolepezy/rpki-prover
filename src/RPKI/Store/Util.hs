@@ -8,6 +8,7 @@ import           Lmdb.Types
 import           RPKI.Store.Base.LMDB
 
 import           RPKI.Store.Stores
+import           RPKI.Store.Sequence
 
 createObjectStore :: Env -> IO (RpkiObjectStore LmdbStorage)
 createObjectStore e = do
@@ -36,6 +37,14 @@ createResultStore e = do
     rMap <- create e
     pure $ VResultStore {
         results = SMap lmdb rMap
+    }
+
+createSequenceStore :: Env -> IO (SequenceStore LmdbStorage)
+createSequenceStore e = do
+    let lmdb = LmdbStorage e
+    rMap <- create e
+    pure $ SequenceStore {
+        sequences = SMap lmdb rMap
     }
 
 mkLmdb :: FilePath -> IO Env

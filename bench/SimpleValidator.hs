@@ -9,26 +9,18 @@ import Colog hiding (extract)
 import Control.Monad
 import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
-import Control.DeepSeq (($!!))
 import Control.Exception
-
-import           Control.Concurrent.STM
-import           Control.Concurrent.STM.TBQueue (newTBQueue)
 
 import qualified Codec.Serialise                as Serialise
 
 import qualified Data.ByteString                as B
 import qualified Data.ByteString.Lazy           as BL
-import qualified Data.List                      as L
-import           Data.Map                       (Map)
-import qualified Data.Map                       as Map
 import           Data.MultiMap                  (MultiMap)
 import qualified Data.MultiMap                  as MultiMap
 import qualified Data.Text                      as T
 
 import           Data.Maybe
 
-import           Data.X509
 import           Data.X509.Validation
 
 import           RPKI.AppMonad
@@ -50,28 +42,12 @@ import qualified Data.ByteString.Streaming      as Q
 import           Data.ByteString.Streaming.HTTP
 import           Data.IORef
 import           Streaming
-import qualified Streaming.Prelude              as S
-
-import           Conduit
-import           Data.Conduit
-import qualified Data.Conduit.List              as CL
-import           Network.HTTP.Simple            (httpSink)
-
-import qualified Data.ByteString.Base64         as B64
-import           Data.XML.Types                 (Event)
-import           Text.XML
-import qualified Text.XML.Expat.SAX             as X
-import qualified Text.XML.Stream.Parse          as XC
-
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
-import qualified System.IO.Posix.MMap as Mmap
-import System.IO (withFile, IOMode(..), hClose)
-import System.Directory (removeFile)
+import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
-import           Data.Hex                   (hex, unhex)
 
 import qualified UnliftIO.Async as Unlift
 
@@ -81,10 +57,6 @@ import           RPKI.Config
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.Update
-import qualified RPKI.Store.Base.LMDB as LMDB
-import           RPKI.Store.Base.Map
-import           RPKI.Store.Base.MultiMap
-import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Rsync
 import           RPKI.Validation.ObjectValidation
@@ -503,11 +475,7 @@ validateTreeFromTA env = do
     CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     processRsync repo objectStore
     -- lift3 $ say $ "taCert = " <> show taCert
-    q1 <- lift3 $ atomically $ newTBQueue 100    
-    q2 <- lift3 $ atomically $ newTBQueue 100    
-    m <- lift3 $ atomically $ newTVar Map.empty
-    validateTree (objectStore, resultStore, repositoryStore) 
-        taCert (TopDownContext Nothing q1 q2 m)
+    lift3 $ validateCA conf (objectStore, resultStore, repositoryStore) taCert
 
   say $ "x = " <> show x
 
@@ -517,8 +485,7 @@ validateTreeFromTA env = do
 validateTreeFromStore :: Environment 'ReadWrite -> IO ()
 validateTreeFromStore env = do    
     nu <- now
-    let conf = (createLogger, RsyncConf "/tmp/rsync", 
-                Config getParallelism, 
+    let conf = (createLogger, RsyncConf "/tmp/rsync", Config getParallelism, 
                 vContext $ URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer", 
                 nu)              
     objectStore <- createObjectStore env
@@ -528,12 +495,8 @@ validateTreeFromStore env = do
         CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
         -- lift3 $ say $ "taCert = " <> show taCert
         let e = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
-        lift3 $ say $ "taCert SIA = " <> show e
-        q1 <- lift3 $ atomically $ newTBQueue 100    
-        q2 <- lift3 $ atomically $ newTBQueue 100    
-        m <- lift3 $ atomically $ newTVar Map.empty
-        validateTree (objectStore, resultStore, repositoryStore) 
-            taCert (TopDownContext Nothing q1 q2 m)
+        lift3 $ say $ "taCert SIA = " <> show e        
+        lift3 $ validateCA conf (objectStore, resultStore, repositoryStore) taCert
     say $ "x = " <> show x  
     pure ()  
 

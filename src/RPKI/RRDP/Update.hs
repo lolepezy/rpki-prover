@@ -86,6 +86,7 @@ updateRrdpRepo config repo@(RrdpRepository repoUri _) handleSnapshot handleDelta
                             bindRight snapshot $ \s ->
                                 maybe (Right $ repoFromSnapshot s) Left <$> handleSnapshot s
 
+        -- TODO Rollback to snapshot processing in case of an error
         useDeltas sortedDeltas notification = do
             deltas <- parallel (parallelism config) processDelta sortedDeltas            
             foldM foldDeltas' ([], Nothing) deltas >>= \case 
