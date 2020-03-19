@@ -466,7 +466,8 @@ validateTreeFromTA env = do
   nu <- now
   let conf = (createLogger, RsyncConf "/tmp/rsync", 
               Config getParallelism, 
-              vContext $ URI "something.cer",               
+              vContext $ URI "something.cer",  
+              TaName "Test TA",
               nu)              
   objectStore <- createObjectStore env
   resultStore <- createResultStore env
@@ -487,6 +488,7 @@ validateTreeFromStore env = do
     nu <- now
     let conf = (createLogger, RsyncConf "/tmp/rsync", Config getParallelism, 
                 vContext $ URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer", 
+                TaName "Test TA",
                 nu)              
     objectStore <- createObjectStore env
     resultStore <- createResultStore env

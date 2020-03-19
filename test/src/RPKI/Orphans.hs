@@ -52,385 +52,397 @@ import           RPKI.Util                             (convert)
 
 
 instance Arbitrary URI where
-  arbitrary = URI <$> do
-    ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
-    name <- listOf1 $ elements ['a'..'z']
-    pure $ convert $ "rsync://" <> name <> ext
-  shrink = genericShrink
+    arbitrary = URI <$> do
+        ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
+        name <- listOf1 $ elements ['a'..'z']
+        pure $ convert $ "rsync://" <> name <> ext
+    shrink = genericShrink
 
 instance Arbitrary Hash where
-  arbitrary = Hash . B.pack <$> replicateM 32 arbitrary
+    arbitrary = Hash . B.pack <$> replicateM 32 arbitrary
 
 instance Arbitrary Serial where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SessionId where
-  arbitrary = SessionId . convert <$>
-    (listOf1 $ elements $ ['a'..'z'] ++ ['0'..'9'])
+    arbitrary = SessionId . convert <$> 
+        (listOf1 $ elements $ ['a'..'z'] ++ ['0'..'9'])
 
 instance Arbitrary Version where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary DeltaPublish where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary DeltaWithdraw where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary DeltaItem where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary DecodedBase64 where
-  arbitrary = DecodedBase64 <$> arbitrary
+    arbitrary = DecodedBase64 <$> arbitrary
 
 instance Arbitrary EncodedBase64 where
     arbitrary = do 
         DecodedBase64 bs <- arbitrary
         pure $ EncodedBase64 $ B64.encode bs
     shrink = genericShrink   
-  
+
 instance Arbitrary SnapshotInfo where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SnapshotPublish where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary DeltaInfo where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Snapshot where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Delta where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Notification where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 -- 
-  
+
 
 instance Arbitrary a => Arbitrary (X509.SignedExact a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (X509.Signed a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
     
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
 instance Arbitrary a => Arbitrary (NE.NonEmpty a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-  
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary AKI where
-  arbitrary = AKI . KI <$> B.pack <$> replicateM 20 arbitrary
+    arbitrary = AKI . KI <$> B.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary SKI where
-  arbitrary = SKI . KI <$> B.pack <$> replicateM 20 arbitrary
+    arbitrary = SKI . KI <$> B.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary KI where
-  arbitrary = KI <$> arbitrary  
+    arbitrary = KI <$> arbitrary  
 
 instance Arbitrary Manifest where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Roa where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Gbr where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary ASN where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (CMS a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SignCRL where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary ResourceCertificate where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary RpkiObject where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary IdentityMeta where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance (Arbitrary m, Arbitrary a) => Arbitrary (With m a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance (Arbitrary s, Arbitrary r) => Arbitrary (WithRFC_ s r) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (WithRFC 'Strict_ ResourceCert) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (ResourceCert 'Strict_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (ResourceCert 'Reconsidered_) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 instance Arbitrary (WithRFC 'Reconsidered_ ResourceCert) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary AsResources where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary IpResources where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary AllResources where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary AsResource where
-  arbitrary = oneof [as, asRange]
-    where
-      as = AS . ASN <$> arbitrary
-      asRange = do
-        s <- arbitrary
-        e <- suchThat arbitrary ((>s) . fromIntegral)
-        pure $ ASRange (ASN s) (ASN e)
-  shrink = genericShrink
+    arbitrary = oneof [as, asRange]
+        where
+        as = AS . ASN <$> arbitrary
+        asRange = do
+            s <- arbitrary
+            e <- suchThat arbitrary ((>s) . fromIntegral)
+            pure $ ASRange (ASN s) (ASN e)
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (RSet a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
-  
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary IpResourceSet where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (IntervalSet a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary ContentType where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (EncapsulatedContentInfo a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (SignedObject a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (SignedData a) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary CMSVersion where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary DigestAlgorithmIdentifiers where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SignatureAlgorithmIdentifier where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SignatureValue where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SignerIdentifier where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SignedAttributes where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Attribute where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary CertificateWithSignature where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SignerInfos where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Repository where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RsyncRepository where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpRepository where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 -- IPs
 
 instance Arbitrary IpPrefix where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Ipv4Prefix where
-  arbitrary = do
-    w1 :: Word8 <- arbitrary `suchThat` (>0)
-    w2 :: Word8 <- arbitrary `suchThat` (>0)
-    w3 :: Word8 <- arbitrary `suchThat` (>0)
-    w4 :: Word8 <- arbitrary `suchThat` (>0)
-    let w = fourW8sToW32 [w1, w2, w3, w4]
-    m :: Word8  <- choose (8, 32)
-    let x = w `shift` (32 - fromIntegral m)
-    pure $ mkIpv4Block x m
-  shrink = genericShrink
+    arbitrary = do
+        w1 :: Word8 <- arbitrary `suchThat` (>0)
+        w2 :: Word8 <- arbitrary `suchThat` (>0)
+        w3 :: Word8 <- arbitrary `suchThat` (>0)
+        w4 :: Word8 <- arbitrary `suchThat` (>0)
+        let w = fourW8sToW32 [w1, w2, w3, w4]
+        m :: Word8  <- choose (8, 32)
+        let x = w `shift` (32 - fromIntegral m)
+        pure $ mkIpv4Block x m
+    shrink = genericShrink
 
 instance Arbitrary Ipv6Prefix where
-  arbitrary = do
-    w1 :: Word32 <- arbitrary `suchThat` (>0)
-    w2 :: Word32 <- arbitrary `suchThat` (>0)
-    w3 :: Word32 <- arbitrary `suchThat` (>0)
-    w4 :: Word32 <- arbitrary `suchThat` (>0)    
-    m :: Word8  <- choose (46, 128)
-    let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
-    pure $ mkIpv6Block x m
-  shrink = genericShrink
+    arbitrary = do
+        w1 :: Word32 <- arbitrary `suchThat` (>0)
+        w2 :: Word32 <- arbitrary `suchThat` (>0)
+        w3 :: Word32 <- arbitrary `suchThat` (>0)
+        w4 :: Word32 <- arbitrary `suchThat` (>0)    
+        m :: Word8  <- choose (46, 128)
+        let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
+        pure $ mkIpv6Block x m
+    shrink = genericShrink
 
 instance Arbitrary (V4.IpBlock Canonical) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (V6.IpBlock Canonical) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (Range V4.IpAddress) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (Range V6.IpAddress) where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary V4.IpAddress where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary V6.IpAddress where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary V4.IpNetMask where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary V6.IpNetMask where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 --- Crypto stuff
 
 instance Arbitrary BitArray where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary ASN1TimeType where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary ASN1Class where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary ASN1ConstructionType where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SerializedPoint where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Crypto.PubKey.ECC.Types.CurveName where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Date where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary TimeOfDay where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary Month where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary Hours where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary Minutes where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary Seconds where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary NanoSeconds where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary TimezoneOffset where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary ASN1 where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
     
 instance Arbitrary PubKey where
-  arbitrary = PubKeyRSA <$> arbitrary
+    arbitrary = PubKeyRSA <$> arbitrary
 
 instance Arbitrary PubKeyEC where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary PubKeyALG where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary ExtensionRaw where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
 instance Arbitrary HashALG where
-  arbitrary = genericArbitrary
-  shrink = genericShrink
+    arbitrary = genericArbitrary
+    shrink = genericShrink
   
   
 instance Arbitrary RSA.PublicKey where
@@ -485,7 +497,7 @@ instance Arbitrary ASN1CharacterString where
 
 instance Arbitrary DistinguishedName where
     arbitrary = DistinguishedName <$> (choose (1,5) >>= \l -> replicateM l arbitraryDE)
-      where arbitraryDE = (,) <$> arbitrary <*> arbitrary
+        where arbitraryDE = (,) <$> arbitrary <*> arbitrary
 
 instance Arbitrary DateTime where
     arbitrary = timeConvert <$> (arbitrary :: Gen Elapsed)

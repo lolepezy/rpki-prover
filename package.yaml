@@ -78,6 +78,7 @@ dependencies:
 - semigroups
 - serialise
 - stm
+- stm-chans
 - stm-containers
 - streaming
 - streaming-bytestring

@@ -13,8 +13,9 @@ import RPKI.ResourcesSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
-    rrdpXmlLazyParsingGroup,
-    rrdpUpdateSpec,
-    objectStoreGroup,
-    resourceGroup
-  ]  
+        rrdpXmlLazyParsingGroup,
+        rrdpUpdateSpec,
+        storeGroup,
+        repositoryStoreGroup,
+        resourceGroup
+    ]  

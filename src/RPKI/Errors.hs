@@ -41,6 +41,7 @@ data ValidationError = InvalidCert !T.Text |
             CertNoPolicyExtension |
             CertWrongPolicyExtension !B.ByteString |
             NoMFT !AKI !Locations |
+            NoMFTNoRepository !AKI !Locations |
             NoCRLOnMFT !AKI !Locations |
             MoreThanOneCRLOnMFT !AKI !Locations |
             NoCRLExists !AKI !Locations |

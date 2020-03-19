@@ -49,4 +49,3 @@ txFunnel poolSize as produce withTx consume = do
     readAll chanOut = withTx $ \tx -> 
       forM as $ \_ -> 
         consume tx =<< liftIO (Chan.readChan chanOut)
-

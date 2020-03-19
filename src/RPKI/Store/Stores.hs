@@ -91,16 +91,16 @@ getAll tx store = reverse <$> M.fold tx (objects store) f []
 
 
 -- | TA Store 
-newtype TAStore s = TAStore (SMap "trust-anchors" s TaName StoredTA)
+newtype TAStore s = TAStore (SMap "trust-anchors" s TaName STA)
 
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
 
-putTA :: Storage s => Tx s 'RW -> TAStore s -> StoredTA -> IO ()
+putTA :: Storage s => Tx s 'RW -> TAStore s -> STA -> IO ()
 putTA tx (TAStore s) ta = M.put tx s (getTaName $ tal ta) ta
 
-getTA :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe StoredTA)
+getTA :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe STA)
 getTA tx (TAStore s) name = M.get tx s name
 
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
@@ -120,16 +120,28 @@ putVResult tx (VResultStore s) vr = M.put tx s (path vr) vr
 
 
 data RepositoryStore s = RepositoryStore {
-    repositories  :: SMap "repositories" s URI SRepository
+    repositories      :: SMap "repositories" s URI SRepository,
+    repositoriesPerTA :: SMultiMap "repositoriesPerTA" s TaName URI
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s) = storage s
+    storage (RepositoryStore s _) = storage s
 
 
 newRepository :: Repository -> SRepository
 newRepository r = SRepository r NEW 
 
-putRepository :: Storage s => Tx s 'RW -> RepositoryStore s -> SRepository -> IO ()
-putRepository tx (RepositoryStore s) vr = M.put tx s (repositoryURI $ repo vr) vr
+putRepository :: Storage s => Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> IO ()
+putRepository tx s r taName = do 
+    let repoUri = repositoryURI $ repo r
+    M.put tx (repositories s) repoUri r
+    MM.put tx (repositoriesPerTA s) taName repoUri
+
+getRepositoriesForTA :: Storage s => Tx s m -> RepositoryStore s -> TaName -> IO [SRepository]
+getRepositoriesForTA tx s taName = MM.fold tx (repositoriesPerTA s) taName f []
+    where
+        f ros _ uri =   
+            M.get tx (repositories s) uri >>= \case
+                Just rs -> pure $! rs : ros
+                Nothing -> pure ros
 

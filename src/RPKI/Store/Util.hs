@@ -27,14 +27,16 @@ createRepositoryStore :: Env -> IO (RepositoryStore LmdbStorage)
 createRepositoryStore e = do
     let lmdb = LmdbStorage e
     rMap <- create e
+    perTaMap <- createMulti e
     pure $ RepositoryStore {
-        repositories = SMap lmdb rMap
+        repositories = SMap lmdb rMap,
+        repositoriesPerTA = SMultiMap lmdb perTaMap
     }
 
 createResultStore :: Env -> IO (VResultStore LmdbStorage)
 createResultStore e = do
     let lmdb = LmdbStorage e
-    rMap <- create e
+    rMap <- create e    
     pure $ VResultStore {
         results = SMap lmdb rMap
     }
