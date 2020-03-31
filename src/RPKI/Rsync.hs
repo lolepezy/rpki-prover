@@ -22,7 +22,6 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Env
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Validation.ObjectValidation
@@ -30,8 +29,6 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Stores
 import qualified RPKI.Util                             as U
-
-import           Data.Has
 
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 

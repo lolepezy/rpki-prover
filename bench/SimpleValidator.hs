@@ -50,7 +50,6 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.Core
-import           RPKI.Env
 import           RPKI.Logging
 import           RPKI.Config
 import           RPKI.RRDP.Parse

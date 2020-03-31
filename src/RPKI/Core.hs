@@ -40,7 +40,6 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Stores
 import           RPKI.TAL
-import           RPKI.Env
 import           RPKI.Util                        (fmtEx)
 import           RPKI.Validation.ObjectValidation 
 

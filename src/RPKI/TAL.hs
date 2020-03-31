@@ -64,17 +64,17 @@ parseTAL bs =
             case T.lines bs of 
                 [] -> Left $ TALError "Couldn't find newline character."
                 lns -> do
-                let nonComments = L.filter (\line -> not $ "#" `T.isPrefixOf` line) lns
-                properties <- forM nonComments $ \line ->
-                    case T.splitOn "=" line of
-                    [name, value] -> Right (T.strip name, T.strip value)
-                    _             -> Left $ TALError $ convert $ "Line " <> show line <> " doesn't contain '=' sign."
+                    let nonComments = L.filter (\line -> not $ "#" `T.isPrefixOf` line) lns
+                    properties <- forM nonComments $ \line ->
+                        case T.splitOn "=" line of
+                        [name, value] -> Right (T.strip name, T.strip value)
+                        _             -> Left $ TALError $ convert $ "Line " <> show line <> " doesn't contain '=' sign."
                 
-                PropertiesTAL <$> 
-                    getCaName properties <*>
-                    getCertificateLocation properties <*>
-                    getPublicKeyInfo properties <*>
-                    getPrefetchUris properties      
+                    PropertiesTAL <$> 
+                        getCaName properties <*>
+                        getCertificateLocation properties <*>
+                        getPublicKeyInfo properties <*>
+                        getPrefetchUris properties      
             where 
                 getCaName ps              = Right $ lookup "ca.name" ps
                 getCertificateLocation ps = URI     <$> getMandatory "certificate.location" ps
