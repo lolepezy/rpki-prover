@@ -41,6 +41,12 @@ createResultStore e = do
         results = SMap lmdb rMap
     }
 
+createTAStore :: Env -> IO (TAStore LmdbStorage)
+createTAStore e = do
+    let lmdb = LmdbStorage e
+    rMap <- create e
+    pure $ TAStore (SMap lmdb rMap)
+
 createSequenceStore :: Env -> IO (SequenceStore LmdbStorage)
 createSequenceStore e = do
     let lmdb = LmdbStorage e
@@ -59,3 +65,11 @@ mkLmdb fileName = initializeReadWriteEnvironment mapSize readerNum maxDatabases 
 
 closeLmdb :: Environment e -> IO ()
 closeLmdb = closeEnvironment
+
+
+createDatabase :: Env -> IO (DB LmdbStorage)
+createDatabase e = DB <$>
+    createTAStore e <*>
+    createRepositoryStore e <*>
+    createObjectStore e <*>
+    createResultStore e

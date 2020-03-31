@@ -31,12 +31,11 @@ import qualified Lmdb.Types as Lmdb
 import Pipes
 
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
-type DB = Lmdb.Database B.ByteString B.ByteString
-
+type DBMap = Lmdb.Database B.ByteString B.ByteString
 
 data LmdbStore (name :: Symbol) = LmdbStore { 
     env :: Env,
-    db  :: DB
+    db  :: DBMap
 }
 
 data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
@@ -121,7 +120,7 @@ foldGeneric tx db f a0 withC makeProducer =
                     a' <- f a (SKey $ Storable k) (SValue $ Storable v)
                     writeIORef z $! a'
         readIORef z
-  
+
 
 create :: forall name . KnownSymbol name => 
             Env -> IO (LmdbStore name)

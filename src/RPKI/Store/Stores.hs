@@ -145,3 +145,10 @@ getRepositoriesForTA tx s taName = MM.fold tx (repositoriesPerTA s) taName f []
                 Just rs -> pure $! rs : ros
                 Nothing -> pure ros
 
+
+data DB s = DB {
+    taStore :: TAStore s, 
+    repositoryStore :: RepositoryStore s, 
+    objectStore :: RpkiObjectStore s,
+    resultStore :: VResultStore s
+}

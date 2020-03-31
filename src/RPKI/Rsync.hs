@@ -22,6 +22,7 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
+import           RPKI.Env
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Validation.ObjectValidation
@@ -45,65 +46,58 @@ import           System.Process.Typed
 
 import System.IO.Posix.MMap (unsafeMMapFile)
 
-
-newtype RsyncConf = RsyncConf {
-  rsyncRoot :: FilePath
-}
-
 -- | Download one file using rsync
-rsyncFile :: (Has RsyncConf conf, Has AppLogger conf) => 
-              URI -> 
-              ValidatorT conf IO RpkiObject
-rsyncFile (URI uri) = do
-  RsyncConf {..} <- asks getter
-  let destination = rsyncDestination rsyncRoot uri
-  let rsync = rsyncProcess (URI uri) destination RsyncOneFile
-  logger :: AppLogger  <- asks getter 
-  (exitCode, out, err) <- readProcess rsync      
-  case exitCode of  
-    ExitFailure errorCode -> do
-      lift3 $ logError_ logger [i|Rsync process failed: #rsync 
-                                  with code #{errorCode}, 
-                                  stderr = #{err}, 
-                                  stdout = #{out}|]        
-      throwError $ RsyncE $ RsyncProcessError errorCode err  
-    ExitSuccess -> do
-        fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
-        pureToValidatorT $ validateSizeM fileSize
-        bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
-        fromEither $ first ParseE $ readObject (U.convert uri) bs
+rsyncFile :: AppContext -> 
+            URI -> 
+            ValidatorT vc IO RpkiObject
+rsyncFile AppContext{..}(URI uri) = do
+    let RsyncConf {..} = rsyncConf
+    let destination = rsyncDestination rsyncRoot uri
+    let rsync = rsyncProcess (URI uri) destination RsyncOneFile
+    (exitCode, out, err) <- readProcess rsync      
+    case exitCode of  
+        ExitFailure errorCode -> do
+            lift3 $ logError_ logger [i|Rsync process failed: #rsync 
+                                        with code #{errorCode}, 
+                                        stderr = #{err}, 
+                                        stdout = #{out}|]        
+            throwError $ RsyncE $ RsyncProcessError errorCode err  
+        ExitSuccess -> do
+            fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
+            pureToValidatorT $ validateSizeM fileSize
+            bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
+            fromEither $ first ParseE $ readObject (U.convert uri) bs
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-processRsync :: (Has RsyncConf conf, Has AppLogger conf, Has Config conf, Storage s) => 
+processRsync :: Storage s => 
+                AppContext ->
                 RsyncRepository -> 
                 RpkiObjectStore s -> 
                 ValidatorT conf IO ()
-processRsync (RsyncRepository (URI uri)) objectStore = do 
-  RsyncConf {..} <- asks getter
-  let destination = rsyncDestination rsyncRoot uri
-  let rsync = rsyncProcess (URI uri) destination RsyncDirectory
+processRsync AppContext{..} (RsyncRepository (URI uri)) objectStore = do 
+    let RsyncConf {..} = rsyncConf
+    let destination = rsyncDestination rsyncRoot uri
+    let rsync = rsyncProcess (URI uri) destination RsyncDirectory
 
-  _ <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-    createDirectoryIfMissing True destination
-  
-  logger :: AppLogger   <- asks getter 
-  lift3 $ logInfo_ logger [i|Going to run #{rsync}|]
-  (exitCode, out, err) <- lift $ readProcess rsync
-  lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
-  case exitCode of  
-    ExitSuccess -> do
-      config :: Config <- asks getter
-      count <- fromIOEither $ loadRsyncRepository logger config rsyncRoot objectStore      
-      lift3 $ logInfo_ logger [i|Finished loading #{count} objects into local storage|]      
-    ExitFailure errorCode -> do
-      lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
-                                  with code #{errorCode}, 
-                                  stderr = #{err}, 
-                                  stdout = #{out}|]
-      throwError $ RsyncE $ RsyncProcessError errorCode err  
-  
+    _ <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+        createDirectoryIfMissing True destination
+        
+    lift3 $ logInfo_ logger [i|Going to run #{rsync}|]
+    (exitCode, out, err) <- lift $ readProcess rsync
+    lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
+    case exitCode of  
+        ExitSuccess -> do
+            count <- fromIOEither $ loadRsyncRepository logger config rsyncRoot objectStore      
+            lift3 $ logInfo_ logger [i|Finished loading #{count} objects into local storage|]      
+        ExitFailure errorCode -> do
+            lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
+                                        with code #{errorCode}, 
+                                        stderr = #{err}, 
+                                        stdout = #{out}|]
+            throwError $ RsyncE $ RsyncProcessError errorCode err  
+    
 
 -- | Recursively traverse given directory and save all the parseable 
 -- | objects into the storage.

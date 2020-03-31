@@ -11,9 +11,8 @@ import Control.Monad.Reader
 import Control.Exception
 import Control.Monad.Morph
 
-import Data.Has
-
 import Data.Bifunctor
+import Data.Has
 import RPKI.Errors
 
 -- Application monad stack

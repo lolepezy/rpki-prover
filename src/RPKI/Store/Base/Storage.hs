@@ -36,3 +36,4 @@ roTx s = readOnlyTx (storage s)
 
 rwTx :: WithStorage s ws => ws -> (Tx s 'RW -> IO a) -> IO a
 rwTx s = readWriteTx (storage s)
+

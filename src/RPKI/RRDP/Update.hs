@@ -186,11 +186,11 @@ nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1
 
 -- TODO Add warnings and errors to the specific VContext
-processRrdp :: (Has AppLogger conf, Has Config conf, Storage s) =>                 
+updateObjectForRrdpRepository :: (Has AppLogger conf, Has Config conf, Storage s) =>                 
                 RrdpRepository ->
                 RpkiObjectStore s ->
                 ValidatorT conf IO (RrdpRepository, Maybe SomeError)
-processRrdp repository objectStore = do
+updateObjectForRrdpRepository repository objectStore = do
     logger :: AppLogger <- asks getter
     config :: Config    <- asks getter 
     doIt config logger

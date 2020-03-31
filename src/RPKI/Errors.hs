@@ -53,7 +53,9 @@ data ValidationError = InvalidCert !T.Text |
             AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
             ManifestEntryDontExist !Hash |
             OverclaimedResources PrefixesAndAsns |
-            InheritWithoutParentResources 
+            InheritWithoutParentResources |
+            UnknownUriType !URI | 
+            CertificateDoesn'tHaveSIA
     deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
     
 data RrdpError = BrokenXml !T.Text | 

@@ -40,7 +40,7 @@ newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
 data WithRFC_ s r = WithStrict_       !s 
-                  | WithReconsidered_ !r
+                | WithReconsidered_ !r
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
@@ -68,8 +68,8 @@ type Locations = NonEmpty URI
 -- | Domain objects
 
 newtype CMS a = CMS {
-    unCMS :: SignedObject a
- } deriving stock (Show, Eq, Typeable, Generic)
+        unCMS :: SignedObject a
+    } deriving stock (Show, Eq, Typeable, Generic)
 
 class WithAKI a where
     getAKI :: a -> Maybe AKI
@@ -87,8 +87,8 @@ class WithResourceCertificate a where
     getRC :: a -> ResourceCertificate
 
 data IdentityMeta = IdentityMeta 
-                   !Hash 
-    {-# UNPACK #-} !Locations
+                        !Hash 
+        {-# UNPACK #-} !Locations
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data With meta content = With !meta !content 
@@ -102,6 +102,9 @@ instance {-# OVERLAPPING #-} Contains_ whole part => Contains_ (With meta whole)
 
 instance {-# OVERLAPPING #-} (a ~ b) => Contains_ a b where
     extract = id
+
+with :: With a b -> c -> With c (With a b) 
+with w c = With c w
 
 type CrlObject = With IdentityMeta (With AKI SignCRL)
 type CerObject = With IdentityMeta (With (Maybe AKI) (With SKI ResourceCertificate))
@@ -178,9 +181,9 @@ instance WithLocations RpkiObject where
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
-    certX509  :: CertificateWithSignature, 
-    resources :: AllResources
-} deriving stock (Show, Eq, Typeable, Generic)
+        certX509  :: CertificateWithSignature, 
+        resources :: AllResources
+    } deriving stock (Show, Eq, Typeable, Generic)
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Typeable, Generic)
@@ -192,20 +195,20 @@ data Roa = Roa
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data Manifest = Manifest {
-    mftNumber   :: Int, 
-    fileHashAlg :: X509.HashALG, 
-    thisTime    :: DateTime, 
-    nextTime    :: DateTime, 
-    mftEntries  :: [(T.Text, Hash)]
-} deriving stock (Show, Eq, Typeable, Generic)
+        mftNumber   :: Int, 
+        fileHashAlg :: X509.HashALG, 
+        thisTime    :: DateTime, 
+        nextTime    :: DateTime, 
+        mftEntries  :: [(T.Text, Hash)]
+    } deriving stock (Show, Eq, Typeable, Generic)
 
 data SignCRL = SignCRL {
-  crl                :: X509.CRL,
-  signatureAlgorithm :: SignatureAlgorithmIdentifier,
-  signatureValue     :: SignatureValue,
-  encodedValue       :: B.ByteString,
-  crlNumber          :: Integer
-} deriving stock (Show, Eq, Typeable, Generic)
+        crl                :: X509.CRL,
+        signatureAlgorithm :: SignatureAlgorithmIdentifier,
+        signatureValue     :: SignatureValue,
+        encodedValue       :: B.ByteString,
+        crlNumber          :: Integer
+    } deriving stock (Show, Eq, Typeable, Generic)
 
 -- TODO Define it
 data Gbr = Gbr deriving stock (Show, Eq, Ord, Typeable, Generic)
@@ -216,20 +219,20 @@ data Gbr = Gbr deriving stock (Show, Eq, Ord, Typeable, Generic)
 -- https://tools.ietf.org/html/rfc5652
 
 data SignedObject a = SignedObject {
-    soContentType :: ContentType, 
-    soContent     :: SignedData a
-} deriving stock (Show, Eq, Typeable, Generic)
+        soContentType :: ContentType, 
+        soContent     :: SignedData a
+    } deriving stock (Show, Eq, Typeable, Generic)
 
 
 data CertificateWithSignature = CertificateWithSignature {
-    cwsX509certificate :: X509.Certificate,
-    cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
-    cwsSignature :: SignatureValue,
-    cwsEncoded :: B.ByteString
-  } deriving stock (Show, Eq, Typeable, Generic)
+        cwsX509certificate :: X509.Certificate,
+        cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
+        cwsSignature :: SignatureValue,
+        cwsEncoded :: B.ByteString
+    } deriving stock (Show, Eq, Typeable, Generic)
 
 {- 
-      SignedData ::= SEQUENCE {
+    SignedData ::= SEQUENCE {
         version CMSVersion,
         digestAlgorithms DigestAlgorithmIdentifiers,
         encapContentInfo EncapsulatedContentInfo,
@@ -237,30 +240,30 @@ data CertificateWithSignature = CertificateWithSignature {
         crls [1] IMPLICIT RevocationInfoChoices OPTIONAL,
         signerInfos SignerInfos }
 
-      DigestAlgorithmIdentifiers ::= SET OF DigestAlgorithmIdentifier
+    DigestAlgorithmIdentifiers ::= SET OF DigestAlgorithmIdentifier
 
-      SignerInfos ::= SET OF SignerInfo
+    SignerInfos ::= SET OF SignerInfo
 -}
 data SignedData a = SignedData {
-      scVersion          :: CMSVersion, 
-      scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
-      scEncapContentInfo :: EncapsulatedContentInfo a, 
-      scCertificate      :: EECerObject, 
-      scSignerInfos      :: SignerInfos
-  } deriving stock (Show, Eq, Typeable, Generic)
-  
-  {- 
-      EncapsulatedContentInfo ::= SEQUENCE {
-          eContentType ContentType,
-          eContent [0] EXPLICIT OCTET STRING OPTIONAL }
-  -}
+        scVersion          :: CMSVersion, 
+        scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
+        scEncapContentInfo :: EncapsulatedContentInfo a, 
+        scCertificate      :: EECerObject, 
+        scSignerInfos      :: SignerInfos
+    } deriving stock (Show, Eq, Typeable, Generic)
+
+{- 
+    EncapsulatedContentInfo ::= SEQUENCE {
+        eContentType ContentType,
+        eContent [0] EXPLICIT OCTET STRING OPTIONAL }
+-}
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
-      eContentType :: ContentType, 
-      cContent     :: a    
-  } deriving stock (Show, Eq, Ord, Typeable, Generic)
-  
-  {-
-      SignerInfo ::= SEQUENCE {
+        eContentType :: ContentType, 
+        cContent     :: a    
+    } deriving stock (Show, Eq, Ord, Typeable, Generic)
+
+{-
+    SignerInfo ::= SEQUENCE {
             version CMSVersion,
             sid SignerIdentifier,
             digestAlgorithm DigestAlgorithmIdentifier,
@@ -268,48 +271,48 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
             signatureAlgorithm SignatureAlgorithmIdentifier,
             signature SignatureValue,
             unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
-  -}
+-}
 data SignerInfos = SignerInfos {
-      siVersion          :: CMSVersion, 
-      siSid              :: SignerIdentifier, 
-      digestAlgorithm    :: DigestAlgorithmIdentifiers, 
-      signedAttrs        :: SignedAttributes, 
-      signatureAlgorithm :: SignatureAlgorithmIdentifier, 
-      signature          :: SignatureValue
-  } deriving stock (Show, Eq, Typeable, Generic)
-  
+        siVersion          :: CMSVersion, 
+        siSid              :: SignerIdentifier, 
+        digestAlgorithm    :: DigestAlgorithmIdentifiers, 
+        signedAttrs        :: SignedAttributes, 
+        signatureAlgorithm :: SignatureAlgorithmIdentifier, 
+        signature          :: SignatureValue
+    } deriving stock (Show, Eq, Typeable, Generic)
+
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text 
-  deriving stock (Eq, Ord, Show)
-  
+    deriving stock (Eq, Ord, Show)
+
 newtype SignerIdentifier = SignerIdentifier B.ByteString 
-  deriving stock (Show, Eq, Ord, Typeable, Generic)
-  
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+
 newtype ContentType = ContentType OID 
-  deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype CMSVersion = CMSVersion Int 
-  deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
-  deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
-  deriving stock (Show, Eq, Typeable, Generic)
+    deriving stock (Show, Eq, Typeable, Generic)
 
 newtype SignatureValue = SignatureValue B.ByteString 
-  deriving stock (Show, Eq, Ord, Typeable, Generic)  
+    deriving stock (Show, Eq, Ord, Typeable, Generic)  
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] B.ByteString
-  deriving stock (Show, Eq, Typeable, Generic)
+    deriving stock (Show, Eq, Typeable, Generic)
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest B.ByteString
             | SigningTime DateTime (Maybe TimezoneOffset)
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
-      deriving stock (Show, Eq, Typeable, Generic)
+    deriving stock (Show, Eq, Typeable, Generic)
 
 
 
