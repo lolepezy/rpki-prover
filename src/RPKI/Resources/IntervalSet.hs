@@ -10,13 +10,9 @@ module RPKI.Resources.IntervalSet where
 
 import Prelude hiding (subtract, null)
 
-import           Codec.Serialise
-
 import           Data.Either              (partitionEithers)
-import           Data.Kind
 import qualified Data.List                as L
 import qualified Data.Vector              as V
-import           GHC.Generics
 import           RPKI.Resources.Types
 
 empty ::IntervalSet a
@@ -35,50 +31,50 @@ findIntersections a as = concatMap fst $ findFullIntersections a as
 -- | Return also the orginal intervals it intersects with.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
 findFullIntersections a (IntervalSet v) = 
-  case (V.unsafeIndex v 0) `intersection` a of
-      [] -> case (V.unsafeIndex v lastIndex) `intersection` a of
-        [] -> goBinary 0 lastIndex
-        _  -> goBackwards lastIndex
-      _  -> goForward 0
-  where 
-    goBinary b e
-      | e <= b = []
-      | otherwise =           
-          case middle `intersection` a of
-            [] -> 
-              case compare (start a) (start middle) of
-                LT -> goBinary b middleIndex 
-                GT -> goBinary (middleIndex + 1) e
-                -- this will never happen
-                EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-            _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-      where                  
-        middle = V.unsafeIndex v middleIndex
-        middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
-          where
-            word n = fromIntegral n :: Word
-            {-# INLINE word #-}
+    case (V.unsafeIndex v 0) `intersection` a of
+        [] -> case (V.unsafeIndex v lastIndex) `intersection` a of
+            [] -> goBinary 0 lastIndex
+            _  -> goBackwards lastIndex
+        _  -> goForward 0
+    where 
+        goBinary b e
+            | e <= b = []
+            | otherwise =           
+                case middle `intersection` a of
+                    [] -> 
+                        case compare (start a) (start middle) of
+                            LT -> goBinary b middleIndex 
+                            GT -> goBinary (middleIndex + 1) e
+                            -- this will never happen
+                            EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
+                    _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
+            where                  
+                middle = V.unsafeIndex v middleIndex
+                middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
+                    where
+                        word n = fromIntegral n :: Word
+                        {-# INLINE word #-}
     
-    goForward index 
-      | index >= len = []
-      | otherwise = 
-          case big `intersection` a of
-            [] -> []
-            is -> (is, big) : goForward (index + 1)
-      where
-        big = V.unsafeIndex v index
-    
-    goBackwards index
-      | index <= 0 = []
-      | otherwise = 
-          case big `intersection` a of
-            [] -> []
-            is -> goBackwards (index - 1) <> [(is, big)]
-      where
-        big = V.unsafeIndex v index
-          
-    len = V.length v
-    lastIndex = len - 1        
+        goForward index 
+            | index >= len = []
+            | otherwise = 
+                case big `intersection` a of
+                    [] -> []
+                    is -> (is, big) : goForward (index + 1)
+            where
+                big = V.unsafeIndex v index
+        
+        goBackwards index
+            | index <= 0 = []
+            | otherwise = 
+                case big `intersection` a of
+                    [] -> []
+                    is -> goBackwards (index - 1) <> [(is, big)]
+            where
+                big = V.unsafeIndex v index
+
+        len = V.length v
+        lastIndex = len - 1        
 
 
 type ResourceCheckResult a = Either 
