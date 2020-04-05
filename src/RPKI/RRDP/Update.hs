@@ -13,7 +13,6 @@ import           Control.Monad.Reader
 
 import           Data.Bifunctor                 (first, second)
 import qualified Data.ByteString.Lazy           as BL
-import           Data.Has
 import           Data.IORef
 import           Data.String.Interpolate
 import qualified Data.List                      as L
@@ -54,12 +53,12 @@ import qualified UnliftIO.Async                 as Unlift
     1) Replace IO with some reasonable Monad (MonadIO + MonadMask/MonadUnliftIO/MonadBaseControl).
     2) Maybe return bracketed IO actions instead of exectuting them.
 -}
-updateRrdpRepo :: Config ->
+updateRrdpRepo :: AppContext ->
                 RrdpRepository ->                 
-                (Snapshot -> IO (Maybe SomeError)) ->
-                (Delta -> IO (Maybe SomeError)) ->
-                IO (Either SomeError (RrdpRepository, Maybe SomeError))
-updateRrdpRepo config repo@(RrdpRepository repoUri _) handleSnapshot handleDelta = do
+                (Snapshot -> IO (Maybe AppError)) ->
+                (Delta -> IO (Maybe AppError)) ->
+                IO (Either AppError (RrdpRepository, Maybe AppError))
+updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _) handleSnapshot handleDelta = do
     notificationXml <- download repoUri (RrdpE . CantDownloadNotification . show)
     bindRight (notificationXml >>= (first RrdpE . parseNotification)) $ \notification -> 
         bindRight (first RrdpE $ rrdpNextStep repo notification) $ \case
@@ -69,45 +68,81 @@ updateRrdpRepo config repo@(RrdpRepository repoUri _) handleSnapshot handleDelta
     where
         bindRight e f = either (pure . Left) f e 
         
-        useSnapshot (SnapshotInfo uri@(URI u) hash) = do
-            let tmpFileName = U.convert $ U.normalizeUri u
-            -- Download snapshot to a temporary file and MMAP it to a lazy bytestring 
-            -- to minimize the heap. Snapshots can be pretty big, so we don't want 
-            -- a spike in heap usage
-            withSystemTempFile tmpFileName $ \name fd -> do
-                realHash <- downloadToFile uri (RrdpE . CantDownloadSnapshot . show) fd
-                bindRight realHash $ \realHash' ->
-                    if realHash' /= hash
-                        then pure $ Left $ RrdpE $ SnapshotHashMismatch hash realHash'
-                        else do
-                            -- File has to be closed before it can be opened again by mmap
-                            hClose fd
-                            snapshot <- first RrdpE . parseSnapshot <$> unsafeMMapFile name
-                            bindRight snapshot $ \s ->
-                                maybe (Right $ repoFromSnapshot s) Left <$> handleSnapshot s
+        useSnapshot (SnapshotInfo uri hash) =            
+            downloadAndParse uri hash
+                (RrdpE . CantDownloadSnapshot . show)                 
+                (\realHash -> Left $ RrdpE $ SnapshotHashMismatch hash realHash)
+                (\content -> do
+                    let snapshot = first RrdpE $ parseSnapshot content
+                    bindRight snapshot $ \s ->
+                        maybe (Right $ repoFromSnapshot s) Left <$> handleSnapshot s)
+
 
         -- TODO Rollback to snapshot processing in case of an error
         useDeltas sortedDeltas notification = do
             deltas <- parallel (parallelism config) processDelta sortedDeltas            
-            foldM foldDeltas' ([], Nothing) deltas >>= \case 
+            foldM foldDeltas ([], Nothing) deltas >>= \case 
                 (ds, Nothing) -> pure $ Right (repoFromDeltas ds notification, Nothing)
                 ([], Just e)  -> pure $ Left e
                 (ds, Just e)  -> pure $ Right (repoFromDeltas ds notification, Just e)
             where
-                foldDeltas' (valids, Just e)   _         = pure (valids, Just e)
-                foldDeltas' (valids, Nothing) (Left e')  = pure (valids, Just e')
-                foldDeltas' (valids, Nothing) (Right d) =
-                    handleDelta d >>= \case 
+                foldDeltas (valids, Just e)   _         = pure (valids, Just e)
+                foldDeltas (valids, Nothing) (Left e')  = pure (valids, Just e')
+                foldDeltas (valids, Nothing) (Right d) =
+                    handleDelta d >>= \case                 
                         Nothing -> pure (d : valids, Nothing)
                         Just e  -> pure (valids, Just e)
 
-                processDelta (DeltaInfo uri hash serial) = do                     
-                    deltaXml <- download uri (RrdpE . CantDownloadDelta . show)                        
-                    bindRight deltaXml $ \dXml ->
-                        let realHash = U.sha256 dXml
-                        in pure $ if realHash /= hash
-                            then Left $ RrdpE $ DeltaHashMismatch hash realHash serial
-                            else let !d = first RrdpE $ parseDelta dXml in d
+                processDelta (DeltaInfo uri hash serial) = 
+                    downloadAndParse uri hash
+                        (RrdpE . CantDownloadDelta . show)                         
+                        (\realHash -> Left $ RrdpE $ DeltaHashMismatch hash realHash serial)
+                        (\content -> pure $ first RrdpE $ parseDelta content)
+
+        useDeltas' :: [DeltaInfo]
+                    -> Notification
+                    -> IO (Either AppError (RrdpRepository, Maybe AppError))
+        useDeltas' sortedDeltas notification = do
+            deltas <- parallel (parallelism config) processDelta sortedDeltas            
+            foldM foldDeltas ([], Nothing) deltas >>= \case 
+                (ds, Nothing) -> pure $ Right (repoFromDeltas ds notification, Nothing)
+                ([], Just e)  -> pure $ Left e
+                (ds, Just e)  -> pure $ Right (repoFromDeltas ds notification, Just e)
+            where
+                foldDeltas (valids, Just e)   _         = pure (valids, Just e)
+                foldDeltas (valids, Nothing) (Left e')  = pure (valids, Just e')
+                foldDeltas (valids, Nothing) (Right d) =
+                    handleDelta d >>= \case                 
+                        Nothing -> pure (d : valids, Nothing)
+                        Just e  -> pure (valids, Just e)
+
+                processDelta (DeltaInfo uri hash serial) = 
+                    downloadAndParse uri hash
+                        (RrdpE . CantDownloadDelta . show)                         
+                        (\realHash -> Left $ RrdpE $ DeltaHashMismatch hash realHash serial)
+                        (\content -> pure $ first RrdpE $ parseDelta content)
+
+        downloadAndParse :: URI
+                    -> Hash        
+                    -> (SomeException -> AppError)
+                    -> (Hash -> Either AppError a)
+                    -> (BL.ByteString -> IO (Either AppError a))
+                    -> IO (Either AppError a)
+        downloadAndParse uri@(URI u) hash cantDownload hashMishmatch consumeContent = do
+            -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
+            -- to minimize the heap. Snapshots can be pretty big, so we don't want 
+            -- a spike in heap usage.
+            let tmpFileName = U.convert $ U.normalizeUri u
+            logInfo_ logger [i|tmpFileName = #{tmpFileName}.|]
+            withSystemTempFile tmpFileName $ \name fd -> do                    
+                realHash <- streamHttpToFile uri cantDownload fd
+                bindRight realHash $ \realHash' ->
+                    if realHash' /= hash                                
+                        then pure $ hashMishmatch realHash'
+                        else do
+                            hClose fd
+                            content <- unsafeMMapFile name
+                            consumeContent content
 
         repoFromSnapshot :: Snapshot -> RrdpRepository
         repoFromSnapshot (Snapshot _ sid s _) = RrdpRepository repoUri $ Just (sid, s)
@@ -118,7 +153,7 @@ updateRrdpRepo config repo@(RrdpRepository repoUri _) handleSnapshot handleDelta
                 newSessionId = sessionId notification
                 newSerial = L.maximum $ map (\(Delta _ _ s _) -> s) ds        
 
-
+-- | Download HTTP stream into memory bytestring
 download :: MonadIO m => URI -> (SomeException -> e) -> m (Either e BL.ByteString)
 download (URI uri) err = liftIO $ do
     r <- try (WR.get $ T.unpack uri)
@@ -126,12 +161,12 @@ download (URI uri) err = liftIO $ do
 
 
 -- | Download HTTP stream into a file while calculating its hash at the same time
-downloadToFile :: MonadIO m =>
-                URI -> 
-                (SomeException -> err) -> 
-                Handle -> 
-                m (Either err Hash)
-downloadToFile (URI uri) err destinationHandle = 
+streamHttpToFile :: MonadIO m =>
+                    URI -> 
+                    (SomeException -> err) -> 
+                    Handle -> 
+                    m (Either err Hash)
+streamHttpToFile (URI uri) err destinationHandle = 
     liftIO $ first err <$> try go    
     where
         go = do
@@ -148,8 +183,8 @@ downloadToFile (URI uri) err destinationHandle =
 
 
 data Step = UseSnapshot SnapshotInfo
-          | UseDeltas { sortedDeltas :: [DeltaInfo] }
-          | NothingToDo
+        | UseDeltas { sortedDeltas :: [DeltaInfo] }
+        | NothingToDo
     deriving (Show, Eq, Ord, Generic)
 
 -- | Decides what to do next based on current state of the repository
@@ -165,10 +200,10 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{
             case (deltas, nonConsecutive) of
                 ([], _) -> Right $ UseSnapshot snapshotInfo
                 (_, []) | nextSerial repoSerial < head (map deltaSerial sortedDeltas) ->
-                           -- we are too far behind
-                           Right $ UseSnapshot snapshotInfo
+                            -- we are too far behind
+                            Right $ UseSnapshot snapshotInfo
                         | otherwise ->
-                           Right $ UseDeltas chosenDeltas
+                            Right $ UseDeltas chosenDeltas
                 (_, nc) -> Left $ NonConsecutiveDeltaSerials nc
             where
                 sortedSerials = map deltaSerial sortedDeltas
@@ -186,71 +221,70 @@ nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1
 
 -- TODO Add warnings and errors to the specific VContext
-updateObjectForRrdpRepository :: (Has AppLogger conf, Has Config conf, Storage s) =>                 
+updateObjectForRrdpRepository :: Storage s => 
+                AppContext ->
                 RrdpRepository ->
                 RpkiObjectStore s ->
-                ValidatorT conf IO (RrdpRepository, Maybe SomeError)
-updateObjectForRrdpRepository repository objectStore = do
-    logger :: AppLogger <- asks getter
-    config :: Config    <- asks getter 
-    doIt config logger
+                ValidatorT conf IO (RrdpRepository, Maybe AppError)
+updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore = 
+    fromIOEither $ updateRrdpRepo appContext repository saveSnapshot saveDelta
     where
-        doIt config logger = fromIOEither $ 
-            updateRrdpRepo config repository saveSnapshot saveDelta
+        rwTx_ = rwTx objectStore        
+
+        saveSnapshot (Snapshot _ _ _ snapshotItems) = do
+            logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
+            either Just (const Nothing) . 
+                first (StorageE . StorageError . U.fmtEx) <$> 
+                    try (txFunnel (parallelism config) snapshotItems 
+                        storableToChan rwTx_ chanToStorage)
             where
-                rwTx_ = rwTx objectStore        
-                saveSnapshot (Snapshot _ _ _ snapshotItems) = do
-                    logInfo_ logger [i|Using snapshot for the repository: #{repository} |]
-                    either Just (const Nothing) . 
-                        first (StorageE . StorageError . U.fmtEx) <$> 
-                            try (txFunnel (parallelism config) snapshotItems storableToChan rwTx_ chanToStorage)
-                    where
-                        storableToChan (SnapshotPublish u encodedb64) = do
-                            a <- Unlift.async $ pure $! asStorable u encodedb64
-                            pure (u, a)
-                        
-                        chanToStorage tx (u, a) = Unlift.wait a >>= \case                        
-                            SError e   -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                            SObject so -> putObject tx objectStore so
+                storableToChan (SnapshotPublish u encodedb64) = do
+                    a <- Unlift.async $ pure $! asStorable u encodedb64
+                    pure (u, a)
                 
-                saveDelta (Delta _ _ _ deltaItems) = 
-                    either Just (const Nothing) . 
-                        first (StorageE . StorageError . U.fmtEx) <$> 
-                            try (txFunnel (parallelism config) deltaItems storableToChan rwTx_ chanToStorage)
-                    where
-                        storableToChan (DP (DeltaPublish u h encodedb64)) = do 
-                            a <- Unlift.async $ pure $! asStorable u encodedb64
-                            pure $ Right (u, h, a)
+                chanToStorage tx (u, a) = Unlift.wait a >>= \case                        
+                    SError e   -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                    SObject so -> putObject tx objectStore so
+            
+        saveDelta (Delta _ _ _ deltaItems) = 
+            either Just (const Nothing) . 
+                first (StorageE . StorageError . U.fmtEx) <$> 
+                    try (txFunnel (parallelism config) deltaItems 
+                        storableToChan rwTx_ chanToStorage)
+            where
+                storableToChan (DP (DeltaPublish u h encodedb64)) = do 
+                    a <- Unlift.async $ pure $! asStorable u encodedb64
+                    pure $ Right (u, h, a)
 
-                        storableToChan (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
+                storableToChan (DW (DeltaWithdraw u h)) = pure $ Left (u, h)       
 
-                        chanToStorage tx = \case
-                            Left (_, h)           -> deleteObject tx objectStore h
-                            Right (u, Nothing, a) -> 
-                                Unlift.wait a >>= \case
-                                    SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                                    SObject so@(StorableObject ro _) -> do
-                                        let h = getHash ro
-                                        getByHash tx objectStore h >>= \case
+                chanToStorage tx = \case
+                    Left (_, h)           -> deleteObject tx objectStore h
+                    Right (u, Nothing, a) -> 
+                        Unlift.wait a >>= \case
+                            SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                            SObject so@(StorableObject ro _) -> do
+                                let h = getHash ro
+                                getByHash tx objectStore h >>= \case
+                                    Nothing -> putObject tx objectStore so
+                                    (Just _ :: Maybe RpkiObject) ->
+                                        -- TODO Add location
+                                        logWarn_ logger [i|There's an existing object with hash #{h} |]
+                    Right (u, Just oldHash, a) -> 
+                        Unlift.wait a >>= \case
+                            SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
+                            SObject so@(StorableObject ro _) -> do                                    
+                                getByHash tx objectStore oldHash >>= \case 
+                                    Nothing -> 
+                                        logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
+                                    (Just _ :: Maybe RpkiObject) -> do 
+                                        deleteObject tx objectStore oldHash
+                                        let newHash = getHash ro
+                                        getByHash tx objectStore newHash >>= \case 
                                             Nothing -> putObject tx objectStore so
-                                            (Just _ :: Maybe RpkiObject) ->
+                                            (Just _ :: Maybe RpkiObject)  -> 
                                                 -- TODO Add location
-                                                logWarn_ logger [i|There's an existing object with hash #{h} |]
-                            Right (u, Just oldHash, a) -> 
-                                Unlift.wait a >>= \case
-                                    SError e -> logError_ logger [i|Couldn't parse object #{u}, error #{e} |]
-                                    SObject so@(StorableObject ro _) -> do                                    
-                                        getByHash tx objectStore oldHash >>= \case 
-                                            Nothing -> 
-                                                logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
-                                            (Just _ :: Maybe RpkiObject) -> do 
-                                                deleteObject tx objectStore oldHash
-                                                let newHash = getHash ro
-                                                getByHash tx objectStore newHash >>= \case 
-                                                    Nothing -> putObject tx objectStore so
-                                                    (Just _ :: Maybe RpkiObject)  -> 
-                                                        -- TODO Add location
-                                                        logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
+                                                logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
 
         asStorable (URI u) b64 = case parsed of
             Left e   -> SError e

@@ -1,5 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module RPKI.Store.Base.Storage where
 
@@ -28,7 +29,7 @@ class WithTx s => Storage s where
     deleteMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
     deleteAllMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> IO ()
 
-class Storage s => WithStorage s ws where
+class Storage s => WithStorage s ws | ws -> s where
     storage :: ws -> s
 
 roTx :: WithStorage s ws => ws -> (Tx s 'RO -> IO a) -> IO a

@@ -15,9 +15,6 @@ import           RPKI.TAL
 class WithKey a k where
     key :: a -> k
 
-data VProblem = VErr SomeError | VWarn VWarning
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
 -- TODO Add versioning here
 data VResult = VResult {
     problem :: ![VProblem],

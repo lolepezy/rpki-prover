@@ -214,5 +214,5 @@ validateSize :: Integer -> Either ValidationError Integer
 validateSize s = 
     case () of _
                 | s < 10         -> Left $ ObjectIsTooSmall s
-                | s > 10_000_000 -> Left $ ObjectIsTooBig s
+                | s > 50_000_000 -> Left $ ObjectIsTooBig s
                 | otherwise      -> pure s

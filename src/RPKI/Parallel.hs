@@ -41,11 +41,11 @@ txFunnel :: (Traversable t, MonadUnliftIO m) =>
             ((tx -> m (t c)) -> m (t c)) ->
             (tx -> b -> m c) -> m (t c)
 txFunnel poolSize as produce withTx consume = do
-  (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
-  snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
-  where
-    writeAll chanIn = forM_ as $
-      liftIO . Chan.writeChan chanIn <=< produce
-    readAll chanOut = withTx $ \tx -> 
-      forM as $ \_ -> 
-        consume tx =<< liftIO (Chan.readChan chanOut)
+    (chanIn, chanOut) <- liftIO $ Chan.newChan $ max 1 (poolSize - 1)
+    snd <$> Unlift.concurrently (writeAll chanIn) (readAll chanOut)
+    where
+        writeAll chanIn = forM_ as $
+            liftIO . Chan.writeChan chanIn <=< produce
+        readAll chanOut = withTx $ \tx -> 
+            forM as $ \_ -> 
+                consume tx =<< liftIO (Chan.readChan chanOut)

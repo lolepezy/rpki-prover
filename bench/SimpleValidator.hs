@@ -9,6 +9,7 @@ import Colog hiding (extract)
 import Control.Monad
 import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
+import Control.Concurrent.STM
 import Control.Exception
 
 import qualified Codec.Serialise                as Serialise
@@ -57,6 +58,7 @@ import           RPKI.RRDP.Types
 import           RPKI.RRDP.Update
 import           RPKI.TAL
 import           RPKI.Rsync
+import           RPKI.Repository
 import           RPKI.Store.Stores
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ObjectValidation
@@ -420,8 +422,8 @@ processRRDP env = do
     let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     store <- createObjectStore env
-    e <- runValidatorT conf $ updateObjectForRrdpRepository repo store
-    say $ "resulve " <> show e
+    e <- runValidatorT conf $ updateObjectForRrdpRepository createAppContext repo store
+    say $ "result " <> show e
 
 saveRsyncRepo env = do  
     let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
@@ -429,20 +431,26 @@ saveRsyncRepo env = do
     store <- createObjectStore env
     runValidatorT vc $ processRsync createAppContext repo store
 
+saveRsync :: p -> IO ()
 saveRsync env = do
     say "begin"  
     let logAction = logTextStdout
-    e <- runValidatorT (vContext $ URI "something.cer") $ rsyncFile createAppContext (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+    e <- runValidatorT (vContext $ URI "something.cer") $ rsyncFile createAppContext 
+        (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     say $ "done " <> show e
 
 loadRsync env = do
     say "begin"  
     let logAction = logTextStdout
     let logger = createLogger
-    store <- createObjectStore env    
-    loadRsyncRepository logger (Config getParallelism) "/tmp/rsync/rsync___rpki.ripe.net_repository" store
+    store <- createObjectStore env        
+    repositories <- atomically $ newTVar emptyRepositories
+    let collectRepositories = (repositories, updateRepositories)
+    loadRsyncRepository createAppContext (URI "rsync://rpki.ripe.net/repository") 
+        "/tmp/rsync/rsync___rpki.ripe.net_repository" store collectRepositories
     say $ "done "
 
+processTAL :: IO ()
 processTAL = do
     say "begin"      
     result <- runValidatorT (vContext $ URI "something.cer") $ do
@@ -454,6 +462,7 @@ processTAL = do
         pure (ro, x)
     say $ "done " <> show result
 
+getTACert :: IO (Either AppError (RpkiObject, CerObject), [VWarning])
 getTACert = 
     runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
@@ -502,9 +511,9 @@ validateTreeFromStore env = do
 main :: IO ()
 main = do 
     -- mkLmdb "./data"  >>= void . saveRsyncRepo
-    -- mkLmdb "./data" >>= processRRDP
-    -- mkLmdb "./data/" >>= saveRsyncRepo
-    mkLmdb "./data/" >>= validateTreeFromStore
+    mkLmdb "./data" >>= processRRDP
+    -- mkLmdb "./data/" >>= void . saveRsyncRepo
+    -- mkLmdb "./data/" >>= validateTreeFromStore
     -- mkLmdb "./data/" >>= validateTreeFromTA
 
 

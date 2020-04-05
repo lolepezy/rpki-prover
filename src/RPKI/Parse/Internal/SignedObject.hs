@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Parse.Internal.SignedObject where
-  
+
 import qualified Data.ByteString as B
 
 import Control.Applicative
@@ -13,8 +13,6 @@ import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
-
-import Data.X509
 
 import RPKI.Domain
 import RPKI.Parse.Internal.Common

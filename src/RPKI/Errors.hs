@@ -9,10 +9,13 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text            as T
 
 import           Codec.Serialise
-import           Control.DeepSeq
 import           Control.Exception
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
+import           Data.Map                         (Map)
+import qualified Data.Map                         as Map
+import           Data.Set                         (Set)
+import qualified Data.Set                         as Set
 
 import           Data.Data            (Typeable)
 import           Data.Hourglass       (DateTime)
@@ -24,7 +27,8 @@ import           RPKI.Resources.Types
 
 
 newtype ParseError s = ParseError s
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
 data ValidationError = InvalidCert !T.Text |
             ParentDoesntHaveResources |
@@ -56,7 +60,8 @@ data ValidationError = InvalidCert !T.Text |
             InheritWithoutParentResources |
             UnknownUriType !URI | 
             CertificateDoesn'tHaveSIA
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
     
 data RrdpError = BrokenXml !T.Text | 
                 BrokenSerial !B.ByteString |
@@ -82,39 +87,62 @@ data RrdpError = BrokenXml !T.Text |
                 CantDownloadDelta !String |
                 SnapshotHashMismatch !Hash !Hash |
                 DeltaHashMismatch !Hash !Hash !Serial
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError !Int !BL.ByteString |
                     FileReadError !T.Text |
                     RsyncDirError !T.Text
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
 data StorageError = StorageError !T.Text |
                     DeserialisationError !T.Text
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
 newtype TALError = TALError T.Text 
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
     deriving newtype Semigroup
 
 newtype VContext = VContext (NE.NonEmpty URI) 
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
-data SomeError = ParseE (ParseError T.Text) | 
+data AppError = ParseE (ParseError T.Text) | 
                     TAL_E TALError | 
                     RrdpE RrdpError |
                     RsyncE RsyncError |
-                    StorageE StorageError | 
-                    ValidationE ValidationError
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+                    StorageE StorageError |                     
+                    ValidationE ValidationError |
+                    UnspecifiedE T.Text
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
-instance Exception SomeError
+instance Exception AppError
 
-newtype VWarning = VWarning SomeError
-    deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+newtype VWarning = VWarning AppError
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
 
 vContext :: URI -> VContext
 vContext u = VContext $ u :| []
 
 childVContext :: VContext -> URI -> VContext
 childVContext (VContext us) u = VContext $ u `NE.cons` us
+
+data VProblem = VErr !AppError | VWarn !VWarning
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
+
+newtype Validations = Validations (Map VContext (Set VProblem))
+    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving anyclass Serialise
+    deriving newtype (Monoid, Semigroup)
+
+mError :: VContext -> AppError -> Validations
+mError vc e = Validations $ Map.fromList [(vc, Set.fromList [VErr e])]
+
+mWarning :: VContext -> VWarning -> Validations
+mWarning vc w = Validations $ Map.fromList [(vc, Set.fromList [VWarn w])]

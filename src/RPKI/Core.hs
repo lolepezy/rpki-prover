@@ -4,7 +4,6 @@
 
 module RPKI.Core where
 
-import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception
@@ -14,7 +13,6 @@ import           Control.Monad.Reader
 import qualified Control.Concurrent.STM.TBQueue   as Q
 
 import           Data.Has
-import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NE
 import           Data.Map                         (Map)
 import qualified Data.Map                         as Map
@@ -24,7 +22,6 @@ import qualified Data.Set                         as Set
 import           Data.String.Interpolate
 import qualified Data.Text                        as T
 
-import           Data.Tuple.Ops
 
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -33,9 +30,9 @@ import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parallel                    (parallel)
 import           RPKI.Parse.Parse
-import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.Rsync
+import           RPKI.Repository
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Stores
@@ -68,14 +65,14 @@ validateTA env tal database = do
             rwTx tas $ \tx -> do
                 getTA tx tas taName >>= \case
                     Nothing -> do
-                        -- it's a new TA, store it
+                        -- it's a new TA, store it and trigger all the other actions
                         let c = cwsX509certificate $ getCertWithSignature $ newCert
                         logInfo_ logger [i| Storing new #{getTaName tal}, 
                             getRrdpNotifyUri newCert = #{getRrdpNotifyUri c }, getRepositoryUri newCert = #{getRepositoryUri c}|]
                     
                         putTA tx tas (STA tal newCert)
                         
-                        case createRepository tal newCert of
+                        case createRepositoryFromTAL tal newCert of
                             Left e -> pure $ Left $ ValidationE e
                             Right repository -> do                                
                                 putRepository tx (repositoryStore database) (newRepository repository) taName                                      
@@ -121,7 +118,7 @@ emptyTopDownContext taName = do
 validateCA :: (Has AppContext env, Storage s) =>
             env -> VContext -> DB s -> TaName -> CerObject -> IO [URI]
 validateCA env vContext database taName certificate = do    
-    let appContext@AppContext {..} = getter env
+    let AppContext {..} = getter env
     topDownContext <- emptyTopDownContext taName    
     let validateAll = do
             result <- runValidatorT vContext $ validateTree env database certificate topDownContext
@@ -267,7 +264,7 @@ validateTree env database certificate topDownContext = do
 
 
 -- | Put validation result into a queue for writing
-queueVResult :: TopDownContext -> VContext -> (Either SomeError (), [VWarning]) -> IO ()
+queueVResult :: TopDownContext -> VContext -> (Either AppError (), [VWarning]) -> IO ()
 queueVResult topDownContext vc result = do    
     let problems = case result of            
             (Left e, ws)  -> map VWarn ws <> [VErr e]
@@ -314,36 +311,3 @@ fetchTACertificate appContext tal =
             lift3 $ logError_ (logger appContext) message
             validatorWarning $ VWarning e
             go uris
-
-
--- | Create repository based on URIs in TAL and in TA certificate,
--- | use some reasonable heuristics, but don't try to be very smart.
--- | URI of the repository is supposed to be a "real" one, i.e. where
--- | repository can actually be downloaded from.
-createRepository :: TAL -> CerObject -> Either ValidationError Repository
-createRepository tal (cwsX509certificate . getCertWithSignature -> cert) = 
-    case tal of 
-        PropertiesTAL {..} -> case prefetchUris of
-                                []      -> fromCert
-                                uri : _ -> fromURI uri
-        RFC_TAL {..}       -> fromCert
-    where
-        isRsyncURI (URI u) = "rsync://" `T.isPrefixOf` u
-        isRrdpURI (URI u) = "http://" `T.isPrefixOf` u || "https://" `T.isPrefixOf` u
-        fromURI u = 
-            if isRsyncURI u 
-                then Right $ RsyncRepo $ RsyncRepository u
-                else if isRrdpURI u
-                    then Right $ RrdpRepo $ RrdpRepository u Nothing
-                    else Left $ UnknownUriType u
-
-        fromCert = case getRrdpNotifyUri cert of
-                Just rrdpNotify | isRrdpURI rrdpNotify -> 
-                                        Right $ RrdpRepo $ RrdpRepository rrdpNotify Nothing
-                                | otherwise -> Left $ UnknownUriType rrdpNotify
-                Nothing -> 
-                    case getRepositoryUri cert of 
-                        Just repositoryUri | isRsyncURI repositoryUri -> 
-                                        Right $ RsyncRepo $ RsyncRepository repositoryUri
-                                            | otherwise -> Left $ UnknownUriType repositoryUri
-                        Nothing -> Left CertificateDoesn'tHaveSIA 

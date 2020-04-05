@@ -89,27 +89,27 @@ intersectionAndOverclaimedIntervals :: Interval a =>
                                       (Nested (IntervalSet a), Overclaiming (IntervalSet a))
 intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =     
     (Nested $ fromList intersectionRS, Overclaiming $ fromList overclaimingRS)
-  where
-    intersectionRS = good <> concatMap fst problematic 
-    overclaimingRS = concatMap snd problematic
+    where
+        intersectionRS = good <> concatMap fst problematic 
+        overclaimingRS = concatMap snd problematic
 
-    (problematic, good) = partitionEithers $ concatMap overclamingPart smaller
+        (problematic, good) = partitionEithers $ concatMap overclamingPart smaller
 
-    overclamingPart smallerInterval = 
-      case findFullIntersections smallerInterval bigger of
-        []             -> [Left ([], [smallerInterval])]
-        intersections  -> (flip L.map) intersections $ 
-          \(intersection, biggerInterval) ->        
-              if biggerInterval `contains` smallerInterval
-                then Right smallerInterval
-                else Left (intersection, smallerInterval `subtract` biggerInterval)       
+        overclamingPart smallerInterval = 
+            case findFullIntersections smallerInterval bigger of
+                []             -> [Left ([], [smallerInterval])]
+                intersections  -> (flip L.map) intersections $ 
+                    \(intersection, biggerInterval) ->        
+                        if biggerInterval `contains` smallerInterval
+                            then Right smallerInterval
+                            else Left (intersection, smallerInterval `subtract` biggerInterval)       
 
 
 subsetCheck :: Interval a =>
                 IntervalSet a -> IntervalSet a -> ResourceCheckResult a              
 subsetCheck s b = 
-  if null o 
-    then Left $ Nested i
-    else Right (Nested i, Overclaiming o)
-  where
-    (Nested i, Overclaiming o) = intersectionAndOverclaimedIntervals s b                  
+    if null o 
+        then Left $ Nested i
+        else Right (Nested i, Overclaiming o)
+    where
+        (Nested i, Overclaiming o) = intersectionAndOverclaimedIntervals s b                  
