@@ -85,8 +85,8 @@ type ResourceCheckResult a = Either
 -- | For two sets, find intersecting and overclaming resource subsets
 -- 
 intersectionAndOverclaimedIntervals :: Interval a =>    
-                                      IntervalSet a -> IntervalSet a -> 
-                                      (Nested (IntervalSet a), Overclaiming (IntervalSet a))
+                                        IntervalSet a -> IntervalSet a -> 
+                                        (Nested (IntervalSet a), Overclaiming (IntervalSet a))
 intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =     
     (Nested $ fromList intersectionRS, Overclaiming $ fromList overclaimingRS)
     where

@@ -86,7 +86,9 @@ data RrdpError = BrokenXml !T.Text |
                 CantDownloadSnapshot !String |
                 CantDownloadDelta !String |
                 SnapshotHashMismatch !Hash !Hash |
-                DeltaHashMismatch !Hash !Hash !Serial
+                DeltaHashMismatch !Hash !Hash !Serial |
+                NoObjectToReplace !URI !Hash |
+                ObjectExistsWhenReplacing !URI !Hash
     deriving stock (Show, Eq, Ord, Typeable, Generic)
     deriving anyclass Serialise
 
@@ -142,7 +144,7 @@ newtype Validations = Validations (Map VContext (Set VProblem))
     deriving newtype (Monoid, Semigroup)
 
 mError :: VContext -> AppError -> Validations
-mError vc e = Validations $ Map.fromList [(vc, Set.fromList [VErr e])]
+mError vc e = Validations $ Map.singleton vc $ Set.fromList [VErr e]
 
 mWarning :: VContext -> VWarning -> Validations
-mWarning vc w = Validations $ Map.fromList [(vc, Set.fromList [VWarn w])]
+mWarning vc w = Validations $ Map.singleton vc $ Set.fromList [VWarn w]

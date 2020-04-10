@@ -9,19 +9,16 @@ module RPKI.Rsync where
 
 import           Data.Bifunctor
 
-import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.Reader
 import           Control.Monad.Except
-import           UnliftIO.Exception                    hiding (fromEither)
+import           UnliftIO.Exception                    hiding (fromEither, fromEitherM)
 
 import qualified Data.ByteString                       as B
 import           Data.String.Interpolate
 import qualified Data.Text                             as T
-import qualified Data.List                             as L
 import           Data.IORef
-import           Data.Maybe (fromMaybe)
 
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -29,6 +26,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Repository
+import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Base.Storage
@@ -36,7 +34,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Stores
 import qualified RPKI.Util                             as U
 
-import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
+import qualified Control.Concurrent.STM.TBQueue as Q
 
 import           System.Directory                      (createDirectoryIfMissing,
                                                         doesDirectoryExist,
@@ -48,6 +46,8 @@ import           System.Exit
 import           System.Process.Typed
 
 import System.IO.Posix.MMap (unsafeMMapFile)
+
+import qualified UnliftIO.Async as Unlift
 
 -- | Download one file using rsync
 rsyncFile :: AppContext -> 
@@ -67,9 +67,9 @@ rsyncFile AppContext{..} (URI uri) = do
             throwError $ RsyncE $ RsyncProcessError errorCode err  
         ExitSuccess -> do
             fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
-            pureToValidatorT $ validateSizeM fileSize
+            void $ vHoist $ validateSizeM fileSize
             bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
-            fromEither $ first ParseE $ readObject (U.convert uri) bs
+            fromEitherM $ pure $ first ParseE $ readObject (U.convert uri) bs
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
@@ -91,7 +91,7 @@ processRsync appContenxt@AppContext{..} (RsyncRepository (URI uri)) objectStore 
     (exitCode, out, err) <- lift $ readProcess rsync
     lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
     case exitCode of  
-        ExitSuccess -> fromIOEither $ do 
+        ExitSuccess -> fromEitherM $ do 
             repositories <- atomically $ newTVar emptyRepositories
             count <- loadRsyncRepository appContenxt (URI uri) destination 
                         objectStore (repositories, updateRepositories)
@@ -120,35 +120,38 @@ loadRsyncRepository :: Storage s =>
                         IO (Either AppError (Validations, Integer))
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulator, handleObject) = do        
         counter <- newIORef 0
-        (chanIn, chanOut) <- Chan.newChan $ parallelism config
-        (r1, r2) <- concurrently 
-                        (travelrseFS chanIn) 
-                        (saveObjects counter chanOut)
+        (r1, r2) <- bracketChan 
+                        (parallelism config)
+                        travelrseFS
+                        (saveObjects counter)
+                        kill
         c <- readIORef counter
+        -- TODO That is weird
         pure $ do    
             r1' <- r1
             r2' <- r2
             pure (r2', c)
     where
-        travelrseFS chanIn = 
-            first (RsyncE . FileReadError . U.fmtEx) <$> try (
-                readFiles chanIn rootPath 
-                    `finally` 
-                    Chan.writeChan chanIn Nothing)        
+        kill = maybe (pure ()) (Unlift.cancel . snd)
 
-        readFiles chanIn currentPath = do
+        travelrseFS queue = 
+            first (RsyncE . FileReadError . U.fmtEx) <$> try (
+                readFiles queue rootPath 
+                    `finally` 
+                    (atomically $ Q.writeTBQueue queue Nothing))
+
+        readFiles queue currentPath = do
             names <- getDirectoryContents currentPath
             let properNames = filter (`notElem` [".", ".."]) names
             forM_ properNames $ \name -> do
                 let path = currentPath </> name
                 doesDirectoryExist path >>= \case
-                    True  -> readFiles chanIn path
+                    True  -> readFiles queue path
                     False -> 
                         when (supportedExtension path) $ do                            
-                            a <- async $ readAndParseObject path                            
+                            a <- Unlift.async $ readAndParseObject path                            
                             let uri = pathToUri repositoryUrl rootPath path
-                            logDebug_ logger [i|paths: #{repositoryUrl} #{rsyncRoot rsyncConf} #{path}, uri = #{uri} |]
-                            Chan.writeChan chanIn $ Just (uri, a)
+                            atomically $ Q.writeTBQueue queue $ Just (uri, a)
             where
                 readAndParseObject filePath = do                                         
                     (_, content)  <- getSizeAndContent filePath                
@@ -174,14 +177,14 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulat
                                             Left e ->   SError $ ValidationE e
                                             Right ro' -> SObject $! toStorableObject ro'
         
-        saveObjects counter chanOut = 
+        saveObjects counter queue = 
             first (StorageE . StorageError . U.fmtEx) <$> 
                 try (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
             where            
                 go tx validations = 
-                    Chan.readChan chanOut >>= \case 
+                    (atomically $ Q.readTBQueue queue) >>= \case 
                         Nothing -> pure validations
-                        Just (uri, a) -> try (wait a) >>= process tx uri validations >>= go tx
+                        Just (uri, a) -> try (Unlift.wait a) >>= process tx uri validations >>= go tx
 
                 process tx uri validations = \case
                     Left (e :: SomeException) -> do

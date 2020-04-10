@@ -419,10 +419,16 @@ createAppContext = AppContext {
 processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
     say "begin"      
-    let repo = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
+    let repo1 = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
+    let repo2 = RrdpRepository (URI "https://rrdp.arin.net/notification.xml") Nothing    
+    let repo3 = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing    
+    let repo4 = RrdpRepository (URI "https://rrdp.afrinic.net/notification.xml") Nothing    
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     store <- createObjectStore env
-    e <- runValidatorT conf $ updateObjectForRrdpRepository createAppContext repo store
+    as <- forM [repo1, repo2, repo3, repo4] $ \repo ->
+        async $ runValidatorT conf $ updateObjectForRrdpRepository createAppContext repo store
+
+    e <- forM as wait
     say $ "result " <> show e
 
 saveRsyncRepo env = do  
@@ -456,20 +462,19 @@ processTAL = do
     result <- runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
-        tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
+        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
         (u, ro) <- fetchTACertificate createAppContext tal
-        x <- pureToValidatorT $ validateTACert tal u ro
+        x <- vHoist $ validateTACert tal u ro
         pure (ro, x)
     say $ "done " <> show result
 
-getTACert :: IO (Either AppError (RpkiObject, CerObject), [VWarning])
 getTACert = 
     runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
-        tal <- fromEither $ first TAL_E $ parseTAL $ U.convert t        
+        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
         (u, ro) <- fetchTACertificate createAppContext tal
-        x <- pureToValidatorT $ validateTACert tal u ro
+        x <- vHoist $ validateTACert tal u ro
         pure (ro, x)
 
 

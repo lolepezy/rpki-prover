@@ -53,9 +53,9 @@ validateResourceCertExtensions cert =
         validateHasCriticalExtensions x509cert = do
             let exts = getExts x509cert
             case extVal exts id_ce_certificatePolicies of
-                Nothing -> pureError CertNoPolicyExtension
+                Nothing -> vPureError CertNoPolicyExtension
                 Just bs 
-                    | B.null bs -> pureError CertNoPolicyExtension
+                    | B.null bs -> vPureError CertNoPolicyExtension
                     | otherwise ->
                         case decodeASN1 DER (BL.fromStrict bs) of
                             Right [
@@ -65,7 +65,7 @@ validateResourceCertExtensions cert =
                                     End Sequence,
                                     End Sequence
                                 ] | oid == id_cp_ipAddr_asNumber -> pure cert
-                            _ -> pureError $ CertWrongPolicyExtension bs
+                            _ -> vPureError $ CertWrongPolicyExtension bs
                                 
 -- | 
 validateTACert :: TAL -> URI -> RpkiObject -> PureValidator conf CerObject
@@ -78,7 +78,7 @@ validateTACert tal u (CerRO taCert) = do
     void $ validateResourceCertExtensions taCert
     pure taCert
 
-validateTACert _ _ _ = pureError UnknownObjectAsTACert
+validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
 
 {- |
@@ -100,9 +100,9 @@ validateResourceCert :: (WithResourceCertificate c,
 validateResourceCert cert parentCert vcrl = do
     signatureCheck $ validateCertSignature cert parentCert
     when (isRevoked cert vcrl) $ 
-        pureError RevokedResourceCertificate
+        vPureError RevokedResourceCertificate
     when (not (correctSkiAki cert parentCert)) $ 
-        pureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+        vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
     void $ validateResourceCertExtensions cert
     pure $ Validated cert
     where 
@@ -172,7 +172,7 @@ validateCms cms parentCert crl extraValidation = do
     let eeCert = getEEResourceCert $ unCMS cms  
     validateResourceCert eeCert parentCert crl
     when (isRevoked eeCert crl) $ 
-        pureError RevokedEECertificate
+        vPureError RevokedEECertificate
     extraValidation cms
     pure $ Validated cms
 
@@ -181,9 +181,9 @@ validateCms cms parentCert crl extraValidation = do
 validateNexUpdate :: Now -> Maybe DateTime -> PureValidator conf DateTime
 validateNexUpdate (Now now) nextUpdateTime = do 
     case nextUpdateTime of
-        Nothing -> pureError NextUpdateTimeNotSet
+        Nothing -> vPureError NextUpdateTimeNotSet
         Just nextUpdate 
-            | nextUpdate < now -> pureError $ NextUpdateTimeIsBeforeNow nextUpdate
+            | nextUpdate < now -> vPureError $ NextUpdateTimeIsBeforeNow nextUpdate
             | otherwise        -> pure nextUpdate
 
 
@@ -200,7 +200,7 @@ isRevoked cert (Validated crlObject) =
 
 signatureCheck :: SignatureVerification -> PureValidator conf ()
 signatureCheck sv = case sv of
-    SignatureFailed e -> pureError $ InvalidSignature $ convert $ show e
+    SignatureFailed e -> vPureError $ InvalidSignature $ convert $ show e
     SignaturePass     -> pure ()        
 
 
@@ -208,7 +208,7 @@ validateSizeOfBS :: B.ByteString -> PureValidator c B.ByteString
 validateSizeOfBS bs = validateSizeM (toInteger $ B.length bs) >> pure bs  
 
 validateSizeM :: Integer -> PureValidator c Integer
-validateSizeM s = pureFromEither $ validateSize s
+validateSizeM s = vFromEither $ validateSize s
 
 validateSize :: Integer -> Either ValidationError Integer
 validateSize s = 

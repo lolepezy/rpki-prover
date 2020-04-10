@@ -34,7 +34,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
       case verifiedResources of 
         Nothing -> do 
           case (c, p) of 
-            (_,       Inherit) -> pureError InheritWithoutParentResources
+            (_,       Inherit) -> vPureError InheritWithoutParentResources
             (Inherit, RS ps)   -> pure $ Left $ Nested ps
             (RS cs,   RS ps)   -> pure $ IS.subsetCheck cs ps
         Just vr -> 
@@ -48,7 +48,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
       case (q4, q6, qa) of
         (Left (Nested n4), Left (Nested n6), Left (Nested na)) -> 
           pure $ VerifiedRS $ PrefixesAndAsns n4 n6 na
-        _ -> pureError $ OverclaimedResources $ 
+        _ -> vPureError $ OverclaimedResources $ 
           PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
  
     reconsidered q4 q6 qa = do

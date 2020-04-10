@@ -59,7 +59,7 @@ validateTA env tal database = do
     let taName = getTaName tal
     let taContext = vContext $ getTaURI tal
     (uri', ro) <- fetchTACertificate appContext tal
-    newCert <- pureToValidatorT $ validateTACert tal uri' ro  
+    newCert <- vHoist $ validateTACert tal uri' ro  
     join $ 
         fromTryEither (StorageE . StorageError . fmtEx) $
             rwTx tas $ \tx -> do
@@ -147,11 +147,11 @@ validateCA env vContext database taName certificate = do
 validateTree :: (Has AppContext env, 
                 Has VContext vc, 
                 Storage s) =>
-            env ->
-            DB s ->
-            CerObject ->
-            TopDownContext ->
-            ValidatorT vc IO ()
+                env ->
+                DB s ->
+                CerObject ->
+                TopDownContext ->
+                ValidatorT vc IO ()
 validateTree env database certificate topDownContext = do      
     let appContext@AppContext {..} = getter env
     vContext' :: VContext <- asks getter
@@ -172,7 +172,7 @@ validateTree env database certificate topDownContext = do
     case crlObject of 
         Nothing          -> vError $ NoCRLExists childrenAki locations    
         Just (CrlRO crl) -> do      
-            validCrl <- pureToValidatorT $ do          
+            validCrl <- vHoist $ do          
                 crl' <- validateCrl (now topDownContext) crl certificate
                 validateMft (now topDownContext) mft certificate crl'
                 pure crl'
@@ -215,7 +215,7 @@ validateTree env database certificate topDownContext = do
             case ro of
                 CerRO childCert -> do 
                     result <- runValidatorT childContext $ do
-                            childVerifiedResources <- pureToValidatorT $ do                 
+                            childVerifiedResources <- vHoist $ do                 
                                 validateResourceCert childCert certificate validCrl                
                                 validateResources (verifiedResources topDownContext) childCert certificate 
                             -- lift3 $ logDebug_ (getter childContext :: AppLogger) 
@@ -306,8 +306,10 @@ fetchTACertificate appContext tal =
     go $ NE.toList $ certLocations tal
     where
         go []         = throwError $ TAL_E $ TALError "No certificate location could be fetched."
-        go (u : uris) = ((u,) <$> rsyncFile appContext u) `catchError` \e -> do            
-            let message = [i| Failed to fetch #{u}: #{e}|]
-            lift3 $ logError_ (logger appContext) message
-            validatorWarning $ VWarning e
-            go uris
+        go (u : uris) = ((u,) <$> rsyncFile appContext u) `catchError` goToNext 
+            where 
+                goToNext e = do            
+                    let message = [i| Failed to fetch #{u}: #{e}|]
+                    lift3 $ logError_ (logger appContext) message
+                    validatorWarning $ VWarning e
+                    go uris

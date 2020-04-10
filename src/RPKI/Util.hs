@@ -1,6 +1,7 @@
 module RPKI.Util where
 
 import           Control.Exception
+import           Numeric.Natural
 
 import qualified Crypto.Hash.SHA256      as S256
 import qualified Data.ByteString         as B
@@ -37,3 +38,7 @@ isSpace_ = isSpace . chr . fromEnum
 
 fmtEx :: SomeException -> T.Text
 fmtEx = T.pack . show
+
+toNatural :: Int -> Maybe Natural 
+toNatural i | i > 0     = Just (fromIntegral i :: Natural)
+            | otherwise = Nothing
