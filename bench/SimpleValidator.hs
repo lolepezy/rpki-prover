@@ -425,11 +425,16 @@ processRRDP env = do
     let repo4 = RrdpRepository (URI "https://rrdp.afrinic.net/notification.xml") Nothing    
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     store <- createObjectStore env
+    repositories <- atomically $ newTVar emptyRepositories
+    let collectRepositories = (repositories, updateRepositories)
     as <- forM [repo1, repo2, repo3, repo4] $ \repo ->
-        async $ runValidatorT conf $ updateObjectForRrdpRepository createAppContext repo store
+        async $ runValidatorT conf $ updateObjectForRrdpRepository 
+                    createAppContext repo store collectRepositories
 
     e <- forM as wait
+    newRepos <- atomically $ readTVar repositories
     say $ "result " <> show e
+    say $ "newRepos = " <> show newRepos
 
 saveRsyncRepo env = do  
     let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    

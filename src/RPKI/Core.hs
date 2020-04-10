@@ -88,7 +88,7 @@ validateTA env tal database = do
                         pure $ Right $ pure ()
     
 
--- TODO Implement
+-- | Download repository and 
 prefetch :: Repository -> ValidatorT env IO ()
 prefetch _ = pure ()
 

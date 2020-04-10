@@ -165,16 +165,9 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulat
                                 -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
                                 -- a slow CPU-intensive transaction (verify that it's the case)
                                 Right ro -> do
-                                    z <- atomically $ do 
-                                        a <- readTVar accumulator
-                                        case handleObject a ro of
-                                            Left e   -> pure $ Left e
-                                            Right a' -> do 
-                                                writeTVar accumulator a' 
-                                                pure $ Right ro
-
+                                    z <- atomically $ updateIfValidObject accumulator handleObject ro
                                     pure $! case z of 
-                                            Left e ->   SError $ ValidationE e
+                                            Left e    -> SError $ ValidationE e
                                             Right ro' -> SObject $! toStorableObject ro'
         
         saveObjects counter queue = 
@@ -191,7 +184,6 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulat
                         logError_ logger [i|An error reading and parsing the object: #{e}|]
                         pure $ validations <> mError (vContext uri) (UnspecifiedE $ U.fmtEx e)
                     Right (SError e) -> do
-                        -- TODO Do something with the validation result here
                         logError_ logger [i|An error parsing or serialising the object: #{e}|]
                         pure $ validations <> mError (vContext uri) e
                     Right (SObject so@(StorableObject ro _)) -> do                        

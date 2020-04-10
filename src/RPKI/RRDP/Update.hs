@@ -23,6 +23,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
+import           RPKI.Repository
 import           RPKI.Parse.Parse
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
@@ -203,14 +204,18 @@ deltaSerial (DeltaInfo _ _ s) = s
 nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1
 
--- TODO Add warnings and errors to the specific VContext
+
 updateObjectForRrdpRepository :: Storage s => 
                                 AppContext ->
                                 RrdpRepository ->
                                 Stores.RpkiObjectStore s ->
+                                (TVar a, (a -> RpkiObject -> Either ValidationError a)) ->
                                 ValidatorT conf IO (RrdpRepository, Validations)
-updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore = 
-    updateRrdpRepo appContext repository saveSnapshot saveDelta
+updateObjectForRrdpRepository 
+    appContext@AppContext{..} 
+    repository objectStore 
+    (accumulator, handleObject) =
+        updateRrdpRepo appContext repository saveSnapshot saveDelta
     where
         saveSnapshot (Snapshot _ _ _ snapshotItems) = do
             lift3 $ logDebug_ logger [i|Using snapshot for the repository: #{repository} |]
@@ -226,9 +231,9 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
             lift3 $ logDebug_ logger [i|Loaded snapshot: #{repository} |]
             pure vs
             where
-                storableToChan (SnapshotPublish uri' encodedb64) = do
-                    a <- Unlift.async $ pure $! asStorable uri' encodedb64
-                    pure (uri', a)
+                storableToChan (SnapshotPublish uri encodedb64) = do
+                    a <- Unlift.async $ parseAndProcess uri encodedb64
+                    pure (uri, a)
                 
                 chanToStorage tx (uri, a) validations = 
                     Unlift.wait a >>= \case                        
@@ -254,7 +259,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
 
                 storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
                 storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
-                    a <- Unlift.async $ pure $! asStorable uri encodedb64
+                    a <- Unlift.async $ parseAndProcess uri encodedb64
                     pure $ maybe (Add uri a) (Replace uri a) hash
 
                 storableToChan (DW (DeltaWithdraw _ hash)) = 
@@ -303,10 +308,14 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
                                             pure $ validations <> mWarning (vContext uri) 
                                                 (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
 
-        asStorable (URI u) b64 = 
+        parseAndProcess (URI u) b64 =     
             case parsed of
-                Left e   -> SError e
-                Right ro -> SObject $ toStorableObject ro
+                Left e   -> pure $! SError e
+                Right ro -> do 
+                    z <- atomically $ updateIfValidObject accumulator handleObject ro
+                    pure $! case z of   
+                        Left e    -> SError $ ValidationE e
+                        Right ro' -> SObject $! toStorableObject ro'
             where
                 parsed = do
                     DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
