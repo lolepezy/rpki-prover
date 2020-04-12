@@ -3,31 +3,29 @@
 module RPKI.Validation.ObjectValidation where
 
 import           Control.Monad
-import           Control.Monad.Reader
 
 import qualified Data.ByteString          as B
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Maybe
-
 import           Data.Data                (Typeable)
-import           Data.Has
 
 import           GHC.Generics
 
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
+
 import           Data.X509
+import           Data.X509.Validation   hiding (InvalidSignature)
 
 import           Data.Hourglass         (DateTime)
-import           Data.X509.Validation   hiding (InvalidSignature)
+
 import           System.Hourglass       (dateCurrent)
 
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
-import           RPKI.Resources.Resources        
 import           RPKI.Resources.Types        
 import           RPKI.TAL
 import           RPKI.Util              (convert)
@@ -75,8 +73,7 @@ validateTACert tal u (CerRO taCert) = do
     pureErrorIfNot (isNothing $ getAKI taCert) $ TACertAKIIsNotEmpty u
     -- It's self-signed, so use itself as a parent to check the signature
     signatureCheck $ validateCertSignature taCert taCert
-    void $ validateResourceCertExtensions taCert
-    pure taCert
+    validateResourceCertExtensions taCert >> pure taCert
 
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
@@ -94,16 +91,19 @@ validateResourceCert :: (WithResourceCertificate c,
                         WithResourceCertificate parent, 
                         WithSKI parent, 
                         WithAKI c) => 
-                        c -> parent -> 
+                        Now -> c -> parent -> 
                         Validated CrlObject ->
                         PureValidator conf (Validated c)
-validateResourceCert cert parentCert vcrl = do
+validateResourceCert (Now now) cert parentCert vcrl = do
+    let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
     signatureCheck $ validateCertSignature cert parentCert
-    when (isRevoked cert vcrl) $ 
-        vPureError RevokedResourceCertificate
+    when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
+    when (now < before) $ vPureError CertificateIsInTheFuture
+    when (now > after) $ vPureError CertificateIsExpired    
     when (not (correctSkiAki cert parentCert)) $ 
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
     void $ validateResourceCertExtensions cert
+
     pure $ Validated cert
     where 
         correctSkiAki c (getSKI -> SKI s) = 
@@ -141,7 +141,7 @@ validateMft :: (WithResourceCertificate c, WithSKI c) =>
                 Now -> MftObject -> c -> Validated CrlObject -> 
                 PureValidator conf (Validated MftObject)
 validateMft now mft parentCert crl = do
-    validateCms (extract mft) parentCert crl $ \m -> do
+    void $ validateCms now (extract mft) parentCert crl $ \m -> do
         void $ validateNexUpdate now $ Just $ nextTime $ getCMSContent m
         pure m
     pure $ Validated mft
@@ -150,31 +150,29 @@ validateRoa :: (WithResourceCertificate c, WithSKI c) =>
                 Now -> RoaObject -> c -> Validated CrlObject -> 
                 PureValidator conf (Validated RoaObject)
 validateRoa now roa parentCert crl = do
-    validateCms (extract roa) parentCert crl pure
+    void $ validateCms now (extract roa) parentCert crl pure
     pure $ Validated roa
 
 validateGbr :: (WithResourceCertificate c, WithSKI c) =>
                 Now -> GbrObject -> c -> Validated CrlObject -> 
                 PureValidator conf (Validated GbrObject)
 validateGbr now gbr parentCert crl = do
-    validateCms (extract gbr) parentCert crl pure
+    void $ validateCms now (extract gbr) parentCert crl pure
     -- TODO Implement it
     pure $ Validated gbr
 
 validateCms :: (WithResourceCertificate c, WithSKI c) =>
+                Now -> 
                 CMS a -> 
                 c -> 
                 Validated CrlObject -> 
                 (CMS a -> PureValidator conf (CMS a)) ->
                 PureValidator conf (Validated (CMS a))
-validateCms cms parentCert crl extraValidation = do
+validateCms now cms parentCert crl extraValidation = do
     signatureCheck $ validateCMSSignature cms
     let eeCert = getEEResourceCert $ unCMS cms  
-    validateResourceCert eeCert parentCert crl
-    when (isRevoked eeCert crl) $ 
-        vPureError RevokedEECertificate
-    extraValidation cms
-    pure $ Validated cms
+    void $ validateResourceCert now eeCert parentCert crl
+    Validated <$> extraValidation cms
 
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
