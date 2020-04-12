@@ -74,12 +74,15 @@ rsyncFile AppContext{..} (URI uri) = do
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-processRsync :: Storage s => 
+updateObjectForRsyncRepository :: Storage s => 
                 AppContext ->
                 RsyncRepository -> 
                 RpkiObjectStore s -> 
-                ValidatorT conf IO ()
-processRsync appContenxt@AppContext{..} (RsyncRepository (URI uri)) objectStore = do 
+                ValidatorT vc IO (RsyncRepository, Validations)
+updateObjectForRsyncRepository 
+                appContenxt@AppContext{..} 
+                repo@(RsyncRepository (URI uri)) 
+                objectStore = do     
     let RsyncConf {..} = rsyncConf
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess (URI uri) destination RsyncDirectory
@@ -91,18 +94,17 @@ processRsync appContenxt@AppContext{..} (RsyncRepository (URI uri)) objectStore 
     (exitCode, out, err) <- lift $ readProcess rsync
     lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
     case exitCode of  
-        ExitSuccess -> fromEitherM $ do 
-            repositories <- atomically $ newTVar emptyRepositories
-            count <- loadRsyncRepository appContenxt (URI uri) destination 
-                        objectStore (repositories, updateRepositories)
-            logInfo_ logger [i|Finished loading #{count} objects into local storage.|]
-            pure $ Right ()            
+        ExitSuccess -> do 
+            (validations, count) <- fromEitherM $ loadRsyncRepository appContenxt (URI uri) destination objectStore
+            lift3 $ logInfo_ logger [i|Finished loading #{count} objects into local storage.|]
+            pure (repo, validations)
         ExitFailure errorCode -> do
             lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
                                         with code #{errorCode}, 
                                         stderr = #{err}, 
                                         stdout = #{out}|]
-            throwError $ RsyncE $ RsyncProcessError errorCode err  
+            throwError $ RsyncE $ RsyncProcessError errorCode err 
+        
     
 
 -- | Recursively traverse given directory and save all the parseable 
@@ -116,9 +118,8 @@ loadRsyncRepository :: Storage s =>
                         URI -> 
                         FilePath -> 
                         RpkiObjectStore s -> 
-                        (TVar a, (a -> RpkiObject -> Either ValidationError a)) ->
                         IO (Either AppError (Validations, Integer))
-loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulator, handleObject) = do        
+loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do        
         counter <- newIORef 0
         (r1, r2) <- bracketChan 
                         (parallelism config)
@@ -126,7 +127,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulat
                         (saveObjects counter)
                         kill
         c <- readIORef counter
-        -- TODO That is weird
+        -- TODO That is weird, make somjething reasonable out of it
         pure $ do    
             r1' <- r1
             r2' <- r2
@@ -164,11 +165,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulat
                                 -- force computation of the serialised object and gain some parallelism
                                 -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
                                 -- a slow CPU-intensive transaction (verify that it's the case)
-                                Right ro -> do
-                                    z <- atomically $ updateIfValidObject accumulator handleObject ro
-                                    pure $! case z of 
-                                            Left e    -> SError $ ValidationE e
-                                            Right ro' -> SObject $! toStorableObject ro'
+                                Right ro -> pure $! SObject $! toStorableObject ro
         
         saveObjects counter queue = 
             first (StorageE . StorageError . U.fmtEx) <$> 
@@ -192,9 +189,9 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore (accumulat
                             Nothing -> do
                                 putObject tx objectStore so
                                 void $ atomicModifyIORef counter $ \c -> (c + 1, ())
-                            (Just _ :: Maybe RpkiObject) ->
+                            (Just _ :: Maybe RpkiObject) -> pure ()
                                 -- TODO Add location
-                                logDebug_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
+                                -- logDebug_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
                         pure validations
                     
 

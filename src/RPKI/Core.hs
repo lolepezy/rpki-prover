@@ -108,15 +108,14 @@ emptyTopDownContext taName = do
     now <- thisMoment
     atomically $ TopDownContext Nothing <$> 
             (newTBQueue 100) <*>
-            (newTBQueue 100) <*>
             (newTVar Map.empty) <*>
-            (newTVar Set.empty) <*>
+            (newTVar Map.empty) <*>
             pure taName <*> 
             pure now   
 
 
 validateCA :: (Has AppContext env, Storage s) =>
-            env -> VContext -> DB s -> TaName -> CerObject -> IO [URI]
+            env -> VContext -> DB s -> TaName -> CerObject -> IO ()
 validateCA env vContext database taName certificate = do    
     let AppContext {..} = getter env
     topDownContext <- emptyTopDownContext taName    
@@ -124,26 +123,39 @@ validateCA env vContext database taName certificate = do
             result <- runValidatorT vContext $ validateTree env database certificate topDownContext
             queueVResult topDownContext vContext result
 
-    let finaliseQueues = atomically $ do
-            Q.writeTBQueue (repositoryQueue topDownContext) Nothing
-            Q.writeTBQueue (resultQueue topDownContext) Nothing
+    let finaliseQueue = atomically $ Q.writeTBQueue (resultQueue topDownContext) Nothing
 
-    let topDown = Concurrently $ validateAll `finally` finaliseQueues
+    let topDown = Concurrently $ validateAll `finally` finaliseQueue
     let saveVResults = Concurrently $ writeVResults logger topDownContext (resultStore database)
-    let saveRepositories = Concurrently $ writeRepositories logger taName topDownContext (repositoryStore database)
 
     {- Write validation results and repositories in separate threads to avoid 
         blocking on the database with writing transactions during the validation process 
     -}
-    void $ runConcurrently $ (,,) <$> 
-                topDown <*> saveVResults <*> saveRepositories
+    void $ runConcurrently $ (,) <$> topDown <*> saveVResults
 
-    Set.toList <$> (atomically $ readTVar $ newRepositories topDownContext)
+    newRepos <- atomically $ readTVar $ newRepositories topDownContext
+
+
+    -- merge newRepositories with existing ones, i.e.
+    --  - join rsync repos under the same root
+    --  - take only unique RRDP repos
+
+    -- save new ones after filtering everything with NEW status
+
+    {- 
+        forM mergedRepositories $ \(r, caCert) -> do  
+            r' <- fetchRepository r 
+            let vContext' = vContext $ repositoryURI r'
+            validateCA env vContext' database taName caCert  
+    -}
+
+
+    pure ()
         
     
 
 -- | Do top-down validation starting from the given certificate
--- TODO Resolve URL VContext to an actual URL instead of the rsync path.
+-- TODO Do something reasonable when MFT is not found because repository is not yet fetched
 validateTree :: (Has AppContext env, 
                 Has VContext vc, 
                 Storage s) =>
@@ -216,7 +228,7 @@ validateTree env database certificate topDownContext = do
                 CerRO childCert -> do 
                     result <- runValidatorT childContext $ do
                             childVerifiedResources <- vHoist $ do                 
-                                validateResourceCert childCert certificate validCrl                
+                                validateResourceCert (now topDownContext) childCert certificate validCrl                
                                 validateResources (verifiedResources topDownContext) childCert certificate 
                             -- lift3 $ logDebug_ (getter childContext :: AppLogger) 
                             --     [i|Validated: #{getter childContext :: VContext}, resources: #{childVerifiedResources}.|]                
@@ -248,10 +260,8 @@ validateTree env database certificate topDownContext = do
                     newRepositories <- readTVar tNewRepositories                        
                     case Map.lookup uri repoMap of
                         Nothing -> do
-                            let queue = repositoryQueue topDownContext                                
                             writeTVar tRepoMap $ Map.insert uri repo repoMap     
-                            writeTVar tNewRepositories $ Set.insert uri newRepositories
-                            Q.writeTBQueue queue $ Just repo
+                            writeTVar tNewRepositories $ Map.insert uri cerObject newRepositories
                             pure $ Just uri
                         Just _ -> pure $ Just uri
             where
@@ -281,14 +291,6 @@ writeVResults logger topDownContext resultStore =
         logDebug_ logger [i|VResult: #{vr}.|]
         rwTx resultStore $ \tx -> putVResult tx resultStore vr
 
-
--- | Get new repositories from the queue and save it to the DB
-writeRepositories :: (Storage s) => AppLogger -> TaName -> TopDownContext -> RepositoryStore s -> IO ()
-writeRepositories logger taName topDownContext repositoryStore =
-    withQueue (repositoryQueue topDownContext) $ \r -> do
-        logDebug_ logger [i|Repository: #{r}.|]
-        rwTx repositoryStore $ \tx ->            
-            putRepository tx repositoryStore (newRepository r) taName
 
 -- TODO Optimise so that it reads the whole queue at once 
 withQueue :: TBQueue (Maybe a) -> (a -> IO ()) -> IO ()

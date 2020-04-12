@@ -23,7 +23,6 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
-import           RPKI.Repository
 import           RPKI.Parse.Parse
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
@@ -41,6 +40,7 @@ import qualified Crypto.Hash.SHA256             as S256
 
 import           System.IO                      (Handle)
 import           System.IO.Posix.MMap.Lazy      (unsafeMMapFile)
+import           System.TimeIt
 
 import UnliftIO hiding (fromEither, fromEitherM)
 import qualified UnliftIO.Async                 as Unlift
@@ -209,30 +209,26 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext ->
                                 RrdpRepository ->
                                 Stores.RpkiObjectStore s ->
-                                (TVar a, (a -> RpkiObject -> Either ValidationError a)) ->
-                                ValidatorT conf IO (RrdpRepository, Validations)
-updateObjectForRrdpRepository 
-    appContext@AppContext{..} 
-    repository objectStore 
-    (accumulator, handleObject) =
-        updateRrdpRepo appContext repository saveSnapshot saveDelta
+                                ValidatorT vc IO (RrdpRepository, Validations)
+updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
+    updateRrdpRepo appContext repository saveSnapshot saveDelta
     where
         saveSnapshot (Snapshot _ _ _ snapshotItems) = do
             lift3 $ logDebug_ logger [i|Using snapshot for the repository: #{repository} |]
-            vs <- fromTry 
-                    (StorageE . StorageError . U.fmtEx)                
-                    (txConsumeFold 
-                        (parallelism config) 
-                        snapshotItems 
-                        storableToChan 
-                        (rwTx objectStore) 
-                        chanToStorage 
-                        (mempty :: Validations))            
-            lift3 $ logDebug_ logger [i|Loaded snapshot: #{repository} |]
+            (t, vs) <- timeItT $ fromTry 
+                        (StorageE . StorageError . U.fmtEx)                
+                        (txConsumeFold 
+                            (parallelism config) 
+                            snapshotItems 
+                            storableToChan 
+                            (rwTx objectStore) 
+                            chanToStorage 
+                            (mempty :: Validations))            
+            lift3 $ logDebug_ logger [i|Loaded snapshot: #{repository} in #{t}s|]
             pure vs
             where
                 storableToChan (SnapshotPublish uri encodedb64) = do
-                    a <- Unlift.async $ parseAndProcess uri encodedb64
+                    a <- Unlift.async $ pure $! parseAndProcess uri encodedb64
                     pure (uri, a)
                 
                 chanToStorage tx (uri, a) validations = 
@@ -259,7 +255,7 @@ updateObjectForRrdpRepository
 
                 storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
                 storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
-                    a <- Unlift.async $ parseAndProcess uri encodedb64
+                    a <- Unlift.async $ pure $! parseAndProcess uri encodedb64
                     pure $ maybe (Add uri a) (Replace uri a) hash
 
                 storableToChan (DW (DeltaWithdraw _ hash)) = 
@@ -310,12 +306,8 @@ updateObjectForRrdpRepository
 
         parseAndProcess (URI u) b64 =     
             case parsed of
-                Left e   -> pure $! SError e
-                Right ro -> do 
-                    z <- atomically $ updateIfValidObject accumulator handleObject ro
-                    pure $! case z of   
-                        Left e    -> SError $ ValidationE e
-                        Right ro' -> SObject $! toStorableObject ro'
+                Left e   -> SError e
+                Right ro -> SObject $! toStorableObject ro                    
             where
                 parsed = do
                     DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
