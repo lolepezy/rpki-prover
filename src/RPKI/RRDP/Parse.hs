@@ -66,16 +66,16 @@ parseSnapshot xml = makeSnapshot =<< folded
             Left $ BrokenXml "More than one 'snapshot'"
         foldPubs (Nothing, _) (X.StartElement "publish" _)  = 
             Left $ BrokenXml "'publish' before 'snapshot'"
-        foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri)]) = 
-            Right (Just sn, SnapshotPublish (URI $ convert uri) (EncodedBase64 "") : ps)
+        foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri')]) = 
+            Right (Just sn, SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps)
         foldPubs (Just _, []) (X.StartElement "publish" as) = 
             Left $ BrokenXml $ T.pack $ "Wrong atrribute set " <> show as
-  
+
         foldPubs (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
-        foldPubs (Just sn, SnapshotPublish uri (EncodedBase64 c) : ps) (X.CharacterData cd) = 
-          let !nc = c <> trim cd
-              !sp = SnapshotPublish uri (EncodedBase64 nc) : ps
-            in Right (Just sn, sp)      
+        foldPubs (Just sn, SnapshotPublish uri' (EncodedBase64 c) : ps) (X.CharacterData cd) = 
+            let !nc = c <> trim cd
+                !sp = SnapshotPublish uri' (EncodedBase64 nc) : ps
+                in Right (Just sn, sp)      
         foldPubs x  _                                          = Right x
 
 
@@ -105,8 +105,8 @@ parseDelta xml = makeDelta =<< folded
             pure (Just sn, DW dw : ps)        
     
         foldItems (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
-        foldItems (Just sn, DP (DeltaPublish uri h (EncodedBase64 c)) : ps) (X.CharacterData cd) = 
-            let nc = c <> trim cd in Right (Just sn, DP (DeltaPublish uri h (EncodedBase64 nc)) : ps)
+        foldItems (Just sn, DP (DeltaPublish uri' h (EncodedBase64 c)) : ps) (X.CharacterData cd) = 
+            let nc = c <> trim cd in Right (Just sn, DP (DeltaPublish uri' h (EncodedBase64 nc)) : ps)
         foldItems d@(Just _, DW (DeltaWithdraw _ _) : _) (X.CharacterData cd) = 
             if B.all isSpace_ cd 
                 then Right d 
@@ -118,9 +118,9 @@ parseInteger :: B.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs
 
 parseSerial :: Monad m =>
-              B.ByteString ->
-              (Serial -> ExceptT RrdpError m v) ->
-              ExceptT RrdpError m v
+            B.ByteString ->
+            (Serial -> ExceptT RrdpError m v) ->
+            ExceptT RrdpError m v
 parseSerial v f =  case parseInteger v of
     Nothing -> throwE $ BrokenSerial v
     Just s  -> f $ Serial s

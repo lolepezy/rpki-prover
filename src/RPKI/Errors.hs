@@ -54,6 +54,8 @@ data ValidationError = InvalidCert !T.Text |
             NextUpdateTimeIsBeforeNow !DateTime |
             RevokedEECertificate |
             RevokedResourceCertificate |
+            CertificateIsInTheFuture |
+            CertificateIsExpired |
             AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
             ManifestEntryDontExist !Hash |
             OverclaimedResources PrefixesAndAsns |

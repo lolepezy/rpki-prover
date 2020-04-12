@@ -137,6 +137,19 @@ putRepository tx s r taName = do
     M.put tx (repositories s) repoUri r
     MM.put tx (repositoriesPerTA s) taName repoUri
 
+updateRepositoryStatus :: Storage s => 
+                        Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> IO ()
+updateRepositoryStatus tx s r status = do 
+    let repoUri = repositoryURI r
+    getRepository tx s repoUri >>= \case
+        Nothing -> pure ()
+        Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status
+
+
+getRepository :: Storage s => 
+                Tx s 'RW -> RepositoryStore s -> URI -> IO (Maybe Repository)
+getRepository tx s repoUri = fmap repo <$> M.get tx (repositories s) repoUri 
+
 getRepositoriesForTA :: Storage s => Tx s m -> RepositoryStore s -> TaName -> IO [SRepository]
 getRepositoriesForTA tx s taName = MM.fold tx (repositoriesPerTA s) taName f []
     where
