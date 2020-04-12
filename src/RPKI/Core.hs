@@ -32,6 +32,7 @@ import           RPKI.Parallel                    (parallel)
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
 import           RPKI.Rsync
+import           RPKI.RRDP.Update
 import           RPKI.Repository
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
@@ -50,7 +51,7 @@ rwAppTx s e f = validatorT $ rwTx s $ \tx -> runValidatorT e (f tx)
 
 
 -- | Valiidate TA starting from the TAL.
--- | 
+-- | TODO Do something consistent with Validations
 validateTA :: (Has AppContext env, Has VContext vc, Storage s) => 
             env -> TAL -> DB s -> ValidatorT vc IO ()
 validateTA env tal database = do
@@ -63,6 +64,13 @@ validateTA env tal database = do
     join $ 
         fromTryEither (StorageE . StorageError . fmtEx) $
             rwTx tas $ \tx -> do
+
+                let fetchAndValidate repository = do 
+                    let vContext' = vContext $ repositoryURI repository
+                    (repo, validations) <- fetchRepository appContext database repository
+                    lift3 $ updateRepositoryStatus tx (repositoryStore database) repo FETCHED
+                    lift3 $ validateCA env vContext' database taName newCert  
+
                 getTA tx tas taName >>= \case
                     Nothing -> do
                         -- it's a new TA, store it and trigger all the other actions
@@ -75,11 +83,8 @@ validateTA env tal database = do
                         case createRepositoryFromTAL tal newCert of
                             Left e -> pure $ Left $ ValidationE e
                             Right repository -> do                                
-                                putRepository tx (repositoryStore database) (newRepository repository) taName                                      
-                                pure $ Right $ do 
-                                    let vContext' = vContext $ repositoryURI repository
-                                    prefetch repository                                    
-                                    void $ lift3 $ validateCA env vContext' database taName newCert                                    
+                                putRepository tx (repositoryStore database) (newRepository repository) taName
+                                pure $ Right $ fetchAndValidate repository 
 
                     Just (STA _ oldCert) -> do
                         when (getSerial oldCert /= getSerial newCert) $ do            
@@ -89,16 +94,24 @@ validateTA env tal database = do
     
 
 -- | Download repository and 
-prefetch :: Repository -> ValidatorT env IO ()
-prefetch _ = pure ()
+fetchRepository :: Storage s => 
+            AppContext -> DB s -> Repository -> ValidatorT env IO (Repository, Validations)
+fetchRepository appContext@AppContext {..} database r = 
+    case r of
+        RsyncRepo repo -> do
+            (repo', validations) <- updateObjectForRsyncRepository appContext repo (objectStore database)
+            pure (RsyncRepo repo', validations)
+        RrdpRepo repo -> do
+            (repo', validations) <- updateObjectForRrdpRepository appContext repo (objectStore database)
+            pure (RrdpRepo repo', validations)
 
 
+-- Auxiliarry structure used in top-down validation
 data TopDownContext = TopDownContext {    
     verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns),
     resultQueue :: TBQueue (Maybe VResult),
-    repositoryQueue :: TBQueue (Maybe Repository),
     repositoryMap :: TVar (Map URI Repository),
-    newRepositories :: TVar (Set URI),
+    newRepositories :: TVar (Map URI CerObject),
     taName :: TaName, 
     now :: Now
 }
@@ -165,7 +178,7 @@ validateTree :: (Has AppContext env,
                 TopDownContext ->
                 ValidatorT vc IO ()
 validateTree env database certificate topDownContext = do      
-    let appContext@AppContext {..} = getter env
+    let AppContext {..} = getter env
     vContext' :: VContext <- asks getter
 
     let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
@@ -250,7 +263,7 @@ validateTree env database certificate topDownContext = do
 
 
         -- | Register URI of the repository for the given certificate if it's not there yet
-        registerPublicationPoint (cwsX509certificate . getCertWithSignature -> cert) = 
+        registerPublicationPoint cerObject@(cwsX509certificate . getCertWithSignature -> cert) = 
             case repositoryObject of
                 Nothing          -> pure Nothing
                 Just (uri, repo) -> lift3 $ atomically $ do            

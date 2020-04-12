@@ -2,18 +2,20 @@
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module RPKI.Repository where
 
-import Data.X509 (Certificate)
-
 import           Control.Concurrent.STM
-
+import           Codec.Serialise
 import           GHC.Generics
+
+import Data.X509 (Certificate)
 
 import           Data.Map                 (Map)
 import qualified Data.Map                 as Map
 import qualified Data.Text                as T
+import qualified Data.List                as L
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
@@ -21,8 +23,32 @@ import           RPKI.TAL
 
 
 newtype Repositories = Repositories (Map URI Repository)
+    deriving stock (Show, Eq, Ord, Generic)    
+
+data RsyncTree = RsyncTree RsyncRepository [RsyncTree]
     deriving stock (Show, Eq, Ord, Generic)
-    
+    deriving anyclass Serialise
+
+-- | Merge rsync repositories into the hierarchy based on their URIs
+-- e.g.
+--   rsync://host/foo/
+--     rsync://host/foo/bar/
+--       rsync://host/foo/bar/quux
+--     rsync://host/foo/baz/
+--       rsync://host/foo/baz/nup
+--       rsync://host/foo/baz/bop
+-- When fetching a repositoiry we actually want o
+mergeInto :: RsyncRepository -> [RsyncTree] -> [RsyncTree]
+mergeInto r [] = [RsyncTree r []]
+mergeInto 
+    r@(RsyncRepository newUri) 
+    trees@(tree@(RsyncTree maybeParent@(RsyncRepository uri) children) : rts) = L.sort $ 
+        if uri == newUri 
+            then trees 
+            else if uri `isParentOf` newUri
+                then RsyncTree maybeParent (r `mergeInto` children) : rts
+                else tree : r `mergeInto` rts 
+
 
 emptyRepositories :: Repositories
 emptyRepositories = Repositories Map.empty
@@ -62,6 +88,8 @@ isRsyncURI, isRrdpURI :: URI -> Bool
 isRsyncURI (URI u) = "rsync://" `T.isPrefixOf` u
 isRrdpURI (URI u) = "http://" `T.isPrefixOf` u || "https://" `T.isPrefixOf` u                        
 
+isParentOf :: URI -> URI -> Bool
+isParentOf (URI maybeParent) (URI maybeChild) = maybeParent `T.isPrefixOf` maybeChild
 
 repositoryFromCert :: Certificate -> Either ValidationError (URI, Repository)
 repositoryFromCert cert = 

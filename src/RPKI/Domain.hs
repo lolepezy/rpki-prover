@@ -30,6 +30,9 @@ import qualified Data.X509 as X509
 import Data.ASN1.OID
 import Data.ASN1.Types
 
+-- import Text.URI (URI)
+-- import qualified Text.URI as URI
+
 import RPKI.Resources.Resources as RS
 import RPKI.Resources.Types
 import RPKI.Serialise.Orphans
@@ -325,34 +328,34 @@ newtype EncodedBase64 = EncodedBase64 B.ByteString
     deriving stock (Show, Eq, Ord, Typeable, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
-  
+
 newtype DecodedBase64 = DecodedBase64 B.ByteString
     deriving stock (Show, Eq, Ord, Typeable, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
-  
+
 
 newtype TaName = TaName T.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data TA = TA {
-    taName        :: TaName
-  , taCertificate :: Maybe ResourceCertificate
-  , taUri         :: URI
-  , taSpki        :: SPKI
-} 
+        taName        :: TaName, 
+        taCertificate :: Maybe ResourceCertificate,
+        taUri         :: URI,
+        taSpki        :: SPKI
+    } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
 
-data RsyncRepository = RsyncRepository {
+newtype RsyncRepository = RsyncRepository {
     uri :: URI    
 } deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data RrdpRepository = RrdpRepository {
     uri :: URI,
-    session :: Maybe (SessionId, Serial)
+    rrdpMeta :: Maybe (SessionId, Serial)
 } deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 data Repository = 

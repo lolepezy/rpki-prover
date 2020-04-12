@@ -28,7 +28,7 @@ data STA = STA {
 } deriving (Show, Eq, Generic, Serialise)
 
 
-data RepositoryStatus = NEW | FAILED | COMPLETED
+data RepositoryStatus = NEW | FAILED | FETCHED
     deriving (Show, Eq, Ord, Generic, Serialise)
 
 data SRepository = SRepository {

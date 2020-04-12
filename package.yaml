@@ -67,6 +67,7 @@ dependencies:
 - lifted-async
 - memory
 - mmorph
+- modern-uri
 - MissingH
 - monad-control
 - mtl
@@ -88,6 +89,7 @@ dependencies:
 - tagged
 - text
 - text-short
+- timeit
 - typed-process
 - time
 - transformers
