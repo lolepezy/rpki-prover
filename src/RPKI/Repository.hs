@@ -29,6 +29,10 @@ data RsyncTree = RsyncTree RsyncRepository [RsyncTree]
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
+newtype Forest = Forest [RsyncTree]
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
 -- | Merge rsync repositories into the hierarchy based on their URIs
 -- e.g.
 --   rsync://host/foo/
@@ -37,7 +41,7 @@ data RsyncTree = RsyncTree RsyncRepository [RsyncTree]
 --     rsync://host/foo/baz/
 --       rsync://host/foo/baz/nup
 --       rsync://host/foo/baz/bop
--- When fetching a repositoiry we actually want o
+--
 mergeInto :: RsyncRepository -> [RsyncTree] -> [RsyncTree]
 mergeInto r [] = [RsyncTree r []]
 mergeInto 
@@ -47,7 +51,15 @@ mergeInto
             then trees 
             else if uri `isParentOf` newUri
                 then RsyncTree maybeParent (r `mergeInto` children) : rts
-                else tree : r `mergeInto` rts 
+                else if newUri `isParentOf` uri
+                    then let
+                        (ch, nonCh) = List.partition 
+                            (\(RsyncTree (RsyncRepository u) _) -> newUri `isParentOf` u) rts
+                        in RsyncTree r (tree : ch) : nonCh
+                    else tree : r `mergeInto` rts 
+
+createRsyncForest :: [RsyncRepository] -> Forest
+createRsyncForest = Forest . List.foldl (flip mergeInto) []
 
 
 emptyRepositories :: Repositories

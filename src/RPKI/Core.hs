@@ -64,10 +64,10 @@ validateTA env tal database = do
             rwTx tas $ \tx -> do
 
                 let fetchAndValidate repository = do 
-                    let vContext' = vContext $ repositoryURI repository
-                    (repo, validations) <- fetchRepository appContext database repository
-                    lift3 $ updateRepositoryStatus tx (repositoryStore database) repo FETCHED
-                    lift3 $ validateCA env vContext' database taName newCert  
+                        let vContext' = vContext $ repositoryURI repository
+                        (repo, validations) <- fetchRepository appContext database repository
+                        lift3 $ updateRepositoryStatus tx (repositoryStore database) repo FETCHED
+                        lift3 $ validateCA env vContext' database taName newCert  
 
                 getTA tx tas taName >>= \case
                     Nothing -> do
