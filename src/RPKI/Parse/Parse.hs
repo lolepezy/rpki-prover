@@ -19,21 +19,21 @@ import RPKI.Parse.Internal.SignedObject
 
 import RPKI.Domain
 
-import qualified Data.ByteString as B
-import qualified Data.List as L
-import qualified Data.Text as T
+import qualified Data.ByteString as BS
+import qualified Data.List as List
+import qualified Data.Text as Text
 
 supportedExtension :: String -> Bool
 supportedExtension filename = 
-    let ext = L.drop (L.length filename - 4) filename
+    let ext = List.drop (List.length filename - 4) filename
         in elem ext [".cer", ".mft", ".crl", ".roa", ".gbr"] 
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
-readObject :: String -> B.ByteString -> ParseResult RpkiObject
+readObject :: String -> BS.ByteString -> ParseResult RpkiObject
 readObject name content = do    
-    let ext = L.drop (L.length name - 3) name
-    let u = URI $ T.pack name
+    let ext = List.drop (List.length name - 3) name
+    let u = URI $ Text.pack name
     case ext of
         "cer" -> parse_ u parseResourceCertificate CerRO content            
         "mft" -> parse_ u parseMft MftRO content

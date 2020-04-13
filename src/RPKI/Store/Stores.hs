@@ -4,12 +4,6 @@
 
 module RPKI.Store.Stores where
 
-import           Codec.Serialise
-
-import           GHC.Generics
-
-import qualified Data.List.NonEmpty       as NE
-
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Store.Base.Map      (SMap (..))

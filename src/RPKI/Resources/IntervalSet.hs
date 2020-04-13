@@ -11,7 +11,7 @@ module RPKI.Resources.IntervalSet where
 import Prelude hiding (subtract, null)
 
 import           Data.Either              (partitionEithers)
-import qualified Data.List                as L
+import qualified Data.List                as List
 import qualified Data.Vector              as V
 import           RPKI.Resources.Types
 
@@ -98,7 +98,7 @@ intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =
         overclamingPart smallerInterval = 
             case findFullIntersections smallerInterval bigger of
                 []             -> [Left ([], [smallerInterval])]
-                intersections  -> (flip L.map) intersections $ 
+                intersections  -> (flip List.map) intersections $ 
                     \(intersection, biggerInterval) ->        
                         if biggerInterval `contains` smallerInterval
                             then Right smallerInterval

@@ -6,8 +6,7 @@
 
 module RPKI.Store.Base.MultiMap where
 
-import           Codec.Serialise
-
+import Codec.Serialise
 import GHC.TypeLits
 
 import RPKI.Store.Base.Storable
@@ -18,17 +17,17 @@ data SMultiMap (name :: Symbol) s k v where
 
 instance Storage s => WithStorage s (SMultiMap name s k v) where
     storage (SMultiMap s _) = s
- 
+
 put :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
 put tx (SMultiMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
 
 delete :: (Serialise k, Serialise v) =>
-         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
+            Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
 delete tx (SMultiMap _ s) k v = S.deleteMu tx s (storableKey k) (storableValue v)
 
 deleteAll :: (Serialise k, Serialise v) =>
-         Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
+            Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
 deleteAll tx (SMultiMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
 fold :: (Serialise k, Serialise v) =>

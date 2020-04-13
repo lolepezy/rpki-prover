@@ -1,13 +1,10 @@
 {-# LANGUAGE RecordWildCards #-}
 module RPKI.Validation.Crypto where
 
-import qualified Data.ByteString as B
-
 import Data.X509 hiding (getCertificate)
 import Data.X509.Validation hiding (InvalidSignature)
 
 import RPKI.Domain
-import RPKI.Parse.Parse
     
 -- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification

@@ -6,11 +6,11 @@ module RPKI.Orphans where
 
 import Control.Monad
 
-import qualified Data.ByteString                       as B
-import qualified Data.List                       as L
+import qualified Data.ByteString                       as BS
+import qualified Data.List                       as List
 import qualified Data.ByteString.Base64                as B64
 
-import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty (NonEmpty)
 
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Gen
@@ -59,7 +59,7 @@ instance Arbitrary URI where
     shrink = genericShrink
 
 instance Arbitrary Hash where
-    arbitrary = Hash . B.pack <$> replicateM 32 arbitrary
+    arbitrary = Hash . BS.pack <$> replicateM 32 arbitrary
 
 instance Arbitrary Serial where
     arbitrary = genericArbitrary
@@ -132,15 +132,15 @@ instance Arbitrary a => Arbitrary (X509.Signed a) where
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
-instance Arbitrary a => Arbitrary (NE.NonEmpty a) where
+instance Arbitrary a => Arbitrary (NonEmpty a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary AKI where
-    arbitrary = AKI . KI <$> B.pack <$> replicateM 20 arbitrary
+    arbitrary = AKI . KI <$> BS.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary SKI where
-    arbitrary = SKI . KI <$> B.pack <$> replicateM 20 arbitrary
+    arbitrary = SKI . KI <$> BS.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary KI where
     arbitrary = KI <$> arbitrary  
@@ -516,7 +516,7 @@ instance Arbitrary Extensions where
 instance Arbitrary ExtKeyUsageFlag where
     arbitrary = elements $ enumFrom KeyUsage_digitalSignature
 instance Arbitrary ExtKeyUsage where
-    arbitrary = ExtKeyUsage . L.sort . L.nub <$> listOf1 arbitrary
+    arbitrary = ExtKeyUsage . List.sort . List.nub <$> listOf1 arbitrary
 
 instance Arbitrary ExtKeyUsagePurpose where
     arbitrary = elements [ KeyUsagePurpose_ServerAuth
@@ -526,7 +526,7 @@ instance Arbitrary ExtKeyUsagePurpose where
                           , KeyUsagePurpose_TimeStamping
                           , KeyUsagePurpose_OCSPSigning ]
 instance Arbitrary ExtExtendedKeyUsage where
-    arbitrary = ExtExtendedKeyUsage . L.nub <$> listOf1 arbitrary
+    arbitrary = ExtExtendedKeyUsage . List.nub <$> listOf1 arbitrary
 
 instance Arbitrary Certificate where
     arbitrary = Certificate <$> pure 2
@@ -552,5 +552,5 @@ instance Arbitrary CRL where
                     <*> arbitrary
                     <*> arbitrary
 
-arbitraryBS :: Int -> Int -> Gen B.ByteString
-arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> (B.pack <$> replicateM l arbitrary)
+arbitraryBS :: Int -> Int -> Gen BS.ByteString
+arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> (BS.pack <$> replicateM l arbitrary)

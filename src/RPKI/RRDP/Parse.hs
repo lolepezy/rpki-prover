@@ -6,12 +6,12 @@ module RPKI.RRDP.Parse where
 import           Control.Monad
 import           Control.Monad.Trans.Except
 
-import qualified Data.ByteString            as B
+import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Base64     as B64
-import qualified Data.ByteString.Lazy       as BL
+import qualified Data.ByteString.Lazy       as LBS
 import           Data.Hex                   (unhex)
-import qualified Data.List                  as L
-import qualified Data.Text                  as T
+import qualified Data.List                  as List
+import qualified Data.Text                  as Text
 import           Text.Read                  (readMaybe)
 
 import qualified Text.XML.Expat.SAX         as X
@@ -25,7 +25,7 @@ import           RPKI.Util                  (convert, trim, isSpace_)
 
 type NOTIF = (Maybe (Version, SessionId, Serial), Maybe SnapshotInfo, [DeltaInfo])
 
-parseNotification :: BL.ByteString -> Either RrdpError Notification
+parseNotification :: LBS.ByteString -> Either RrdpError Notification
 parseNotification xml = makeNotification =<< folded
     where
         makeNotification (Nothing, _, _) = Left NoSessionId
@@ -52,7 +52,7 @@ parseNotification xml = makeNotification =<< folded
 
 type SN = (Maybe (Version, SessionId, Serial), [SnapshotPublish])
 
-parseSnapshot :: BL.ByteString -> Either RrdpError Snapshot
+parseSnapshot :: LBS.ByteString -> Either RrdpError Snapshot
 parseSnapshot xml = makeSnapshot =<< folded
     where
         makeSnapshot (Nothing, _) = Left NoSessionId
@@ -69,7 +69,7 @@ parseSnapshot xml = makeSnapshot =<< folded
         foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri')]) = 
             Right (Just sn, SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps)
         foldPubs (Just _, []) (X.StartElement "publish" as) = 
-            Left $ BrokenXml $ T.pack $ "Wrong atrribute set " <> show as
+            Left $ BrokenXml $ Text.pack $ "Wrong atrribute set " <> show as
 
         foldPubs (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
         foldPubs (Just sn, SnapshotPublish uri' (EncodedBase64 c) : ps) (X.CharacterData cd) = 
@@ -81,7 +81,7 @@ parseSnapshot xml = makeSnapshot =<< folded
 
 type DT = (Maybe (Version, SessionId, Serial), [DeltaItem])
 
-parseDelta :: BL.ByteString -> Either RrdpError Delta
+parseDelta :: LBS.ByteString -> Either RrdpError Delta
 parseDelta xml = makeDelta =<< folded
     where
         makeDelta (Nothing, _) = Left NoSessionId
@@ -108,17 +108,17 @@ parseDelta xml = makeDelta =<< folded
         foldItems (Just sn, DP (DeltaPublish uri' h (EncodedBase64 c)) : ps) (X.CharacterData cd) = 
             let nc = c <> trim cd in Right (Just sn, DP (DeltaPublish uri' h (EncodedBase64 nc)) : ps)
         foldItems d@(Just _, DW (DeltaWithdraw _ _) : _) (X.CharacterData cd) = 
-            if B.all isSpace_ cd 
+            if BS.all isSpace_ cd 
                 then Right d 
                 else Left $ ContentInWithdraw cd
         foldItems x  _                                          = Right x
 
 
-parseInteger :: B.ByteString -> Maybe Integer
+parseInteger :: BS.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs
 
 parseSerial :: Monad m =>
-            B.ByteString ->
+            BS.ByteString ->
             (Serial -> ExceptT RrdpError m v) ->
             ExceptT RrdpError m v
 parseSerial v f =  case parseInteger v of
@@ -126,63 +126,63 @@ parseSerial v f =  case parseInteger v of
     Just s  -> f $ Serial s
 
 
-parseMeta :: [(B.ByteString, B.ByteString)] -> Either RrdpError (Version, SessionId, Serial)
+parseMeta :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError (Version, SessionId, Serial)
 parseMeta as = do
-    sId <- toEither NoSessionId $ L.lookup "session_id" as
-    s   <- toEither NoSerial $ L.lookup "serial" as
+    sId <- toEither NoSessionId $ List.lookup "session_id" as
+    s   <- toEither NoSerial $ List.lookup "serial" as
     s'  <- toEither NoSerial $ parseInteger s
-    v   <- toEither NoVersion $ L.lookup "version" as
+    v   <- toEither NoVersion $ List.lookup "version" as
     v'  <- toEither NoVersion $ parseInteger v            
     pure (Version v', SessionId $ sId, Serial s')
 
-parseSnapshotInfo :: [(B.ByteString, B.ByteString)] -> Either RrdpError SnapshotInfo
+parseSnapshotInfo :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError SnapshotInfo
 parseSnapshotInfo as = do
-    u <- toEither NoSnapshotURI $ L.lookup "uri" as
-    h <- toEither NoSnapshotHash $ L.lookup "hash" as        
+    u <- toEither NoSnapshotURI $ List.lookup "uri" as
+    h <- toEither NoSnapshotHash $ List.lookup "hash" as        
     case makeHash h of
         Nothing -> Left $ BadHash h
         Just h' -> pure $ SnapshotInfo (URI $ convert u) h'
 
-parseDeltaInfo :: [(B.ByteString, B.ByteString)] -> Either RrdpError DeltaInfo
+parseDeltaInfo :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaInfo
 parseDeltaInfo as = do
-    u <- toEither NoSnapshotURI $ L.lookup "uri" as
-    h <- toEither NoSnapshotHash $ L.lookup "hash" as      
-    s <- toEither NoSerial $ L.lookup "serial" as
+    u <- toEither NoSnapshotURI $ List.lookup "uri" as
+    h <- toEither NoSnapshotHash $ List.lookup "hash" as      
+    s <- toEither NoSerial $ List.lookup "serial" as
     s' <- toEither NoSerial $ parseInteger s  
     case makeHash h of
         Nothing -> Left $ BadHash h
         Just h' -> pure $ DeltaInfo (URI $ convert u) h' (Serial s')
 
-parseDeltaPublish :: [(B.ByteString, B.ByteString)] -> Either RrdpError DeltaPublish
+parseDeltaPublish :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaPublish
 parseDeltaPublish as = do
-    u <- toEither NoPublishURI $ L.lookup "uri" as
-    case L.lookup "hash" as of 
+    u <- toEither NoPublishURI $ List.lookup "uri" as
+    case List.lookup "hash" as of 
         Nothing -> Right $ DeltaPublish (URI $ convert u) Nothing (EncodedBase64 "")
         Just h -> case makeHash h of
             Nothing -> Left $ BadHash h
             Just h' -> Right $ DeltaPublish (URI $ convert u) (Just h') (EncodedBase64 "")
 
-parseDeltaWithdraw :: [(B.ByteString, B.ByteString)] -> Either RrdpError DeltaWithdraw
+parseDeltaWithdraw :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaWithdraw
 parseDeltaWithdraw as = do
-    u <- toEither NoPublishURI $ L.lookup "uri" as
-    h <- toEither NoHashInWithdraw $ L.lookup "hash" as  
+    u <- toEither NoPublishURI $ List.lookup "uri" as
+    h <- toEither NoHashInWithdraw $ List.lookup "hash" as  
     case makeHash h of
         Nothing -> Left $ BadHash h    
         Just h' -> pure $ DeltaWithdraw (URI $ convert u) h'
 
 -- Some auxiliary things
 
-makeHash :: B.ByteString -> Maybe Hash
+makeHash :: BS.ByteString -> Maybe Hash
 makeHash bs = Hash . toBytes <$> hexString bs
 
 -- Parsing HEX stuff
-newtype HexString = HexString B.ByteString 
+newtype HexString = HexString BS.ByteString 
     deriving (Show, Eq, Ord)
 
-hexString :: B.ByteString -> Maybe HexString
+hexString :: BS.ByteString -> Maybe HexString
 hexString bs = HexString <$> unhex bs
 
-toBytes :: HexString -> B.ByteString
+toBytes :: HexString -> BS.ByteString
 toBytes (HexString bs) = bs
 
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
@@ -195,22 +195,22 @@ toEither e Nothing  = Left e
 toEither _ (Just v) = Right v
 
 mapXmlElem :: (Element -> Either RrdpError a) ->
-              (B.ByteString -> Either RrdpError a) ->
-              X.SAXEvent B.ByteString B.ByteString -> 
+              (BS.ByteString -> Either RrdpError a) ->
+              X.SAXEvent BS.ByteString BS.ByteString -> 
               Maybe (Either RrdpError a)
 mapXmlElem onElement onText = \case
     X.StartElement tag attrs -> Just $ onElement (tag, attrs)
     X.CharacterData text     -> Just $ onText text 
-    X.FailDocument e         -> Just $ Left $ BrokenXml $ T.pack $ show e 
+    X.FailDocument e         -> Just $ Left $ BrokenXml $ Text.pack $ show e 
     _                        -> Nothing
 
-type Element = (B.ByteString, [(B.ByteString, B.ByteString)])
-type SAX = X.SAXEvent B.ByteString B.ByteString
+type Element = (BS.ByteString, [(BS.ByteString, BS.ByteString)])
+type SAX = X.SAXEvent BS.ByteString BS.ByteString
 
 
-bs2Sax :: BL.ByteString -> [SAX]
+bs2Sax :: LBS.ByteString -> [SAX]
 bs2Sax xml = filter nonEmpty_ saxs
     where 
-        nonEmpty_ (X.CharacterData cd) = not $ B.all isSpace_ cd
+        nonEmpty_ (X.CharacterData cd) = not $ BS.all isSpace_ cd
         nonEmpty_ _ = True        
-        saxs = X.parse (X.defaultParseOptions :: X.ParseOptions B.ByteString B.ByteString) xml    
+        saxs = X.parse (X.defaultParseOptions :: X.ParseOptions BS.ByteString BS.ByteString) xml    

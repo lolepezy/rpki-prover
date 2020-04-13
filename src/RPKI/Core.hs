@@ -13,14 +13,12 @@ import           Control.Monad.Reader
 import qualified Control.Concurrent.STM.TBQueue   as Q
 
 import           Data.Has
-import qualified Data.List.NonEmpty               as NE
+import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Map                         (Map)
 import qualified Data.Map                         as Map
 import           Data.Maybe                       (catMaybes)
-import           Data.Set                         (Set)
-import qualified Data.Set                         as Set
 import           Data.String.Interpolate
-import qualified Data.Text                        as T
+import qualified Data.Text                        as Text
 
 
 import           RPKI.AppMonad
@@ -156,8 +154,10 @@ validateCA env vContext database taName certificate = do
     -- save new ones after filtering everything with NEW status
 
     {- 
-        forM mergedRepositories $ \(r, caCert) -> do  
-            r' <- fetchRepository r 
+        forM mergedRepositories $ \(r, caCert) -> do              
+            r' <- case status r of    
+                    NEW -> fetchRepository r
+                    _   -> pure r            
             let vContext' = vContext $ repositoryURI r'
             validateCA env vContext' database taName caCert  
     -}
@@ -232,7 +232,7 @@ validateTree env database certificate topDownContext = do
                 Just mft -> pure mft
 
         -- TODO Is there a more reliable way to find it? Compare it with SIA?
-        findCrlOnMft mft = filter (\(name, _) -> ".crl" `T.isSuffixOf` name) $ 
+        findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $ 
             mftEntries $ getCMSContent $ extract mft
 
         validateChild :: VContext -> Validated CrlObject -> RpkiObject -> IO () 
@@ -259,7 +259,7 @@ validateTree env database certificate topDownContext = do
                 _ -> pure ()
             where
                 childContext = childVContext parentContext childLocation 
-                childLocation = NE.head $ getLocations ro
+                childLocation = NonEmpty.head $ getLocations ro
 
 
         -- | Register URI of the repository for the given certificate if it's not there yet
@@ -318,7 +318,7 @@ withQueue queue f = do
 fetchTACertificate :: Has VContext vc => 
                     AppContext -> TAL -> ValidatorT vc IO (URI, RpkiObject)
 fetchTACertificate appContext tal = 
-    go $ NE.toList $ certLocations tal
+    go $ NonEmpty.toList $ certLocations tal
     where
         go []         = throwError $ TAL_E $ TALError "No certificate location could be fetched."
         go (u : uris) = ((u,) <$> rsyncFile appContext u) `catchError` goToNext 

@@ -12,9 +12,9 @@ import           Control.Concurrent.STM
 
 import           Data.String.Interpolate
 
-import qualified Data.ByteString            as B
+import qualified Data.ByteString            as BS
 import           Data.Has
-import qualified Data.List.NonEmpty         as NE
+import qualified Data.List.NonEmpty         as NonEmpty
 
 import           RPKI.AppMonad
 import           RPKI.Errors

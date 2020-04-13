@@ -6,7 +6,7 @@
 
 module RPKI.RRDP.UpdateSpec where
 
-import qualified Data.Text               as T
+import qualified Data.Text               as Text
 
 import           RPKI.Domain
 import           RPKI.Errors
@@ -83,5 +83,5 @@ makeNotification sessionId serial = Notification {
 
 makeDelta :: Serial -> DeltaInfo
 makeDelta serial@(Serial s) = DeltaInfo (URI uri) (Hash "AABBCC") serial
-  where uri = T.pack $ "http://somehost/delta" <> show s <> ".xml"
+  where uri = Text.pack $ "http://somehost/delta" <> show s <> ".xml"
 

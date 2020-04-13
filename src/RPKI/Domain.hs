@@ -12,8 +12,8 @@
 
 module RPKI.Domain where
 
-import qualified Data.ByteString as B
-import qualified Data.Text as T
+import qualified Data.ByteString as BS
+import qualified Data.Text as Text
 
 import Codec.Serialise
 import Data.Hex (hex)
@@ -55,14 +55,14 @@ forRFC (WithStrict_ (WithRFC a))       f _ = f a
 forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
 -- TODO Use library type?
-newtype Hash = Hash B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype Hash = Hash BS.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
 
-newtype URI  = URI { unURI :: T.Text } deriving stock (Show, Eq, Ord, Typeable, Generic)
-newtype KI   = KI  B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype URI  = URI { unURI :: Text.Text } deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype KI   = KI  BS.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype SKI  = SKI KI deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype AKI  = AKI KI deriving stock (Show, Eq, Ord, Typeable, Generic)
 
-newtype SessionId = SessionId B.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
+newtype SessionId = SessionId BS.ByteString deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype Serial = Serial Integer deriving stock (Show, Eq, Ord, Typeable, Generic)
 newtype Version = Version Integer deriving stock (Show, Eq, Ord, Typeable, Generic)
 
@@ -70,9 +70,8 @@ type Locations = NonEmpty URI
 
 -- | Domain objects
 
-newtype CMS a = CMS {
-        unCMS :: SignedObject a
-    } deriving stock (Show, Eq, Typeable, Generic)
+newtype CMS a = CMS { unCMS :: SignedObject a } 
+    deriving stock (Show, Eq, Typeable, Generic)
 
 class WithAKI a where
     getAKI :: a -> Maybe AKI
@@ -202,14 +201,14 @@ data Manifest = Manifest {
         fileHashAlg :: X509.HashALG, 
         thisTime    :: DateTime, 
         nextTime    :: DateTime, 
-        mftEntries  :: [(T.Text, Hash)]
+        mftEntries  :: [(Text.Text, Hash)]
     } deriving stock (Show, Eq, Typeable, Generic)
 
 data SignCRL = SignCRL {
         crl                :: X509.CRL,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
-        encodedValue       :: B.ByteString,
+        encodedValue       :: BS.ByteString,
         crlNumber          :: Integer
     } deriving stock (Show, Eq, Typeable, Generic)
 
@@ -231,7 +230,7 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
         cwsSignature :: SignatureValue,
-        cwsEncoded :: B.ByteString
+        cwsEncoded :: BS.ByteString
     } deriving stock (Show, Eq, Typeable, Generic)
 
 {- 
@@ -284,10 +283,10 @@ data SignerInfos = SignerInfos {
         signature          :: SignatureValue
     } deriving stock (Show, Eq, Typeable, Generic)
 
-newtype IssuerAndSerialNumber = IssuerAndSerialNumber T.Text 
+newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text.Text 
     deriving stock (Eq, Ord, Show)
 
-newtype SignerIdentifier = SignerIdentifier B.ByteString 
+newtype SignerIdentifier = SignerIdentifier BS.ByteString 
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 newtype ContentType = ContentType OID 
@@ -301,17 +300,17 @@ newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID]
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Typeable, Generic)
 
-newtype SignatureValue = SignatureValue B.ByteString 
+newtype SignatureValue = SignatureValue BS.ByteString 
     deriving stock (Show, Eq, Ord, Typeable, Generic)  
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
-data SignedAttributes = SignedAttributes [Attribute] B.ByteString
+data SignedAttributes = SignedAttributes [Attribute] BS.ByteString
     deriving stock (Show, Eq, Typeable, Generic)
 
 data Attribute = ContentTypeAttr ContentType 
-            | MessageDigest B.ByteString
+            | MessageDigest BS.ByteString
             | SigningTime DateTime (Maybe TimezoneOffset)
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
@@ -324,18 +323,18 @@ newtype SPKI = SPKI EncodedBase64
     deriving stock (Show, Eq, Ord, Typeable, Generic)
     deriving anyclass Serialise
 
-newtype EncodedBase64 = EncodedBase64 B.ByteString
+newtype EncodedBase64 = EncodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Typeable, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 
-newtype DecodedBase64 = DecodedBase64 B.ByteString
+newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Typeable, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 
 
-newtype TaName = TaName T.Text
+newtype TaName = TaName Text.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

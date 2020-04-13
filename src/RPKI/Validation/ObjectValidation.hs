@@ -4,8 +4,8 @@ module RPKI.Validation.ObjectValidation where
 
 import           Control.Monad
 
-import qualified Data.ByteString          as B
-import qualified Data.ByteString.Lazy     as BL
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Lazy     as LBS
 import           Data.Maybe
 import           Data.Data                (Typeable)
 
@@ -53,9 +53,9 @@ validateResourceCertExtensions cert =
             case extVal exts id_ce_certificatePolicies of
                 Nothing -> vPureError CertNoPolicyExtension
                 Just bs 
-                    | B.null bs -> vPureError CertNoPolicyExtension
+                    | BS.null bs -> vPureError CertNoPolicyExtension
                     | otherwise ->
-                        case decodeASN1 DER (BL.fromStrict bs) of
+                        case decodeASN1 DER (LBS.fromStrict bs) of
                             Right [
                                     Start Sequence,
                                     Start Sequence,
@@ -202,8 +202,8 @@ signatureCheck sv = case sv of
     SignaturePass     -> pure ()        
 
 
-validateSizeOfBS :: B.ByteString -> PureValidator c B.ByteString
-validateSizeOfBS bs = validateSizeM (toInteger $ B.length bs) >> pure bs  
+validateSizeOfBS :: BS.ByteString -> PureValidator c BS.ByteString
+validateSizeOfBS bs = validateSizeM (toInteger $ BS.length bs) >> pure bs  
 
 validateSizeM :: Integer -> PureValidator c Integer
 validateSizeM s = vFromEither $ validateSize s

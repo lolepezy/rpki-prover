@@ -11,7 +11,7 @@
 module RPKI.Store.StoresSpec where
 
 import           Control.Monad
-import           Data.List                         as L
+import           Data.List                         as List
 import           Data.Maybe
 
 import           System.Directory
@@ -66,10 +66,10 @@ should_insert_and_get_all_back_from_object_store io = do
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [RpkiObject] <- removeMftNumberDuplicates <$> generateSome
 
-    let (firstHalf, secondHalf) = L.splitAt (L.length ros `div` 2) ros
+    let (firstHalf, secondHalf) = List.splitAt (List.length ros `div` 2) ros
 
-    let ros1 = L.map (replaceAKI aki1) firstHalf
-    let ros2 = L.map (replaceAKI aki2) secondHalf
+    let ros1 = List.map (replaceAKI aki1) firstHalf
+    let ros2 = List.map (replaceAKI aki2) secondHalf
     let ros' = ros1 <> ros2 
 
     rwTx objectStore $ \tx -> do
@@ -84,7 +84,7 @@ should_insert_and_get_all_back_from_object_store io = do
     compareLatestMfts objectStore ros1 aki1
     compareLatestMfts objectStore ros2 aki2  
     
-    let (toDelete, toKeep) = L.splitAt (L.length ros1 `div` 2) ros1
+    let (toDelete, toKeep) = List.splitAt (List.length ros1 `div` 2) ros1
 
     rwTx objectStore $ \tx -> 
         forM_ toDelete $ \ro -> 
@@ -96,7 +96,7 @@ should_insert_and_get_all_back_from_object_store io = do
     compareLatestMfts objectStore ros2 aki2  
 
     where
-        removeMftNumberDuplicates ros = L.nubBy sameMftNumber ros
+        removeMftNumberDuplicates ros = List.nubBy sameMftNumber ros
             where 
                 sameMftNumber ro1 ro2 = 
                     case (ro1, ro2) of
@@ -132,11 +132,11 @@ should_insert_and_get_all_back_from_repository_store io = do
     test1 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName1
     test2 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName2
 
-    let reposByTa taName = L.sort $ L.map fst $ L.filter ((== taName) . snd) withTas
+    let reposByTa taName = List.sort $ List.map fst $ List.filter ((== taName) . snd) withTas
 
     let assertForTa taName test = HU.assertEqual 
             ("Not the same repositories for " <> show taName) 
-            (L.map repo (L.sort test)) (reposByTa taName)
+            (List.map repo (List.sort test)) (reposByTa taName)
 
     assertForTa taName1 test1
     assertForTa taName2 test2

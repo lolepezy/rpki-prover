@@ -10,10 +10,10 @@ import           Control.Lens                   ((^.))
 import           Control.Monad.Except
 
 import           Data.Bifunctor                 (first, second)
-import qualified Data.ByteString.Lazy           as BL
+import qualified Data.ByteString.Lazy           as LBS
 import           Data.String.Interpolate
-import qualified Data.List                      as L
-import qualified Data.Text                      as T
+import qualified Data.List                      as List
+import qualified Data.Text                      as Text
 import qualified Network.Wreq                   as WR
 
 import           GHC.Generics
@@ -101,7 +101,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _) handleSnapshot han
         repoFromDeltas ds notification = RrdpRepository repoUri $ Just (newSessionId, newSerial)
             where
                 newSessionId = sessionId notification
-                newSerial = L.maximum $ map (\(Delta _ _ s _) -> s) ds        
+                newSerial = List.maximum $ map (\(Delta _ _ s _) -> s) ds        
 
 
 -- | Download HTTP content to a temporary file, compare the hash and return 
@@ -115,8 +115,8 @@ downloadHashedContent :: (MonadIO m, MonadUnliftIO m) =>
                         URI -> 
                         Hash -> 
                         (SomeException -> e) ->
-                        (Hash -> Either e BL.ByteString) ->
-                        m (Either e BL.ByteString)
+                        (Hash -> Either e LBS.ByteString) ->
+                        m (Either e LBS.ByteString)
 downloadHashedContent uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
@@ -144,7 +144,7 @@ streamHttpToFileAndHash (URI uri) errorMapping destinationHandle =
     liftIO $ first errorMapping <$> try go    
     where
         go = do
-            req  <- parseRequest $ T.unpack uri
+            req  <- parseRequest $ Text.unpack uri
             tls  <- newManager tlsManagerSettings 
             hash <- newIORef S256.init
             withHTTP req tls $ \resp -> 
@@ -157,9 +157,9 @@ streamHttpToFileAndHash (URI uri) errorMapping destinationHandle =
 
 
 -- | Download HTTP stream into memory bytestring
-fetch :: MonadIO m => URI -> (SomeException -> e) -> m (Either e BL.ByteString)
+fetch :: MonadIO m => URI -> (SomeException -> e) -> m (Either e LBS.ByteString)
 fetch (URI uri) err = liftIO $ do
-    r <- try (WR.get $ T.unpack uri)
+    r <- try (WR.get $ Text.unpack uri)
     pure $! first err $ second (^. WR.responseBody) r            
 
 
@@ -191,11 +191,11 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{
                 (_, nc) -> Left $ NonConsecutiveDeltaSerials nc
             where
                 sortedSerials = map deltaSerial sortedDeltas
-                sortedDeltas = L.sortOn deltaSerial deltas
+                sortedDeltas = List.sortOn deltaSerial deltas
                 chosenDeltas = filter ((> repoSerial) . deltaSerial) sortedDeltas
 
-                nonConsecutive = L.filter (\(s, s') -> nextSerial s /= s') $
-                    L.zip sortedSerials (tail sortedSerials)
+                nonConsecutive = List.filter (\(s, s') -> nextSerial s /= s') $
+                    List.zip sortedSerials (tail sortedSerials)
 
 
 deltaSerial :: DeltaInfo -> Serial
@@ -311,7 +311,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
             where
                 parsed = do
                     DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-                    first ParseE $ readObject (T.unpack u) b
+                    first ParseE $ readObject (Text.unpack u) b
                     
 
 data DeltaOp a = Delete !Hash 

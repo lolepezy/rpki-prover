@@ -11,7 +11,7 @@ module RPKI.Store.Base.LMDB where
 
 import Control.Monad (forever)
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
 
 import RPKI.Store.Base.Storable
@@ -31,7 +31,7 @@ import qualified Lmdb.Types as Lmdb
 import Pipes
 
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
-type DBMap = Lmdb.Database B.ByteString B.ByteString
+type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 
 data LmdbStore (name :: Symbol) = LmdbStore { 
     env :: Env,
@@ -40,7 +40,7 @@ data LmdbStore (name :: Symbol) = LmdbStore {
 
 data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
     env :: Env,
-    db :: Lmdb.MultiDatabase B.ByteString B.ByteString
+    db :: Lmdb.MultiDatabase BS.ByteString BS.ByteString
 }
 
 type family LmdbTxMode (m :: TxMode) :: Lmdb.Mode where
@@ -140,7 +140,7 @@ createMulti env = do
     db <- withTransaction env $ \tx -> openMultiDatabase tx (Just name') dbSettings 
     pure $ LmdbMultiStore env db
     where
-        dbSettings :: Lmdb.MultiDatabaseSettings B.ByteString B.ByteString
+        dbSettings :: Lmdb.MultiDatabaseSettings BS.ByteString BS.ByteString
         dbSettings = makeMultiSettings 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 

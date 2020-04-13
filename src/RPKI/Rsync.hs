@@ -15,9 +15,9 @@ import           Control.Monad.Reader
 import           Control.Monad.Except
 import           UnliftIO.Exception                    hiding (fromEither, fromEitherM)
 
-import qualified Data.ByteString                       as B
+import qualified Data.ByteString                       as BS
 import           Data.String.Interpolate
-import qualified Data.Text                             as T
+import qualified Data.Text                             as Text
 import           Data.IORef
 
 import           RPKI.AppMonad
@@ -25,7 +25,6 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
-import           RPKI.Repository
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Validation.ObjectValidation
@@ -202,24 +201,24 @@ rsyncProcess (URI uri) destination rsyncMode =
     proc "rsync" $ 
         [ "--timeout=300",  "--update",  "--times" ] <> 
         extraOptions <> 
-        [ T.unpack uri, destination ]
+        [ Text.unpack uri, destination ]
     where 
         extraOptions = case rsyncMode of 
             RsyncOneFile   -> []
             RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]        
 
 -- TODO Make it generate shorter filenames
-rsyncDestination :: FilePath -> T.Text -> FilePath
-rsyncDestination root uri = root </> T.unpack (U.normalizeUri $ T.replace "rsync://" "" uri)
+rsyncDestination :: FilePath -> Text.Text -> FilePath
+rsyncDestination root uri = root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" uri)
 
-fileContent :: FilePath -> IO B.ByteString 
+fileContent :: FilePath -> IO BS.ByteString 
 fileContent path = do
     r <- try $ unsafeMMapFile path
     case r of
         Right bs                  -> pure bs
-        Left (_ :: SomeException) -> B.readFile path
+        Left (_ :: SomeException) -> BS.readFile path
 
-getSizeAndContent :: FilePath -> IO (Integer, Either AppError B.ByteString)
+getSizeAndContent :: FilePath -> IO (Integer, Either AppError BS.ByteString)
 getSizeAndContent path = withFile path ReadMode $ \h -> do
     size <- hFileSize h
     case validateSize size of
@@ -227,7 +226,7 @@ getSizeAndContent path = withFile path ReadMode $ \h -> do
         Right _ -> do
             -- read small files in memory and mmap bigger ones 
             r <- try $ if size < 10_000 
-                        then B.hGetContents h 
+                        then BS.hGetContents h 
                         else fileContent path
             pure (size, first (RsyncE . FileReadError . U.fmtEx) r)                                
 
@@ -238,16 +237,16 @@ getFileSize path = withFile path ReadMode hFileSize
 -- | Slightly heuristical 
 -- TODO Make it more effectient and simpler, introduce NormalisedURI and NormalisedPath
 pathToUri :: URI -> FilePath -> FilePath -> URI
-pathToUri (URI rsyncBaseUri) (T.pack -> rsyncRoot) (T.pack -> filePath) = 
+pathToUri (URI rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
     let 
-        rsyncRoot' = if T.isSuffixOf "/" rsyncRoot 
+        rsyncRoot' = if Text.isSuffixOf "/" rsyncRoot 
             then rsyncRoot
             else rsyncRoot <> "/"
 
-        rsyncBaseUri' = if T.isSuffixOf "/" rsyncBaseUri 
+        rsyncBaseUri' = if Text.isSuffixOf "/" rsyncBaseUri 
             then rsyncBaseUri
             else rsyncBaseUri <> "/"
         in 
-            URI $ T.replace rsyncRoot' rsyncBaseUri' filePath    
+            URI $ Text.replace rsyncRoot' rsyncBaseUri' filePath    
 
     

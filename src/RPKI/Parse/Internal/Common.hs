@@ -5,8 +5,8 @@ module RPKI.Parse.Internal.Common where
 import Data.Bifunctor
 import Control.Monad
 
-import qualified Data.ByteString as B  
-import qualified Data.Text as T  
+import qualified Data.ByteString as BS  
+import qualified Data.Text as Text  
 import Data.Text.Encoding (decodeUtf8)
 
 import Data.Char (chr)
@@ -25,7 +25,7 @@ import RPKI.Resources.Types
 import RPKI.Domain
 import RPKI.Errors
 
-type ParseResult a = Either (ParseError T.Text) a
+type ParseResult a = Either (ParseError Text.Text) a
 
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
@@ -64,8 +64,8 @@ id_ce_cRLDistributionPoints, id_ce_certificatePolicies :: OID
 id_ce_cRLDistributionPoints = [2, 5, 29, 31]
 id_ce_certificatePolicies   = [2, 5, 29, 32]
 
-fmtErr :: String -> ParseError T.Text
-fmtErr = ParseError . T.pack
+fmtErr :: String -> ParseError Text.Text
+fmtErr = ParseError . Text.pack
 
 mapParseErr :: Either String a -> ParseResult a       
 mapParseErr = first fmtErr
@@ -95,15 +95,15 @@ getOID f m = getNext >>= \case
 
 getIA5String :: (String -> ParseASN1 a) -> String -> ParseASN1 a
 getIA5String f m = getNext >>= \case 
-    ASN1String (ASN1CharacterString IA5 bs) -> f $ map (chr . fromEnum) $ B.unpack bs
+    ASN1String (ASN1CharacterString IA5 bs) -> f $ map (chr . fromEnum) $ BS.unpack bs
     a                                       -> parseError m a
 
-getBitString :: (B.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
+getBitString :: (BS.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
 getBitString f m = getNext >>= \case 
     BitString (BitArray _ bs) -> f bs
     a                         -> parseError m a
 
-getAddressFamily :: String -> ParseASN1 (Either B.ByteString AddrFamily)
+getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
 getAddressFamily m = getNext >>= \case 
     (OctetString familyType) -> 
         case familyType of 
@@ -113,7 +113,7 @@ getAddressFamily m = getNext >>= \case
     a              -> parseError m a      
 
 -- Certificate utilities
-extVal :: [ExtensionRaw] -> OID -> Maybe B.ByteString
+extVal :: [ExtensionRaw] -> OID -> Maybe BS.ByteString
 extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
 
 getExts :: Certificate -> [ExtensionRaw]
@@ -122,7 +122,7 @@ getExts (certExtensions -> Extensions extensions) = fromMaybe [] extensions
 getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
 getExtsSign = getExts . cwsX509certificate
 
-parseKI :: B.ByteString -> ParseResult KI
+parseKI :: BS.ByteString -> ParseResult KI
 parseKI bs = case decodeASN1' BER bs of
     Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
     Right [OctetString bytes] -> pure $ KI bytes
@@ -151,7 +151,7 @@ unifyCert signedExact = CertificateWithSignature {
         signed = getSigned signedExact
 
 
-getSiaValue :: Certificate -> OID -> Maybe B.ByteString
+getSiaValue :: Certificate -> OID -> Maybe BS.ByteString
 getSiaValue c oid = do
     sia  <- extVal (getExts c) id_pe_sia
     asns <- toMaybe $ decodeASN1' BER sia

@@ -11,8 +11,6 @@ import           Data.Text (Text)
 import           RPKI.Store.Base.Map      (SMap (..))
 
 import qualified RPKI.Store.Base.Map      as M
-import qualified RPKI.Store.Base.MultiMap as MM
-import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 
 newtype Sequence = Sequence Integer
@@ -31,6 +29,6 @@ nextValue tx (SequenceStore s) sequenceName = do
         Nothing -> do
             M.put tx s sequenceName $ Sequence 1
             pure $ Sequence 1
-        Just (Sequence sequence) -> do
-            M.put tx s sequenceName $ Sequence $ sequence + 1
-            pure $ Sequence $ sequence + 1
+        Just (Sequence number) -> do
+            M.put tx s sequenceName $ Sequence $ number + 1
+            pure $ Sequence $ number + 1

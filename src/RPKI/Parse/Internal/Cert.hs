@@ -4,12 +4,9 @@ module RPKI.Parse.Internal.Cert where
 
 import           Control.Applicative
 
-import qualified Data.ByteString            as B
-import qualified Data.ByteString.Lazy       as BL
+import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Base64     as B64
-
-import qualified Data.List                  as L
-import           Data.List.NonEmpty         (NonEmpty ((:|)))
+import qualified Data.List                  as List
 
 import           Data.Bifunctor
 import           Data.Bits
@@ -33,7 +30,7 @@ import           RPKI.Parse.Internal.Common
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseResourceCertificate :: B.ByteString ->
+parseResourceCertificate :: BS.ByteString ->
                             ParseResult (URI -> CerObject)
 parseResourceCertificate bs = do
   certificate <- mapParseErr $ decodeSignedObject bs  
@@ -76,7 +73,7 @@ parseResources x509cert = do
         asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) asns
         pure $ ResourceCert x509c $ allResources ips' asns'
 
-      parseR :: ([ASN1] -> ParseResult a) -> B.ByteString -> ParseResult a
+      parseR :: ([ASN1] -> ParseResult a) -> BS.ByteString -> ParseResult a
       parseR f bs = f =<< first fmt decoded
         where decoded = decodeASN1' BER bs
               fmt err = fmtErr $ "Couldn't parse IP address extension: " <> show err
@@ -141,8 +138,8 @@ parseIpExt asns = mapParseErr $
               BitString (BitArray _       bs1),
               BitString (BitArray nzBits2 bs2)
             ] ->
-              let w1 = wToAddr $ B.unpack bs1
-                  w2 = wToAddr $ setLowerBitsToOne (B.unpack bs2)
+              let w1 = wToAddr $ BS.unpack bs1
+                  w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
                         (fromIntegral nzBits2) fullLength
                 in pure $ rangeToPrefixes w1 w2
 
@@ -151,13 +148,13 @@ parseIpExt asns = mapParseErr $
 
       setLowerBitsToOne ws setBitsNum allBitsNum =
         R.rightPad (allBitsNum `div` 8) 0xFF $
-          L.zipWith (curry setBits) ws (map (*8) [0..])
+          List.zipWith (curry setBits) ws (map (*8) [0..])
         where
           setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
                           | i < setBitsNum = w8
                           | otherwise = 0xFF
           extra lastBitsNum =
-            L.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
+            List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
 
 
 {-

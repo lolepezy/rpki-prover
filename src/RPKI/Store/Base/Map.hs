@@ -6,19 +6,18 @@
 
 module RPKI.Store.Base.Map where
 
-import           Codec.Serialise
-
+import Codec.Serialise
 import GHC.TypeLits
 
-import           RPKI.Store.Base.Storage as S
-import           RPKI.Store.Base.Storable
+import RPKI.Store.Base.Storage as S
+import RPKI.Store.Base.Storable
 
 data SMap (name :: Symbol) s k v where
     SMap :: Storage s => s -> SMapImpl s name -> SMap name s k v
 
 instance Storage s => WithStorage s (SMap name s k v) where
     storage (SMap s _) = s
- 
+
 put :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMap name s k v -> k -> v -> IO ()
 put tx (SMap _ s) k v = S.put tx s (storableKey k) (storableValue v)    
@@ -30,7 +29,7 @@ get tx (SMap _ s) k = do
     pure $ fromStorable . (\(SValue z) -> z) <$> msv
 
 delete :: (Serialise k, Serialise v) =>
-         Tx s 'RW -> SMap name s k v -> k -> IO ()
+            Tx s 'RW -> SMap name s k v -> k -> IO ()
 delete tx (SMap _ s) k = S.delete tx s (storableKey k)
 
 fold :: (Serialise k, Serialise v) =>

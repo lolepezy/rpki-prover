@@ -14,8 +14,8 @@ import Data.X509 (Certificate)
 
 import           Data.Map                 (Map)
 import qualified Data.Map                 as Map
-import qualified Data.Text                as T
-import qualified Data.List                as L
+import qualified Data.Text                as Text
+import qualified Data.List                as List
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
@@ -42,7 +42,7 @@ mergeInto :: RsyncRepository -> [RsyncTree] -> [RsyncTree]
 mergeInto r [] = [RsyncTree r []]
 mergeInto 
     r@(RsyncRepository newUri) 
-    trees@(tree@(RsyncTree maybeParent@(RsyncRepository uri) children) : rts) = L.sort $ 
+    trees@(tree@(RsyncTree maybeParent@(RsyncRepository uri) children) : rts) = List.sort $ 
         if uri == newUri 
             then trees 
             else if uri `isParentOf` newUri
@@ -85,11 +85,11 @@ createRepositoryFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) 
         fromCert = repositoryFromCert cert
 
 isRsyncURI, isRrdpURI :: URI -> Bool
-isRsyncURI (URI u) = "rsync://" `T.isPrefixOf` u
-isRrdpURI (URI u) = "http://" `T.isPrefixOf` u || "https://" `T.isPrefixOf` u                        
+isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
+isRrdpURI (URI u) = "http://" `Text.isPrefixOf` u || "https://" `Text.isPrefixOf` u                        
 
 isParentOf :: URI -> URI -> Bool
-isParentOf (URI maybeParent) (URI maybeChild) = maybeParent `T.isPrefixOf` maybeChild
+isParentOf (URI maybeParent) (URI maybeChild) = maybeParent `Text.isPrefixOf` maybeChild
 
 repositoryFromCert :: Certificate -> Either ValidationError (URI, Repository)
 repositoryFromCert cert = 

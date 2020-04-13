@@ -2,7 +2,7 @@
 
 module RPKI.Parse.Internal.SignedObject where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString as BS
 
 import Control.Applicative
 import Data.Maybe
@@ -71,7 +71,7 @@ parseSignedObject eContentParse =
         where
           eContent contentType = do 
             fullContent <- getMany getNext
-            let bs = B.concat [ os | OctetString os <- fullContent ]            
+            let bs = BS.concat [ os | OctetString os <- fullContent ]            
             case decodeASN1' BER bs of
               Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
               Right asns ->  
@@ -143,5 +143,5 @@ parseSignedObject eContentParse =
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
-getMetaFromSigned :: SignedObject a -> B.ByteString -> ParseResult (URI -> IdentityMeta)
+getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult (URI -> IdentityMeta)
 getMetaFromSigned _ bs = pure $ \location -> IdentityMeta (U.sha256s bs) (location :| [])

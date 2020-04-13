@@ -14,11 +14,11 @@ import Control.Exception
 
 import qualified Codec.Serialise                as Serialise
 
-import qualified Data.ByteString                as B
-import qualified Data.ByteString.Lazy           as BL
+import qualified Data.ByteString                as BS
+import qualified Data.ByteString.Lazy           as LBS
 import           Data.MultiMap                  (MultiMap)
 import qualified Data.MultiMap                  as MultiMap
-import qualified Data.Text                      as T
+import qualified Data.Text                      as Text
 
 import           Data.Maybe
 
@@ -66,7 +66,7 @@ import qualified RPKI.Util  as U
 import RPKI.Store.Util
 
 
-makeLmdbMap :: ModeBool e => Environment e -> IO (Database Hash B.ByteString)
+makeLmdbMap :: ModeBool e => Environment e -> IO (Database Hash BS.ByteString)
 makeLmdbMap env = 
     withTransaction env $ \tx -> openDatabase tx (Just "objects") dbSettings 
     where
@@ -106,13 +106,13 @@ validateObjects objects = do
   say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
   say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
 
-type ReadStuff = (String, Either (ParseError T.Text) [RpkiObject])
+type ReadStuff = (String, Either (ParseError Text.Text) [RpkiObject])
 
 readRepo :: IO [(String, ParseResult RpkiObject)]
 readRepo = do
   fileNames <- getFileNames
   forM fileNames $ \f -> do
-    bs <- B.readFile f
+    bs <- BS.readFile f
     pure (f, readObject f bs)
 
 getFileNames :: IO [String]
@@ -147,7 +147,7 @@ getFileNames = do
 --       S.effects $
 --       S.mapM (Chan.writeChan chanIn) $
 --       S.mapM (\f -> async $ do
---         bs <- B.readFile f
+--         bs <- BS.readFile f
 --         pure (readObject f bs, bs)) $
 --       S.each fileNames
 
@@ -184,7 +184,7 @@ getFileNames = do
 --   fileNames <- getFileNames
 --   say "found"
 
---   db :: Database Hash (String, B.ByteString) <- readWriteTransaction lmdb $ getDatabase (Just "originals")  
+--   db :: Database Hash (String, BS.ByteString) <- readWriteTransaction lmdb $ getDatabase (Just "originals")  
 
 --   (chanIn, chanOut) <- Chan.newChan 20
 --   void $ concurrently
@@ -201,7 +201,7 @@ getFileNames = do
 --       S.effects $
 --       S.mapM (Chan.writeChan chanIn) $
 --       S.mapM (\f -> async $ do 
---                       bs <- B.readFile f
+--                       bs <- BS.readFile f
 --                       pure (f, bs)) $
 --       S.each fileNames
 
@@ -212,7 +212,7 @@ getFileNames = do
 --       S.mapM (\_ -> liftIO $ Chan.readChan chanOut) $
 --       S.each fileNames
      
---     readAll :: Database Hash (String, B.ByteString) -> IO [RpkiObject]
+--     readAll :: Database Hash (String, BS.ByteString) -> IO [RpkiObject]
 --     readAll db = readOnlyTransaction lmdb $ do
 --         ks <- keys db
 --         S.toList_ $ 
@@ -230,7 +230,7 @@ getFileNames = do
 --   let objects = [ o | (_, Right o) <- parsed ]
 
 --   let roaFile = "/Users/mpuzanov/ripe/tmp//rpki/repo/ripe.net/repository/DEFAULT/5b/6ab497-16d9-4c09-94d9-1be4c416a09c/1/XY9rz4RATnJEwJxBpE7ExbD-Ubk.roa"  
---   bs  <- B.readFile roaFile
+--   bs  <- BS.readFile roaFile
 --   let Right roa = readObject roaFile bs
 
 --   putStrLn $ "roa blob = " ++ show bs
@@ -251,7 +251,7 @@ getFileNames = do
 --   putStrLn $ "x = " <> show x
 --   putStrLn $ "s = " <> show s
 
---   let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
+--   let bss = [ BS.take len $ BS.drop b bs | b <- [1..BS.length bs - 1], len <- [1..BS.length bs - b]]
 
 --   let pubKey = certPubKey $ cwsX509certificate $ withRFC parentCert certX509              
 --   let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
@@ -264,8 +264,8 @@ getFileNames = do
 -- testCrl :: IO ()
 -- testCrl = do
   
---   bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
---   -- bs  <- B.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/lacnic/repository/lacnic/0043f52c-eeee-4d62-97e6-44c83c8beb9f/3c4a28de1ccccd1e98eb95feb157d61c6659de78.crl"  
+--   bs  <- BS.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/repository/ripe-ncc-ta.crl"
+--   -- bs  <- BS.readFile "/Users/mpuzanov/ripe/tmp/rpki/repo/lacnic/repository/lacnic/0043f52c-eeee-4d62-97e6-44c83c8beb9f/3c4a28de1ccccd1e98eb95feb157d61c6659de78.crl"  
 --   -- putStrLn $ "asns = " <> show (decodeASN1' BER bs)
   
 --   parsed <- readRepo
@@ -289,7 +289,7 @@ getFileNames = do
 
 --       let pubKey = certPubKey $ getX509Cert $ withRFC parentCert certX509              
 
---       let bss = [ B.take len $ B.drop b bs | b <- [1..B.length bs - 1], len <- [1..B.length bs - b]]
+--       let bss = [ BS.take len $ BS.drop b bs | b <- [1..BS.length bs - 1], len <- [1..BS.length bs - b]]
 --       let checks = map (\b -> (b, verifySignature signAlgorithm pubKey b sign)) bss 
 --       putStrLn $ "valid signature = " <> show [ b | (b, SignaturePass) <- checks]
 
@@ -340,14 +340,14 @@ bySKIMap ros = MultiMap.fromList [ (ski, ro) | (Just ski, ro) <- map f ros ]
 byAKIMap :: WithAKI a => [a] -> MultiMap AKI a
 byAKIMap ros = MultiMap.fromList [ (a, ro) | ro <- ros, a <- maybeToList (getAKI ro) ]
 
-parseWithTmp :: FilePath -> (BL.ByteString -> IO a) -> IO a
-parseWithTmp filename f = --BL.readFile filename >>= f
+parseWithTmp :: FilePath -> (LBS.ByteString -> IO a) -> IO a
+parseWithTmp filename f = --LBS.readFile filename >>= f
   withSystemTempFile "test_mmap_" $ \name h -> do
-  --   -- BL.readFile filename >>= BL.writeFile name
+  --   -- LBS.readFile filename >>= LBS.writeFile name
     runResourceT $ Q.toHandle h $ Q.readFile filename
     hClose h
     f =<< unsafeMMapFile name   
-  --   -- f =<< BL.hGetContents h   
+  --   -- f =<< LBS.hGetContents h   
 
 -- RRDP
 validatorUpdateRRDPRepo :: Environment 'ReadWrite -> IO ()
@@ -380,7 +380,7 @@ validatorUpdateRRDPRepo lmdb = do
 
       mkObject u b64 = do
         DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-        first ParseE $ readObject (T.unpack u) b
+        first ParseE $ readObject (Text.unpack u) b
 
       write_ chanIn ps = 
         forM_ ps $ \(SnapshotPublish (URI u) encodedb64) -> do 
@@ -397,7 +397,7 @@ validatorUpdateRRDPRepo lmdb = do
               True -> pure ()
               False -> LmdbMap.repsert' tx m h bs
 
-      toBytes_ o = (getHash o, BL.toStrict $ Serialise.serialise o)      
+      toBytes_ o = (getHash o, LBS.toStrict $ Serialise.serialise o)      
     
       -- readAll :: Database Hash RpkiObject -> IO [RpkiObject]
       -- readAll db = withReadOnlyTransaction lmdb $ do
@@ -457,7 +457,7 @@ processTAL = do
     say "begin"      
     result <- runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-            B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
+            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
         (u, ro) <- fetchTACertificate createAppContext tal
         x <- vHoist $ validateTACert tal u ro
@@ -467,7 +467,7 @@ processTAL = do
 getTACert = 
     runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-            B.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
+            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
         (u, ro) <- fetchTACertificate createAppContext tal
         x <- vHoist $ validateTACert tal u ro

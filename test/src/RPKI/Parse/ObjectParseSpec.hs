@@ -2,7 +2,7 @@
 
 module RPKI.Parse.ObjectParseSpec where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString as BS
 
 import Control.Monad
 
@@ -19,7 +19,7 @@ testCertParsing = do
   -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.apnic.net/873/member_repository/A917150D/2B63EBE6326811E4B59A4118C4F9AE02/L3M4gVlKnWpaICg9mMRk2VX_A3k.mft"
   -- let path = "/Users/mpuzanov/ripe/tmp/rsync/rpki.afrinic.net/873/repository/afrinic/imnjE5vX78CApC4WBIM5j6bHW7Y.cer"
 
-  cert <- B.readFile path  
+  cert <- BS.readFile path  
 
   let (Right content :: Either String (X509.SignedExact X509.Certificate)) = X509.decodeSignedObject cert
   let (X509.Extensions (Just xt)) = X509.certExtensions $ X509.signedObject $ X509.getSigned content
@@ -58,7 +58,7 @@ testSignedObjectParsing = do
 
   let repository = "/Users/mpuzanov/ripe/tmp/rpki-validator-app-2.25/data/rsync"
 
-  roa <- B.readFile roaFile 
+  roa <- BS.readFile roaFile 
   -- let d = decodeASN1' BER mft
   -- let r = parseRoa roa
   -- putStrLn $ "roa = " ++ show r
@@ -79,7 +79,7 @@ testAllObjects parseIt t = do
              (fileName ~~? "*.mft")
   objs   <- find always expr repository
   parsed <- forM objs $ \file -> do    
-              p <- parseIt <$> B.readFile file
+              p <- parseIt <$> BS.readFile file
               putStrLn $ "path = " ++ show file
               case p of
                 Left e  -> putStrLn $ file ++ ", error = " ++ show e

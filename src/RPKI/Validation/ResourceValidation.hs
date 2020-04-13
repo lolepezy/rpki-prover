@@ -5,9 +5,7 @@ module RPKI.Validation.ResourceValidation where
 import           RPKI.AppMonad
 import           RPKI.Errors
 import qualified RPKI.Resources.IntervalSet as IS
-import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
-
 
 validateChildParentResources :: ValidationRFC -> 
                                 AllResources -> 

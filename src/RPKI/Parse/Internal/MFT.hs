@@ -2,11 +2,11 @@ module RPKI.Parse.Internal.MFT where
 
 import Control.Monad
 
-import qualified Data.ByteString          as B
-import qualified Data.Text                as T
+import qualified Data.ByteString          as BS
+import qualified Data.Text                as Text
 
 import           Data.ASN1.Types
-import Data.Bifunctor (first)
+import           Data.Bifunctor (first)
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
@@ -16,7 +16,7 @@ import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.SignedObject
 
 
-parseMft :: B.ByteString -> ParseResult (URI -> MftObject)
+parseMft :: BS.ByteString -> ParseResult (URI -> MftObject)
 parseMft bs = do
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs
     signedMft <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
@@ -50,7 +50,7 @@ parseMft bs = do
 
         getEntries _ = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
-                (,) <$> getIA5String (pure . T.pack) "Wrong file name"
+                (,) <$> getIA5String (pure . Text.pack) "Wrong file name"
                     <*> getBitString (pure . Hash) "Wrong hash"
 
         getTime message = getNext >>= \case

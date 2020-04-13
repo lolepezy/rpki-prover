@@ -11,7 +11,7 @@
 module RPKI.ResourcesSpec where
 
 import           Control.Monad
-import           Data.List                         as L
+import           Data.List                         as List
 import           Data.Maybe
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Gen
@@ -51,7 +51,7 @@ prefixPropertyGroup = testGroup "Prefix properties tests"
           QC.forAll (sublistOf asns) $ \sub ->
               let intervalSet = IS.fromList asns
                   check as = normalise (IS.findIntersections as intervalSet) == [as]
-                in L.all check sub
+                in List.all check sub
   ]  
 
 

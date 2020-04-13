@@ -4,15 +4,15 @@
 
 module RPKI.TAL where
 
-import           Control.DeepSeq
 import           Control.Monad
-import           Data.Data          (Typeable)
-import qualified Data.List          as L
-import           Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Text          as T
 
 import           Codec.Serialise
+
+import           Data.Data          (Typeable)
+import qualified Data.List          as List
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Text          as Text
 
 import           GHC.Generics
 
@@ -28,7 +28,7 @@ import           RPKI.Util        (convert)
 -- | (I couldn't find any formal definiteion of the "RIPE format")
 -- | 
 data TAL = PropertiesTAL {
-    caName              :: Maybe T.Text,
+    caName              :: Maybe Text.Text,
     certificateLocation :: URI,
     publicKeyInfo       :: EncodedBase64,
     prefetchUris        :: [URI]
@@ -44,16 +44,16 @@ certLocations RFC_TAL {..}       = certificateLocations
 getTaName :: TAL -> TaName
 getTaName tal = case tal of 
     PropertiesTAL {..} -> maybe (uri2TaName certificateLocation) TaName caName
-    RFC_TAL {..}       -> uri2TaName $ NE.head certificateLocations
+    RFC_TAL {..}       -> uri2TaName $ NonEmpty.head certificateLocations
     where 
         uri2TaName = \(URI t) -> TaName t
 
 getTaURI :: TAL -> URI
 getTaURI PropertiesTAL {..} = certificateLocation
-getTaURI RFC_TAL {..} = NE.head certificateLocations
+getTaURI RFC_TAL {..} = NonEmpty.head certificateLocations
 
 -- | Parse TAL object from raw text
-parseTAL :: T.Text -> Either TALError TAL
+parseTAL :: Text.Text -> Either TALError TAL
 parseTAL bs = 
     case (parseAsProperties, parseRFC) of
         (Right t, _)       -> Right t
@@ -61,13 +61,13 @@ parseTAL bs =
         (Left (TALError e1), Left (TALError e2)) -> Left $ TALError $ e1 <> " | " <> e2    
     where
         parseAsProperties = 
-            case T.lines bs of 
+            case Text.lines bs of 
                 [] -> Left $ TALError "Couldn't find newline character."
                 lns -> do
-                    let nonComments = L.filter (\line -> not $ "#" `T.isPrefixOf` line) lns
+                    let nonComments = List.filter (\line -> not $ "#" `Text.isPrefixOf` line) lns
                     properties <- forM nonComments $ \line ->
-                        case T.splitOn "=" line of
-                        [name, value] -> Right (T.strip name, T.strip value)
+                        case Text.splitOn "=" line of
+                        [name, value] -> Right (Text.strip name, Text.strip value)
                         _             -> Left $ TALError $ convert $ "Line " <> show line <> " doesn't contain '=' sign."
                 
                     PropertiesTAL <$> 
@@ -82,7 +82,7 @@ parseTAL bs =
                 getPrefetchUris ps        = Right $
                     case lookup "prefetch.uris" ps of
                         Nothing          -> []
-                        Just prefetchStr -> L.map URI $ T.splitOn "," prefetchStr 
+                        Just prefetchStr -> List.map URI $ Text.splitOn "," prefetchStr 
 
                 getMandatory name ps =
                     case lookup name ps of
@@ -90,15 +90,15 @@ parseTAL bs =
                         Just cl -> Right cl
 
         parseRFC =      
-            case L.span looksLikeUri $ T.lines bs of        
+            case List.span looksLikeUri $ Text.lines bs of        
                 (_, []) -> Left $ TALError "Empty public key info"
                 (uris, base64) ->
-                    case NE.nonEmpty uris of
+                    case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
                         Just uris' -> Right $ RFC_TAL {
-                                certificateLocations = NE.map (URI . T.strip) uris',
+                                certificateLocations = NonEmpty.map (URI . Text.strip) uris',
                                 publicKeyInfo = EncodedBase64 $ convert $ 
-                                    T.concat $ filter (not . T.null) $ map T.strip base64
+                                    Text.concat $ filter (not . Text.null) $ map Text.strip base64
                             }
 
-        looksLikeUri s = any (`T.isPrefixOf` s) ["rsync://", "http://", "https://"]
+        looksLikeUri s = any (`Text.isPrefixOf` s) ["rsync://", "http://", "https://"]

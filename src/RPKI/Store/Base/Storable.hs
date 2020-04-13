@@ -3,15 +3,15 @@
 
 module RPKI.Store.Base.Storable where
 
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 
 import Control.DeepSeq
 import Codec.Serialise
 import Data.Data (Typeable)
 import GHC.Generics
 
-newtype Storable = Storable B.ByteString
+newtype Storable = Storable BS.ByteString
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 newtype SValue = SValue Storable
@@ -30,7 +30,7 @@ toStorableObject :: Serialise a => a -> StorableObject a
 toStorableObject a = StorableObject a $ force (storableValue a)
 
 toStorable :: Serialise v => v -> Storable
-toStorable = Storable . BL.toStrict . serialise
+toStorable = Storable . LBS.toStrict . serialise
 
 storableValue :: Serialise v => v -> SValue
 storableValue = SValue . toStorable
@@ -42,13 +42,13 @@ storableKey = SKey . toStorable
 -- 
 -- fromStorable :: Serialise t => Storable -> Either StorageError t
 -- fromStorable (Storable b) = first (DeserialisationError . fmtEx) $ 
---     deserialiseOrFail $ BL.fromStrict b
+--     deserialiseOrFail $ LBS.fromStrict b
 
 -- fromSValue :: Serialise t => SValue -> Either StorageError t
 -- fromSValue (SValue b) = fromStorable b
 
 fromStorable :: Serialise t => Storable -> t
-fromStorable (Storable b) = deserialise $ BL.fromStrict b
+fromStorable (Storable b) = deserialise $ LBS.fromStrict b
 
 fromSValue :: Serialise t => SValue -> t
 fromSValue (SValue b) = fromStorable b
