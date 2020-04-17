@@ -16,7 +16,7 @@ import           Control.Monad.Except
 import           UnliftIO.Exception                    hiding (fromEither, fromEitherM)
 
 import qualified Data.ByteString                       as BS
-import           Data.String.Interpolate
+import Data.String.Interpolate.IsString
 import qualified Data.Text                             as Text
 import           Data.IORef
 

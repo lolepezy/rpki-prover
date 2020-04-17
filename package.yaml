@@ -20,7 +20,7 @@ extra-source-files:
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
 default-extensions: ViewPatterns, LambdaCase, ScopedTypeVariables,
-                    AllowAmbiguousTypes, ConstraintKinds, DataKinds, 
+                    ConstraintKinds, DataKinds, 
                     DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
                     DuplicateRecordFields, FlexibleContexts, GADTs, 
                     KindSignatures, MultiWayIf, NoMonomorphismRestriction, 
@@ -60,20 +60,17 @@ dependencies:
 - hexpat
 - hourglass
 - hw-ip
-- ixset-typed
+- interpolate
 - lens
-- lmdb
 - lmdb-high-level
 - lifted-async
 - memory
 - mmorph
 - modern-uri
-- MissingH
 - monad-control
 - mtl
 - multimap
 - parallel
-- pem
 - pipes
 - primitive
 - semigroups
@@ -85,21 +82,16 @@ dependencies:
 - streaming-bytestring
 - streaming-utils
 - string-conversions
-- string-interpolate
-- tagged
 - text
 - text-short
-- timeit
 - typed-process
 - time
 - transformers
 - temporary
-- tuple-sop
 - validation
 - wreq
 - x509
 - x509-validation
-- xeno
 - QuickCheck
 - quickcheck-instances
 - tasty
@@ -107,12 +99,10 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
-- unagi-chan
 - unliftio
 - unliftio-core
 - vector
-- xml-types
-- xml-conduit
+
 
 ghc-options:
   # - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS

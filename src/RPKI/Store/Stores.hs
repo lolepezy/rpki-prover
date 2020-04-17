@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards       #-}
 
 module RPKI.Store.Stores where
 
@@ -14,6 +15,7 @@ import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+
 import           RPKI.Store.Data
 
 
@@ -126,18 +128,18 @@ newRepository :: Repository -> SRepository
 newRepository r = SRepository r NEW 
 
 putRepository :: Storage s => Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> IO ()
-putRepository tx s r taName = do 
+putRepository tx s r taName' = do 
     let repoUri = repositoryURI $ repo r
     M.put tx (repositories s) repoUri r
-    MM.put tx (repositoriesPerTA s) taName repoUri
+    MM.put tx (repositoriesPerTA s) taName' repoUri
 
 updateRepositoryStatus :: Storage s => 
                         Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> IO ()
-updateRepositoryStatus tx s r status = do 
+updateRepositoryStatus tx s r status' = do 
     let repoUri = repositoryURI r
     getRepository tx s repoUri >>= \case
         Nothing -> pure ()
-        Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status
+        Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status'
 
 
 getRepository :: Storage s => 
@@ -145,10 +147,10 @@ getRepository :: Storage s =>
 getRepository tx s repoUri = fmap repo <$> M.get tx (repositories s) repoUri 
 
 getRepositoriesForTA :: Storage s => Tx s m -> RepositoryStore s -> TaName -> IO [SRepository]
-getRepositoriesForTA tx s taName = MM.fold tx (repositoriesPerTA s) taName f []
+getRepositoriesForTA tx s taName' = MM.fold tx (repositoriesPerTA s) taName' f []
     where
-        f ros _ uri =   
-            M.get tx (repositories s) uri >>= \case
+        f ros _ uri' =   
+            M.get tx (repositories s) uri' >>= \case
                 Just rs -> pure $! rs : ros
                 Nothing -> pure ros
 
@@ -159,3 +161,6 @@ data DB s = DB {
     objectStore :: RpkiObjectStore s,
     resultStore :: VResultStore s
 }
+
+instance Storage s => WithStorage s (DB s) where
+    storage (DB {..}) = storage taStore

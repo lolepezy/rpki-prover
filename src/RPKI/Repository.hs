@@ -6,11 +6,15 @@
 
 module RPKI.Repository where
 
+import           Control.Monad
 import           Control.Concurrent.STM
 import           Codec.Serialise
 import           GHC.Generics
 
 import Data.X509 (Certificate)
+
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
 
 import           Data.Map                 (Map)
 import qualified Data.Map                 as Map
@@ -96,6 +100,37 @@ createRepositoryFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) 
 
         fromCert = repositoryFromCert cert
 
+-- | Extract repositories from URIs in TAL and in TA certificate,
+-- | use some reasonable heuristics, but don't try to be very smart.
+-- | Prefer RRDP to rsync for everything.
+-- | URI of the repository is supposed to be a "real" one, i.e. where
+-- | repository can actually be downloaded from.
+createRepositoriesFromTAL :: TAL -> CerObject -> Either ValidationError (NonEmpty Repository)
+createRepositoriesFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+    case tal of 
+        PropertiesTAL {..} -> do 
+            (certUri, repository) <- repositoryFromCert cert
+            uniquePrefetchRepos   <- mapM 
+                (\u -> snd <$> fromURI u) $ filter (/= certUri) prefetchUris
+
+            let prefetchReposToUse = 
+                    case [ r | r@(RrdpRepo _) <- uniquePrefetchRepos ] of
+                        []    -> uniquePrefetchRepos
+                        rrdps -> rrdps        
+
+            pure $ repository :| prefetchReposToUse 
+
+        RFC_TAL {..} -> 
+            (\(_, r) -> r :| []) <$> repositoryFromCert cert            
+    where        
+        fromURI u = 
+            if isRsyncURI u 
+                then Right (u, RsyncRepo $ RsyncRepository u)
+                else if isRrdpURI u
+                    then Right (u, RrdpRepo $ RrdpRepository u Nothing)
+                    else Left $ UnknownUriType u
+        
+
 isRsyncURI, isRrdpURI :: URI -> Bool
 isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
 isRrdpURI (URI u) = "http://" `Text.isPrefixOf` u || "https://" `Text.isPrefixOf` u                        
@@ -107,7 +142,7 @@ repositoryFromCert :: Certificate -> Either ValidationError (URI, Repository)
 repositoryFromCert cert = 
     case getRrdpNotifyUri cert of
         Just rrdpNotifyUri | isRrdpURI rrdpNotifyUri -> 
-                                    Right (rrdpNotifyUri, RrdpRepo $ RrdpRepository rrdpNotifyUri Nothing)
+                                Right (rrdpNotifyUri, RrdpRepo $ RrdpRepository rrdpNotifyUri Nothing)
                             | otherwise -> Left $ UnknownUriType rrdpNotifyUri
         Nothing -> 
             case getRepositoryUri cert of 

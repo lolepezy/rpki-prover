@@ -9,10 +9,6 @@ import Colog hiding (extract)
 import Control.Monad
 import Control.Parallel.Strategies hiding ((.|))
 import Control.Concurrent.Async
-import Control.Concurrent.STM
-import Control.Exception
-
-import qualified Codec.Serialise                as Serialise
 
 import qualified Data.ByteString                as BS
 import qualified Data.ByteString.Lazy           as LBS
@@ -30,21 +26,15 @@ import           Data.Time.Clock                (getCurrentTime)
 
 import           Lmdb.Codec
 import           Lmdb.Connection
-import qualified Lmdb.Map                       as LmdbMap
 import           Lmdb.Types
 
 import qualified Data.ByteString.Streaming      as Q
 import           Data.ByteString.Streaming.HTTP
-import           Data.IORef
 import           Streaming
-
-import qualified Control.Concurrent.Chan.Unagi.Bounded as Chan
 
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
-
-import qualified UnliftIO.Async as Unlift
 
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -53,12 +43,9 @@ import           RPKI.Parse.Parse
 import           RPKI.Core
 import           RPKI.Logging
 import           RPKI.Config
-import           RPKI.RRDP.Parse
-import           RPKI.RRDP.Types
 import           RPKI.RRDP.Update
 import           RPKI.TAL
 import           RPKI.Rsync
-import           RPKI.Repository
 import           RPKI.Store.Stores
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ObjectValidation
@@ -80,49 +67,49 @@ makeLmdbMap env =
 
 runValidate :: IO ()
 runValidate = do
-  say "starting"
-  parsedObjects <- readRepo              
+    say "starting"
+    parsedObjects <- readRepo              
 
-  let errors = [ (f, e) | (f, Left e) <- parsedObjects ]  
-  
-  say $ "errors = " <> show (length errors)
-  let objects = [ o | (_, Right o) <- parsedObjects ]
+    let errors = [ (f, e) | (f, Left e) <- parsedObjects ]  
+    
+    say $ "errors = " <> show (length errors)
+    let objects = [ o | (_, Right o) <- parsedObjects ]
 
-  say $ "objects = " <> show (length objects)
+    say $ "objects = " <> show (length objects)
 
-  let Right signatureValidations = validateKeys objects
-  say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
-  say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
-  say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
-  say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
+    let Right signatureValidations = validateKeys objects
+    say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
+    say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
+    say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
+    say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
 
-  say "done"
+    say "done"
   
 validateObjects :: [RpkiObject] -> IO ()
 validateObjects objects = do
-  let Right signatureValidations = validateKeys objects
-  say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
-  say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
-  say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
-  say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
+    let Right signatureValidations = validateKeys objects
+    say $ "valid signature = " <> show (length [s | s@SignaturePass <- signatureValidations])
+    say $ "invalid signature = " <> show (length [s | s@(SignatureFailed SignatureInvalid) <- signatureValidations])  
+    say $ "invalid pubkey mismatch = " <> show (length [s | s@(SignatureFailed SignaturePubkeyMismatch) <- signatureValidations])  
+    say $ "invalid not implemented = " <> show (length [s | s@(SignatureFailed SignatureUnimplemented) <- signatureValidations])  
 
 type ReadStuff = (String, Either (ParseError Text.Text) [RpkiObject])
 
 readRepo :: IO [(String, ParseResult RpkiObject)]
 readRepo = do
-  fileNames <- getFileNames
-  forM fileNames $ \f -> do
-    bs <- BS.readFile f
-    pure (f, readObject f bs)
+    fileNames <- getFileNames
+    forM fileNames $ \f -> do
+            bs <- BS.readFile f
+            pure (f, readObject f bs)
 
 getFileNames :: IO [String]
 getFileNames = do
-  let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/"  
-  let expr = (fileName ~~? "*.cer") ||? 
-              (fileName ~~? "*.roa") ||?
-              (fileName ~~? "*.mft") ||?            
-              (fileName ~~? "*.crl") 
-  find always expr repository 
+    let repository = "/Users/mpuzanov/ripe/tmp/rpki/repo/"  
+    let expr = (fileName ~~? "*.cer") ||? 
+                (fileName ~~? "*.roa") ||?
+                (fileName ~~? "*.mft") ||?            
+                (fileName ~~? "*.crl") 
+    find always expr repository 
 
 -- saveSerialised :: Environment ReadWrite -> IO ()
 -- saveSerialised lmdb = do
@@ -349,65 +336,6 @@ parseWithTmp filename f = --LBS.readFile filename >>= f
     f =<< unsafeMMapFile name   
   --   -- f =<< LBS.hGetContents h   
 
--- RRDP
-validatorUpdateRRDPRepo :: Environment 'ReadWrite -> IO ()
-validatorUpdateRRDPRepo lmdb = do
-  say "begin"
-
-  m  <- makeLmdbMap lmdb
-
-  -- runResourceT $ runExceptT $ streamHttpResponse 
-  --   "https://rrdp.ripe.net/670de3e5-de83-4d77-bede-9d8a78454151/1585/snapshot.xml" 
-  --   (\s -> Q.writeFile "snapshot.xml")  
-  --   show
-  counter <- newIORef (0 :: Int)
-  parseWithTmp "snapshot.xml" $ \xml -> fileToDb m xml counter
-  c <- readIORef counter
-  say $ "saved " <> show c <> " objects."
-    where
-      fileToDb m xml counter =
-        -- say $ "xml = " <> show xml
-        case parseSnapshot xml of
-          Left e -> putStrLn $ "error = " <> show e
-          Right (Snapshot _ _ _ ps) -> do
-            (chanIn, chanOut) <- Chan.newChan 20
-            x <- first (\(e :: SomeException) -> e) <$> (try $ Unlift.concurrently 
-              (write_ chanIn ps) 
-              (withTransaction lmdb $ \tx -> read_ chanOut counter tx m ps))
-            case x of 
-              Left e -> say $ "error = " <> show e
-              Right _ -> pure ()
-
-      mkObject u b64 = do
-        DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-        first ParseE $ readObject (Text.unpack u) b
-
-      write_ chanIn ps = 
-        forM_ ps $ \(SnapshotPublish (URI u) encodedb64) -> do 
-          a <- async $ pure $! (u,) . toBytes_ <$> mkObject u encodedb64          
-          Chan.writeChan chanIn (u, a)
-
-      read_ chanOut counter tx m x = forM x $ \_ -> do
-        (u, a) <- Chan.readChan chanOut
-        wait a >>= \case
-          Left e             -> putStrLn $ "error = " <> show e <> ", u = " <> show u
-          Right (_, (h, bs)) -> do
-            void $ atomicModifyIORef counter $ \c -> (c + 1, ())
-            LmdbMap.insertSuccess' tx m h bs >>= \case 
-              True -> pure ()
-              False -> LmdbMap.repsert' tx m h bs
-
-      toBytes_ o = (getHash o, LBS.toStrict $ Serialise.serialise o)      
-    
-      -- readAll :: Database Hash RpkiObject -> IO [RpkiObject]
-      -- readAll db = withReadOnlyTransaction lmdb $ do
-      --     ks <- keys db
-      --     S.toList_ $ 
-      --       S.concat $ 
-      --       S.mapM (get db) $ 
-      --       S.each ks                  
-
-  -- say $ "hash = " <> show hash
 
 createAppContext :: AppContext
 createAppContext = AppContext {
@@ -429,6 +357,7 @@ processRRDP env = do
         async $ runValidatorT conf $ updateObjectForRrdpRepository createAppContext repo store 
 
     e <- forM as wait
+
     say $ "result " <> show e
 
 saveRsyncRepo env = do  
@@ -452,22 +381,24 @@ loadRsync env = do
                 "/tmp/rsync/rsync___rpki.ripe.net_repository" store
     say $ "done "
 
-processTAL :: IO ()
-processTAL = do
+processTAL :: Environment 'ReadWrite -> IO ()
+processTAL env = do
     say "begin"      
+    database <- createDatabase env    
+    let appContext = createAppContext
     result <- runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
-        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
-        (u, ro) <- fetchTACertificate createAppContext tal
-        x <- vHoist $ validateTACert tal u ro
-        pure (ro, x)
+            -- BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/afrinic.tal"
+            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/lacnic.tal"
+        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
+        x <- validateTA appContext tal database
+        pure x
     say $ "done " <> show result
 
 getTACert = 
     runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/ripe-pilot.tal"
+            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/apinic.tal"
         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
         (u, ro) <- fetchTACertificate createAppContext tal
         x <- vHoist $ validateTACert tal u ro
@@ -476,16 +407,20 @@ getTACert =
 
 validateTreeFromTA :: Environment 'ReadWrite -> IO ()
 validateTreeFromTA env = do  
-    let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
-    nu <- thisMoment
+    -- let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
+    let repo = RsyncRepository (URI "rsync://rpki.apnic.net/member_repository/")        
+    -- let repo = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing        
     database <- createDatabase env    
     let appContext = createAppContext
     let taName = TaName "Test TA"
     let vContext' = vContext $ URI "something.cer"
     x <- runValidatorT vContext' $ do
-        CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+        -- CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+        CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")        
+        let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
+        let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
+        lift3 $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
         updateObjectForRsyncRepository appContext repo (objectStore database)
-        -- lift3 $ say $ "taCert = " <> show taCert
         lift3 $ validateCA appContext vContext' database taName taCert
 
     say $ "x = " <> show x
@@ -495,13 +430,13 @@ validateTreeFromTA env = do
 validateTreeFromStore :: Environment 'ReadWrite -> IO ()
 validateTreeFromStore env = do       
     let appContext = createAppContext
-    let vContext' = vContext $ URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer"
+    let taCertURI = URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer"
     database <- createDatabase env
-    x <- runValidatorT vContext' $ do
+    x <- runValidatorT (vContext taCertURI) $ do
         -- CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
         -- CerRO taCert <- rsyncFile (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")
-        CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.arin.net/repository/arin-rpki-ta.cer")
-        -- lift3 $ say $ "taCert = " <> show taCert
+        CerRO taCert <- rsyncFile appContext taCertURI
+        lift3 $ say $ "taCert = " <> show taCert
         let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
         let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
         lift3 $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
@@ -515,7 +450,8 @@ main = do
     -- mkLmdb "./data" >>= processRRDP
     -- mkLmdb "./data/" >>= void . saveRsyncRepo
     -- mkLmdb "./data/" >>= validateTreeFromStore
-    mkLmdb "./data/" >>= validateTreeFromTA
+    -- mkLmdb "./data/" >>= validateTreeFromTA
+    mkLmdb "./data/" >>= processTAL
 
 
 

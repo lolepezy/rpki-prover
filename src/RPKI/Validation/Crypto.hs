@@ -1,10 +1,13 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE RecordWildCards     #-}
+
 module RPKI.Validation.Crypto where
 
-import Data.X509 hiding (getCertificate)
-import Data.X509.Validation hiding (InvalidSignature)
+import           Data.X509            hiding (getCertificate)
+import           Data.X509.Validation hiding (InvalidSignature)
 
-import RPKI.Domain
+import           RPKI.Domain
+
     
 -- | Validate that a given object was signed by the public key of the given certificate
 validateSignature :: RpkiObject -> CerObject -> SignatureVerification
@@ -83,17 +86,4 @@ validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData si
             _ _ = getEECert so
         pubKey = certPubKey eeCertificate
         SignedAttributes _ signData = signedAttrs $ scSignerInfos $ soContent so        
-
-
--- | Validate the signature of CMS's EE certificate
-validateCMS'EECertSignature :: WithResourceCertificate c => CMS a -> c -> SignatureVerification
-validateCMS'EECertSignature (CMS so) parentCert = 
-    verifySignature signAlgorithm pubKey encodedCert signature    
-    where
-        CertificateWithSignature
-            _
-            (SignatureAlgorithmIdentifier signAlgorithm) 
-            (SignatureValue signature) 
-            encodedCert = getEECert so
-        pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
         

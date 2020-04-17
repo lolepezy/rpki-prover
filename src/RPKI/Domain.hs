@@ -2,7 +2,6 @@
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
@@ -359,7 +358,8 @@ data RrdpRepository = RrdpRepository {
 
 data Repository = 
     RsyncRepo RsyncRepository | 
-    RrdpRepo RrdpRepository 
+    RrdpRepo RrdpRepository |    
+    Prefetch Repository
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
         
@@ -464,4 +464,5 @@ makeEECert a s rc = With a $ With s rc
 
 repositoryURI :: Repository -> URI
 repositoryURI (RsyncRepo (RsyncRepository {..})) = uri
-repositoryURI (RrdpRepo (RrdpRepository{..})) =  uri
+repositoryURI (RrdpRepo (RrdpRepository{..}))    = uri
+repositoryURI (Prefetch r)                       = repositoryURI r

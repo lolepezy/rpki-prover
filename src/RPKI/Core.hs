@@ -17,9 +17,10 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Map                         (Map)
 import qualified Data.Map                         as Map
 import           Data.Maybe                       (catMaybes)
-import           Data.String.Interpolate
+import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
+import Data.Bifunctor
 
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -41,53 +42,48 @@ import           RPKI.Validation.ObjectValidation
 
 
 
-roAppTx :: WithStorage s s => s -> env -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a
-roAppTx s e f = validatorT $ roTx s $ \tx -> runValidatorT e (f tx)
-
-rwAppTx :: WithStorage s s => s -> env -> (forall tm . Tx s tm -> ValidatorT env IO a) -> ValidatorT env IO a
-rwAppTx s e f = validatorT $ rwTx s $ \tx -> runValidatorT e (f tx)
-
 
 -- | Valiidate TA starting from the TAL.
 -- | TODO Do something consistent with Validations
 validateTA :: (Has AppContext env, Has VContext vc, Storage s) => 
             env -> TAL -> DB s -> ValidatorT vc IO ()
-validateTA env tal database = do
+validateTA env tal database@DB {..} = do
     let appContext@AppContext {..} = getter env
-    let tas = taStore database
     let taName = getTaName tal
     let taContext = vContext $ getTaURI tal
     (uri', ro) <- fetchTACertificate appContext tal
     newCert <- vHoist $ validateTACert tal uri' ro  
     join $ 
         fromTryEither (StorageE . StorageError . fmtEx) $
-            rwTx tas $ \tx -> do
+            rwTx taStore $ \tx -> do
 
                 let fetchAndValidate repository = do 
                         let vContext' = vContext $ repositoryURI repository
                         (repo, validations) <- fetchRepository appContext database repository
-                        lift3 $ updateRepositoryStatus tx (repositoryStore database) repo FETCHED
-                        lift3 $ validateCA env vContext' database taName newCert  
+                        lift3 $ do 
+                            rwTx taStore $ \txNew -> updateRepositoryStatus txNew repositoryStore repo FETCHED
+                            validateCA env vContext' database taName newCert  
 
-                getTA tx tas taName >>= \case
+                getTA tx taStore taName >>= \case
                     Nothing -> do
                         -- it's a new TA, store it and trigger all the other actions
                         let c = cwsX509certificate $ getCertWithSignature $ newCert
                         logInfo_ logger [i| Storing new #{getTaName tal}, 
                             getRrdpNotifyUri newCert = #{getRrdpNotifyUri c }, getRepositoryUri newCert = #{getRepositoryUri c}|]
-                    
-                        putTA tx tas (STA tal newCert)
-                        
-                        case createRepositoryFromTAL tal newCert of
+                                                                
+                        case createRepositoriesFromTAL tal newCert of
                             Left e -> pure $ Left $ ValidationE e
-                            Right repository -> do                                
-                                putRepository tx (repositoryStore database) (newRepository repository) taName
-                                pure $ Right $ fetchAndValidate repository 
+                            Right repositories -> do                                
+                                forM_ repositories $ 
+                                    \r -> putRepository tx repositoryStore (newRepository r) taName
+                                pure $ Right $ do 
+                                    lift3 $ putTA tx taStore (STA tal newCert repositories)
+                                    forM_ repositories fetchAndValidate
 
-                    Just (STA _ oldCert) -> do
+                    Just (sta@STA { taCert = oldCert }) -> do
                         when (getSerial oldCert /= getSerial newCert) $ do            
                             logInfo_ logger [i| Updating TA certificate for #{getTaName tal} |]
-                            putTA tx tas (STA tal newCert)            
+                            putTA tx taStore $ sta { taCert = newCert }
                         pure $ Right $ pure ()
     
 
@@ -127,17 +123,20 @@ emptyTopDownContext taName = do
 
 validateCA :: (Has AppContext env, Storage s) =>
             env -> VContext -> DB s -> TaName -> CerObject -> IO ()
-validateCA env vContext database taName certificate = do    
+validateCA env vContext' database@DB {..} taName certificate = do    
     let AppContext {..} = getter env
     topDownContext <- emptyTopDownContext taName    
+
+    currentRepositories <- roTx database $ \tx -> getRepositoriesForTA tx repositoryStore taName
+
     let validateAll = do
-            result <- runValidatorT vContext $ validateTree env database certificate topDownContext
-            queueVResult topDownContext vContext result
+            result <- runValidatorT vContext' $ validateTree env database certificate topDownContext
+            queueVResult topDownContext vContext' result
 
     let finaliseQueue = atomically $ Q.writeTBQueue (resultQueue topDownContext) Nothing
 
     let topDown = Concurrently $ validateAll `finally` finaliseQueue
-    let saveVResults = Concurrently $ writeVResults logger topDownContext (resultStore database)
+    let saveVResults = Concurrently $ writeVResults logger topDownContext resultStore
 
     {- Write validation results and repositories in separate threads to avoid 
         blocking on the database with writing transactions during the validation process 
@@ -328,3 +327,27 @@ fetchTACertificate appContext tal =
                     lift3 $ logError_ (logger appContext) message
                     validatorWarning $ VWarning e
                     go uris
+
+
+
+-- Utilities to have storage transaction in ValidatorT monad.
+roAppTx :: (WithStorage s s, Exception exc) => 
+            s -> (exc -> AppError) -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+roAppTx s err f = appTx s err f roTx    
+
+rwAppTx :: (WithStorage s s, Exception exc) => 
+            s -> (exc -> AppError) -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTx s err f = appTx s err f rwTx
+
+
+appTx :: (WithStorage s s, Exception exc) => 
+            s -> (exc -> AppError) -> 
+            (Tx s mode -> ValidatorT env IO a) -> 
+            (s -> (Tx s mode -> IO (Either AppError a, [VWarning]))
+               -> IO (Either AppError a, [VWarning])) -> 
+            ValidatorT env IO a
+appTx s err f txF = do
+    env <- ask
+    t <- lift3 $ try $ txF s $ \tx -> runValidatorT env $ f tx
+    validatorT $ pure $ either (\e -> (Left $ err e, [])) id t
+

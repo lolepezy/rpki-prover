@@ -11,7 +11,7 @@ import           Control.Monad.Except
 
 import           Data.Bifunctor                 (first, second)
 import qualified Data.ByteString.Lazy           as LBS
-import           Data.String.Interpolate
+import Data.String.Interpolate.IsString
 import qualified Data.List                      as List
 import qualified Data.Text                      as Text
 import qualified Network.Wreq                   as WR
@@ -40,7 +40,6 @@ import qualified Crypto.Hash.SHA256             as S256
 
 import           System.IO                      (Handle)
 import           System.IO.Posix.MMap.Lazy      (unsafeMMapFile)
-import           System.TimeIt
 
 import UnliftIO hiding (fromEither, fromEitherM)
 import qualified UnliftIO.Async                 as Unlift
@@ -215,17 +214,15 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
     where
         saveSnapshot (Snapshot _ _ _ snapshotItems) = do
             lift3 $ logDebug_ logger [i|Using snapshot for the repository: #{repository} |]
-            (t, vs) <- timeItT $ fromTry 
-                        (StorageE . StorageError . U.fmtEx)                
-                        (txConsumeFold 
-                            (parallelism config) 
-                            snapshotItems 
-                            storableToChan 
-                            (rwTx objectStore) 
-                            chanToStorage 
-                            (mempty :: Validations))            
-            lift3 $ logDebug_ logger [i|Loaded snapshot: #{repository} in #{t}s|]
-            pure vs
+            fromTry 
+                (StorageE . StorageError . U.fmtEx)                
+                (txConsumeFold 
+                    (parallelism config) 
+                    snapshotItems 
+                    storableToChan 
+                    (rwTx objectStore) 
+                    chanToStorage 
+                    (mempty :: Validations))                        
             where
                 storableToChan (SnapshotPublish uri encodedb64) = do
                     a <- Unlift.async $ pure $! parseAndProcess uri encodedb64

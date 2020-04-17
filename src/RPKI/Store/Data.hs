@@ -7,6 +7,8 @@ module RPKI.Store.Data where
 import           Codec.Serialise
 import           GHC.Generics
 
+import Data.List.NonEmpty
+
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.TAL
@@ -23,8 +25,9 @@ data VResult = VResult {
 
 
 data STA = STA {
-    tal        :: !TAL,
-    taCert     :: !CerObject
+    tal                 :: !TAL,
+    taCert              :: !CerObject,
+    initialRepositories :: NonEmpty Repository
 } deriving (Show, Eq, Generic, Serialise)
 
 
