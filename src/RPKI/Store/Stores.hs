@@ -104,7 +104,7 @@ ifJust a f = maybe (pure ()) f a
 
 
 -- | Validation result store
-data VResultStore s = VResultStore {
+newtype VResultStore s = VResultStore {
     results  :: SMap "results" s VContext VResult
 }
 

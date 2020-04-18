@@ -1,25 +1,24 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveAnyClass #-}
 
 module RPKI.Repository where
 
-import           Control.Monad
-import           Control.Concurrent.STM
 import           Codec.Serialise
+import           Control.Concurrent.STM
 import           GHC.Generics
 
-import Data.X509 (Certificate)
+import           Data.X509              (Certificate)
 
-import           Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NonEmpty
+import           Data.List.NonEmpty     (NonEmpty (..))
+import qualified Data.List.NonEmpty     as NonEmpty
 
-import           Data.Map                 (Map)
-import qualified Data.Map                 as Map
-import qualified Data.Text                as Text
-import qualified Data.List                as List
+import qualified Data.List              as List
+import           Data.Map.Strict        (Map)
+import qualified Data.Map.Strict        as Map
+import qualified Data.Text              as Text
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse

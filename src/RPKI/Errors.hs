@@ -12,8 +12,9 @@ import           Codec.Serialise
 import           Control.Exception
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
-import           Data.Map                         (Map)
-import qualified Data.Map                         as Map
+import qualified Data.List          as List
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 
@@ -150,3 +151,6 @@ mError vc e = Validations $ Map.singleton vc $ Set.fromList [VErr e]
 
 mWarning :: VContext -> VWarning -> Validations
 mWarning vc w = Validations $ Map.singleton vc $ Set.fromList [VWarn w]
+
+emptyValidations :: Validations -> Bool 
+emptyValidations (Validations m) = List.all Set.null $ Map.elems m  

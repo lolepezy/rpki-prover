@@ -27,10 +27,14 @@ class WithTx s => Storage s where
     foldMuForKey :: Tx s m -> SMultiMapImpl s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     foldMu :: Tx s m -> SMultiMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     deleteMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
-    deleteAllMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> IO ()
+    deleteAllMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> IO ()    
 
-class Storage s => WithStorage s ws | ws -> s where
+
+class Storage s => WithStorage s ws where
     storage :: ws -> s
+
+instance Storage s => WithStorage s s where
+    storage = id
 
 roTx :: WithStorage s ws => ws -> (Tx s 'RO -> IO a) -> IO a
 roTx s = readOnlyTx (storage s)

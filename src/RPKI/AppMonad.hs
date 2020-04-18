@@ -17,10 +17,10 @@ import RPKI.Errors
 
 -- Application monad stack
 type ValidatorT env m r = Has VContext env => 
-        ReaderT env (ExceptT AppError (StateT [VWarning] m)) r
+        ReaderT env (ExceptT AppError (StateT Validations m)) r
 
 type PureValidator env r = Has VContext env =>
-        ReaderT env (ExceptT AppError (State [VWarning])) r
+        ReaderT env (ExceptT AppError (State Validations)) r
 
 vHoist :: Monad m => PureValidator env r -> ValidatorT env m r
 vHoist = hoist $ hoist $ hoist generalize
@@ -38,7 +38,7 @@ fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT env m r
 fromEitherM = lift . ExceptT . lift 
 
 -- TODO Make it not so ugly
-validatorT :: Monad m => m (Either AppError r, [VWarning]) -> ValidatorT env m r
+validatorT :: Monad m => m (Either AppError r, Validations) -> ValidatorT env m r
 validatorT s = lift $ ExceptT $ do
                 (v, w) <- lift s
                 put w
@@ -55,11 +55,11 @@ toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
 runPureValidator :: Has VContext env =>
-                env -> PureValidator env r -> (Either AppError r, [VWarning])
+                env -> PureValidator env r -> (Either AppError r, Validations)
 runPureValidator env v = (runState $ runExceptT $ runReaderT v env) mempty
 
 runValidatorT :: Has VContext env =>
-                env -> ValidatorT env m r -> m (Either AppError r, [VWarning])
+                env -> ValidatorT env m r -> m (Either AppError r, Validations)
 runValidatorT env v = (runStateT $ runExceptT $ runReaderT v env) mempty
 
 validatorWarning :: Monad m => VWarning -> ValidatorT env m ()
@@ -71,8 +71,10 @@ vError = vHoist . vPureError
 appError :: Monad m => AppError -> ValidatorT env m r
 appError = vHoist . pureError
 
-pureWarning :: VWarning -> PureValidator env ()
-pureWarning w = lift $ modify' (w:)
+pureWarning :: Has VContext env => VWarning -> PureValidator env ()
+pureWarning w = do 
+    vc <- asks getter 
+    lift $ modify' (mWarning vc w <>)
 
 vPureError :: ValidationError -> PureValidator env r
 vPureError = pureError . ValidationE
@@ -91,8 +93,8 @@ vFromEither :: Either ValidationError r -> PureValidator env r
 vFromEither e = fromEither $ first ValidationE e
 
 valid :: Applicative m =>
-        m (Either AppError (), [VWarning])
-valid = pure (Right (), [])
+        m (Either AppError (), Validations)
+valid = pure (Right (), mempty)
 
 vWarn :: (Monad m, Has VContext env) =>
         ValidationError -> ValidatorT env m ()

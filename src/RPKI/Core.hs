@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Core where
 
@@ -11,16 +11,17 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 
 import qualified Control.Concurrent.STM.TBQueue   as Q
-
 import           Data.Has
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Map                         (Map)
-import qualified Data.Map                         as Map
+import qualified Data.List          as List
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
+import qualified Data.Set                         as Set
 import           Data.Maybe                       (catMaybes)
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
-import Data.Bifunctor
+import           Data.Bifunctor
 
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -29,16 +30,16 @@ import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parallel                    (parallel)
 import           RPKI.Parse.Parse
-import           RPKI.Resources.Types
-import           RPKI.Rsync
-import           RPKI.RRDP.Update
 import           RPKI.Repository
+import           RPKI.Resources.Types
+import           RPKI.RRDP.Update
+import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Stores
 import           RPKI.TAL
 import           RPKI.Util                        (fmtEx)
-import           RPKI.Validation.ObjectValidation 
+import           RPKI.Validation.ObjectValidation
 
 
 
@@ -48,6 +49,50 @@ import           RPKI.Validation.ObjectValidation
 validateTA :: (Has AppContext env, Has VContext vc, Storage s) => 
             env -> TAL -> DB s -> ValidatorT vc IO ()
 validateTA env tal database@DB {..} = do
+    let appContext@AppContext {..} = getter env
+    let taName = getTaName tal
+    let taContext = vContext $ getTaURI tal
+    (uri', ro) <- fetchTACertificate appContext tal
+    newCert <- vHoist $ validateTACert tal uri' ro  
+    join $ 
+        fromTryEither (StorageE . StorageError . fmtEx) $
+            rwTx taStore $ \tx -> do
+
+                let fetchAndValidate repository = do 
+                        let vContext' = vContext $ repositoryURI repository
+                        (repo, validations) <- fetchRepository appContext database repository
+                        lift3 $ do 
+                            rwTx taStore $ \txNew -> updateRepositoryStatus txNew repositoryStore repo FETCHED
+                            validateCA env vContext' database taName newCert  
+
+                getTA tx taStore taName >>= \case
+                    Nothing -> do
+                        -- it's a new TA, store it and trigger all the other actions
+                        let c = cwsX509certificate $ getCertWithSignature $ newCert
+                        logInfo_ logger [i| Storing new #{getTaName tal}, 
+                            getRrdpNotifyUri newCert = #{getRrdpNotifyUri c }, getRepositoryUri newCert = #{getRepositoryUri c}|]
+                                                                
+                        case createRepositoriesFromTAL tal newCert of
+                            Left e -> pure $ Left $ ValidationE e
+                            Right repositories -> do                                
+                                forM_ repositories $ 
+                                    \r -> putRepository tx repositoryStore (newRepository r) taName
+                                pure $ Right $ do 
+                                    lift3 $ putTA tx taStore (STA tal newCert repositories)
+                                    forM_ repositories fetchAndValidate
+
+                    Just (sta@STA { taCert = oldCert }) -> do
+                        when (getSerial oldCert /= getSerial newCert) $ do            
+                            logInfo_ logger [i| Updating TA certificate for #{getTaName tal} |]
+                            putTA tx taStore $ sta { taCert = newCert }
+                        pure $ Right $ pure ()
+
+
+-- | Valiidate TA starting from the TAL.
+-- | TODO Do something consistent with Validations
+validateTAFromTAL :: (Has AppContext env, Has VContext vc, Storage s) => 
+                    env -> TAL -> DB s -> ValidatorT vc IO ()
+validateTAFromTAL env tal database@DB {..} = do
     let appContext@AppContext {..} = getter env
     let taName = getTaName tal
     let taContext = vContext $ getTaURI tal
@@ -215,7 +260,7 @@ validateTree env database certificate topDownContext = do
             -- Interrupt the whole thing or just go with a warning            
             case mftProblems of
                 [] -> pure ()
-                ps -> mapM_ vWarn $ catMaybes mftProblems
+                _  -> mapM_ vWarn $ catMaybes mftProblems
 
         Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations        
     where                        
@@ -286,15 +331,18 @@ validateTree env database certificate topDownContext = do
 
 
 -- | Put validation result into a queue for writing
-queueVResult :: TopDownContext -> VContext -> (Either AppError (), [VWarning]) -> IO ()
+queueVResult :: TopDownContext -> VContext -> (Either AppError (), Validations) -> IO ()
 queueVResult topDownContext vc result = do    
-    let problems = case result of            
-            (Left e, ws)  -> map VWarn ws <> [VErr e]
-            (Right _, ws) -> map VWarn ws
+    let validations = case result of            
+            (Left e, vs)  -> vs <> mError vc e
+            (Right _, vs) -> vs
     let queue = resultQueue topDownContext
-    case problems of
-        [] -> pure ()
-        ps -> atomically $ Q.writeTBQueue queue $ Just $ VResult ps vc
+    case validations of
+        Validations validationsMap
+            | emptyValidations validations -> pure ()
+            | otherwise -> void $ (flip Map.traverseWithKey) validationsMap $ 
+                    \vc' problems -> atomically $ Q.writeTBQueue queue $ 
+                                        Just $ VResult (Set.toList problems) vc'
 
 -- | Get validation result from the queue and save it to the DB
 writeVResults :: (Storage s) => AppLogger -> TopDownContext -> VResultStore s -> IO ()
@@ -331,23 +379,42 @@ fetchTACertificate appContext tal =
 
 
 -- Utilities to have storage transaction in ValidatorT monad.
-roAppTx :: (WithStorage s s, Exception exc) => 
+roAppTx :: Storage s => 
+            s -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+roAppTx s f = appTx s f roTx    
+
+rwAppTx :: Storage s => 
+            s -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTx s f = appTx s f rwTx
+
+
+-- appTx :: Storage s => 
+--             s -> (Tx s mode -> ValidatorT env IO a) -> 
+--             (s -> (Tx s mode -> IO (Either AppError a, [VWarning]))
+--                -> IO (Either AppError a, [VWarning])) -> 
+--             ValidatorT env IO a
+appTx s f txF = do
+    env <- ask
+    validatorT $ txF s $ runValidatorT env . f
+
+
+roAppTxEx :: (Storage s, Exception exc) => 
             s -> (exc -> AppError) -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
-roAppTx s err f = appTx s err f roTx    
+roAppTxEx s err f = appTxEx s err f roTx    
 
-rwAppTx :: (WithStorage s s, Exception exc) => 
+rwAppTxEx :: (Storage s, Exception exc) => 
             s -> (exc -> AppError) -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
-rwAppTx s err f = appTx s err f rwTx
+rwAppTxEx s err f = appTxEx s err f rwTx
 
-
-appTx :: (WithStorage s s, Exception exc) => 
+appTxEx :: (Storage s, Exception exc) => 
             s -> (exc -> AppError) -> 
             (Tx s mode -> ValidatorT env IO a) -> 
-            (s -> (Tx s mode -> IO (Either AppError a, [VWarning]))
-               -> IO (Either AppError a, [VWarning])) -> 
+            (s -> (Tx s mode -> IO (Either AppError a, Validations))
+               -> IO (Either AppError a, Validations)) -> 
             ValidatorT env IO a
-appTx s err f txF = do
+appTxEx s err f txF = do
     env <- ask
-    t <- lift3 $ try $ txF s $ \tx -> runValidatorT env $ f tx
-    validatorT $ pure $ either (\e -> (Left $ err e, [])) id t
+    -- TODO Make it less ugly and complicated
+    t <- lift3 $ try $ txF s $ runValidatorT env . f
+    validatorT $ pure $ either ((, mempty) . Left . err) id t
 
