@@ -59,7 +59,7 @@ rsyncFile AppContext{..} (URI uri) = do
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
         ExitFailure errorCode -> do
-            lift3 $ logError_ logger [i|Rsync process failed: #rsync 
+            logErrorM logger [i|Rsync process failed: #rsync 
                                         with code #{errorCode}, 
                                         stderr = #{err}, 
                                         stdout = #{out}|]        
@@ -89,16 +89,16 @@ updateObjectForRsyncRepository
     _ <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
         createDirectoryIfMissing True destination
         
-    lift3 $ logInfo_ logger [i|Going to run #{rsync}|]
+    logInfoM logger [i|Going to run #{rsync}|]
     (exitCode, out, err) <- lift $ readProcess rsync
-    lift3 $ logInfo_ logger [i|Finished rsynching #{destination}|]
+    logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
             (validations, count) <- fromEitherM $ loadRsyncRepository appContenxt (URI uri) destination objectStore
-            lift3 $ logInfo_ logger [i|Finished loading #{count} objects into local storage.|]
+            logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
-            lift3 $ logError_ logger [i|Rsync process failed: #{rsync} 
+            logErrorM logger [i|Rsync process failed: #{rsync} 
                                         with code #{errorCode}, 
                                         stderr = #{err}, 
                                         stdout = #{out}|]

@@ -213,7 +213,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
     updateRrdpRepo appContext repository saveSnapshot saveDelta
     where
         saveSnapshot (Snapshot _ _ _ snapshotItems) = do
-            lift3 $ logDebug_ logger [i|Using snapshot for the repository: #{repository} |]
+            logDebugM logger [i|Using snapshot for the repository: #{repository} |]
             fromTry 
                 (StorageE . StorageError . U.fmtEx)                
                 (txConsumeFold 

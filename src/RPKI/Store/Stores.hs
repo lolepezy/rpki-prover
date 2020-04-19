@@ -5,6 +5,8 @@
 
 module RPKI.Store.Stores where
 
+import Control.Monad.IO.Class
+
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Store.Base.Map      (SMap (..))
@@ -93,11 +95,11 @@ instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
 
-putTA :: Storage s => Tx s 'RW -> TAStore s -> STA -> IO ()
-putTA tx (TAStore s) ta = M.put tx s (getTaName $ tal ta) ta
+putTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> STA -> m ()
+putTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 
-getTA :: Storage s => Tx s m -> TAStore s -> TaName -> IO (Maybe STA)
-getTA tx (TAStore s) name = M.get tx s name
+getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe STA)
+getTA tx (TAStore s) name = liftIO $ M.get tx s name
 
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a

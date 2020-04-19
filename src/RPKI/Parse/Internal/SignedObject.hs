@@ -89,11 +89,11 @@ parseSignedObject eContentParse =
               Left e              -> throwParseError $ show e
               Right eeCertificate -> do
                   sigAlgorithm <- parseSignatureAlgorithm
-                  signature    <- parseSignature
-                  let certWithSig = CertificateWithSignature eeCertificate sigAlgorithm signature encodedCert
+                  signature'   <- parseSignature
+                  let certWithSig = CertificateWithSignature eeCertificate sigAlgorithm signature' encodedCert
                   case toResourceCert certWithSig of
                     Left e                    -> throwParseError $ "EE certificate is broken " <> show e
-                    Right (_, ski, Nothing)   -> throwParseError $ "EE certificate doesn't have an AKI"
+                    Right (_,   _,  Nothing)  -> throwParseError $ "EE certificate doesn't have an AKI"
                     Right (rc, ski, Just aki) -> pure $ makeEECert aki ski rc
                   where 
                     encodedCert = encodeASN1' DER $ 

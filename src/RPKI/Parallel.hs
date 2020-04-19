@@ -62,7 +62,6 @@ txConsumeFold poolSize as produce withTx consume accum0 =
                     consume tx a accum        
 
 
-
 bracketChan :: MonadUnliftIO m =>
                 Natural ->
                 (Q.TBQueue t -> m b) ->

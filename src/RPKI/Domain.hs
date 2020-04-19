@@ -358,8 +358,7 @@ data RrdpRepository = RrdpRepository {
 
 data Repository = 
     RsyncRepo RsyncRepository | 
-    RrdpRepo RrdpRepository |    
-    Prefetch Repository
+    RrdpRepo RrdpRepository    
     deriving stock (Show, Eq, Ord, Typeable, Generic)
 
         
@@ -465,4 +464,3 @@ makeEECert a s rc = With a $ With s rc
 repositoryURI :: Repository -> URI
 repositoryURI (RsyncRepo (RsyncRepository {..})) = uri
 repositoryURI (RrdpRepo (RrdpRepository{..}))    = uri
-repositoryURI (Prefetch r)                       = repositoryURI r

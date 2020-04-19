@@ -27,9 +27,17 @@ import           RPKI.Store.Stores
 import           RPKI.Util                  (convert, fmtEx)
 
 
-data Task = ValidateTA TaName | 
-            ValidateTree TaName |
-            ValidateRepository Repository
+data Task = CheckTACertificate (TAL -> Task) |
+            FetchRepository (Repository -> Task) |
+            TaskSequence [Task] |
+            Noop
+
+
+
+init :: TAL -> [Task]
+init tal = [
+        CheckTACertificate (\_ -> Noop)
+    ]
 
 
 {-
@@ -48,4 +56,4 @@ data Task = ValidateTA TaName |
 
   - 
 
--}
+-} 

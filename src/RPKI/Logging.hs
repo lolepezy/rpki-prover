@@ -4,6 +4,9 @@
 module RPKI.Logging where
 
 import Colog
+
+import Control.Monad.IO.Class
+
 import GHC.Stack (callStack, withFrozenCallStack)
 
 import Data.Text
@@ -27,3 +30,9 @@ logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
 logWhat sev la textMessage = do
     withFrozenCallStack $ la <& Msg sev callStack textMessage
 
+
+logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => logger -> Text -> m ()
+logErrorM logger t = liftIO $ logError_ logger t
+logWarnM logger t  = liftIO $ logWarn_ logger t
+logInfoM logger t  = liftIO $ logInfo_ logger t
+logDebugM logger t = liftIO $ logDebug_ logger t
