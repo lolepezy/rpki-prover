@@ -391,7 +391,7 @@ processTAL env = do
             -- BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/afrinic.tal"
             BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/lacnic.tal"
         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
-        x <- validateTAFromTAL appContext tal database
+        x <- bootstrapTA appContext tal database
         pure x
     say $ "done " <> show result
 
