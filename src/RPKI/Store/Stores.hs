@@ -30,11 +30,11 @@ data RpkiObjectStore s = RpkiObjectStore {
 instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
 
-getByHash :: Storage s => Tx s m -> RpkiObjectStore s -> Hash -> IO (Maybe RpkiObject)
-getByHash tx store h = (fromSValue <$>) <$> M.get tx (objects store) h
+getByHash :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
+getByHash tx store h = liftIO $ (fromSValue <$>) <$> M.get tx (objects store) h
 
-putObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> IO ()
-putObject tx store (StorableObject ro sv) = do
+putObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> m ()
+putObject tx store (StorableObject ro sv) = liftIO $ do
     let h = getHash ro
     M.put tx (objects store) h sv  
     ifJust (getAKI ro) $ \aki' -> do 
@@ -44,8 +44,8 @@ putObject tx store (StorableObject ro sv) = do
             _         -> pure ()
 
 
-deleteObject :: Storage s => Tx s 'RW -> RpkiObjectStore s -> Hash -> IO ()
-deleteObject tx store h = do
+deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
+deleteObject tx store h = liftIO $ do
     ro' <- getByHash tx store h
     ifJust ro' $ \ro -> do 
         M.delete tx (objects store) h
@@ -55,8 +55,8 @@ deleteObject tx store h = do
                 MftRO mft -> MM.delete tx (mftByAKI store) aki' (h, getMftNumber mft)
                 _         -> pure ()      
 
-findLatestMftByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO (Maybe MftObject)
-findLatestMftByAKI tx store aki' = 
+findLatestMftByAKI :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
+findLatestMftByAKI tx store aki' = liftIO $ 
     MM.fold tx (mftByAKI store) aki' f Nothing >>= \case
         Nothing        -> pure Nothing
         Just (hash, _) -> do
@@ -71,8 +71,8 @@ findLatestMftByAKI tx store aki' =
                 | mftNum > latestNum -> Just (hash, mftNum)
                 | otherwise          -> latest
 
-findMftsByAKI :: Storage s => Tx s m -> RpkiObjectStore s -> AKI -> IO [MftObject]
-findMftsByAKI tx store aki' = 
+findMftsByAKI :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
+findMftsByAKI tx store aki' = liftIO $ 
     MM.fold tx (mftByAKI store) aki' f []
     where
         f mfts _ (h, _) = accumulate <$> getByHash tx store h
@@ -82,8 +82,8 @@ findMftsByAKI tx store aki' =
                     _ -> mfts            
 
 -- This is for testing purposes mostly
-getAll :: Storage s => Tx s m -> RpkiObjectStore s -> IO [RpkiObject]
-getAll tx store = reverse <$> M.fold tx (objects store) f []
+getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
+getAll tx store = liftIO $ reverse <$> M.fold tx (objects store) f []
     where
         f ros _ v = pure $ fromSValue v : ros
 
@@ -113,8 +113,8 @@ newtype VResultStore s = VResultStore {
 instance Storage s => WithStorage s (VResultStore s) where
     storage (VResultStore s) = storage s
 
-putVResult :: Storage s => Tx s 'RW -> VResultStore s -> VResult -> IO ()
-putVResult tx (VResultStore s) vr = M.put tx s (path vr) vr
+putVResult :: (MonadIO m, Storage s) => Tx s 'RW -> VResultStore s -> VResult -> m ()
+putVResult tx (VResultStore s) vr = liftIO $ M.put tx s (path vr) vr
 
 
 data RepositoryStore s = RepositoryStore {
@@ -129,27 +129,27 @@ instance Storage s => WithStorage s (RepositoryStore s) where
 newRepository :: Repository -> SRepository
 newRepository r = SRepository r NEW 
 
-putRepository :: Storage s => Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> IO ()
-putRepository tx s r taName' = do 
+putRepository :: (MonadIO m, Storage s) => Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> m ()
+putRepository tx s r taName' = liftIO $ do 
     let repoUri = repositoryURI $ repo r
     M.put tx (repositories s) repoUri r
     MM.put tx (repositoriesPerTA s) taName' repoUri
 
-updateRepositoryStatus :: Storage s => 
-                        Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> IO ()
-updateRepositoryStatus tx s r status' = do 
+updateRepositoryStatus :: (MonadIO m, Storage s) => 
+                        Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> m ()
+updateRepositoryStatus tx s r status' = liftIO $ do 
     let repoUri = repositoryURI r
     getRepository tx s repoUri >>= \case
         Nothing -> pure ()
         Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status'
 
 
-getRepository :: Storage s => 
-                Tx s 'RW -> RepositoryStore s -> URI -> IO (Maybe Repository)
-getRepository tx s repoUri = fmap repo <$> M.get tx (repositories s) repoUri 
+getRepository :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> RepositoryStore s -> URI -> m (Maybe Repository)
+getRepository tx s repoUri = liftIO $ fmap repo <$> M.get tx (repositories s) repoUri 
 
-getRepositoriesForTA :: Storage s => Tx s m -> RepositoryStore s -> TaName -> IO [SRepository]
-getRepositoriesForTA tx s taName' = MM.fold tx (repositoriesPerTA s) taName' f []
+getRepositoriesForTA :: (MonadIO m, Storage s) => Tx s mode -> RepositoryStore s -> TaName -> m [SRepository]
+getRepositoriesForTA tx s taName' = liftIO $ MM.fold tx (repositoriesPerTA s) taName' f []
     where
         f ros _ uri' =   
             M.get tx (repositories s) uri' >>= \case

@@ -99,7 +99,7 @@ validateTA env tal database@DB {..} = do
                                 forM_ repositories $ 
                                     \r -> putRepository tx repositoryStore (newRepository r) taName
                                 pure $ Right $ do 
-                                    lift3 $ putTA tx taStore (STA tal newCert repositories)
+                                    putTA tx taStore (STA tal newCert repositories)
                                     forM_ repositories fetchAndValidate
                                     -- pure $ Right $ UpdatedTACert newCert repositories
 
