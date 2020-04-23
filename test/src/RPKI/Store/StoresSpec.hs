@@ -47,7 +47,8 @@ storeGroup = withObjectStore $ \io -> testGroup "Rpki object LMDB storage test"
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = withRepositoryStore $ \io -> testGroup "Repository LMDB storage test"
     [
-        HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io)        
+        HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io),
+        HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
     ]
 
 
@@ -116,6 +117,36 @@ should_insert_and_get_all_back_from_object_store io = do
 
 should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, Env), RepositoryStore LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_repository_store io = do  
+    (_, repositoryStore) <- io 
+
+    ros :: [Repository] <- nubBy (\r1 r2 -> repositoryURI r1 == repositoryURI r2) <$> 
+        (forM [1 :: Int .. 100] $ const $ QC.generate arbitrary)
+
+    taName1 <- TaName <$> QC.generate arbitrary
+    taName2 <- QC.generate $ (TaName <$> arbitrary) `QC.suchThat` (/= taName1)
+
+    withTas <- forM ros $ \r -> do        
+        ta <- QC.generate $ QC.elements [taName1, taName2]
+        pure (r, ta)        
+
+    rwTx repositoryStore $ \tx -> 
+        forM_ withTas $ \(repository, ta) ->            
+            putRepository tx repositoryStore repository ta
+
+    reposForTa1 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName1
+    reposForTa2 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName2
+
+    let reposByTa ta = List.sort $ List.map fst $ List.filter ((== ta) . snd) withTas
+
+    let assertForTa ta repos = HU.assertEqual 
+            ("Not the same repositories for " <> show ta) 
+            repos (reposFromList $ reposByTa ta)
+
+    assertForTa taName1 reposForTa1
+    assertForTa taName2 reposForTa2
+
+should_read_create_change_set_and_apply_repository_store :: IO ((FilePath, Env), RepositoryStore LmdbStorage) -> HU.Assertion
+should_read_create_change_set_and_apply_repository_store io = do  
     (_, repositoryStore) <- io 
 
     ros :: [Repository] <- nubBy (\r1 r2 -> repositoryURI r1 == repositoryURI r2) <$> 

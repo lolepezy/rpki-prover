@@ -10,20 +10,18 @@ import           Codec.Serialise
 import           Control.Monad
 import           GHC.Generics
 
-import           Data.X509                    (Certificate)
+import           Data.X509          (Certificate)
 
-import           Data.List.NonEmpty           (NonEmpty (..))
-import qualified Data.List.NonEmpty           as NonEmpty
+import           Data.List.NonEmpty (NonEmpty (..))
 
-import qualified Data.List                    as List
-import           Data.Map.Strict              (Map)
-import qualified Data.Map.Strict              as Map
-import           Data.Set                     (Set)
-import qualified Data.Set                     as Set
+import qualified Data.List          as List
+import           Data.Map.Strict    (Map)
+import qualified Data.Map.Strict    as Map
 import           Data.Maybe
-import qualified Data.Text                    as Text
+import qualified Data.Set           as Set
+import qualified Data.Text          as Text
 
-import           Data.Hourglass               (DateTime)
+import           Data.Hourglass     (DateTime)
 
 import           RPKI.Domain
 import           RPKI.Errors
@@ -185,8 +183,8 @@ data Change a = Put a | Remove a
 
 
 -- | Derive a change set to apply to the 
-diff :: Repositories -> Repositories -> [Change Repository]
-diff (Repositories rrdpOld rsyncOld) (Repositories rrdpNew rsyncNew) = 
+changeSet :: Repositories -> Repositories -> [Change Repository]
+changeSet (Repositories rrdpOld rsyncOld) (Repositories rrdpNew rsyncNew) = 
     putNewRrdps <> removeOldRrdps <> putNewRsyncs <> removeOldRsyncs
     where
         rom = Map.elems rrdpOld

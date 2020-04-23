@@ -15,20 +15,20 @@ import qualified Data.List                as List
 import qualified Data.Vector              as V
 import           RPKI.Resources.Types
 
-empty ::IntervalSet a
+empty :: IntervalSet a
 empty = IntervalSet V.empty
 
-null ::IntervalSet a -> Bool
+null :: IntervalSet a -> Bool
 null (IntervalSet s) = V.null s
 
 fromList :: WithSetOps a => [a] -> IntervalSet a
-fromList = IntervalSet . V.fromList . normalise 
+fromList = IntervalSet . V.fromList . normalise
 
 findIntersections :: Interval a => a -> IntervalSet a -> [a]
 findIntersections a as = concatMap fst $ findFullIntersections a as
 
 -- | Use binary search to find intersections of an interval within an interval set.
--- | Return also the orginal intervals it intersects with.
+-- | Return both interesections -- '[a]' and the intervals it intersects with -- 'a'.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
 findFullIntersections a (IntervalSet v) = 
     case (V.unsafeIndex v 0) `intersection` a of
