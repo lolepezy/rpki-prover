@@ -1,16 +1,18 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Store.Data where
 
 import           Codec.Serialise
 import           GHC.Generics
 
-import Data.List.NonEmpty
+import           Data.List.NonEmpty
 
 import           RPKI.Domain
 import           RPKI.Errors
+import           RPKI.Repository
 import           RPKI.TAL
 
 
@@ -31,17 +33,12 @@ data STA = STA {
 } deriving (Show, Eq, Generic, Serialise)
 
 
-data RepositoryStatus = NEW | FAILED | FETCHED
+data SRepository = SRepository !Repository !RepositoryStatus
     deriving (Show, Eq, Ord, Generic, Serialise)
 
-data SRepository = SRepository {
-    repo   :: !Repository,    
-    status :: !RepositoryStatus
-} deriving (Show, Eq, Ord, Generic, Serialise)
-
-
 instance WithKey SRepository URI where
-    key (SRepository r _) = repositoryURI r
+    key (SRepository (RrdpR (RrdpRepository{..} )) _) = uri
+    key (SRepository (RsyncR (RsyncTree (RsyncRepository{..}) _)) _) = uri
 
 instance WithKey VResult VContext where
     key vr = path vr

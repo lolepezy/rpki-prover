@@ -8,6 +8,7 @@ import           Lmdb.Types
 import           RPKI.Store.Base.LMDB
 
 import           RPKI.Store.Stores
+import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
 
 createObjectStore :: Env -> IO (RpkiObjectStore LmdbStorage)
@@ -26,11 +27,13 @@ createObjectStore e = do
 createRepositoryStore :: Env -> IO (RepositoryStore LmdbStorage)
 createRepositoryStore e = do
     let lmdb = LmdbStorage e
-    rMap <- create e
+    rMap1 <- create e
+    rMap2 <- create e
     perTaMap <- createMulti e
     pure $ RepositoryStore {
-        repositories = SMap lmdb rMap,
-        repositoriesPerTA = SMultiMap lmdb perTaMap
+        rrdpS = SMap lmdb rMap1,
+        rsyncS = SMap lmdb rMap2,
+        perTA = SMultiMap lmdb perTaMap
     }
 
 createResultStore :: Env -> IO (VResultStore LmdbStorage)

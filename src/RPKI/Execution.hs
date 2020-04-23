@@ -19,6 +19,7 @@ import qualified Data.List.NonEmpty         as NonEmpty
 import           RPKI.AppMonad
 import           RPKI.Errors
 import           RPKI.Domain
+import           RPKI.Repository
 import           RPKI.Logging
 import           RPKI.Rsync
 import           RPKI.TAL
@@ -29,6 +30,7 @@ import           RPKI.Util                  (convert, fmtEx)
 
 data Task = CheckTACertificate (TAL -> Task) |
             FetchRepository (Repository -> Task) |
+            FetchAndValidate (Repository -> Task) |
             TaskSequence [Task] |
             Noop
 

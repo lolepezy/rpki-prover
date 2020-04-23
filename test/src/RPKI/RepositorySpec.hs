@@ -18,7 +18,7 @@ repositoryGroup = testGroup "Repositories" [
     ]
 
 repositoriesURIs :: [RsyncRepository]
-repositoriesURIs = map (\s -> RsyncRepository $ URI $ "rsync://host1.com/" <> s) $ [
+repositoriesURIs = map (\s -> RsyncRepository (URI $ "rsync://host1.com/" <> s) New) $ [
         "a",
         "a/b",
         "a/c",
@@ -27,8 +27,9 @@ repositoriesURIs = map (\s -> RsyncRepository $ URI $ "rsync://host1.com/" <> s)
         "a/z/q/zzz",
         "a/z/q/aa",
         "a/z/p/q",
-        "b/a",        
+        "b/a",
         "b/a/c",
+        "a/z/q",
         "b/a/d",
         "b/a/e",
         "b/z",
@@ -54,16 +55,16 @@ prop_creates_thesame_hierarchy_regardless_of_shuffle =
                 List.filter (\(t1, t2) -> nested t1 t2) $
                 [ (t1, t2) | t1 <- trees, t2 <- trees, t1 /= t2]
             where 
-                nested (RsyncTree (RsyncRepository u1) _) (RsyncTree (RsyncRepository u2) _) = 
+                nested (RsyncTree (RsyncRepository u1 _) _) (RsyncTree (RsyncRepository u2 _) _) = 
                     u1 `isParentOf` u2 || u2 `isParentOf` u1
 
         treesAreSorted trees = 
             uris == sortedURIs &&
             List.all (\(RsyncTree _ children) -> treesAreSorted children) trees
             where 
-                uris = map (\(RsyncTree (RsyncRepository u) _) -> u) trees
+                uris = map (\(RsyncTree (RsyncRepository u _) _) -> u) trees
                 sortedURIs = List.sort uris
 
-        childURINestedInParent (RsyncTree (RsyncRepository uri') children) = 
-            List.all (\(RsyncTree (RsyncRepository childUri) _) -> uri' `isParentOf` childUri) children &&
+        childURINestedInParent (RsyncTree (RsyncRepository uri' _) children) = 
+            List.all (\(RsyncTree (RsyncRepository childUri _) _) -> uri' `isParentOf` childUri) children &&
             List.all childURINestedInParent children

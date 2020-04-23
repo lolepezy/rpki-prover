@@ -38,6 +38,7 @@ import System.IO.Temp (withSystemTempFile)
 
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Repository
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.TopDown
@@ -347,29 +348,28 @@ createAppContext = AppContext {
 processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
     say "begin"      
-    let repo1 = RrdpRepository (URI "https://rrdp.ripe.net/notification.xml") Nothing    
-    let repo2 = RrdpRepository (URI "https://rrdp.arin.net/notification.xml") Nothing    
-    let repo3 = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing    
-    let repo4 = RrdpRepository (URI "https://rrdp.afrinic.net/notification.xml") Nothing    
+    let repo1 = rrdpR (URI "https://rrdp.ripe.net/notification.xml") 
+    let repo2 = rrdpR (URI "https://rrdp.arin.net/notification.xml") 
+    let repo3 = rrdpR (URI "https://rrdp.apnic.net/notification.xml")
+    let repo4 = rrdpR (URI "https://rrdp.afrinic.net/notification.xml")
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
-    store <- createObjectStore env
+    database <- createDatabase env    
     as <- forM [repo1, repo2, repo3, repo4] $ \repo ->
-        async $ runValidatorT conf $ updateObjectForRrdpRepository createAppContext repo store 
+        async $ runValidatorT conf $ fetchRepository createAppContext database repo
 
     e <- forM as wait
 
     say $ "result " <> show e
 
 saveRsyncRepo env = do  
-    let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
-    let vc = vContext $ URI "something.cer"
-    store <- createObjectStore env
-    runValidatorT vc $ updateObjectForRsyncRepository createAppContext repo store
+    database <- createDatabase env
+    let repo = rsyncR (URI "rsync://rpki.ripe.net/repository")    
+    let vc = vContext $ URI "something.cer"    
+    runValidatorT vc $ fetchRepository createAppContext database repo
 
 saveRsync :: p -> IO ()
 saveRsync env = do
     say "begin"  
-    let logAction = logTextStdout
     e <- runValidatorT (vContext $ URI "something.cer") $ rsyncFile createAppContext 
         (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     say $ "done " <> show e
@@ -408,7 +408,7 @@ getTACert =
 validateTreeFromTA :: Environment 'ReadWrite -> IO ()
 validateTreeFromTA env = do  
     -- let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
-    let repo = RsyncRepository (URI "rsync://rpki.apnic.net/member_repository/")        
+    let repo = rsyncR (URI "rsync://rpki.apnic.net/member_repository/")        
     -- let repo = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing        
     database <- createDatabase env    
     let appContext = createAppContext
@@ -420,7 +420,7 @@ validateTreeFromTA env = do
         let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
         let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
         lift3 $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
-        updateObjectForRsyncRepository appContext repo (objectStore database)
+        fetchRepository appContext database repo
         lift3 $ validateCA appContext vContext' database taName taCert
 
     say $ "x = " <> show x

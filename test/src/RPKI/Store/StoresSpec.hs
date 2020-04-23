@@ -23,6 +23,7 @@ import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.Domain
+import           RPKI.Repository
 import           RPKI.Orphans
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
@@ -31,6 +32,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Stores
+import           RPKI.Store.Repository
 
 import           RPKI.Store.Util
 
@@ -118,28 +120,29 @@ should_insert_and_get_all_back_from_repository_store io = do
 
     ros :: [Repository] <- nubBy (\r1 r2 -> repositoryURI r1 == repositoryURI r2) <$> 
         (forM [1 :: Int .. 100] $ const $ QC.generate arbitrary)
+
     taName1 <- TaName <$> QC.generate arbitrary
     taName2 <- QC.generate $ (TaName <$> arbitrary) `QC.suchThat` (/= taName1)
 
-    withTas <- forM ros $ \r -> do
-        taName <- QC.generate $ QC.elements [taName1, taName2]
-        pure (r, taName)
+    withTas <- forM ros $ \r -> do        
+        ta <- QC.generate $ QC.elements [taName1, taName2]
+        pure (r, ta)        
 
     rwTx repositoryStore $ \tx -> 
-        forM_ withTas $ \(repository, taName) ->            
-            putRepository tx repositoryStore (newRepository repository) taName
+        forM_ withTas $ \(repository, ta) ->            
+            putRepository tx repositoryStore repository ta
 
-    test1 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName1
-    test2 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName2
+    reposForTa1 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName1
+    reposForTa2 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName2
 
-    let reposByTa taName = List.sort $ List.map fst $ List.filter ((== taName) . snd) withTas
+    let reposByTa ta = List.sort $ List.map fst $ List.filter ((== ta) . snd) withTas
 
-    let assertForTa taName test = HU.assertEqual 
-            ("Not the same repositories for " <> show taName) 
-            (List.map repo (List.sort test)) (reposByTa taName)
+    let assertForTa ta repos = HU.assertEqual 
+            ("Not the same repositories for " <> show ta) 
+            repos (reposFromList $ reposByTa ta)
 
-    assertForTa taName1 test1
-    assertForTa taName2 test2
+    assertForTa taName1 reposForTa1
+    assertForTa taName2 reposForTa2
     
 
 generateSome :: Arbitrary a => IO [a]

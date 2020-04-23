@@ -12,6 +12,7 @@ import qualified Data.ByteString.Base64                as B64
 
 import Data.List.NonEmpty (NonEmpty)
 
+import           Test.QuickCheck
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Instances.ByteString
@@ -31,6 +32,7 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Validity
 
 import           RPKI.Domain
+import           RPKI.Repository
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
 import           RPKI.RRDP.Types
@@ -290,6 +292,22 @@ instance Arbitrary SignerInfos where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RsyncTree where
+    arbitrary = sized arbitraryRsyncTree
+    shrink = genericShrink
+
+
+arbitraryRsyncTree :: Int -> Gen RsyncTree
+arbitraryRsyncTree 0 = do
+    a <- arbitrary
+    return $ RsyncTree a []
+arbitraryRsyncTree n = do
+    (Positive m) <- arbitrary
+    let n' = n `div` (m + 1)
+    f <- replicateM m (arbitraryRsyncTree n')
+    a <- arbitrary
+    return $ RsyncTree a f
+
 instance Arbitrary Repository where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -301,6 +319,11 @@ instance Arbitrary RsyncRepository where
 instance Arbitrary RrdpRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+instance Arbitrary RepositoryStatus where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 
 -- IPs
 

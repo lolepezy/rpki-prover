@@ -19,6 +19,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 
 import           RPKI.Store.Data
+import           RPKI.Store.Repository
 
 
 data RpkiObjectStore s = RpkiObjectStore {
@@ -30,10 +31,12 @@ data RpkiObjectStore s = RpkiObjectStore {
 instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
 
-getByHash :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
+getByHash :: (MonadIO m, Storage s) => 
+            Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
 getByHash tx store h = liftIO $ (fromSValue <$>) <$> M.get tx (objects store) h
 
-putObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> m ()
+putObject :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> m ()
 putObject tx store (StorableObject ro sv) = liftIO $ do
     let h = getHash ro
     M.put tx (objects store) h sv  
@@ -55,7 +58,8 @@ deleteObject tx store h = liftIO $ do
                 MftRO mft -> MM.delete tx (mftByAKI store) aki' (h, getMftNumber mft)
                 _         -> pure ()      
 
-findLatestMftByAKI :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
+findLatestMftByAKI :: (MonadIO m, Storage s) => 
+                    Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
 findLatestMftByAKI tx store aki' = liftIO $ 
     MM.fold tx (mftByAKI store) aki' f Nothing >>= \case
         Nothing        -> pure Nothing
@@ -71,7 +75,8 @@ findLatestMftByAKI tx store aki' = liftIO $
                 | mftNum > latestNum -> Just (hash, mftNum)
                 | otherwise          -> latest
 
-findMftsByAKI :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
+findMftsByAKI :: (MonadIO m, Storage s) => 
+                Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
 findMftsByAKI tx store aki' = liftIO $ 
     MM.fold tx (mftByAKI store) aki' f []
     where
@@ -113,48 +118,48 @@ newtype VResultStore s = VResultStore {
 instance Storage s => WithStorage s (VResultStore s) where
     storage (VResultStore s) = storage s
 
-putVResult :: (MonadIO m, Storage s) => Tx s 'RW -> VResultStore s -> VResult -> m ()
+putVResult :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> VResultStore s -> VResult -> m ()
 putVResult tx (VResultStore s) vr = liftIO $ M.put tx s (path vr) vr
 
 
-data RepositoryStore s = RepositoryStore {
-    repositories      :: SMap "repositories" s URI SRepository,
-    repositoriesPerTA :: SMultiMap "repositoriesPerTA" s TaName URI
-}
+-- data RepositoryStore s = RepositoryStore {
+--     repositories      :: SMap "repositories" s URI SRepository,
+--     repositoriesPerTA :: SMultiMap "repositoriesPerTA" s TaName URI
+-- }
 
-instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _) = storage s
-
-
-newRepository :: Repository -> SRepository
-newRepository r = SRepository r NEW 
-
-putRepository :: (MonadIO m, Storage s) => Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> m ()
-putRepository tx s r taName' = liftIO $ do 
-    let repoUri = repositoryURI $ repo r
-    M.put tx (repositories s) repoUri r
-    MM.put tx (repositoriesPerTA s) taName' repoUri
-
-updateRepositoryStatus :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> m ()
-updateRepositoryStatus tx s r status' = liftIO $ do 
-    let repoUri = repositoryURI r
-    getRepository tx s repoUri >>= \case
-        Nothing -> pure ()
-        Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status'
+-- instance Storage s => WithStorage s (RepositoryStore s) where
+--     storage (RepositoryStore s _) = storage s
 
 
-getRepository :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> RepositoryStore s -> URI -> m (Maybe Repository)
-getRepository tx s repoUri = liftIO $ fmap repo <$> M.get tx (repositories s) repoUri 
+-- putRepository :: (MonadIO m, Storage s) => 
+--                 Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> m ()
+-- putRepository tx s r taName' = liftIO $ do 
+--     let repoUri = key r
+--     M.put tx (repositories s) repoUri r
+--     MM.put tx (repositoriesPerTA s) taName' repoUri
 
-getRepositoriesForTA :: (MonadIO m, Storage s) => Tx s mode -> RepositoryStore s -> TaName -> m [SRepository]
-getRepositoriesForTA tx s taName' = liftIO $ MM.fold tx (repositoriesPerTA s) taName' f []
-    where
-        f ros _ uri' =   
-            M.get tx (repositories s) uri' >>= \case
-                Just rs -> pure $! rs : ros
-                Nothing -> pure ros
+-- updateRepositoryStatus :: (MonadIO m, Storage s) => 
+--                         Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> m ()
+-- updateRepositoryStatus tx s r status' = liftIO $ do 
+--     let repoUri = repositoryURI r
+--     getRepository tx s repoUri >>= \case
+--         Nothing -> pure ()
+--         Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status'
+
+
+-- getRepository :: (MonadIO m, Storage s) => 
+--                 Tx s 'RW -> RepositoryStore s -> URI -> m (Maybe Repository)
+-- getRepository tx s repoUri = liftIO $ fmap repo <$> M.get tx (repositories s) repoUri 
+
+-- getRepositoriesForTA :: (MonadIO m, Storage s) => 
+--                         Tx s mode -> RepositoryStore s -> TaName -> m [SRepository]
+-- getRepositoriesForTA tx s taName' = liftIO $ MM.fold tx (repositoriesPerTA s) taName' f []
+--     where
+--         f ros _ uri' =   
+--             M.get tx (repositories s) uri' >>= \case
+--                 Just rs -> pure $! rs : ros
+--                 Nothing -> pure ros
 
 
 data DB s = DB {

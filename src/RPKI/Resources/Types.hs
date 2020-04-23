@@ -15,7 +15,6 @@ import           Control.DeepSeq
 
 import qualified Data.ByteString                       as BS
 
-import           Data.Data                             (Typeable)
 import           Data.Kind
 import           Data.Vector                           (Vector)
 import           Data.Word
@@ -28,29 +27,29 @@ import           HaskellWorks.Data.Network.Ip.SafeEnum
 import           HaskellWorks.Data.Network.Ip.Validity
 
 data AddrFamily = Ipv4F | Ipv6F
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 newtype ASN = ASN Word32
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (NFData, Serialise)  
     deriving newtype Enum
 
 data AsResource =  AS !ASN
                 | ASRange !ASN !ASN
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 
@@ -68,43 +67,43 @@ class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p), WithSetOps p) => Pref
 
 
 data ValidationRFC = Strict_ | Reconsidered_
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
 
 data RSet r = RS !r | Inherit
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data IpResourceSet = IpResourceSet
     !(RSet (IntervalSet Ipv4Prefix))
     !(RSet (IntervalSet Ipv6Prefix))
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data PrefixeSet = PrefixeSet 
     !(IntervalSet Ipv4Prefix) 
     !(IntervalSet Ipv6Prefix)
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
 
 newtype IpResources = IpResources IpResourceSet
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 newtype AsResources = AsResources (RSet (IntervalSet AsResource))
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data AllResources = AllResources 
     !(RSet (IntervalSet Ipv4Prefix))
     !(RSet (IntervalSet Ipv6Prefix))
     !(RSet (IntervalSet AsResource))
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data PrefixesAndAsns = PrefixesAndAsns 
     !(IntervalSet Ipv4Prefix)
     !(IntervalSet Ipv6Prefix)
     !(IntervalSet AsResource)
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 newtype Nested a = Nested a
@@ -112,7 +111,7 @@ newtype Overclaiming a = Overclaiming a
 
 
 newtype VerifiedRS a = VerifiedRS a
-    deriving stock (Show, Eq, Ord, Typeable, Generic) 
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 class (WithSetOps p, Eq (Point p), Ord (Point p)) => Interval p where

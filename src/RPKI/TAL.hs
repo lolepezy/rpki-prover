@@ -8,7 +8,6 @@ import           Control.Monad
 
 import           Codec.Serialise
 
-import           Data.Data          (Typeable)
 import qualified Data.List          as List
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -35,7 +34,7 @@ data TAL = PropertiesTAL {
 } | RFC_TAL {
     certificateLocations :: Locations,
     publicKeyInfo        :: EncodedBase64
-} deriving (Show, Eq, Ord, Typeable, Generic, Serialise)
+} deriving (Show, Eq, Ord, Generic, Serialise)
 
 certLocations :: TAL -> Locations
 certLocations PropertiesTAL {..} = certificateLocation :| []

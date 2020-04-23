@@ -8,7 +8,6 @@ import qualified Data.ByteString.Lazy as LBS
 
 import Control.DeepSeq
 import Codec.Serialise
-import Data.Data (Typeable)
 import GHC.Generics
 
 newtype Storable = Storable BS.ByteString
@@ -24,7 +23,7 @@ newtype SKey = SKey Storable
 data StorableUnit a e = SObject {-# UNPACK #-} !(StorableObject a) | SError !e
 
 data StorableObject a = StorableObject !a !SValue
-    deriving (Show, Eq, Typeable, Generic)
+    deriving (Show, Eq, Generic)
 
 toStorableObject :: Serialise a => a -> StorableObject a 
 toStorableObject a = StorableObject a $ force (storableValue a)

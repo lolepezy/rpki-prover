@@ -18,7 +18,6 @@ import qualified Data.Map.Strict                  as Map
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 
-import           Data.Data            (Typeable)
 import           Data.Hourglass       (DateTime)
 
 import           GHC.Generics
@@ -28,7 +27,7 @@ import           RPKI.Resources.Types
 
 
 newtype ParseError s = ParseError s
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data ValidationError = InvalidCert !Text.Text |
@@ -63,7 +62,7 @@ data ValidationError = InvalidCert !Text.Text |
             InheritWithoutParentResources |
             UnknownUriType !URI | 
             CertificateDoesn'tHaveSIA
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
 data RrdpError = BrokenXml !Text.Text | 
@@ -92,27 +91,27 @@ data RrdpError = BrokenXml !Text.Text |
                 DeltaHashMismatch !Hash !Hash !Serial |
                 NoObjectToReplace !URI !Hash |
                 ObjectExistsWhenReplacing !URI !Hash
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError !Int !LBS.ByteString |
                     FileReadError !Text.Text |
                     RsyncDirError !Text.Text
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data StorageError = StorageError !Text.Text |
                     DeserialisationError !Text.Text
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype TALError = TALError Text.Text 
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
 
 newtype VContext = VContext (NonEmpty URI) 
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data AppError = ParseE (ParseError Text.Text) | 
@@ -122,13 +121,13 @@ data AppError = ParseE (ParseError Text.Text) |
                     StorageE StorageError |                     
                     ValidationE ValidationError |
                     UnspecifiedE Text.Text
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 instance Exception AppError
 
 newtype VWarning = VWarning AppError
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 vContext :: URI -> VContext
@@ -138,11 +137,11 @@ childVContext :: VContext -> URI -> VContext
 childVContext (VContext us) u = VContext $ u `NonEmpty.cons` us
 
 data VProblem = VErr !AppError | VWarn !VWarning
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype Validations = Validations (Map VContext (Set VProblem))
-    deriving stock (Show, Eq, Ord, Typeable, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 

@@ -21,6 +21,7 @@ import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Repository
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parse.Parse
@@ -55,7 +56,7 @@ updateRrdpRepo :: AppContext ->
                 (Snapshot -> ValidatorT vc IO Validations) ->
                 ([Delta]  -> ValidatorT vc IO Validations) ->
                 ValidatorT vc IO (RrdpRepository, Validations)
-updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _) handleSnapshot handleDeltas = do
+updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot handleDeltas = do
 
     notificationXml <- fromEitherM $ fetch repoUri (RrdpE . CantDownloadNotification . show)    
     notification    <- hoistHere $ parseNotification notificationXml
@@ -94,10 +95,10 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _) handleSnapshot han
                     pure $! (di,) <$> rawContent
 
         repoFromSnapshot :: Snapshot -> RrdpRepository
-        repoFromSnapshot (Snapshot _ sid s _) = RrdpRepository repoUri $ Just (sid, s)
+        repoFromSnapshot (Snapshot _ sid s _) = repo { rrdpMeta = Just (sid, s) }
 
         repoFromDeltas :: [Delta] -> Notification -> RrdpRepository
-        repoFromDeltas ds notification = RrdpRepository repoUri $ Just (newSessionId, newSerial)
+        repoFromDeltas ds notification = repo { rrdpMeta = Just (newSessionId, newSerial) }
             where
                 newSessionId = sessionId notification
                 newSerial = List.maximum $ map (\(Delta _ _ s _) -> s) ds        
@@ -173,9 +174,9 @@ data Step = UseSnapshot SnapshotInfo
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
 rrdpNextStep :: RrdpRepository -> Notification -> Either RrdpError Step
-rrdpNextStep (RrdpRepository _ Nothing) Notification{..} = 
+rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} = 
     Right $ UseSnapshot snapshotInfo
-rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial))) Notification{..} =
+rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notification{..} =
     if  | sessionId /= repoSessionId -> Right $ UseSnapshot snapshotInfo
         | repoSerial > serial  -> Left $ LocalSerialBiggerThanRemote repoSerial serial
         | repoSerial == serial -> Right NothingToDo
@@ -221,7 +222,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
                     snapshotItems 
                     storableToChan 
                     (rwTx objectStore) 
-                    chanToStorage 
+                    chanToStorage   
                     (mempty :: Validations))                        
             where
                 storableToChan (SnapshotPublish uri encodedb64) = do

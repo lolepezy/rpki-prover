@@ -23,6 +23,7 @@ import           Data.IORef
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Repository
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -80,7 +81,7 @@ updateObjectForRsyncRepository :: Storage s =>
                 ValidatorT vc IO (RsyncRepository, Validations)
 updateObjectForRsyncRepository 
                 appContenxt@AppContext{..} 
-                repo@(RsyncRepository (URI uri)) 
+                repo@(RsyncRepository (URI uri) _) 
                 objectStore = do     
     let RsyncConf {..} = rsyncConf
     let destination = rsyncDestination rsyncRoot uri

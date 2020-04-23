@@ -37,6 +37,7 @@ import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Stores
+import           RPKI.Store.Repository
 import           RPKI.TAL
 import           RPKI.Util                        (fmtEx)
 import           RPKI.Validation.ObjectValidation
@@ -51,7 +52,7 @@ data TACertValidationResult =
 -- | Initial bootstrap of the TA: do everything needed to start up.
 -- | 
 bootstrapTA :: (Has AppContext env, Storage s) => 
-                 env -> TAL -> DB s -> ValidatorT vc IO ()
+                env -> TAL -> DB s -> ValidatorT vc IO ()
 bootstrapTA env tal database = do
     next <- validateTAFromTAL env tal database 
     case next of
@@ -90,36 +91,39 @@ validateTAFromTAL env tal DB {..} = do
                         getRrdpNotifyUri newCert = #{getRrdpNotifyUri c}, 
                         getRepositoryUri newCert = #{getRepositoryUri c}|]
                                                             
-                    case createRepositoriesFromTAL tal newCert of
-                        Left e             -> appError $ ValidationE e
-                        Right repositories -> pure $ UpdatedTACert newCert repositories
+                    storeTaCert tx newCert
 
                 Just (STA {..}) ->
                     if (getSerial taCert /= getSerial newCert) 
                         then do            
-                            logInfoM logger [i| Updating TA certificate for #{taName'} |]
-                            case createRepositoriesFromTAL tal newCert of
-                                Left e             -> appError $ ValidationE e
-                                Right repositories -> pure $ UpdatedTACert newCert repositories                             
+                            logInfoM logger [i| Updating TA certificate for #{taName'} |]                            
+                            storeTaCert tx newCert
                         else 
                             pure $ SameTACert taCert initialRepositories
 
-    where
+    where        
+        storeTaCert tx newCert = 
+            case createRepositoriesFromTAL tal newCert of
+                Left e             -> appError $ ValidationE e
+                Right repositories -> do 
+                    putTA tx taStore (STA tal newCert repositories)
+                    pure $ UpdatedTACert newCert repositories
+
         taName' = getTaName tal
         appContext@AppContext {..} = getter env
      
 
 -- | Download repository and 
 fetchRepository :: Storage s => 
-            AppContext -> DB s -> Repository -> ValidatorT env IO (Repository, Validations)
+                AppContext -> DB s -> Repository -> ValidatorT env IO (Repository, Validations)
 fetchRepository appContext@AppContext {..} database r = 
     case r of
-        RsyncRepo repo -> do
+        RsyncR (RsyncTree repo s) -> do
             (repo', validations) <- updateObjectForRsyncRepository appContext repo (objectStore database)
-            pure (RsyncRepo repo', validations)
-        RrdpRepo repo -> do
+            pure (RsyncR (RsyncTree repo' s), validations)
+        RrdpR repo -> do
             (repo', validations) <- updateObjectForRrdpRepository appContext repo (objectStore database)
-            pure (RrdpRepo repo', validations)
+            pure (RrdpR repo' , validations)
 
 
 -- Auxiliarry structure used in top-down validation
@@ -136,11 +140,11 @@ emptyTopDownContext :: TaName -> IO TopDownContext
 emptyTopDownContext taName = do 
     now <- thisMoment
     atomically $ TopDownContext Nothing <$> 
-            (newTBQueue 100) <*>
-            (newTVar Map.empty) <*>
-            (newTVar Map.empty) <*>
-            pure taName <*> 
-            pure now   
+        (newTBQueue 100) <*>
+        (newTVar Map.empty) <*>
+        (newTVar Map.empty) <*>
+        pure taName <*> 
+        pure now   
 
 
 validateCA :: (Has AppContext env, Storage s) =>
@@ -302,9 +306,9 @@ validateTree env database certificate topDownContext = do
                 repositoryObject = 
                     case getRrdpNotifyUri cert of
                         Just rrdpNotify -> 
-                            Just (rrdpNotify, RrdpRepo $ RrdpRepository rrdpNotify Nothing)
+                            Just (rrdpNotify, rrdpR rrdpNotify)
                         Nothing  -> flip fmap (getRepositoryUri cert) $ \repositoryUri ->
-                            (repositoryUri, RsyncRepo $ RsyncRepository repositoryUri)
+                            (repositoryUri, rsyncR repositoryUri)
 
 
 -- | Put validation result into a queue for writing
@@ -381,7 +385,7 @@ roAppTxEx s err f = appTxEx s err f roTx
 
 rwAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> (exc -> AppError) -> 
-            (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
+            (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
 rwAppTxEx s err f = appTxEx s err f rwTx
 
 appTxEx :: (Storage s, WithStorage s ws, Exception exc) => 

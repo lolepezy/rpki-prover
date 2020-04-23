@@ -9,7 +9,6 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as LBS
-import           Data.Data                          (Typeable)
 import           Data.Hourglass                     (DateTime)
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
@@ -32,7 +31,7 @@ newtype Now = Now DateTime
   deriving (Show, Eq, Ord)
 
 newtype Validated a = Validated a
-  deriving (Show, Eq, Typeable, Generic)
+  deriving (Show, Eq, Generic)
 
 thisMoment :: IO Now
 thisMoment = Now <$> dateCurrent
