@@ -87,11 +87,11 @@ updateObjectForRsyncRepository
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess (URI uri) destination RsyncDirectory
 
-    _ <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+    void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
         createDirectoryIfMissing True destination
         
     logInfoM logger [i|Going to run #{rsync}|]
-    (exitCode, out, err) <- lift $ readProcess rsync
+    (exitCode, out, err) <- fromTry (RsyncE . RsyncRunningError . U.fmtEx) $ readProcess rsync
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
@@ -110,9 +110,7 @@ updateObjectForRsyncRepository
 -- | Recursively traverse given directory and save all the parseable 
 -- | objects into the storage.
 -- 
--- | 'accumulator' is a function that does something pretty arbitrary 
--- | with any read and parsed objects (most probably extracts repositories 
--- | from certificates)
+-- | Is not supposed to throw exceptions, only report errors through ExceptT.
 loadRsyncRepository :: Storage s => 
                         AppContext ->
                         URI -> 

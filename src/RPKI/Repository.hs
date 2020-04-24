@@ -29,7 +29,7 @@ import           RPKI.Parse.Parse
 import           RPKI.TAL
 
 
-data RepositoryStatus = New | Failed DateTime | FetchedAt DateTime
+data RepositoryStatus = New | FailedAt DateTime | FetchedAt DateTime
     deriving (Show, Eq, Ord, Generic, Serialise)
 
 data RsyncRepository = RsyncRepository {

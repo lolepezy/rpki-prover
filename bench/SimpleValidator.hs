@@ -451,7 +451,7 @@ main = do
     -- mkLmdb "./data/" >>= void . saveRsyncRepo
     -- mkLmdb "./data/" >>= validateTreeFromStore
     -- mkLmdb "./data/" >>= validateTreeFromTA
-    mkLmdb "./data/" >>= processTAL
+    mkLmdb "./data/" >>= processRRDP
 
 
 

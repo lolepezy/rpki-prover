@@ -97,9 +97,9 @@ valid :: Applicative m =>
 valid = pure (Right (), mempty)
 
 vWarn :: (Monad m, Has VContext env) =>
-        ValidationError -> ValidatorT env m ()
+            ValidationError -> ValidatorT env m ()
 vWarn = validatorWarning . VWarning . ValidationE
 
 appWarn :: (Monad m, Has VContext env) =>
-        AppError -> ValidatorT env m ()
+            AppError -> ValidatorT env m ()
 appWarn = validatorWarning . VWarning

@@ -49,17 +49,18 @@ data TACertValidationResult =
     deriving (Show, Eq, Generic)
 
 
--- | Initial bootstrap of the TA: do everything needed to start up.
--- | 
+-- | Initial bootstrap of the TA: do everything needed to start up the validator, 
+-- | * download and parse TA certificate
+-- | * fetch the repositories
 bootstrapTA :: (Has AppContext env, Storage s) => 
                 env -> TAL -> DB s -> ValidatorT vc IO ()
 bootstrapTA env tal database = do
     next <- validateTAFromTAL env tal database 
     case next of
-        SameTACert taCert repositories     -> alwaysRefetchAndRevalidate taCert repositories
-        UpdatedTACert newCert repositories -> alwaysRefetchAndRevalidate newCert repositories                                
+        SameTACert taCert repositories     -> fetchAndValidate taCert repositories
+        UpdatedTACert newCert repositories -> fetchAndValidate newCert repositories                                
     where
-        alwaysRefetchAndRevalidate taCert repositories = do 
+        fetchAndValidate taCert repositories = do 
             -- TODO do it in parallel of course
             forM_ repositories $ fetchRepository appContext database
             -- do all the recursive fetching and validaiton
@@ -72,7 +73,6 @@ bootstrapTA env tal database = do
 
 
 -- | Valiidate TA starting from the TAL.
--- | TODO Do something consistent with Validations
 validateTAFromTAL :: (Has AppContext env, Has VContext vc, Storage s) => 
                         env -> TAL -> DB s -> ValidatorT vc IO TACertValidationResult
 validateTAFromTAL env tal DB {..} = do    
@@ -113,17 +113,31 @@ validateTAFromTAL env tal DB {..} = do
         appContext@AppContext {..} = getter env
      
 
--- | Download repository and 
-fetchRepository :: Storage s => 
-                AppContext -> DB s -> Repository -> ValidatorT env IO (Repository, Validations)
-fetchRepository appContext@AppContext {..} database r = 
+-- | Download repository and update it's status
+fetchRepository :: (Storage s, Has VContext vc) => 
+                    AppContext -> DB s -> Repository -> ValidatorT vc IO (Repository, Validations)
+fetchRepository appContext@AppContext {..} DB {..} r = do
+    Now now <- lift3 thisMoment
+    vc  <- asks getter
     case r of
-        RsyncR (RsyncTree repo s) -> do
-            (repo', validations) <- updateObjectForRsyncRepository appContext repo (objectStore database)
-            pure (RsyncR (RsyncTree repo' s), validations)
+        RsyncR (RsyncTree repo children) -> do
+                    (repo', validations) <- updateObjectForRsyncRepository appContext repo objectStore
+                    pure (RsyncR (RsyncTree repo' { status = FetchedAt now } children), validations)
+            `catchError` 
+                \e -> 
+                    pure (RsyncR (RsyncTree repo { status = FailedAt now } children), mError vc e)
+                            
         RrdpR repo -> do
-            (repo', validations) <- updateObjectForRrdpRepository appContext repo (objectStore database)
-            pure (RrdpR repo' , validations)
+                (repo', validations) <- updateObjectForRrdpRepository appContext repo objectStore
+                pure (RrdpR repo' { status = FetchedAt now }, validations)
+            `catchError` 
+                \e -> 
+                    pure (RrdpR repo { status = FailedAt now }, mError vc e)
+
+
+            
+
+
 
 
 -- Auxiliarry structure used in top-down validation

@@ -96,6 +96,7 @@ data RrdpError = BrokenXml !Text.Text |
 
 data RsyncError = RsyncProcessError !Int !LBS.ByteString |
                     FileReadError !Text.Text |
+                    RsyncRunningError !Text.Text |
                     RsyncDirError !Text.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
