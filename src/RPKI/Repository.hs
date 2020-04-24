@@ -14,6 +14,8 @@ import           Data.X509          (Certificate)
 
 import           Data.List.NonEmpty (NonEmpty (..))
 
+import Data.Bifunctor
+
 import qualified Data.List          as List
 import           Data.Map.Strict    (Map)
 import qualified Data.Map.Strict    as Map
@@ -83,43 +85,61 @@ repositoryURI (RsyncR (RsyncTree (RsyncRepository {..}) _)) = uri
 --       rsync://host/foo/baz/nup
 --       rsync://host/foo/baz/bop
 --
-mergeInto :: RsyncRepository -> [RsyncTree] -> [RsyncTree]
-mergeInto r [] = [RsyncTree r []]
+mergeInto :: RsyncRepository -> [RsyncTree] -> ([RsyncTree], RepositoriesUpdated)
+mergeInto r [] = ([RsyncTree r []], AddedNew)
 mergeInto 
     r@(RsyncRepository newUri _) 
-    trees@(tree@(RsyncTree maybeParent@(RsyncRepository uri _) children) : rts) = List.sort $ 
+    trees@(tree@(RsyncTree maybeParent@(RsyncRepository uri _) children) : rts) = first List.sort $ 
         if uri == newUri 
-            then trees 
-            else if uri `isParentOf` newUri
-                then RsyncTree maybeParent (r `mergeInto` children) : rts
-                else if newUri `isParentOf` uri
-                    then let
-                        (ch, nonCh) = List.partition 
-                            (\(RsyncTree (RsyncRepository u _) _) -> newUri `isParentOf` u) rts
-                        in RsyncTree r (tree : ch) : nonCh
-                    else tree : r `mergeInto` rts 
+            then (trees, AlreadyThere $ RsyncR tree)
+            else                 
+                if uri `isParentOf` newUri
+                    then let 
+                        (merged, update) = r `mergeInto` children
+                        tree' = RsyncTree maybeParent merged : rts
+                        in (tree', update)
+                    else if newUri `isParentOf` uri
+                        then let
+                            (ch, nonCh) = List.partition 
+                                (\(RsyncTree (RsyncRepository u _) _) -> newUri `isParentOf` u) rts
+                            in (RsyncTree r (tree : ch) : nonCh, AddedNew)
+                        else 
+                            let 
+                                (merged, update) = r `mergeInto` rts
+                                in (tree : merged, update)
+
 
 createRsyncForest :: [RsyncRepository] -> Forest
-createRsyncForest = Forest . List.foldl (flip mergeInto) []
+createRsyncForest = Forest . List.foldr (\r f -> fst $ r `mergeInto` f) []
 
 
 emptyRepositories :: Repositories
 emptyRepositories = Repositories Map.empty []
 
-updateRepositories :: Repositories -> RpkiObject -> Either ValidationError Repositories
-updateRepositories Repositories {..} (CerRO c)  = do
+data RepositoriesUpdated = AddedNew | AlreadyThere Repository
+    deriving (Show, Eq, Ord)
+
+updateRepositories :: Repositories -> CerObject -> Either ValidationError (Repositories, RepositoriesUpdated)
+updateRepositories repositories@Repositories {..} c  = do
     (uri, repository) <- repositoryFromCert cert
     pure $ case repository of  
-        RrdpR rrdpRepository -> Repositories 
-            (Map.insert uri rrdpRepository rrdps) 
-            rsyncs            
-        RsyncR (RsyncTree rsyncRepository _) -> Repositories 
-            rrdps
-            (rsyncRepository `mergeInto` rsyncs)            
+        RrdpR rrdpRepository -> 
+            case Map.lookup uri rrdps of
+                Nothing -> (newR, AddedNew)
+                    where 
+                        newR = Repositories (Map.insert uri rrdpRepository rrdps) rsyncs
+                Just r  -> (newR, AlreadyThere $ RrdpR r)
+                    where 
+                        newR = if r == rrdpRepository -- most often case
+                                then repositories 
+                                else Repositories (Map.insert uri rrdpRepository rrdps) rsyncs
+
+        RsyncR (RsyncTree rsyncRepository _) ->              
+            (Repositories rrdps rsyncs', update) 
+            where
+                (rsyncs', update) = rsyncRepository `mergeInto` rsyncs
     where
         cert = cwsX509certificate $ getCertWithSignature c
-
-updateRepositories rs _ = pure rs
 
 
 findRepository :: URI -> RsyncTree -> Maybe RsyncRepository
@@ -178,6 +198,8 @@ repositoryFromCert cert =
             | otherwise                -> Left $ UnknownUriType repositoryUri
         (Nothing, Nothing)             -> Left CertificateDoesn'tHaveSIA 
 
+repositoryFromCertObject :: CerObject -> Either ValidationError (URI, Repository)
+repositoryFromCertObject = repositoryFromCert . cwsX509certificate . getCertWithSignature
 
 data Change a = Put a | Remove a 
 

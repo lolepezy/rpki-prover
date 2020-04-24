@@ -10,6 +10,8 @@ import           Control.Exception
 import           Control.Monad.Except
 import           Control.Monad.Reader
 
+import Data.Bifunctor
+
 import           GHC.Generics
 
 import qualified Control.Concurrent.STM.TBQueue   as Q
@@ -143,20 +145,18 @@ fetchRepository appContext@AppContext {..} DB {..} r = do
 -- Auxiliarry structure used in top-down validation
 data TopDownContext = TopDownContext {    
     verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns),
-    resultQueue :: TBQueue (Maybe VResult),
-    repositoryMap :: TVar (Map URI Repository),
-    newRepositories :: TVar (Map URI CerObject),
+    resultQueue :: TBQueue (Maybe VResult),    
+    repositories :: TVar Repositories,    
     taName :: TaName, 
     now :: Now
 }
 
-emptyTopDownContext :: TaName -> IO TopDownContext
-emptyTopDownContext taName = do 
+emptyTopDownContext :: TaName -> Repositories -> IO TopDownContext
+emptyTopDownContext taName repositories = do 
     now <- thisMoment
     atomically $ TopDownContext Nothing <$> 
         (newTBQueue 100) <*>
-        (newTVar Map.empty) <*>
-        (newTVar Map.empty) <*>
+        (newTVar repositories) <*>
         pure taName <*> 
         pure now   
 
@@ -164,10 +164,10 @@ emptyTopDownContext taName = do
 validateCA :: (Has AppContext env, Storage s) =>
             env -> VContext -> DB s -> TaName -> CerObject -> IO ()
 validateCA env vContext' database@DB {..} taName certificate = do    
-    let AppContext {..} = getter env
-    topDownContext <- emptyTopDownContext taName    
+    let AppContext {..} = getter env    
 
-    currentRepositories <- roTx database $ \tx -> getRepositoriesForTA tx repositoryStore taName
+    repositories <- roTx database $ \tx -> getRepositoriesForTA tx repositoryStore taName
+    topDownContext <- emptyTopDownContext taName repositories
 
     let validateAll = do
             result <- runValidatorT vContext' $ validateTree env database certificate topDownContext
@@ -175,15 +175,11 @@ validateCA env vContext' database@DB {..} taName certificate = do
 
     let finaliseQueue = atomically $ Q.writeTBQueue (resultQueue topDownContext) Nothing
 
-    let topDown = Concurrently $ validateAll `finally` finaliseQueue
-    let saveVResults = Concurrently $ writeVResults logger topDownContext resultStore
-
-    {- Write validation results and repositories in separate threads to avoid 
-        blocking on the database with writing transactions during the validation process 
-    -}
-    void $ runConcurrently $ (,) <$> topDown <*> saveVResults
-
-    newRepos <- atomically $ readTVar $ newRepositories topDownContext
+    -- Write validation results in a separate thread to avoid blocking on the 
+    -- database with writing transactions during the validation process 
+    void $ concurrently 
+        (validateAll `finally` finaliseQueue)
+        (writeVResults logger topDownContext resultStore)        
 
 
     -- merge newRepositories with existing ones, i.e.
@@ -217,14 +213,24 @@ validateTree :: (Has AppContext env,
                 TopDownContext ->
                 ValidatorT vc IO ()
 validateTree env database certificate topDownContext = do      
-    let AppContext {..} = getter env
-    vContext' :: VContext <- asks getter
+    let AppContext {..} = getter env    
 
+    (publicationUri, repository) <- vHoist $ fromEither $ 
+        first ValidationE $ repositoryFromCertObject certificate
+
+    -- lift3 $ atomically $ do 
+    --     currentRepos <- readTVar $ repositories topDownContext
+
+
+
+
+    -- publicationUri <- getPublicationPoint certificate
+    -- case publicationUri of
+
+    vContext' :: VContext <- asks getter
     let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
 
-    publicationUri <- registerPublicationPoint certificate
-
-    mft <- findMft childrenAki locations publicationUri
+    mft <- findMft childrenAki locations
 
     (_, crlHash) <- case findCrlOnMft mft of 
         []    -> vError $ NoCRLOnMFT childrenAki locations
@@ -260,14 +266,12 @@ validateTree env database certificate topDownContext = do
         Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations        
     where                        
         findMft :: Has VContext env => 
-                    AKI -> Locations -> Maybe URI -> ValidatorT env IO MftObject
-        findMft childrenAki locations publicationUri = do
+                    AKI -> Locations -> ValidatorT env IO MftObject
+        findMft childrenAki locations = do
             mft' <- lift3 $ roTx (objectStore database) $ \tx -> 
                 findLatestMftByAKI tx (objectStore database) childrenAki
             case mft' of
-                Nothing  -> case publicationUri of
-                                Nothing -> vError $ NoMFTNoRepository childrenAki locations
-                                Just _  -> vError $ NoMFT childrenAki locations
+                Nothing  -> vError $ NoMFT childrenAki locations
                 Just mft -> pure mft
 
         -- TODO Is there a more reliable way to find it? Compare it with SIA?
@@ -282,8 +286,6 @@ validateTree env database certificate topDownContext = do
                             childVerifiedResources <- vHoist $ do                 
                                 validateResourceCert (now topDownContext) childCert certificate validCrl                
                                 validateResources (verifiedResources topDownContext) childCert certificate 
-                            -- logDebugM (getter childContext :: AppLogger) 
-                            --     [i|Validated: #{getter childContext :: VContext}, resources: #{childVerifiedResources}.|]                
                             validateTree env database childCert 
                                 topDownContext { verifiedResources = Just childVerifiedResources }
                     queueVResult topDownContext childContext result
@@ -302,27 +304,27 @@ validateTree env database certificate topDownContext = do
 
 
         -- | Register URI of the repository for the given certificate if it's not there yet
-        registerPublicationPoint cerObject@(cwsX509certificate . getCertWithSignature -> cert) = 
-            case repositoryObject of
-                Nothing          -> pure Nothing
-                Just (uri, repo) -> lift3 $ atomically $ do            
-                    let tRepoMap = repositoryMap topDownContext
-                    let tNewRepositories = newRepositories topDownContext
-                    repoMap <- readTVar tRepoMap                        
-                    newRepositories <- readTVar tNewRepositories                        
-                    case Map.lookup uri repoMap of
-                        Nothing -> do
-                            writeTVar tRepoMap $ Map.insert uri repo repoMap     
-                            writeTVar tNewRepositories $ Map.insert uri cerObject newRepositories
-                            pure $ Just uri
-                        Just _ -> pure $ Just uri
-            where
-                repositoryObject = 
-                    case getRrdpNotifyUri cert of
-                        Just rrdpNotify -> 
-                            Just (rrdpNotify, rrdpR rrdpNotify)
-                        Nothing  -> flip fmap (getRepositoryUri cert) $ \repositoryUri ->
-                            (repositoryUri, rsyncR repositoryUri)
+        -- registerPublicationPoint cerObject@(cwsX509certificate . getCertWithSignature -> cert) = 
+        --     case repositoryObject of
+        --         Nothing          -> pure Nothing
+        --         Just (uri, repo) -> lift3 $ atomically $ do            
+        --             let tRepoMap = repositoryMap topDownContext
+        --             let tNewRepositories = newRepositories topDownContext
+        --             repoMap <- readTVar tRepoMap                        
+        --             newRepositories <- readTVar tNewRepositories                        
+        --             case Map.lookup uri repoMap of
+        --                 Nothing -> do
+        --                     writeTVar tRepoMap $ Map.insert uri repo repoMap     
+        --                     writeTVar tNewRepositories $ Map.insert uri cerObject newRepositories
+        --                     pure $ Just uri
+        --                 Just _ -> pure $ Just uri
+        --     where
+        --         repositoryObject = 
+        --             case getRrdpNotifyUri cert of
+        --                 Just rrdpNotify -> 
+        --                     Just (rrdpNotify, rrdpR rrdpNotify)
+        --                 Nothing  -> flip fmap (getRepositoryUri cert) $ \repositoryUri ->
+        --                     (repositoryUri, rsyncR repositoryUri)
 
 
 -- | Put validation result into a queue for writing

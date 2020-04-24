@@ -348,13 +348,16 @@ createAppContext = AppContext {
 processRRDP :: Environment 'ReadWrite -> IO ()
 processRRDP env = do
     say "begin"      
-    let repo1 = rrdpR (URI "https://rrdp.ripe.net/notification.xml") 
-    let repo2 = rrdpR (URI "https://rrdp.arin.net/notification.xml") 
-    let repo3 = rrdpR (URI "https://rrdp.apnic.net/notification.xml")
-    let repo4 = rrdpR (URI "https://rrdp.afrinic.net/notification.xml")
+    let repos = [
+                rrdpR (URI "https://rrdp.ripe.net/notification.xml"),
+                rrdpR (URI "https://rrdp.arin.net/notification.xml"),
+                rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
+                rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
+                rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
+            ]
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     database <- createDatabase env    
-    as <- forM [repo1, repo2, repo3, repo4] $ \repo ->
+    as <- forM repos $ \repo ->
         async $ runValidatorT conf $ fetchRepository createAppContext database repo
 
     e <- forM as wait
