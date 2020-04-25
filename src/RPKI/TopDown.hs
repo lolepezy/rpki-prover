@@ -15,6 +15,7 @@ import Data.Bifunctor
 import           GHC.Generics
 
 import qualified Control.Concurrent.STM.TBQueue   as Q
+import           Data.Bifunctor
 import           Data.Has
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -215,56 +216,74 @@ validateTree :: (Has AppContext env,
 validateTree env database certificate topDownContext = do      
     let AppContext {..} = getter env    
 
-    (publicationUri, repository) <- vHoist $ fromEither $ 
-        first ValidationE $ repositoryFromCertObject certificate
+    repositoryStatus <- fromEitherM $ fmap (first ValidationE) $ 
+            atomically $ do 
+                repos <- readTVar $ repositories topDownContext        
+                case updateRepositories repos certificate of
+                    Left e                       -> pure $ Left e
+                    Right (repos', updateStatus) -> do
+                        writeTVar (repositories topDownContext) repos'
+                        pure $ Right updateStatus
 
-    -- lift3 $ atomically $ do 
-    --     currentRepos <- readTVar $ repositories topDownContext
+    case repositoryStatus of
+        AddedNew       -> 
+            -- Nothing to do here, the publication point of this certificate 
+            -- is not fetched yet. We have to remember this certificate and 
+            -- continue from this point where the publiction point is fetched.
+            -- 
+            -- TODO Add certificate to the waiting list
+            pure ()
 
+        AlreadyThere _ -> 
+            -- TODO Check the status of the repository 
+            --
+            -- It it's failed, don't continue, only complain that we can't go down, 
+            -- becasue the pulication point is broken
+            --
+            -- If it's checked too long ago, do the same as with the new one, i.e.
+            -- Add certificate to the waiting list
+            validateCertAndDown config 
 
-
-
-    -- publicationUri <- getPublicationPoint certificate
-    -- case publicationUri of
-
-    vContext' :: VContext <- asks getter
-    let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
-
-    mft <- findMft childrenAki locations
-
-    (_, crlHash) <- case findCrlOnMft mft of 
-        []    -> vError $ NoCRLOnMFT childrenAki locations
-        [crl] -> pure crl
-        _     -> vError $ MoreThanOneCRLOnMFT childrenAki locations
-
-    let objectStore' = objectStore database
-    crlObject <- lift3 $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
-    case crlObject of 
-        Nothing          -> vError $ NoCRLExists childrenAki locations    
-        Just (CrlRO crl) -> do      
-            validCrl <- vHoist $ do          
-                crl' <- validateCrl (now topDownContext) crl certificate
-                validateMft (now topDownContext) mft certificate crl'
-                pure crl'
-                
-            let childrenHashes = map snd $ mftEntries $ getCMSContent $ extract mft    
-            let doInParallel as f = parallel (parallelism config) f as 
-            mftProblems <- lift3 $ doInParallel childrenHashes $ \h -> do            
-                ro <- roTx objectStore' $ \tx -> getByHash tx objectStore' h
-                case ro of 
-                    Nothing  -> pure $ Just $ ManifestEntryDontExist h
-                    Just ro' -> do                         
-                        validateChild vContext' validCrl ro'
-                        pure Nothing
-
-            -- TODO Here we should act depending on how strict we want to be,  
-            -- Interrupt the whole thing or just go with a warning            
-            case mftProblems of
-                [] -> pure ()
-                _  -> mapM_ vWarn $ catMaybes mftProblems
-
-        Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations        
     where                        
+        validateCertAndDown config = do
+            vContext' :: VContext <- asks getter
+            let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
+
+            mft <- findMft childrenAki locations
+
+            (_, crlHash) <- case findCrlOnMft mft of 
+                []    -> vError $ NoCRLOnMFT childrenAki locations
+                [crl] -> pure crl
+                _     -> vError $ MoreThanOneCRLOnMFT childrenAki locations
+
+            let objectStore' = objectStore database
+            crlObject <- lift3 $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+            case crlObject of 
+                Nothing          -> vError $ NoCRLExists childrenAki locations    
+                Just (CrlRO crl) -> do      
+                    validCrl <- vHoist $ do          
+                        crl' <- validateCrl (now topDownContext) crl certificate
+                        validateMft (now topDownContext) mft certificate crl'
+                        pure crl'
+                        
+                    let childrenHashes = map snd $ mftEntries $ getCMSContent $ extract mft    
+                    let doInParallel as f = parallel (parallelism config) f as 
+                    mftProblems <- lift3 $ doInParallel childrenHashes $ \h -> do            
+                        ro <- roTx objectStore' $ \tx -> getByHash tx objectStore' h
+                        case ro of 
+                            Nothing  -> pure $ Just $ ManifestEntryDontExist h
+                            Just ro' -> do                         
+                                validateChild vContext' validCrl ro'
+                                pure Nothing
+
+                    -- TODO Here we should act depending on how strict we want to be,  
+                    -- Interrupt the whole thing or just go with a warning            
+                    case mftProblems of
+                        [] -> pure ()
+                        _  -> mapM_ vWarn $ catMaybes mftProblems
+
+                Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations   
+
         findMft :: Has VContext env => 
                     AKI -> Locations -> ValidatorT env IO MftObject
         findMft childrenAki locations = do
@@ -301,30 +320,6 @@ validateTree env database certificate topDownContext = do
             where
                 childContext = childVContext parentContext childLocation 
                 childLocation = NonEmpty.head $ getLocations ro
-
-
-        -- | Register URI of the repository for the given certificate if it's not there yet
-        -- registerPublicationPoint cerObject@(cwsX509certificate . getCertWithSignature -> cert) = 
-        --     case repositoryObject of
-        --         Nothing          -> pure Nothing
-        --         Just (uri, repo) -> lift3 $ atomically $ do            
-        --             let tRepoMap = repositoryMap topDownContext
-        --             let tNewRepositories = newRepositories topDownContext
-        --             repoMap <- readTVar tRepoMap                        
-        --             newRepositories <- readTVar tNewRepositories                        
-        --             case Map.lookup uri repoMap of
-        --                 Nothing -> do
-        --                     writeTVar tRepoMap $ Map.insert uri repo repoMap     
-        --                     writeTVar tNewRepositories $ Map.insert uri cerObject newRepositories
-        --                     pure $ Just uri
-        --                 Just _ -> pure $ Just uri
-        --     where
-        --         repositoryObject = 
-        --             case getRrdpNotifyUri cert of
-        --                 Just rrdpNotify -> 
-        --                     Just (rrdpNotify, rrdpR rrdpNotify)
-        --                 Nothing  -> flip fmap (getRepositoryUri cert) $ \repositoryUri ->
-        --                     (repositoryUri, rsyncR repositoryUri)
 
 
 -- | Put validation result into a queue for writing
