@@ -119,7 +119,8 @@ emptyRepositories = Repositories Map.empty []
 data RepositoriesUpdated = AddedNew | AlreadyThere Repository
     deriving (Show, Eq, Ord)
 
-updateRepositories :: Repositories -> CerObject -> Either ValidationError (Repositories, RepositoriesUpdated)
+updateRepositories :: Repositories -> CerObject -> 
+                    Either ValidationError (Repositories, RepositoriesUpdated)
 updateRepositories repositories@Repositories {..} c  = do
     (uri, repository) <- repositoryFromCert cert
     pure $ case repository of  
