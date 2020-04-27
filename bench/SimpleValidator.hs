@@ -410,7 +410,7 @@ getTACert =
 
 validateTreeFromTA :: Environment 'ReadWrite -> IO ()
 validateTreeFromTA env = do  
-    -- let repo = RsyncRepository (URI "rsync://rpki.ripe.net/repository")    
+    -- let repo = RsyncPublicationPoint (URI "rsync://rpki.ripe.net/repository")    
     let repo = rsyncR (URI "rsync://rpki.apnic.net/member_repository/")        
     -- let repo = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing        
     database <- createDatabase env    

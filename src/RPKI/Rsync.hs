@@ -53,10 +53,10 @@ import qualified UnliftIO.Async as Unlift
 rsyncFile :: AppContext -> 
             URI -> 
             ValidatorT vc IO RpkiObject
-rsyncFile AppContext{..} (URI uri) = do
+rsyncFile AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf
     let destination = rsyncDestination rsyncRoot uri
-    let rsync = rsyncProcess (URI uri) destination RsyncOneFile
+    let rsync = rsyncProcess uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
         ExitFailure errorCode -> do
@@ -80,12 +80,12 @@ updateObjectForRsyncRepository :: Storage s =>
                 RpkiObjectStore s -> 
                 ValidatorT vc IO (RsyncRepository, Validations)
 updateObjectForRsyncRepository 
-                appContenxt@AppContext{..} 
-                repo@(RsyncRepository (URI uri) _) 
-                objectStore = do     
-    let RsyncConf {..} = rsyncConf
+    appContenxt@AppContext{..} 
+    repo@(RsyncRepository (RsyncPublicationPoint uri) _) 
+    objectStore = do     
+    let RsyncConf {..} = rsyncConf    
     let destination = rsyncDestination rsyncRoot uri
-    let rsync = rsyncProcess (URI uri) destination RsyncDirectory
+    let rsync = rsyncProcess uri destination RsyncDirectory
 
     void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
         createDirectoryIfMissing True destination
@@ -95,7 +95,7 @@ updateObjectForRsyncRepository
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
-            (validations, count) <- fromEitherM $ loadRsyncRepository appContenxt (URI uri) destination objectStore
+            (validations, count) <- fromEitherM $ loadRsyncRepository appContenxt uri destination objectStore
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
@@ -207,8 +207,8 @@ rsyncProcess (URI uri) destination rsyncMode =
             RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]        
 
 -- TODO Make it generate shorter filenames
-rsyncDestination :: FilePath -> Text.Text -> FilePath
-rsyncDestination root uri = root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" uri)
+rsyncDestination :: FilePath -> URI -> FilePath
+rsyncDestination root (URI u) = root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" u)
 
 fileContent :: FilePath -> IO BS.ByteString 
 fileContent path = do

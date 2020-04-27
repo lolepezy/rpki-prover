@@ -1,3 +1,6 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 module RPKI.Util where
 
 import           Control.Exception
@@ -9,6 +12,7 @@ import qualified Data.ByteString.Char8   as C
 import qualified Data.ByteString.Lazy    as LBS
 import           Data.Char
 import qualified Data.String.Conversions as SC
+import           Data.Text               (Text)
 import qualified Data.Text               as Text
 import           Data.Word
 
@@ -22,8 +26,14 @@ sha256 = Hash . S256.hashlazy
 sha256s :: BS.ByteString -> Hash
 sha256s = Hash . S256.hash
 
-convert :: SC.ConvertibleStrings s1 s2 => s1 -> s2
-convert = SC.cs
+class ConvertibleAsSomethigString s1 s2 where
+    convert :: s1 -> s2
+
+instance SC.ConvertibleStrings s1 s2 => ConvertibleAsSomethigString s1 s2 where
+    convert = SC.cs
+
+instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString URI s  where
+    convert (URI u) = convert u
 
 normalizeUri :: Text.Text -> Text.Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')

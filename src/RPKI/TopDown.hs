@@ -123,12 +123,12 @@ fetchRepository appContext@AppContext {..} DB {..} r = do
     Now now <- lift3 thisMoment
     vc  <- asks getter
     case r of
-        RsyncR (RsyncTree repo children) -> do
+        RsyncR repo -> do
                     (repo', validations) <- updateObjectForRsyncRepository appContext repo objectStore
-                    pure (RsyncR (RsyncTree repo' { status = FetchedAt now } children), validations)
+                    pure (RsyncR (repo' { status = FetchedAt now }), validations)
             `catchError` 
                 \e -> 
-                    pure (RsyncR (RsyncTree repo { status = FailedAt now } children), mError vc e)
+                    pure (RsyncR (repo { status = FailedAt now }), mError vc e)
                             
         RrdpR repo -> do
                 (repo', validations) <- updateObjectForRrdpRepository appContext repo objectStore
@@ -141,23 +141,23 @@ fetchRepository appContext@AppContext {..} DB {..} r = do
             
 
 
-
-
 -- Auxiliarry structure used in top-down validation
 data TopDownContext = TopDownContext {    
     verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns),
-    resultQueue :: TBQueue (Maybe VResult),    
-    repositories :: TVar Repositories,    
-    taName :: TaName, 
-    now :: Now
+    resultQueue       :: TBQueue (Maybe VResult),    
+    publicationPoints :: TVar PublicationPoints,
+    ppWaitingList     :: TVar (Map PublicationPoints Hash),
+    taName            :: TaName, 
+    now               :: Now
 }
 
-emptyTopDownContext :: TaName -> Repositories -> IO TopDownContext
-emptyTopDownContext taName repositories = do 
+emptyTopDownContext :: TaName -> PublicationPoints -> IO TopDownContext
+emptyTopDownContext taName publicationPoints = do 
     now <- thisMoment
     atomically $ TopDownContext Nothing <$> 
         (newTBQueue 100) <*>
-        (newTVar repositories) <*>
+        (newTVar publicationPoints) <*>
+        (newTVar Map.empty) <*>
         pure taName <*> 
         pure now   
 
@@ -167,8 +167,8 @@ validateCA :: (Has AppContext env, Storage s) =>
 validateCA env vContext' database@DB {..} taName certificate = do    
     let AppContext {..} = getter env    
 
-    repositories <- roTx database $ \tx -> getRepositoriesForTA tx repositoryStore taName
-    topDownContext <- emptyTopDownContext taName repositories
+    publicationPoints <- roTx database $ \tx -> getRepositoriesForTA tx repositoryStore taName
+    topDownContext <- emptyTopDownContext taName publicationPoints
 
     let validateAll = do
             result <- runValidatorT vContext' $ validateTree env database certificate topDownContext
@@ -204,7 +204,6 @@ validateCA env vContext' database@DB {..} taName certificate = do
     
 
 -- | Do top-down validation starting from the given certificate
--- TODO Do something reasonable when MFT is not found because repository is not yet fetched
 validateTree :: (Has AppContext env, 
                 Has VContext vc, 
                 Storage s) =>
@@ -218,30 +217,33 @@ validateTree env database certificate topDownContext = do
 
     repositoryStatus <- fromEitherM $ fmap (first ValidationE) $ 
             atomically $ do 
-                repos <- readTVar $ repositories topDownContext        
-                case updateRepositories repos certificate of
-                    Left e                       -> pure $ Left e
-                    Right (repos', updateStatus) -> do
-                        writeTVar (repositories topDownContext) repos'
-                        pure $ Right updateStatus
+                pps <- readTVar $ publicationPoints topDownContext        
+                case publicationPointsFromCertObject certificate of
+                    Left e -> pure $ Left e
+                    Right (_, pp) -> do
+                        writeTVar (publicationPoints topDownContext) publicationPoints'
+                        pure $ Right ppStatus
+                        where 
+                            (publicationPoints', ppStatus) = updatePublicationPoints pps pp                        
 
     case repositoryStatus of
-        AddedNew       -> 
+        New -> 
             -- Nothing to do here, the publication point of this certificate 
             -- is not fetched yet. We have to remember this certificate and 
             -- continue from this point where the publiction point is fetched.
             -- 
             -- TODO Add certificate to the waiting list
+            -- addToWaitingList 
             pure ()
-
-        AlreadyThere _ -> 
-            -- TODO Check the status of the repository 
-            --
-            -- It it's failed, don't continue, only complain that we can't go down, 
-            -- becasue the pulication point is broken
-            --
-            -- If it's checked too long ago, do the same as with the new one, i.e.
-            -- Add certificate to the waiting list
+        
+        -- TODO Check the status of the repository 
+        --
+        -- It it's failed, don't continue, only complain that we can't go down, 
+        -- because the pulication point is broken
+        --
+        -- If it's checked too long ago, do the same as with the new one, i.e.
+        -- Add certificate to the waiting list
+        FetchedAt _ ->             
             validateCertAndDown config 
 
     where                        

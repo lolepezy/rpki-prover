@@ -312,13 +312,18 @@ instance Arbitrary Repository where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncRepository where
+instance Arbitrary RsyncPublicationPoint where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary RrdpRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+instance Arbitrary RsyncRepository where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 
 instance Arbitrary RepositoryStatus where
     arbitrary = genericArbitrary

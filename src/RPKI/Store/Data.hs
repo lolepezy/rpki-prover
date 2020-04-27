@@ -36,9 +36,9 @@ data STA = STA {
 data SRepository = SRepository !Repository !RepositoryStatus
     deriving (Show, Eq, Ord, Generic, Serialise)
 
-instance WithKey SRepository URI where
-    key (SRepository (RrdpR (RrdpRepository{..} )) _) = uri
-    key (SRepository (RsyncR (RsyncTree (RsyncRepository{..}) _)) _) = uri
+-- instance WithKey SRepository URI where
+--     key (SRepository (RrdpR (RrdpRepository{..} )) _) = uri
+--     key (SRepository (RsyncR (RsyncPublicationPoint{..})) _) = uri
 
 instance WithKey VResult VContext where
     key vr = path vr
