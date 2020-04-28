@@ -10,6 +10,8 @@
 module RPKI.Store.Base.LMDB where
 
 import Control.Monad (forever)
+import Control.Concurrent.STM
+import Control.Exception
 
 import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
@@ -36,7 +38,8 @@ type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 
 data LmdbStore (name :: Symbol) = LmdbStore { 
     env :: Env,
-    db  :: DBMap
+    db  :: DBMap,
+    txSem :: Semaphore
 }
 
 data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
@@ -129,8 +132,9 @@ create :: forall name . KnownSymbol name =>
             Env -> IO (LmdbStore name)
 create env = do
     let name' = symbolVal (P.Proxy :: P.Proxy name)
-    db <- withTransaction env $ \tx -> openDatabase tx (Just name') dbSettings 
-    pure $ LmdbStore env db
+    db <- withTransaction env $ \tx -> openDatabase tx (Just name') dbSettings     
+    -- TODO Bump it up and make it the same for LMDB and the semaphore
+    LmdbStore env db <$> createSemaphore 126
     where
         dbSettings = makeSettings 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
@@ -148,8 +152,21 @@ createMulti env = do
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             byteString byteString
-    
-    
 
 
-    
+-- Auxialliry stuff for limiting the amount of parallel LMDB transactions    
+data Semaphore = Semaphore Int (TVar Int)
+
+createSemaphore :: Int -> IO Semaphore
+createSemaphore n = Semaphore n <$> atomically (newTVar 0)
+
+withSemaphore :: Semaphore -> IO a -> IO a
+withSemaphore (Semaphore maxCounter current) f = 
+    bracket increment decrement (const f)
+    where 
+        increment = atomically $ do 
+            c <- readTVar current
+            if c >= maxCounter 
+                then retry
+                else writeTVar current (c + 1)
+        decrement _ = atomically $ modifyTVar current $ \c -> c - 1
