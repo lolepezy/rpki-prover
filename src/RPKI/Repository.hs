@@ -8,19 +8,16 @@
 module RPKI.Repository where
 
 import           Codec.Serialise
-import           Control.Monad
 import           GHC.Generics
 
 import           Data.X509          (Certificate)
 
 import           Data.List.NonEmpty (NonEmpty (..))
 
-import Data.Bifunctor
-
 import qualified Data.List          as List
 import           Data.Map.Strict    (Map)
 import qualified Data.Map.Strict    as Map
-import           Data.Maybe
+import           Data.Set           (Set)
 import qualified Data.Set           as Set
 import qualified Data.Text          as Text
 
@@ -29,6 +26,7 @@ import           Data.Hourglass     (DateTime)
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
+
 import           RPKI.TAL
 
 
@@ -64,77 +62,10 @@ data RsyncRepository = RsyncRepository {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-
-data RsyncTree = RsyncTree RsyncPublicationPoint [RsyncTree]
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-
-newtype Forest = Forest [RsyncTree]
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-
 data PublicationPoints = PublicationPoints {
     rrdps  :: Map URI RrdpRepository,
     rsyncs :: RsyncMap
 } deriving stock (Show, Eq, Ord, Generic)   
-
-
-rsyncR :: URI -> Repository
-rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) New
-
-rrdpR :: URI -> Repository
-rrdpR u = RrdpR $ RrdpRepository u Nothing New 
-
-rsyncPP :: URI -> PublicationPoint
-rsyncPP = RsyncPP . RsyncPublicationPoint
-
-rrdpPP :: URI -> PublicationPoint
-rrdpPP u = RrdpPP $ RrdpRepository u Nothing New 
-
-toRepository :: PublicationPoint -> Repository
-toRepository (RrdpPP r) = RrdpR r
-toRepository (RsyncPP r) = RsyncR $ RsyncRepository r New
-
-
-repositoryURI :: Repository -> URI
-repositoryURI (RrdpR (RrdpRepository {..})) = uri
-repositoryURI (RsyncR (RsyncRepository (RsyncPublicationPoint {..}) _)) = uri
-
-
--- | Merge rsync repositories into the hierarchy based on their URIs
--- e.g.
---   rsync://host/foo/
---     rsync://host/foo/bar/
---       rsync://host/foo/bar/quux
---     rsync://host/foo/baz/
---       rsync://host/foo/baz/nup
---       rsync://host/foo/baz/bop
---
-mergeIntoTrees :: RsyncPublicationPoint -> [RsyncTree] -> ([RsyncTree], RepositoriesUpdated RsyncTree)
-mergeIntoTrees r [] = ([RsyncTree r []], AddedNew)
-mergeIntoTrees 
-    r@(RsyncPublicationPoint newUri) 
-    trees@(tree@(RsyncTree maybeParent@(RsyncPublicationPoint uri) children) : rts) = 
-        first List.sort $ 
-            if uri == newUri 
-                then (trees, AlreadyThere tree)
-                else if uri `isParentOf` newUri
-                    then let 
-                        (merged, update) = r `mergeIntoTrees` children
-                        tree' = RsyncTree maybeParent merged : rts
-                        in (tree', update)
-                    else if newUri `isParentOf` uri
-                        then let
-                            (ch, nonCh) = List.partition 
-                                (\(RsyncTree (RsyncPublicationPoint u) _) -> newUri `isParentOf` u) rts
-                            in (RsyncTree r (tree : ch) : nonCh, AddedNew)
-                        else let 
-                            (merged, update) = r `mergeIntoTrees` rts
-                            in (tree : merged, update)
-        
-
--- mergeIntoRoots :: RsyncPublicationPoint -> [RsyncRepository] -> [RsyncRepository]
--- mergeIntoRoots r roots = mergeIntoTrees r $ map (\(RsyncRepository t _) -> t) roots      
 
 data RsyncParent = ParentURI !URI | Root !RepositoryStatus
     deriving stock (Show, Eq, Ord, Generic)
@@ -143,6 +74,63 @@ data RsyncParent = ParentURI !URI | Root !RepositoryStatus
 newtype RsyncMap = RsyncMap (Map URI RsyncParent)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+
+
+rsyncR, rrdpR :: URI -> Repository
+rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) New
+rrdpR u = RrdpR $ RrdpRepository u Nothing New 
+
+rsyncPP, rrdpPP :: URI -> PublicationPoint
+rsyncPP = RsyncPP . RsyncPublicationPoint
+rrdpPP u = RrdpPP $ RrdpRepository u Nothing New 
+
+toRepository :: PublicationPoint -> Repository
+toRepository (RrdpPP r) = RrdpR r
+toRepository (RsyncPP r) = RsyncR $ RsyncRepository r New
+
+repositoryURI :: Repository -> URI
+repositoryURI (RrdpR (RrdpRepository {..})) = uri
+repositoryURI (RsyncR (RsyncRepository (RsyncPublicationPoint {..}) _)) = uri
+
+publicationPointURI :: PublicationPoint -> URI
+publicationPointURI (RrdpPP (RrdpRepository {..})) = uri
+publicationPointURI (RsyncPP (RsyncPublicationPoint {..})) = uri
+  
+repositoryStatus :: Repository -> RepositoryStatus 
+repositoryStatus (RsyncR (RsyncRepository {..})) = status
+repositoryStatus (RrdpR (RrdpRepository {..}))   = status
+
+rsyncRepositories :: RsyncMap -> [RsyncRepository]
+rsyncRepositories (RsyncMap rsyncMap) = 
+    [ RsyncRepository (RsyncPublicationPoint u) status | (u, Root status) <- Map.toList rsyncMap ]
+
+repositories :: PublicationPoints -> [Repository]
+repositories (PublicationPoints rrdps rsyncs) = 
+    (map RrdpR $ Map.elems rrdps) <>
+    (map RsyncR $ rsyncRepositories rsyncs)
+
+
+
+repositoryHierarchy :: PublicationPoints -> (Map PublicationPoint Repository, Map Repository (Set PublicationPoint))
+repositoryHierarchy (PublicationPoints rrdps (RsyncMap rsyncs)) = (direct, inverse)    
+    where
+        direct = rrdp <> rsync    
+        inverse = Map.foldrWithKey 
+            (\pp root m -> m <> Map.singleton root (Set.singleton pp)) 
+            Map.empty 
+            direct
+
+        rrdp = Map.fromList $ map (\r -> (RrdpPP r, RrdpR r)) $ Map.elems rrdps        
+        rsync = Map.fromList $ [ 
+                    (RsyncPP (RsyncPublicationPoint u), RsyncR root) | 
+                        (u, Just root) <- map (\u -> (u, findRoot u)) $ Map.keys rsyncs 
+                ]
+        findRoot u = 
+            Map.lookup u rsyncs >>= \case             
+                Root status         -> Just $ RsyncRepository (RsyncPublicationPoint u) status
+                ParentURI parentUri -> findRoot parentUri        
+                
+
 
 
 findRepositoryStatus :: URI -> RsyncMap -> Maybe (URI, RepositoryStatus)
@@ -164,6 +152,15 @@ updateRepositoryStatus u rm@(RsyncMap m) status =
         Just (Root s)      -> (RsyncMap $ Map.insert u (Root status) m, Just s)    
 
 
+-- | Merge rsync repositories into the hierarchy based on their URIs
+-- e.g.
+--   rsync://host/foo/
+--     rsync://host/foo/bar/
+--       rsync://host/foo/bar/quux
+--     rsync://host/foo/baz/
+--       rsync://host/foo/baz/nup
+--       rsync://host/foo/baz/bop
+--
 merge :: URI -> RsyncMap -> (RsyncMap, RepositoryStatus)
 merge u rsyncMap@(RsyncMap m) = 
     case Map.splitLookup u m of        
@@ -203,26 +200,11 @@ merge u rsyncMap@(RsyncMap m) =
                                     | otherwise                               -> resultMap            
 
 
-createRsyncForest :: [RsyncPublicationPoint] -> Forest
-createRsyncForest = Forest . List.foldr (\r f -> fst $ r `mergeIntoTrees` f) []
-
 createRsyncMap :: [RsyncPublicationPoint] -> RsyncMap
 createRsyncMap = List.foldr (\(RsyncPublicationPoint u) rm -> fst $ u `merge` rm) (RsyncMap Map.empty)
 
-
 emptyRepositories :: PublicationPoints
 emptyRepositories = PublicationPoints Map.empty $ RsyncMap Map.empty 
-
-data RepositoriesUpdated a = AddedNew | AlreadyThere a
-    deriving (Show, Eq, Ord)
-
-updateRepositories :: PublicationPoints -> CerObject -> 
-                    Either ValidationError (PublicationPoints, RepositoryStatus)
-updateRepositories repositories@PublicationPoints {..} c  = do
-    (_, publicationPoint) <- publicationPointsFromCert cert
-    pure $ updatePublicationPoints repositories publicationPoint
-    where
-        cert = cwsX509certificate $ getCertWithSignature c
 
 
 -- | Update repository and return the status of the repository 
@@ -246,12 +228,6 @@ updatePublicationPoints PublicationPoints {..} repository  = do
             where
                 (rsyncs', status) = u `merge` rsyncs    
 
-
-findRepository :: URI -> RsyncTree -> Maybe RsyncPublicationPoint
-findRepository childUri (RsyncTree r@(RsyncPublicationPoint parentUri) children)
-    | parentUri == childUri           = Just r
-    | parentUri `isParentOf` childUri = join $ List.find isJust $ map (findRepository childUri) children
-    | otherwise                       = Nothing
 
 
 -- | Extract repositories from URIs in TAL and in TA certificate,
@@ -310,24 +286,20 @@ data Change a = Put a | Remove a
 
 
 -- | Derive a change set to apply to the 
--- changeSet :: PublicationPoints -> PublicationPoints -> [Change Repository]
--- changeSet (PublicationPoints rrdpOld rsyncOld) (PublicationPoints rrdpNew rsyncNew) = 
---     putNewRrdps <> removeOldRrdps <> putNewRsyncs <> removeOldRsyncs
---     where
---         rom = Map.elems rrdpOld
---         rrdpOldSet = Set.fromList rom
---         rrdpNewSet = Set.fromList $ Map.elems rrdpNew
---         putNewRrdps = map (Put . RrdpR) $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew
---         removeOldRrdps = map (Remove . RrdpR) $ filter (not . (`Set.member` rrdpNewSet)) rom
+changeSet :: PublicationPoints -> PublicationPoints -> ([Change RrdpRepository], [Change (URI, RsyncParent)])
+changeSet 
+    (PublicationPoints rrdpOld (RsyncMap rsyncOld)) 
+    (PublicationPoints rrdpNew (RsyncMap rsyncNew)) = 
+    (putNewRrdps <> removeOldRrdps, putNewRsyncs <> removeOldRsyncs)
+    where
+        rrdpOldSet = Set.fromList $ Map.elems rrdpOld
+        rrdpNewSet = Set.fromList $ Map.elems rrdpNew
+        putNewRrdps = map Put $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew
+        removeOldRrdps = map Remove $ filter (not . (`Set.member` rrdpNewSet)) $ Map.elems rrdpOld
 
---         rsyncOldSet = Set.fromList rsyncOld
---         rsyncNewSet = Set.fromList rsyncNew
---         putNewRsyncs = map (Put . RsyncR . RsyncRepository) $ filter (not . (`Set.member` rsyncOldSet)) rsyncNew
---         removeOldRsyncs = map (Remove . RsyncR . RsyncRepository) $ filter (not . (`Set.member` rsyncNewSet)) rsyncOld
-
-
--- reposFromList :: [Repository] -> PublicationPoints
--- reposFromList rs = PublicationPoints rrdps rsync
---     where
---         rrdps = Map.fromList [ (uri, r) | RrdpR r@(RrdpRepository {..}) <- rs ]
---         rsync = [ r | RsyncR r <- rs ]
+        rsyncOldList = Map.toList rsyncOld
+        rsyncNewList = Map.toList rsyncNew
+        rsyncOldSet = Set.fromList rsyncOldList
+        rsyncNewSet = Set.fromList $ Map.toList rsyncNew
+        putNewRsyncs = map Put $ filter (not . (`Set.member` rsyncOldSet)) rsyncNewList
+        removeOldRsyncs = map Remove $ filter (not . (`Set.member` rsyncNewSet)) rsyncOldList

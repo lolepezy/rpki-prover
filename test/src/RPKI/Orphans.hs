@@ -292,22 +292,6 @@ instance Arbitrary SignerInfos where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncTree where
-    arbitrary = sized arbitraryRsyncTree
-    shrink = genericShrink
-
-
-arbitraryRsyncTree :: Int -> Gen RsyncTree
-arbitraryRsyncTree 0 = do
-    a <- arbitrary
-    return $ RsyncTree a []
-arbitraryRsyncTree n = do
-    (Positive m) <- arbitrary
-    let n' = n `div` (m + 1)
-    f <- replicateM m (arbitraryRsyncTree n')
-    a <- arbitrary
-    return $ RsyncTree a f
-
 instance Arbitrary Repository where
     arbitrary = genericArbitrary
     shrink = genericShrink

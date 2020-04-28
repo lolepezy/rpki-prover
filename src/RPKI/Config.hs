@@ -7,6 +7,8 @@ module RPKI.Config where
 import GHC.Conc
 import Numeric.Natural
 
+import Data.Hourglass
+
 import RPKI.Logging
 import RPKI.Util (toNatural)
 
@@ -18,11 +20,16 @@ newtype RsyncConf = RsyncConf {
     rsyncRoot :: FilePath
 }
 
+data ValidationConfig = ValidationConfig {
+    refetchIntervalAfterRepositoryFailure :: Seconds
+}
+
 getParallelism :: Natural 
 getParallelism = maybe 1 id $ toNatural $ numCapabilities
 
 data AppContext = AppContext {
     logger :: AppLogger, 
     config :: Config,
-    rsyncConf :: RsyncConf
+    rsyncConf :: RsyncConf,
+    validationConfig :: ValidationConfig
 }

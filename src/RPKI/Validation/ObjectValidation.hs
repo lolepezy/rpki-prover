@@ -9,7 +9,7 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as LBS
-import           Data.Hourglass                     (DateTime)
+import           Data.Hourglass                     (DateTime, timeDiff)
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
 import           GHC.Generics
@@ -18,6 +18,7 @@ import           System.Hourglass                   (dateCurrent)
 
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Config
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
@@ -246,3 +247,7 @@ validateSize s =
       | s < 10 -> Left $ ObjectIsTooSmall s
       | s > 50_000_000 -> Left $ ObjectIsTooBig s
       | otherwise -> pure s
+
+notTooLongAgo :: ValidationConfig -> DateTime -> Now -> Bool
+notTooLongAgo (ValidationConfig {..}) at (Now now) = 
+    timeDiff now at < refetchIntervalAfterRepositoryFailure

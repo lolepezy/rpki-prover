@@ -33,6 +33,7 @@ import Pipes
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 
+
 data LmdbStore (name :: Symbol) = LmdbStore { 
     env :: Env,
     db  :: DBMap
@@ -61,6 +62,8 @@ instance WithLmdb LmdbStorage where
 
 instance WithTx LmdbStorage where    
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
+
+    -- TODO Limit the amount of simultaneous transactions to 126
     readOnlyTx lmdb f = withROTransaction (getEnv lmdb) (f . LmdbTx)
     readWriteTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx)
 
@@ -146,4 +149,7 @@ createMulti env = do
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             byteString byteString
     
+    
+
+
     

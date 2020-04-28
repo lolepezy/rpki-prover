@@ -69,66 +69,28 @@ putRepositories tx RepositoryStore {..} PublicationPoints {..} taName' = liftIO 
             MM.put tx perTA taName' (u, RRDP)
 
     
--- applyChanges :: (MonadIO m, Storage s) => 
---                 Tx s 'RW -> RepositoryStore s -> [Change Repository] -> TaName -> m ()
--- applyChanges tx s changes taName' = 
---     forM_ changes $ \case 
---         Put r    -> putRepository tx s r taName'
---         Remove r -> removeRepositoryRoot tx s r taName'
-
-
-removeRepositoryRoot :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> RepositoryStore s -> Repository -> TaName -> m ()
-removeRepositoryRoot tx RepositoryStore {..} r taName' = liftIO $ do
-    let repoUri = repositoryURI r
-    case r of 
-        RrdpR _ -> do
-            M.delete tx rrdpS repoUri 
-            MM.delete tx perTA taName' (repoUri, RRDP)
-        RsyncR _ -> do 
-            M.delete tx rsyncS repoUri
-            MM.delete tx perTA taName' (repoUri, Rsync)
-
-
--- getAllRepositoriesForTA :: (MonadIO m, Storage s) => 
---                         Tx s mode -> RepositoryStore s -> TaName -> m [Repository]
--- getAllRepositoriesForTA tx s taName' = liftIO $ MM.fold tx (perTA s) taName' f []
---     where
---         f ros _ index = 
---             case index of 
---                 (uri', Rsync) -> 
---                     M.get tx (rsyncS s) uri' >>= \case
---                         Just rs -> pure $! (RsyncR rs) : ros
---                         Nothing -> pure ros
---                 (uri', RRDP) -> 
---                     M.get tx (rrdpS s) uri' >>= \case
---                         Just rs -> pure $! (RrdpR rs) : ros
---                         Nothing -> pure ros
-
-
--- getRsyncsForTA :: (MonadIO m, Storage s) => 
---                 Tx s mode -> RepositoryStore s -> TaName -> m RsyncMap
--- getRsyncsForTA tx s taName' = liftIO $ MM.fold tx (perTA s) taName' f (RsyncMap rsyncs)
---     where
---         f ros _ index = 
---             case index of 
---                 (uri', Rsync) -> 
---                     M.get tx (rsyncS s) uri' >>= \case
---                         Just rs -> pure $! rs : ros
---                         Nothing -> pure ros
---                 _ -> pure ros                    
-
--- getRrdpsForTA :: (MonadIO m, Storage s) => 
---                 Tx s mode -> RepositoryStore s -> TaName -> m [RrdpRepository]
--- getRrdpsForTA tx s taName' = liftIO $ MM.fold tx (perTA s) taName' f []
---     where
---         f ros _ index = 
---             case index of 
---                 (uri', RRDP) -> 
---                     M.get tx (rrdpS s) uri' >>= \case
---                         Just rs -> pure $! rs : ros
---                         Nothing -> pure ros
---                 _ -> pure ros                    
+applyChangeSet :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> 
+                RepositoryStore s -> 
+                ([Change RrdpRepository], [Change (URI, RsyncParent)]) -> 
+                TaName -> 
+                m ()
+applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' = 
+    liftIO $ do
+        forM_ rrdpChanges $ \case 
+            Put r@(RrdpRepository{..})  -> do
+                M.put tx rrdpS uri r
+                MM.put tx perTA taName' (uri, RRDP)                        
+            Remove (RrdpRepository{..}) -> do 
+                M.delete tx rrdpS uri 
+                MM.delete tx perTA taName' (uri, RRDP)
+        forM_ rsyncChanges $ \case 
+            Put (uri', p)  -> do
+                M.put tx rsyncS uri' p
+                MM.put tx perTA taName' (uri', RRDP)                        
+            Remove (uri', _) -> do 
+                M.delete tx rsyncS uri'
+                MM.delete tx perTA taName' (uri', RRDP)        
 
 
 getRepositoriesForTA :: (MonadIO m, Storage s) => 

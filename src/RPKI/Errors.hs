@@ -61,7 +61,8 @@ data ValidationError = InvalidCert !Text.Text |
             OverclaimedResources PrefixesAndAsns |
             InheritWithoutParentResources |
             UnknownUriType !URI | 
-            CertificateDoesn'tHaveSIA
+            CertificateDoesn'tHaveSIA | 
+            PublicationPointIsNotAvailable URI
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     

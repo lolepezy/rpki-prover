@@ -43,39 +43,6 @@ repositoriesURIs = map (\s -> RsyncPublicationPoint (URI $ "rsync://host1.com/" 
         "different_root"      
     ]
 
-prop_creates_thesame_hierarchy_regardless_of_shuffle :: QC.Property
-prop_creates_thesame_hierarchy_regardless_of_shuffle = 
-    QC.forAll (QC.shuffle repositoriesURIs) $ \repositories -> 
-        let
-            mergedForest = createRsyncForest repositories
-            in mergedForest == initialForest && checkForest mergedForest
-    where
-        initialForest = createRsyncForest repositoriesURIs
-        
-        checkForest (Forest trees) = 
-            urisAreNotNestedOnTheSameLevel trees && 
-            treesAreSorted trees && 
-            List.all childURINestedInParent trees
-        
-        urisAreNotNestedOnTheSameLevel trees = 
-            List.null $
-                List.filter (\(t1, t2) -> nested t1 t2) $
-                [ (t1, t2) | t1 <- trees, t2 <- trees, t1 /= t2]
-            where 
-                nested (RsyncTree (RsyncPublicationPoint u1) _) (RsyncTree (RsyncPublicationPoint u2) _) = 
-                    u1 `isParentOf` u2 || u2 `isParentOf` u1
-
-        treesAreSorted trees = 
-            uris == sortedURIs &&
-            List.all (\(RsyncTree _ children) -> treesAreSorted children) trees
-            where 
-                uris = map (\(RsyncTree (RsyncPublicationPoint u) _) -> u) trees
-                sortedURIs = List.sort uris
-
-        childURINestedInParent (RsyncTree (RsyncPublicationPoint uri') children) = 
-            List.all (\(RsyncTree (RsyncPublicationPoint childUri) _) -> uri' `isParentOf` childUri) children &&
-            List.all childURINestedInParent children
-
 
 prop_creates_thesame_hierarchy_regardless_of_shuffle_map :: QC.Property
 prop_creates_thesame_hierarchy_regardless_of_shuffle_map = 
