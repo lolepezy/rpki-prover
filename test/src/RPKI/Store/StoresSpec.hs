@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes       #-}
+{-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
@@ -34,6 +35,8 @@ import           RPKI.Store.Data
 import           RPKI.Store.Stores
 import           RPKI.Store.Repository
 
+import           RPKI.Store.Base.LMDB (LmdbEnv)
+
 import           RPKI.Store.Util
 
 
@@ -62,7 +65,7 @@ sizes objectStore =
             <*> MM.size tx (mftByAKI objectStore)
 
 
-should_insert_and_get_all_back_from_object_store :: IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> HU.Assertion
+should_insert_and_get_all_back_from_object_store :: IO ((FilePath, LmdbEnv), RpkiObjectStore LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_object_store io = do  
     (_, objectStore) <- io
     aki1 :: AKI <- QC.generate arbitrary
@@ -180,13 +183,13 @@ should_insert_and_get_all_back_from_object_store io = do
 generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
 
-withObjectStore :: (IO ((FilePath, Env), RpkiObjectStore LmdbStorage) -> TestTree) -> TestTree
+withObjectStore :: (IO ((FilePath, LmdbEnv), RpkiObjectStore LmdbStorage) -> TestTree) -> TestTree
 withObjectStore testTree = withResource (makeLmdbStuff createObjectStore) releaseLmdb testTree
 
-withRepositoryStore :: (IO ((FilePath, Env), RepositoryStore LmdbStorage) -> TestTree) -> TestTree
+withRepositoryStore :: (IO ((FilePath, LmdbEnv), RepositoryStore LmdbStorage) -> TestTree) -> TestTree
 withRepositoryStore testTree = withResource (makeLmdbStuff createRepositoryStore) releaseLmdb testTree
 
-withMM :: (IO ((FilePath, Env), SMultiMap "testMM" LmdbStorage Int String) -> TestTree) -> TestTree
+withMM :: (IO ((FilePath, LmdbEnv), SMultiMap "testMM" LmdbStorage Int String) -> TestTree) -> TestTree
 withMM testTree = withResource (makeLmdbStuff mkMMap) releaseLmdb testTree
     where
         mkMMap e = do   
@@ -194,14 +197,16 @@ withMM testTree = withResource (makeLmdbStuff mkMMap) releaseLmdb testTree
             return $ SMultiMap (LmdbStorage e) mm
 
 
+makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
 makeLmdbStuff mkStore = do 
     dir <- createTempDirectory "/tmp" "lmdb-test"
-    e <- mkLmdb dir
+    e <- mkLmdb dir 100
     store <- mkStore e
     pure ((dir, e), store)
 
-releaseLmdb ((dir, e), _) = do   
-    closeLmdb e
+releaseLmdb :: ((FilePath, LmdbEnv), b) -> IO ()
+releaseLmdb ((dir, LmdbEnv{..}), _) = do   
+    closeLmdb nativeEnv
     removeDirectoryRecursive dir
 
 

@@ -204,7 +204,11 @@ validateCA env vContext' database@DB {..} taName certificate = do
             -- TODO Save new repository status to the database
             case repositoryStatus repo of 
                 FetchedAt _ -> do 
-                    let qq = fromMaybe Set.empty $ Map.lookup repo rootToPps
+                    let fetchedPPs = fromMaybe Set.empty $ Map.lookup repo rootToPps
+                    waitingList <- lift3 $ atomically $ readTVar (ppWaitingList topDownContext) 
+                    let qq = Set.map (\pp -> Map.lookup pp waitingList) fetchedPPs
+
+
                     pure ()
                 _ -> pure ()
             pure (repo, vs)

@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 module RPKI.Store.Util where
 
 import           RPKI.Store.Base.Map      (SMap (..))
@@ -11,7 +12,7 @@ import           RPKI.Store.Stores
 import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
 
-createObjectStore :: Env -> IO (RpkiObjectStore LmdbStorage)
+createObjectStore :: LmdbEnv -> IO (RpkiObjectStore LmdbStorage)
 createObjectStore e = do
     let lmdb = LmdbStorage e
     objMap <- create e
@@ -24,7 +25,7 @@ createObjectStore e = do
         mftByAKI = SMultiMap lmdb mftAkiIndex
     }
 
-createRepositoryStore :: Env -> IO (RepositoryStore LmdbStorage)
+createRepositoryStore :: LmdbEnv -> IO (RepositoryStore LmdbStorage)
 createRepositoryStore e = do
     let lmdb = LmdbStorage e
     rMap1 <- create e
@@ -36,7 +37,7 @@ createRepositoryStore e = do
         perTA = SMultiMap lmdb perTaMap
     }
 
-createResultStore :: Env -> IO (VResultStore LmdbStorage)
+createResultStore :: LmdbEnv -> IO (VResultStore LmdbStorage)
 createResultStore e = do
     let lmdb = LmdbStorage e
     rMap <- create e    
@@ -44,13 +45,13 @@ createResultStore e = do
         results = SMap lmdb rMap
     }
 
-createTAStore :: Env -> IO (TAStore LmdbStorage)
+createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
 createTAStore e = do
     let lmdb = LmdbStorage e
     rMap <- create e
     pure $ TAStore (SMap lmdb rMap)
 
-createSequenceStore :: Env -> IO (SequenceStore LmdbStorage)
+createSequenceStore :: LmdbEnv -> IO (SequenceStore LmdbStorage)
 createSequenceStore e = do
     let lmdb = LmdbStorage e
     rMap <- create e
@@ -58,19 +59,21 @@ createSequenceStore e = do
         sequences = SMap lmdb rMap
     }
 
-mkLmdb :: FilePath -> IO Env
-mkLmdb fileName = initializeReadWriteEnvironment mapSize readerNum maxDatabases fileName
+mkLmdb :: FilePath -> Int -> IO LmdbEnv
+mkLmdb fileName maxReaders = 
+    LmdbEnv <$> 
+        initializeReadWriteEnvironment mapSize maxReaders maxDatabases fileName <*>
+        createSemaphore maxReaders
     where
         -- TODO Make it configurable
         mapSize = 8*1024*1024*1024
-        readerNum = 120
         maxDatabases = 120
 
 closeLmdb :: Environment e -> IO ()
 closeLmdb = closeEnvironment
 
 
-createDatabase :: Env -> IO (DB LmdbStorage)
+createDatabase :: LmdbEnv -> IO (DB LmdbStorage)
 createDatabase e = DB <$>
     createTAStore e <*>
     createRepositoryStore e <*>

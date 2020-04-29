@@ -27,6 +27,7 @@ import           Data.Time.Clock                (getCurrentTime)
 import           Lmdb.Codec
 import           Lmdb.Connection
 import           Lmdb.Types
+import RPKI.Store.Base.LMDB (LmdbEnv)
 
 import qualified Data.ByteString.Streaming      as Q
 import           Data.ByteString.Streaming.HTTP
@@ -345,7 +346,7 @@ createAppContext = AppContext {
     rsyncConf = RsyncConf "/tmp/rsync"
 }
 
-processRRDP :: Environment 'ReadWrite -> IO ()
+processRRDP :: LmdbEnv -> IO ()
 processRRDP env = do
     say "begin"      
     let repos = [
@@ -384,7 +385,7 @@ loadRsync env = do
                 "/tmp/rsync/rsync___rpki.ripe.net_repository" store
     say $ "done "
 
-processTAL :: Environment 'ReadWrite -> IO ()
+processTAL :: LmdbEnv -> IO ()
 processTAL env = do
     say "begin"      
     database <- createDatabase env    
@@ -408,7 +409,7 @@ getTACert =
         pure (ro, x)
 
 
-validateTreeFromTA :: Environment 'ReadWrite -> IO ()
+validateTreeFromTA :: LmdbEnv -> IO ()
 validateTreeFromTA env = do  
     -- let repo = RsyncPublicationPoint (URI "rsync://rpki.ripe.net/repository")    
     let repo = rsyncR (URI "rsync://rpki.apnic.net/member_repository/")        
@@ -430,7 +431,7 @@ validateTreeFromTA env = do
 
 
 
-validateTreeFromStore :: Environment 'ReadWrite -> IO ()
+validateTreeFromStore :: LmdbEnv -> IO ()
 validateTreeFromStore env = do       
     let appContext = createAppContext
     let taCertURI = URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer"
@@ -454,7 +455,7 @@ main = do
     -- mkLmdb "./data/" >>= void . saveRsyncRepo
     -- mkLmdb "./data/" >>= validateTreeFromStore
     -- mkLmdb "./data/" >>= validateTreeFromTA
-    mkLmdb "./data/" >>= processRRDP
+    mkLmdb "./data/" 100 >>= processRRDP
 
 
 

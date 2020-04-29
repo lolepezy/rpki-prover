@@ -35,16 +35,19 @@ import Pipes
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 
-
-data LmdbStore (name :: Symbol) = LmdbStore { 
-    env :: Env,
-    db  :: DBMap,
+data LmdbEnv = LmdbEnv {
+    nativeEnv :: Env,
     txSem :: Semaphore
 }
 
+data LmdbStore (name :: Symbol) = LmdbStore {     
+    db  :: DBMap,
+    env :: LmdbEnv
+}
+
 data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
-    env :: Env,
-    db :: Lmdb.MultiDatabase BS.ByteString BS.ByteString
+    db :: Lmdb.MultiDatabase BS.ByteString BS.ByteString,
+    env :: LmdbEnv
 }
 
 type family LmdbTxMode (m :: TxMode) :: Lmdb.Mode where
@@ -57,10 +60,10 @@ toROTx = coerce
 class WithLmdb lmdb where
     getEnv :: lmdb -> Env
 
-newtype LmdbStorage = LmdbStorage { unEnv :: Env }
+newtype LmdbStorage = LmdbStorage { unEnv :: LmdbEnv }
 
 instance WithLmdb LmdbStorage where
-    getEnv = unEnv
+    getEnv = nativeEnv . unEnv
 
 
 instance WithTx LmdbStorage where    
@@ -129,23 +132,22 @@ foldGeneric tx db f a0 withC makeProducer =
 
 
 create :: forall name . KnownSymbol name => 
-            Env -> IO (LmdbStore name)
-create env = do
+            LmdbEnv -> IO (LmdbStore name)
+create env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy :: P.Proxy name)
-    db <- withTransaction env $ \tx -> openDatabase tx (Just name') dbSettings     
-    -- TODO Bump it up and make it the same for LMDB and the semaphore
-    LmdbStore env db <$> createSemaphore 126
+    db <- withTransaction nativeEnv $ \tx -> openDatabase tx (Just name') dbSettings     
+    pure $ LmdbStore db env
     where
         dbSettings = makeSettings 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             byteString byteString
 
 createMulti :: forall name . KnownSymbol name =>  
-                Env -> IO (LmdbMultiStore name)
-createMulti env = do
+                LmdbEnv -> IO (LmdbMultiStore name)
+createMulti env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy :: P.Proxy name)
-    db <- withTransaction env $ \tx -> openMultiDatabase tx (Just name') dbSettings 
-    pure $ LmdbMultiStore env db
+    db <- withTransaction nativeEnv $ \tx -> openMultiDatabase tx (Just name') dbSettings 
+    pure $ LmdbMultiStore db env
     where
         dbSettings :: Lmdb.MultiDatabaseSettings BS.ByteString BS.ByteString
         dbSettings = makeMultiSettings 
