@@ -31,7 +31,8 @@ logWhat sev la textMessage = do
     withFrozenCallStack $ la <& Msg sev callStack textMessage
 
 
-logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => logger -> Text -> m ()
+logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => 
+                                            logger -> Text -> m ()
 logErrorM logger t = liftIO $ logError_ logger t
 logWarnM logger t  = liftIO $ logWarn_ logger t
 logInfoM logger t  = liftIO $ logInfo_ logger t

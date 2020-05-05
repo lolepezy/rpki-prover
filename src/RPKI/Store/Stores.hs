@@ -61,7 +61,7 @@ deleteObject tx store h = liftIO $ do
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
 findLatestMftByAKI tx store aki' = liftIO $ 
-    MM.fold tx (mftByAKI store) aki' f Nothing >>= \case
+    MM.foldS tx (mftByAKI store) aki' f Nothing >>= \case
         Nothing        -> pure Nothing
         Just (hash, _) -> do
             getByHash tx store hash >>= \case
@@ -78,7 +78,7 @@ findLatestMftByAKI tx store aki' = liftIO $
 findMftsByAKI :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
 findMftsByAKI tx store aki' = liftIO $ 
-    MM.fold tx (mftByAKI store) aki' f []
+    MM.foldS tx (mftByAKI store) aki' f []
     where
         f mfts _ (h, _) = accumulate <$> getByHash tx store h
             where 
@@ -152,9 +152,9 @@ putVResult tx (VResultStore s) vr = liftIO $ M.put tx s (path vr) vr
 --                 Tx s 'RW -> RepositoryStore s -> URI -> m (Maybe Repository)
 -- getRepository tx s repoUri = liftIO $ fmap repo <$> M.get tx (repositories s) repoUri 
 
--- getRepositoriesForTA :: (MonadIO m, Storage s) => 
+-- getTaPublicationPoints :: (MonadIO m, Storage s) => 
 --                         Tx s mode -> RepositoryStore s -> TaName -> m [SRepository]
--- getRepositoriesForTA tx s taName' = liftIO $ MM.fold tx (repositoriesPerTA s) taName' f []
+-- getTaPublicationPoints tx s taName' = liftIO $ MM.fold tx (repositoriesPerTA s) taName' f []
 --     where
 --         f ros _ uri' =   
 --             M.get tx (repositories s) uri' >>= \case

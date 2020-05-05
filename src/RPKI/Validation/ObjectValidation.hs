@@ -4,6 +4,7 @@
 module RPKI.Validation.ObjectValidation where
 
 import           Control.Monad
+import           Control.Monad.IO.Class
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
@@ -34,8 +35,8 @@ newtype Now = Now DateTime
 newtype Validated a = Validated a
   deriving (Show, Eq, Generic)
 
-thisMoment :: IO Now
-thisMoment = Now <$> dateCurrent
+thisMoment :: MonadIO m => m Now
+thisMoment = liftIO $ Now <$> dateCurrent
 
 validateResourceCertExtensions :: WithResourceCertificate c => c -> PureValidator conf c
 validateResourceCertExtensions cert =
@@ -116,7 +117,7 @@ validateResourceCert (Now now) cert parentCert vcrl = do
   when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
   when (now < before) $ vPureError CertificateIsInTheFuture
   when (now > after) $ vPureError CertificateIsExpired
-  when (not (correctSkiAki cert parentCert))
+  unless (correctSkiAki cert parentCert)
     $ vPureError
     $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
   void $ validateResourceCertExtensions cert
@@ -211,7 +212,7 @@ validateCms now cms parentCert crl extraValidation = do
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
 validateNexUpdate :: Now -> Maybe DateTime -> PureValidator conf DateTime
-validateNexUpdate (Now now) nextUpdateTime = do
+validateNexUpdate (Now now) nextUpdateTime =
   case nextUpdateTime of
     Nothing -> vPureError NextUpdateTimeNotSet
     Just nextUpdate
@@ -221,10 +222,8 @@ validateNexUpdate (Now now) nextUpdateTime = do
 -- | Check if CMS is on the revocation list
 isRevoked :: WithResourceCertificate c => c -> Validated CrlObject -> Bool
 isRevoked cert (Validated crlObject) =
-  not $ null
-    $ filter
-      (\(RevokedCertificate {..}) -> Serial revokedSerialNumber == serial)
-    $ crlRevokedCertificates crl
+  not $ any (\RevokedCertificate {..} -> Serial revokedSerialNumber == serial) $ 
+    crlRevokedCertificates crl
   where
     SignCRL {..} = extract crlObject
     serial = getSerial cert
@@ -249,5 +248,5 @@ validateSize s =
       | otherwise -> pure s
 
 notTooLongAgo :: ValidationConfig -> DateTime -> Now -> Bool
-notTooLongAgo (ValidationConfig {..}) at (Now now) = 
+notTooLongAgo ValidationConfig {..} at (Now now) = 
     timeDiff now at < refetchIntervalAfterRepositoryFailure

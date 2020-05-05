@@ -19,7 +19,7 @@ class WithTx s => Storage s where
     type SMapImpl s :: Symbol -> Type
     type SMultiMapImpl s :: Symbol -> Type
     get :: Tx s m -> SMapImpl s name -> SKey -> IO (Maybe SValue)    
-    fold :: Tx s m -> SMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
+    foldS :: Tx s m -> SMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     put :: Tx s 'RW -> SMapImpl s name -> SKey -> SValue -> IO ()
     delete :: Tx s 'RW -> SMapImpl s name -> SKey -> IO ()
 

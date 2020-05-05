@@ -186,8 +186,8 @@ toBytes :: HexString -> BS.ByteString
 toBytes (HexString bs) = bs
 
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
-decodeBase64 (EncodedBase64 bs) context = case B64.decode bs of
-    Left e -> Left $ BadBase64 (e <> " for " <> show context) bs
+decodeBase64 (EncodedBase64 bs) context = case B64.decodeBase64 bs of
+    Left e -> Left $ BadBase64 (e <> " for " <> Text.pack (show context)) bs
     Right b -> Right $ DecodedBase64 b
 
 toEither :: e -> Maybe v -> Either e v

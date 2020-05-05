@@ -156,9 +156,9 @@ getSiaValue :: Certificate -> OID -> Maybe BS.ByteString
 getSiaValue c oid = do
     sia  <- extVal (getExts c) id_pe_sia
     asns <- toMaybe $ decodeASN1' BER sia
-    join $ toMaybe $ (flip runParseASN1) asns $ 
-            listToMaybe . catMaybes <$> (
-                onNextContainer Sequence $ getMany extractByOid)
+    join $ toMaybe $ flip runParseASN1 asns $ 
+            listToMaybe . catMaybes <$> 
+                onNextContainer Sequence (getMany extractByOid)
     where
         extractByOid = getNextContainerMaybe Sequence >>= \case
             Nothing -> pure Nothing

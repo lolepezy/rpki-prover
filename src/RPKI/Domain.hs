@@ -15,7 +15,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as Text
 
 import Codec.Serialise
-import Data.Hex (hex)
+import Data.Hex
 
 import Data.Kind (Type)
 import Data.List.NonEmpty

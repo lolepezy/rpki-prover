@@ -34,9 +34,9 @@ delete tx (SMap _ s) k = S.delete tx s (storableKey k)
 
 fold :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> (a -> k -> v -> IO a) -> a -> IO a
-fold tx (SMap _ s) f a = S.fold tx s f' a
+fold tx (SMap _ s) f a = S.foldS tx s f' a
     where
         f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
 
 size :: Tx s m -> SMap name s k v -> IO Int
-size tx (SMap _ s) = S.fold tx s (\a _ _ -> pure $! a + 1) 0
+size tx (SMap _ s) = S.foldS tx s (\a _ _ -> pure $! a + 1) 0

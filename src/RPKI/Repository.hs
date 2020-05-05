@@ -89,29 +89,32 @@ toRepository (RrdpPP r) = RrdpR r
 toRepository (RsyncPP r) = RsyncR $ RsyncRepository r New
 
 repositoryURI :: Repository -> URI
-repositoryURI (RrdpR (RrdpRepository {..})) = uri
-repositoryURI (RsyncR (RsyncRepository (RsyncPublicationPoint {..}) _)) = uri
+repositoryURI (RrdpR RrdpRepository {..}) = uri
+repositoryURI (RsyncR (RsyncRepository RsyncPublicationPoint {..} _)) = uri
 
 publicationPointURI :: PublicationPoint -> URI
-publicationPointURI (RrdpPP (RrdpRepository {..})) = uri
-publicationPointURI (RsyncPP (RsyncPublicationPoint {..})) = uri
+publicationPointURI (RrdpPP RrdpRepository {..}) = uri
+publicationPointURI (RsyncPP RsyncPublicationPoint {..}) = uri
   
 repositoryStatus :: Repository -> RepositoryStatus 
-repositoryStatus (RsyncR (RsyncRepository {..})) = status
-repositoryStatus (RrdpR (RrdpRepository {..}))   = status
+repositoryStatus (RsyncR RsyncRepository {..}) = status
+repositoryStatus (RrdpR RrdpRepository {..})   = status
 
 rsyncRepositories :: RsyncMap -> [RsyncRepository]
 rsyncRepositories (RsyncMap rsyncMap) = 
     [ RsyncRepository (RsyncPublicationPoint u) status | (u, Root status) <- Map.toList rsyncMap ]
 
-repositories :: PublicationPoints -> [Repository]
-repositories (PublicationPoints rrdps rsyncs) = 
-    (map RrdpR $ Map.elems rrdps) <>
-    (map RsyncR $ rsyncRepositories rsyncs)
+repositories :: PublicationPoints -> Map URI Repository
+repositories (PublicationPoints rrdps (RsyncMap rsyncMap)) = 
+    Map.map RrdpR rrdps <>
+    Map.fromList [ 
+        (u, RsyncR (RsyncRepository (RsyncPublicationPoint u) status)) | 
+        (u, Root status) <- Map.toList rsyncMap ]
 
 
 
-repositoryHierarchy :: PublicationPoints -> (Map PublicationPoint Repository, Map Repository (Set PublicationPoint))
+repositoryHierarchy :: PublicationPoints -> 
+                    (Map PublicationPoint Repository, Map Repository (Set PublicationPoint))
 repositoryHierarchy (PublicationPoints rrdps (RsyncMap rsyncs)) = (direct, inverse)    
     where
         direct = rrdp <> rsync    
@@ -132,7 +135,6 @@ repositoryHierarchy (PublicationPoints rrdps (RsyncMap rsyncs)) = (direct, inver
                 
 
 
-
 findRepositoryStatus :: URI -> RsyncMap -> Maybe (URI, RepositoryStatus)
 findRepositoryStatus u (RsyncMap m) = go u
     where
@@ -144,7 +146,8 @@ findRepositoryStatus u (RsyncMap m) = go u
 
 -- | Update repository status and return the old one 
 -- | if the uri is pointing to the rsync root.
-updateRepositoryStatus :: URI -> RsyncMap -> RepositoryStatus -> (RsyncMap, Maybe RepositoryStatus)
+updateRepositoryStatus :: URI -> RsyncMap -> RepositoryStatus -> 
+                        (RsyncMap, Maybe RepositoryStatus)
 updateRepositoryStatus u rm@(RsyncMap m) status = 
     case Map.lookup u m of
         Nothing            -> (rm, Nothing)
@@ -210,14 +213,14 @@ emptyRepositories = PublicationPoints Map.empty $ RsyncMap Map.empty
 -- | Update repository and return the status of the repository 
 -- | as it was before the update.
 updatePublicationPoints :: PublicationPoints -> PublicationPoint -> (PublicationPoints, RepositoryStatus)
-updatePublicationPoints PublicationPoints {..} repository  = do
+updatePublicationPoints PublicationPoints {..} repository =
     case repository of  
-        RrdpPP r@(RrdpRepository { uri = u }) -> 
+        RrdpPP r@RrdpRepository { uri = u } -> 
             case Map.lookup u rrdps of
                 Nothing -> (PublicationPoints rrdps' rsyncs, New)
                     where 
                         rrdps' = Map.insert u r rrdps
-                Just existing@(RrdpRepository { status = s }) -> (PublicationPoints rrdps' rsyncs, s)
+                Just existing@RrdpRepository { status = s } -> (PublicationPoints rrdps' rsyncs, s)
                     where 
                         rrdps' = if r == existing -- most often case
                                 then rrdps 
@@ -286,7 +289,8 @@ data Change a = Put a | Remove a
 
 
 -- | Derive a change set to apply to the 
-changeSet :: PublicationPoints -> PublicationPoints -> ([Change RrdpRepository], [Change (URI, RsyncParent)])
+changeSet :: PublicationPoints -> PublicationPoints -> 
+            ([Change RrdpRepository], [Change (URI, RsyncParent)])
 changeSet 
     (PublicationPoints rrdpOld (RsyncMap rsyncOld)) 
     (PublicationPoints rrdpNew (RsyncMap rsyncNew)) = 
@@ -303,3 +307,55 @@ changeSet
         rsyncNewSet = Set.fromList $ Map.toList rsyncNew
         putNewRsyncs = map Put $ filter (not . (`Set.member` rsyncOldSet)) rsyncNewList
         removeOldRsyncs = map Remove $ filter (not . (`Set.member` rsyncNewSet)) rsyncOldList
+
+
+-- | Derive a change set to apply to the 
+changeSetFromMap :: Map URI Repository -> Map URI Repository -> 
+                    ([Change RrdpRepository], [Change (URI, RsyncParent)])
+changeSetFromMap oldRepos newRepos = 
+    (putNewRrdps <> removeOldRrdps, putNewRsyncs <> removeOldRsyncs)
+    where
+        oldRepoList = Map.toList oldRepos
+        newRepoList = Map.toList newRepos
+
+        putNewRrdps    = [ Put r    | (u, rr@(RrdpR r)) <- newRepoList, Map.lookup u oldRepos /= Just rr ]
+        removeOldRrdps = [ Remove r | (u, rr@(RrdpR r)) <- oldRepoList, Map.lookup u newRepos /= Just rr ]
+
+        putNewRsyncs    = [ Put (u, Root status) | 
+            (u, r@(RsyncR (RsyncRepository _ status)) ) <- newRepoList, Map.lookup u oldRepos /= Just r ]
+
+        removeOldRsyncs = [ Remove (u, Root status) | 
+            (u, r@(RsyncR (RsyncRepository _ status))) <- newRepoList, Map.lookup u oldRepos /= Just r ]
+
+
+updateStatuses :: Foldable t => PublicationPoints -> t (Repository, RepositoryStatus) -> PublicationPoints
+updateStatuses 
+    (PublicationPoints rrdps (RsyncMap rsyncs)) newStatuses = PublicationPoints rrdps' rsyncs'
+    where
+        rrdps' = foldr foldRrdp rrdps newStatuses
+            where 
+                foldRrdp (RrdpR r@RrdpRepository { uri = u }, newStatus) m = let 
+                    r' :: RrdpRepository = r { status = newStatus }
+                    in Map.insert u r' m
+                foldRrdp (RsyncR _, _) m = m
+
+        rsyncs' = RsyncMap $ foldr foldRsync rsyncs newStatuses
+            where 
+                foldRsync (RrdpR _, _) m = m
+                foldRsync (RsyncR (RsyncRepository (RsyncPublicationPoint u) _), newStatus) m = 
+                    case Map.lookup u m of 
+                        Just (Root _) -> Map.insert u (Root newStatus) m
+                        _             -> m                    
+
+
+{- 
+
+let rrdp1 = RrdpRepository (URI "u1") Nothing New
+let rrdp2 = RrdpRepository (URI "u2") Nothing New
+
+let rrdps = M.fromList $ Prelude.map (\r@RrdpRepository {..} -> (uri, r)  ) [rrdp1, rrdp2]
+
+let rsyncs = M.fromList [ (URI "u1/path/a", ParentURI (URI "u1/path")),  ( URI "u1/path", Root New)  ]
+
+
+-}

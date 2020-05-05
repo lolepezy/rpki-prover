@@ -35,7 +35,7 @@ dependencies:
 - asn1-types
 - async
 - base16-bytestring
-- base64-bytestring
+- base64
 - bytestring
 - bytestring-conversion
 - bytestring-mmap
@@ -64,6 +64,7 @@ dependencies:
 - lens
 - lmdb-high-level
 - lifted-async
+- lifted-base
 - memory
 - mmorph
 - modern-uri

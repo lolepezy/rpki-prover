@@ -83,6 +83,7 @@ updateObjectForRsyncRepository
     appContenxt@AppContext{..} 
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) 
     objectStore = do     
+
     let RsyncConf {..} = rsyncConf    
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncDirectory
@@ -91,11 +92,14 @@ updateObjectForRsyncRepository
         createDirectoryIfMissing True destination
         
     logInfoM logger [i|Going to run #{rsync}|]
-    (exitCode, out, err) <- fromTry (RsyncE . RsyncRunningError . U.fmtEx) $ readProcess rsync
+    (exitCode, out, err) <- fromTry 
+        (RsyncE . RsyncRunningError . U.fmtEx) $ 
+        readProcess rsync
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
-            (validations, count) <- fromEitherM $ loadRsyncRepository appContenxt uri destination objectStore
+            (validations, count) <- fromEitherM $ 
+                loadRsyncRepository appContenxt uri destination objectStore
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
@@ -104,13 +108,12 @@ updateObjectForRsyncRepository
                                         stderr = #{err}, 
                                         stdout = #{out}|]
             throwError $ RsyncE $ RsyncProcessError errorCode err 
-        
-    
+
 
 -- | Recursively traverse given directory and save all the parseable 
 -- | objects into the storage.
 -- 
--- | Is not supposed to throw exceptions, only report errors through ExceptT.
+-- | Is not supposed to throw exceptions, only report errors through Either.
 loadRsyncRepository :: Storage s => 
                         AppContext ->
                         URI -> 
@@ -121,19 +124,15 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         counter <- newIORef 0
         (r1, r2) <- bracketChan 
                         (parallelism config)
-                        travelrseFS
+                        traverseFS
                         (saveObjects counter)
                         kill
-        c <- readIORef counter
-        -- TODO That is weird, make somjething reasonable out of it
-        pure $ do    
-            r1' <- r1
-            r2' <- r2
-            pure (r2', c)
+        c <- readIORef counter        
+        pure $ void r1 >> (, c) <$> r2            
     where
         kill = maybe (pure ()) (Unlift.cancel . snd)
 
-        travelrseFS queue = 
+        traverseFS queue = 
             first (RsyncE . FileReadError . U.fmtEx) <$> try (
                 readFiles queue rootPath 
                     `finally` 

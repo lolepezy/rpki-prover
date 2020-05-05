@@ -25,10 +25,7 @@ instance Storage s => WithStorage s (SequenceStore s) where
 
 nextValue :: Storage s => Tx s 'RW -> SequenceStore s -> Text -> IO Sequence
 nextValue tx (SequenceStore s) sequenceName = do
-    M.get tx s sequenceName >>= \case
-        Nothing -> do
-            M.put tx s sequenceName $ Sequence 1
-            pure $ Sequence 1
-        Just (Sequence number) -> do
-            M.put tx s sequenceName $ Sequence $ number + 1
-            pure $ Sequence $ number + 1
+    current <- M.get tx s sequenceName
+    let next = Sequence $ maybe 1 (\(Sequence n) -> n + 1) current
+    M.put tx s sequenceName next
+    pure next

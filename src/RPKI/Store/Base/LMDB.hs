@@ -87,7 +87,7 @@ instance Storage LmdbStorage where
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
 
-    fold (LmdbTx tx) LmdbStore {..} f a0 =
+    foldS (LmdbTx tx) LmdbStore {..} f a0 =
         foldGeneric tx db f a0 withCursor LMap.firstForward        
 
     putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 

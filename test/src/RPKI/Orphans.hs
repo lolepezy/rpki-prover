@@ -93,7 +93,7 @@ instance Arbitrary DecodedBase64 where
 instance Arbitrary EncodedBase64 where
     arbitrary = do 
         DecodedBase64 bs <- arbitrary
-        pure $ EncodedBase64 $ B64.encode bs
+        pure $ EncodedBase64 $ B64.encodeBase64' bs
     shrink = genericShrink   
 
 instance Arbitrary SnapshotInfo where

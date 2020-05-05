@@ -93,10 +93,10 @@ applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' =
                 MM.delete tx perTA taName' (uri', RRDP)        
 
 
-getRepositoriesForTA :: (MonadIO m, Storage s) => 
+getTaPublicationPoints :: (MonadIO m, Storage s) => 
                         Tx s mode -> RepositoryStore s -> TaName -> m PublicationPoints
-getRepositoriesForTA tx s taName' = liftIO $ do
-        (rrdpList, rsyncList) <- MM.fold tx (perTA s) taName' mergeRepos ([], [])
+getTaPublicationPoints tx s taName' = liftIO $ do
+        (rrdpList, rsyncList) <- MM.foldS tx (perTA s) taName' mergeRepos ([], [])
         pure $ PublicationPoints (Map.fromList rrdpList) (RsyncMap $ Map.fromList rsyncList)
     where
         mergeRepos result@(rrdps, rsyncs) _ index = 

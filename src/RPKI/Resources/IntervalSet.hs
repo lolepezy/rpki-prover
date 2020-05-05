@@ -32,7 +32,7 @@ findIntersections a as = concatMap fst $ findFullIntersections a as
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
 findFullIntersections a (IntervalSet v) = 
     case (V.unsafeIndex v 0) `intersection` a of
-        [] -> case (V.unsafeIndex v lastIndex) `intersection` a of
+        [] -> case V.unsafeIndex v lastIndex `intersection` a of
             [] -> goBinary 0 lastIndex
             _  -> goBackwards lastIndex
         _  -> goForward 0
@@ -98,11 +98,11 @@ intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =
         overclamingPart smallerInterval = 
             case findFullIntersections smallerInterval bigger of
                 []             -> [Left ([], [smallerInterval])]
-                intersections  -> (flip List.map) intersections $ 
-                    \(intersection, biggerInterval) ->        
+                intersections  -> flip List.map intersections $ 
+                    \(intersection', biggerInterval) ->        
                         if biggerInterval `contains` smallerInterval
                             then Right smallerInterval
-                            else Left (intersection, smallerInterval `subtract` biggerInterval)       
+                            else Left (intersection', smallerInterval `subtract` biggerInterval)       
 
 
 subsetCheck :: Interval a =>

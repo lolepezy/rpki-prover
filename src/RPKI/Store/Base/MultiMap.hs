@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 
 module RPKI.Store.Base.MultiMap where
 
@@ -30,9 +29,9 @@ deleteAll :: (Serialise k, Serialise v) =>
             Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
 deleteAll tx (SMultiMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
-fold :: (Serialise k, Serialise v) =>
+foldS :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> k -> (a -> k -> v -> IO a) -> a -> IO a
-fold tx (SMultiMap _ s) k f a = S.foldMuForKey tx s (storableKey k) f' a
+foldS tx (SMultiMap _ s) k f a = S.foldMuForKey tx s (storableKey k) f' a
     where
         f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
 

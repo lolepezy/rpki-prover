@@ -6,6 +6,7 @@ module RPKI.Errors where
 
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
+import           Data.Text            (Text)
 import qualified Data.Text            as Text
 
 import           Codec.Serialise
@@ -31,38 +32,38 @@ newtype ParseError s = ParseError s
     deriving anyclass Serialise
 
 data ValidationError = InvalidCert !Text.Text |
-            ParentDoesntHaveResources |
-            NoAKIinManifest |
-            ROACannotBeAParent |
-            NoAKI | 
-            SPKIMismatch !EncodedBase64 !EncodedBase64 |
-            UnknownObjectAsTACert |
-            ObjectIsTooSmall !Integer |
-            ObjectIsTooBig !Integer |
-            TACertificateLocalIsNewer !Serial !Serial |
-            InvalidSignature !Text.Text |                        
-            TACertAKIIsNotEmpty !URI |
-            CertNoPolicyExtension |
-            CertWrongPolicyExtension !BS.ByteString |
-            NoMFT !AKI !Locations |
-            NoMFTNoRepository !AKI !Locations |
-            NoCRLOnMFT !AKI !Locations |
-            MoreThanOneCRLOnMFT !AKI !Locations |
-            NoCRLExists !AKI !Locations |
-            CRLHashPointsToAnotherObject !Hash !Locations |
-            NextUpdateTimeNotSet |
-            NextUpdateTimeIsBeforeNow !DateTime |
-            RevokedEECertificate |
-            RevokedResourceCertificate |
-            CertificateIsInTheFuture |
-            CertificateIsExpired |
-            AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
-            ManifestEntryDontExist !Hash |
-            OverclaimedResources PrefixesAndAsns |
-            InheritWithoutParentResources |
-            UnknownUriType !URI | 
-            CertificateDoesn'tHaveSIA | 
-            PublicationPointIsNotAvailable URI
+                        ParentDoesntHaveResources |
+                        NoAKIinManifest |
+                        ROACannotBeAParent |
+                        NoAKI | 
+                        SPKIMismatch !EncodedBase64 !EncodedBase64 |
+                        UnknownObjectAsTACert |
+                        ObjectIsTooSmall !Integer |
+                        ObjectIsTooBig !Integer |
+                        TACertificateLocalIsNewer !Serial !Serial |
+                        InvalidSignature !Text.Text |                        
+                        TACertAKIIsNotEmpty !URI |
+                        CertNoPolicyExtension |
+                        CertWrongPolicyExtension !BS.ByteString |
+                        NoMFT !AKI !Locations |
+                        NoMFTNoRepository !AKI !Locations |
+                        NoCRLOnMFT !AKI !Locations |
+                        MoreThanOneCRLOnMFT !AKI !Locations |
+                        NoCRLExists !AKI !Locations |
+                        CRLHashPointsToAnotherObject !Hash !Locations |
+                        NextUpdateTimeNotSet |
+                        NextUpdateTimeIsBeforeNow !DateTime |
+                        RevokedEECertificate |
+                        RevokedResourceCertificate |
+                        CertificateIsInTheFuture |
+                        CertificateIsExpired |
+                        AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
+                        ManifestEntryDontExist !Hash |
+                        OverclaimedResources PrefixesAndAsns |
+                        InheritWithoutParentResources |
+                        UnknownUriType !URI | 
+                        CertificateDoesn'tHaveSIA | 
+                        PublicationPointIsNotAvailable URI
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
@@ -79,7 +80,7 @@ data RrdpError = BrokenXml !Text.Text |
                 NoVersion | 
                 BadVersion !BS.ByteString | 
                 NoPublishURI |
-                BadBase64 String !BS.ByteString |
+                BadBase64 Text !BS.ByteString |
                 BadPublish !BS.ByteString |
                 NoHashInWithdraw |
                 ContentInWithdraw !BS.ByteString |
@@ -117,12 +118,12 @@ newtype VContext = VContext (NonEmpty URI)
     deriving anyclass Serialise
 
 data AppError = ParseE (ParseError Text.Text) | 
-                    TAL_E TALError | 
-                    RrdpE RrdpError |
-                    RsyncE RsyncError |
-                    StorageE StorageError |                     
-                    ValidationE ValidationError |
-                    UnspecifiedE Text.Text
+                TAL_E TALError | 
+                RrdpE RrdpError |
+                RsyncE RsyncError |
+                StorageE StorageError |                     
+                ValidationE ValidationError |
+                UnspecifiedE Text.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

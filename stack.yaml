@@ -19,7 +19,7 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 resolver: lts-14.27
-# resolver: lts-15.8
+# resolver: lts-15.10
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -48,12 +48,15 @@ extra-deps:
     subdirs:
       - x509
       - x509-validation
+  - base64-0.4.1@sha256:aedc26f581f81a112af588eec8cf9c2e8db219a60fafc1cb77fd73672f1f7dcb,2832      
+  - bytestring-mmap-0.2.2@sha256:d04e6bc5a158dd292757d3b9b032beb8a2c43e768777d64a8289abf89f612f67,1282  
+  - hex-0.1.2@sha256:1ea06834d1b5616edda6601b2945c5242b44cff9be84ff3a27595a136dcb154e,616  
+  - json-stream-0.4.2.4       
   - primitive-extras-0.7.1
   - stm-containers-1.1.0.4
   - stm-hamt-1.2.0.2
   - streaming-utils-0.2.0.0
-  - json-stream-0.4.2.4 
-  - bytestring-mmap-0.2.2@sha256:d04e6bc5a158dd292757d3b9b032beb8a2c43e768777d64a8289abf89f612f67,1282
+  
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

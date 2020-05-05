@@ -33,10 +33,10 @@ import           RPKI.Parse.Internal.Common
 parseResourceCertificate :: BS.ByteString ->
                             ParseResult (URI -> CerObject)
 parseResourceCertificate bs = do
-  certificate <- mapParseErr $ decodeSignedObject bs  
-  let signedCertificate = unifyCert certificate
-  (rc, ski_, aki_) <- toResourceCert signedCertificate    
-  pure $ \location -> makeCert location aki_ ski_ (U.sha256s bs) rc
+    certificate <- mapParseErr $ decodeSignedObject bs  
+    let signedCertificate = unifyCert certificate
+    (rc, ski_, aki_) <- toResourceCert signedCertificate    
+    pure $ \location -> makeCert location aki_ ski_ (U.sha256s bs) rc
 
 
 toResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, SKI, Maybe AKI)
@@ -184,9 +184,9 @@ parseAsnExt :: [ASN1] -> ParseResult AsResources
 parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
     onNextContainer Sequence $
       -- we only want the first element of the sequence
-      AsResources <$> (onNextContainer (Container Context 0) $
-          getNull_ (pure Inherit) <|>
-          R.toRS <$> onNextContainer Sequence (getMany asOrRange))
+      AsResources <$> onNextContainer (Container Context 0)
+          (getNull_ (pure Inherit) <|>
+           R.toRS <$> onNextContainer Sequence (getMany asOrRange))
   where    
     asOrRange = getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
@@ -200,7 +200,7 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
 subjectPublicKeyInfo :: Certificate -> EncodedBase64
-subjectPublicKeyInfo cert = EncodedBase64 $ B64.encode $ 
+subjectPublicKeyInfo cert = EncodedBase64 $ B64.encodeBase64' $ 
   encodeASN1' DER $ (toASN1 $ certPubKey cert) []
 
 getX509Cert :: SignedExact c -> c

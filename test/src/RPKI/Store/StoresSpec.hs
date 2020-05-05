@@ -136,8 +136,8 @@ should_insert_and_get_all_back_from_object_store io = do
 --         forM_ withTas $ \(repository, ta) ->            
 --             putRepository tx repositoryStore repository ta
 
---     reposForTa1 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName1
---     reposForTa2 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName2
+--     reposForTa1 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName1
+--     reposForTa2 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName2
 
 --     let reposByTa ta = List.sort $ List.map fst $ List.filter ((== ta) . snd) withTas
 
@@ -167,8 +167,8 @@ should_insert_and_get_all_back_from_object_store io = do
 --         forM_ withTas $ \(repository, ta) ->            
 --             putRepository tx repositoryStore repository ta
 
---     reposForTa1 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName1
---     reposForTa2 <- roTx repositoryStore $ \tx -> getRepositoriesForTA tx repositoryStore taName2
+--     reposForTa1 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName1
+--     reposForTa2 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName2
 
 --     let reposByTa ta = List.sort $ List.map fst $ List.filter ((== ta) . snd) withTas
 

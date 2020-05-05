@@ -81,7 +81,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             pure (repoFromSnapshot snapshot, validations)            
 
         useDeltas sortedDeltas notification = do
-            rawContents <- lift3 $ parallel (parallelism config) downloadDelta sortedDeltas    
+            rawContents <- parallel (parallelism config) sortedDeltas downloadDelta    
             deltas      <- forM rawContents $ \case
                                 Left e                -> appError e
                                 Right (_, rawContent) -> hoistHere $ parseDelta rawContent
@@ -111,7 +111,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
 -- NOTE: The file will be deleted from the temporary directory by withSystemTempFile, 
 -- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
 -- safe to use them after returning from this function.
-downloadHashedContent :: (MonadIO m, MonadUnliftIO m) => 
+downloadHashedContent :: (MonadIO m) => 
                         URI -> 
                         Hash -> 
                         (SomeException -> e) ->
@@ -122,16 +122,16 @@ downloadHashedContent uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
-    withSystemTempFile tmpFileName $ \name fd -> do                    
+    withSystemTempFile tmpFileName $ \name fd -> 
         streamHttpToFileAndHash uri cantDownload fd >>= \case        
-            Left e -> pure $! Left e
+            Left e -> pure (Left e)
             Right actualHash 
                 | actualHash /= hash -> 
                     pure $! hashMishmatch actualHash
                 | otherwise -> do
                     hClose fd
                     content <- unsafeMMapFile name
-                    pure $! Right content
+                    pure (Right content)
 
 
 -- | Download HTTP stream into a file while calculating its hash at the same time
