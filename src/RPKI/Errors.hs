@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -31,44 +32,44 @@ newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data ValidationError = InvalidCert !Text.Text |
+data ValidationError = InvalidCert Text.Text |
                         ParentDoesntHaveResources |
                         NoAKIinManifest |
                         ROACannotBeAParent |
                         NoAKI | 
-                        SPKIMismatch !EncodedBase64 !EncodedBase64 |
+                        SPKIMismatch EncodedBase64 EncodedBase64 |
                         UnknownObjectAsTACert |
-                        ObjectIsTooSmall !Integer |
-                        ObjectIsTooBig !Integer |
-                        TACertificateLocalIsNewer !Serial !Serial |
-                        InvalidSignature !Text.Text |                        
-                        TACertAKIIsNotEmpty !URI |
+                        ObjectIsTooSmall Integer |
+                        ObjectIsTooBig Integer |
+                        TACertificateLocalIsNewer Serial Serial |
+                        InvalidSignature Text.Text |                        
+                        TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
-                        CertWrongPolicyExtension !BS.ByteString |
-                        NoMFT !AKI !Locations |
-                        NoMFTNoRepository !AKI !Locations |
-                        NoCRLOnMFT !AKI !Locations |
-                        MoreThanOneCRLOnMFT !AKI !Locations |
-                        NoCRLExists !AKI !Locations |
-                        CRLHashPointsToAnotherObject !Hash !Locations |
+                        CertWrongPolicyExtension BS.ByteString |
+                        NoMFT AKI Locations |
+                        NoMFTNoRepository AKI Locations |
+                        NoCRLOnMFT AKI Locations |
+                        MoreThanOneCRLOnMFT AKI Locations |
+                        NoCRLExists AKI Locations |
+                        CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |
-                        NextUpdateTimeIsBeforeNow !DateTime |
+                        NextUpdateTimeIsBeforeNow DateTime |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |
                         CertificateIsExpired |
-                        AKIIsNotEqualsToParentSKI !(Maybe AKI) !SKI|
-                        ManifestEntryDontExist !Hash |
+                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI|
+                        ManifestEntryDontExist Hash |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
-                        UnknownUriType !URI | 
+                        UnknownUriType URI | 
                         CertificateDoesn'tHaveSIA | 
                         PublicationPointIsNotAvailable URI
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
-data RrdpError = BrokenXml !Text.Text | 
-                BrokenSerial !BS.ByteString |
+data RrdpError = BrokenXml Text.Text | 
+                BrokenSerial BS.ByteString |
                 NoSessionId |
                 NoSerial | 
                 NoSnapshotHash | 
@@ -76,35 +77,35 @@ data RrdpError = BrokenXml !Text.Text |
                 NoDeltaSerial | 
                 NoDeltaURI | 
                 NoDeltaHash |
-                BadHash !BS.ByteString |
+                BadHash BS.ByteString |
                 NoVersion | 
-                BadVersion !BS.ByteString | 
+                BadVersion BS.ByteString | 
                 NoPublishURI |
-                BadBase64 Text !BS.ByteString |
-                BadPublish !BS.ByteString |
+                BadBase64 Text BS.ByteString |
+                BadPublish BS.ByteString |
                 NoHashInWithdraw |
-                ContentInWithdraw !BS.ByteString |
-                LocalSerialBiggerThanRemote !Serial !Serial |
-                NonConsecutiveDeltaSerials ![(Serial, Serial)] |
-                CantDownloadNotification !String |
-                CantDownloadSnapshot !String |
-                CantDownloadDelta !String |
-                SnapshotHashMismatch !Hash !Hash |
-                DeltaHashMismatch !Hash !Hash !Serial |
-                NoObjectToReplace !URI !Hash |
-                ObjectExistsWhenReplacing !URI !Hash
+                ContentInWithdraw BS.ByteString |
+                LocalSerialBiggerThanRemote Serial Serial |
+                NonConsecutiveDeltaSerials [(Serial, Serial)] |
+                CantDownloadNotification String |
+                CantDownloadSnapshot String |
+                CantDownloadDelta String |
+                SnapshotHashMismatch Hash Hash |
+                DeltaHashMismatch Hash Hash Serial |
+                NoObjectToReplace URI Hash |
+                ObjectExistsWhenReplacing URI Hash
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data RsyncError = RsyncProcessError !Int !LBS.ByteString |
-                    FileReadError !Text.Text |
-                    RsyncRunningError !Text.Text |
-                    RsyncDirError !Text.Text
+data RsyncError = RsyncProcessError Int LBS.ByteString |
+                    FileReadError Text.Text |
+                    RsyncRunningError Text.Text |
+                    RsyncDirError Text.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data StorageError = StorageError !Text.Text |
-                    DeserialisationError !Text.Text
+data StorageError = StorageError Text.Text |
+                    DeserialisationError Text.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -127,8 +128,6 @@ data AppError = ParseE (ParseError Text.Text) |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-instance Exception AppError
-
 newtype VWarning = VWarning AppError
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -139,7 +138,7 @@ vContext u = VContext $ u :| []
 childVContext :: VContext -> URI -> VContext
 childVContext (VContext us) u = VContext $ u `NonEmpty.cons` us
 
-data VProblem = VErr !AppError | VWarn !VWarning
+data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

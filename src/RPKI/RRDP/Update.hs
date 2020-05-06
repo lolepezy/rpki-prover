@@ -21,30 +21,30 @@ import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Repository
 import           RPKI.Errors
 import           RPKI.Logging
+import           RPKI.Parallel
 import           RPKI.Parse.Parse
+import           RPKI.Repository
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
-import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
-import qualified RPKI.Store.Stores              as Stores
-import qualified RPKI.Util                      as U
-import           RPKI.Parallel
+import           RPKI.Store.Base.Storage
+import qualified RPKI.Store.Stores               as Stores
+import qualified RPKI.Util                       as U
 
-import qualified Data.ByteString.Streaming      as Q
+import qualified Data.ByteString.Streaming       as Q
 import           Data.ByteString.Streaming.HTTP
 
+import qualified Crypto.Hash.SHA256              as S256
 
-import qualified Crypto.Hash.SHA256             as S256
+import           System.IO                       (Handle, hClose)
+import           System.IO.Posix.MMap.Lazy       (unsafeMMapFile)
+import           System.IO.Temp                  (withSystemTempFile)
 
-import           System.IO                      (Handle)
-import           System.IO.Posix.MMap.Lazy      (unsafeMMapFile)
-
-import UnliftIO hiding (fromEither, fromEitherM)
-import qualified UnliftIO.Async                 as Unlift
-
+import           Control.Concurrent.Async.Lifted as AsyncL
+import           Control.Exception.Lifted
+import           Data.IORef.Lifted
 
 {- 
     TODO 
@@ -81,7 +81,8 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             pure (repoFromSnapshot snapshot, validations)            
 
         useDeltas sortedDeltas notification = do
-            rawContents <- parallel (parallelism config) sortedDeltas downloadDelta    
+            parallelism' <- liftIO $ dynamicPara $ parallelism config
+            rawContents <- parallel parallelism' sortedDeltas downloadDelta    
             deltas      <- forM rawContents $ \case
                                 Left e                -> appError e
                                 Right (_, rawContent) -> hoistHere $ parseDelta rawContent
@@ -226,11 +227,11 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
                     (mempty :: Validations))                        
             where
                 storableToChan (SnapshotPublish uri encodedb64) = do
-                    a <- Unlift.async $ pure $! parseAndProcess uri encodedb64
+                    a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
                     pure (uri, a)
                 
                 chanToStorage tx (uri, a) validations = 
-                    Unlift.wait a >>= \case                        
+                    AsyncL.wait a >>= \case                        
                         SError e   -> do
                             logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                             pure $ validations <> mError (vContext uri) e
@@ -253,13 +254,13 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
 
                 storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
                 storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
-                    a <- Unlift.async $ pure $! parseAndProcess uri encodedb64
+                    a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
                     pure $ maybe (Add uri a) (Replace uri a) hash
 
                 storableToChan (DW (DeltaWithdraw _ hash)) = 
                     pure $ Delete hash
 
-                chanToStorage tx op validations = do
+                chanToStorage tx op validations =
                     case op of
                         Delete hash                -> do
                             Stores.deleteObject tx objectStore hash
@@ -268,7 +269,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
                         Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
                 
                 addObject tx uri a validations =
-                    Unlift.wait a >>= \case              
+                    AsyncL.wait a >>= \case              
                         SError e -> do
                             logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                             pure $ validations <> mError (vContext uri) e
@@ -280,11 +281,11 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
                             pure validations
 
                 replaceObject tx uri a oldHash validations = 
-                    Unlift.wait a >>= \case
+                    AsyncL.wait a >>= \case
                         SError e -> do
                             logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                             pure $ validations <> mError (vContext uri) e
-                        SObject so@(StorableObject ro _) -> do                                    
+                        SObject so@(StorableObject ro _) ->                                    
                             Stores.getByHash tx objectStore oldHash >>= \case 
                                 Nothing -> do
                                     logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]

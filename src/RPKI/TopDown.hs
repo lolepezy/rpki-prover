@@ -11,6 +11,8 @@ import           Control.Exception
 import           Control.Monad.Except
 import           Control.Monad.Reader
 
+import Control.Lens
+
 import Data.Bifunctor
 
 import           GHC.Generics
@@ -35,7 +37,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
-import           RPKI.Parallel                    (parallel)
+import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Resources.Types
@@ -94,38 +96,36 @@ bootstrapTA env tal database = do
     
     pure ()
     where
-        fetchAndValidate taCert repos = do
-            -- TODO do it in parallel of course            
-            statuses <- parallel (parallelism config) repos $ \repo -> do 
+        fetchAndValidate taCert repos = do            
+            statuses <- parallel (fixedPara $ parallelism config) repos $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
                 fetchRepository appContext database repo                
-            
-            -- update repositiory statuses and save them            
-            let flatStatuses = flip NonEmpty.map statuses $ \case 
-                    FetchFailure r s _ -> (r, s)
-                    FetchSuccess r s _ -> (r, s)            
-
+                    
             case partitionFailedSuccess (NonEmpty.toList statuses) of 
                 ([], _) -> do
-                    pubPoints <- roAppTxEx database storageError $ \tx -> 
+                    storedPubPoints <- roAppTxEx database storageError $ \tx -> 
                             getTaPublicationPoints tx (repositoryStore database) taName'                    
 
-                    topDownContext <- emptyTopDownContext taName' pubPoints
+                    let flattenedStatuses = flip NonEmpty.map statuses $ \case 
+                            FetchFailure r s _ -> (r, s)
+                            FetchSuccess r s _ -> (r, s)            
+
+                    -- use publication points taken from the DB and updated with the 
+                    -- the statuses of the fetch that we just performed
+                    let fetchUpdatedPPs = updateStatuses storedPubPoints flattenedStatuses
+                    topDownContext <- emptyTopDownContext taName' fetchUpdatedPPs
 
                     fromTry (UnspecifiedE . fmtEx) $             
                         validateCA env taCertURI database topDownContext taCert                    
 
-                    -- after all is done, save publiocation points to the database                                        
-                    let updatedPPs = updateStatuses pubPoints flatStatuses
-                    liftIO $ atomically $ writeTVar (publicationPoints topDownContext) updatedPPs                
-
-                    -- save it to the database
-                    let changeSet' = changeSet pubPoints updatedPPs
+                    -- get publication points from the topDownContext and save it to the database
+                    pubPointAfterTopDown <- liftIO $ readTVarIO (publicationPoints topDownContext)
+                    let changeSet' = changeSet fetchUpdatedPPs pubPointAfterTopDown
                     rwAppTxEx database storageError $ \tx -> 
-                        applyChangeSet tx (repositoryStore database) changeSet' taName'
+                        applyChangeSet tx (repositoryStore database) changeSet' taName'                    
 
                 (broken, _) -> do
-                    let brokenUrls = map (\(r, _, _) -> repositoryURI r) broken
+                    let brokenUrls = map (repositoryURI . (^. _1)) broken
                     logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download|]
             
         taCertURI = vContext $ NonEmpty.head $ certLocations tal
@@ -215,7 +215,7 @@ validateCA :: (Has AppContext env, Storage s) =>
 validateCA env vContext' database@DB {..} topDownContext@TopDownContext{..} certificate = do    
     let appContext@AppContext {..} = getter env        
 
-    pubPoints <- readTVarIO publicationPoints
+    pubPointsBefore <- readTVarIO publicationPoints
 
     let validateAll = do
             treeValidations <- runValidatorT vContext' $ 
@@ -232,42 +232,49 @@ validateCA env vContext' database@DB {..} topDownContext@TopDownContext{..} cert
 
     -- top-down validation should have updates the set of publication points,
     -- get the updated set
-    pubPoints' <- readTVarIO publicationPoints
+    pubPointsAfter <- readTVarIO publicationPoints
     
-    let pubDiff = changeSet pubPoints' pubPoints
-    rwTx database $ \tx -> applyChangeSet tx repositoryStore pubDiff taName
-
-    let (_, rootToPps) = repositoryHierarchy pubPoints'
+    let (_, rootToPps) = repositoryHierarchy pubPointsAfter
         
-    let newRepositories = (filter ((New ==) . repositoryStatus) $ Map.elems $ repositories pubPoints')    
+    let newRepositories = (filter ((New ==) . repositoryStatus) $ Map.elems $ repositories pubPointsAfter)    
     logDebugM logger [i|newRepositories = #{newRepositories}|]
 
     -- for all new repositories
-    -- parallel (parallelism config) 
-    -- mapM
-    --     (fetchAndValidateWaitingList appContext rootToPps) 
-    --     newRepositories
+    parallel (fixedPara $ parallelism config) 
+        newRepositories    
+        (fetchAndValidateWaitingList1 appContext rootToPps) 
         
     pure ()
     where         
 
-        -- fetchAndValidateWaitingList1 appContext rootToPps newRepositories = do
-        --     statuses <- forM newRepositories $ \repo -> do 
-        --         logDebugM logger [i|Fetching #{repo} |]
-        --         fetchRepository appContext database repo
-            
-        --     -- update repositiory statuses and save them            
-        --     let flatStatuses = flip NonEmpty.map statuses $ \case 
-        --             FetchFailure r s _ -> (r, s)
-        --             FetchSuccess r s _ -> (r, s)                
+        fetchAndValidateWaitingList1 appContext rootToPps repo = do
+            -- logDebugM logger [i|Fetching #{repo} |]
+            result <- fetchRepository appContext database repo                                
+            let statusUpdate = case result of
+                    FetchFailure r s _ -> (r, s)
+                    FetchSuccess r s _ -> (r, s)                
 
-        --     -- TODO create change set directly from the 'flatStatuses'
-        --     -- let updatedRepositories = updateStatuses existingRepositories flatStatuses
-        --     -- let changeSet' = changeSetFromMap existingRepositories updatedRepositories
-        --     -- rwAppTxEx database storageError $ \tx -> 
-        --     --     applyChangeSet tx repositoryStore changeSet' taName
+            atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
+                updateStatuses pubPoints [statusUpdate]
 
-        --     pure ()    
+            case result of
+                FetchFailure r s v -> 
+                    -- TODO Do something with the returned validations
+                    pure ()  
+                FetchSuccess r s _ -> do
+                    let fetchedPPs = fromMaybe Set.empty $ Map.lookup repo rootToPps
+                    waitingListPerPP <- readTVarIO ppWaitingList
+
+                    let waitingHashesForThesePPs  = fromMaybe Set.empty $ fold $ 
+                            Set.map (`Map.lookup` waitingListPerPP) fetchedPPs
+
+                    -- TODO Add "parallelism config"
+                    -- parallel 10 waitingHashesForThesePPs $ \pp -> do
+
+                    --     pure ()
+
+                    pure ()
+
 
 
         -- fetchAndValidateWaitingList appContext rootToPps repo = do 
@@ -381,7 +388,7 @@ validateTree env database certificate topDownContext = do
                         pure crl'
                         
                     let childrenHashes = map snd $ mftEntries $ getCMSContent $ extract mft                       
-                    mftProblems <- parallel (parallelism config) childrenHashes $ \h -> do            
+                    mftProblems <- parallel (fixedPara $ parallelism config) childrenHashes $ \h -> do            
                         ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
                         case ro of 
                             Nothing  -> pure $ Just $ ManifestEntryDontExist h

@@ -41,7 +41,7 @@ newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
 data WithRFC_ s r = WithStrict_       !s 
-                | WithReconsidered_ !r
+                  | WithReconsidered_ !r
     deriving stock (Show, Eq, Ord, Generic)
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a

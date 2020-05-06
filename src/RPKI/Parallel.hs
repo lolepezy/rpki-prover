@@ -4,6 +4,8 @@ import Numeric.Natural
 import Control.Monad
 import Control.Concurrent.STM
 
+import Data.Maybe
+
 import qualified Control.Concurrent.STM.TBQueue as Q
 
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -13,41 +15,66 @@ import Control.Monad.Trans.Control
 import Control.Concurrent.Async.Lifted as AsyncL
 
 
--- FIXME Do something about 'wait' throwing an exception
+data Parallelism = Dynamic !(TVar Natural) Natural | Fixed Natural
+
+dynamicPara :: Natural -> IO Parallelism
+dynamicPara n = atomically $ do 
+    c <- newTVar 0
+    pure $ Dynamic c n
+
+fixedPara :: Natural -> Parallelism
+fixedPara = Fixed
+
 parallel :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
-            Natural -> t a -> (a -> m b) -> m (t b)
-parallel poolSize as f =
-    snd <$> bracketChan (max 1 (poolSize - 1)) writeAll readAll AsyncL.cancel
-    where
-        writeAll queue = forM_ as $ \a -> do
-            aa <- AsyncL.async $ f a
-            liftIO $ atomically $ Q.writeTBQueue queue aa
-        readAll queue = forM as $ \_ ->         
-            AsyncL.wait =<< (liftIO . atomically $ Q.readTBQueue queue)    
+            Parallelism -> t a -> (a -> m b) -> m (t b)
+parallel parallelism as f =
+    case parallelism of 
+        Fixed n                     -> doFixed n
+        Dynamic currentPara maxPara -> doDynamic currentPara maxPara
+    where 
+        doFixed para =
+            snd <$> bracketChan (max 1 (para - 1)) writeAll readAll AsyncL.cancel
+            where
+                writeAll queue = forM_ as $ \a -> do
+                    aa <- AsyncL.async $ f a
+                    liftIO $ atomically $ Q.writeTBQueue queue aa
+                readAll queue = forM as $ \_ ->         
+                    AsyncL.wait =<< (liftIO . atomically $ Q.readTBQueue queue)    
 
-txFunnel :: (Traversable t, Monad m, MonadBaseControl IO m, MonadIO m) =>
+        doDynamic currentPara maxPara =
+            snd <$> bracketChan (max 1 (maxPara - 1)) writeAll readAll cancelIt
+            where
+                cancelIt aa = do 
+                    liftIO $ atomically $ modifyTVar' currentPara $ \c -> c - 1
+                    AsyncL.cancel aa
+
+                writeAll queue = forM_ as $ \a -> 
+                    join $ liftIO $ atomically $ do 
+                        c <- readTVar currentPara
+                        if c >= maxPara
+                            then retry
+                            else pure $ do 
+                                aa <- AsyncL.async $ f a
+                                liftIO $ atomically $ do 
+                                    Q.writeTBQueue queue aa
+                                    writeTVar currentPara (c + 1)
+
+                readAll queue = forM as $ \_ -> do
+                    aa <- liftIO $ atomically $ do 
+                        modifyTVar' currentPara $ \c -> c - 1
+                        Q.readTBQueue queue
+                    AsyncL.wait aa
+
+-- | Utility function for a specific case of producer-consumer pair 
+-- where consumer works within a transaction (represented as withTx function)
+--  
+txConsumeFold :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
             Natural ->
-            t a ->
-            (a -> m b) -> 
-            ((tx -> m (t c)) -> m (t c)) ->
-            (tx -> b -> m c) -> m (t c)
-txFunnel poolSize as produce withTx consume =
-    snd <$> bracketChan (max 1 (poolSize - 1)) writeAll readAll (const $ pure ())
-    where
-        writeAll queue = forM_ as $
-            liftIO . atomically . Q.writeTBQueue queue <=< produce
-        readAll queue = withTx $ \tx ->
-            forM as $ \_ -> 
-                consume tx =<< (liftIO . atomically $ Q.readTBQueue queue)
-
-
-txConsumeFold :: (Traversable t, Monad m, MonadBaseControl IO m, MonadIO m) =>
-            Natural ->
-            t a ->
-            (a -> m q) -> 
-            ((tx -> m r) -> m r) ->
-            (tx -> q -> r -> m r) -> 
-            r -> 
+            t a ->                      -- ^ traversed collection
+            (a -> m q) ->               -- ^ producer, called for every item of the traversed argument
+            ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
+            (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
+            r ->                        -- ^ fold initial value
             m r
 txConsumeFold poolSize as produce withTx consume accum0 =
     snd <$> bracketChan 
@@ -82,59 +109,3 @@ bracketChan size produce consume kill = do
             case a of   
                 Nothing -> pure ()
                 Just as -> kill as >> killAll queue
-
-
-
-{- It's really bad
-
-parallelPooled :: (Traversable t, MonadUnliftIO m) =>
-            Natural ->
-            (a -> m b) -> t a -> m (t (Either SomeException b))
-parallelPooled poolSize f as = do
-    pool <- liftIO $ newPool poolSize
-    tasks <- forM as (\a -> asyncOrNow pool (f a))
-    mapM (waitTask pool) tasks    
-
-
--- Simple pool of asyncs
-data Task m a = AsyncTask !(Unlift.Async a) | Immediate !(m (Either SomeException a))
-
-data AsyncPool = AsyncPool {
-    maxSize     :: !Natural,
-    currentSize :: !(TVar Natural)
-}
-
-newPool :: Natural -> IO AsyncPool
-newPool n = atomically $ AsyncPool n <$> newTVar 0
-
-asyncOrNow :: MonadUnliftIO m => AsyncPool -> m a -> m (Task m a)
-asyncOrNow (AsyncPool {..}) f = 
-    join $ atomically $ do 
-        cs <- readTVar currentSize
-        if cs <= maxSize
-            then do 
-                writeTVar currentSize (cs + 1)
-                pure $! AsyncTask <$> Unlift.async f
-            else pure $! pure $! 
-                -- This one forces actual execution strictly
-                -- TODO Handle exceptions
-                Immediate $! try f
-
-waitTask :: MonadUnliftIO m => AsyncPool -> Task m a -> m (Either SomeException a)
-waitTask pool task = 
-    case task of
-        Immediate io -> io
-        AsyncTask a -> try (Unlift.wait a) `finally` decrement pool 
-         
-
-cancelTask :: MonadUnliftIO m => AsyncPool -> Task m a -> m ()
-cancelTask pool task =
-    case task of
-        Immediate _ -> pure ()
-        AsyncTask a -> Unlift.cancel a `finally` decrement pool 
-
-decrement :: MonadUnliftIO m => AsyncPool -> m ()
-decrement (AsyncPool {..}) = 
-    liftIO $ atomically $ modifyTVar' currentSize $ \n -> n - 1
-
--}

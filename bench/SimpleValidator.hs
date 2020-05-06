@@ -351,11 +351,11 @@ processRRDP :: LmdbEnv -> IO ()
 processRRDP env = do
     say "begin"      
     let repos = [
-                rrdpR (URI "https://rrdp.ripe.net/notification.xml")
-                -- rrdpR (URI "https://rrdp.arin.net/notification.xml"),
-                -- rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
-                -- rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
-                -- rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
+                rrdpR (URI "https://rrdp.ripe.net/notification.xml"),
+                rrdpR (URI "https://rrdp.arin.net/notification.xml"),
+                rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
+                rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
+                rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
             ]
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     database <- createDatabase env    
@@ -364,7 +364,7 @@ processRRDP env = do
 
     e <- forM as wait
 
-    say $ "result " 
+    say $ "result " <> show e
     -- <> show e
 
 saveRsyncRepo env = do  
@@ -451,18 +451,17 @@ validateTreeFromStore env = do
     pure ()  
 
 
--- validateFully :: LmdbEnv -> IO ()
--- validateFully env = do
---     say "begin"      
---     database <- createDatabase env    
---     let appContext = createAppContext
---     result <- runValidatorT (vContext $ URI "something.cer") $ do
---         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $             
---             BS.readFile "/Users/mpuzanov/.rpki-cache/tals/.tal"
---         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
---         x <- bootstrapTA appContext tal database
---         pure x
---     say $ "done " <> show result
+validateFully :: LmdbEnv -> IO ()
+validateFully env = do
+    say "begin"      
+    database <- createDatabase env    
+    let appContext = createAppContext
+    result <- runValidatorT (vContext $ URI "something.cer") $ do
+        t <- fromTry (RsyncE . FileReadError . U.fmtEx) $             
+            BS.readFile "/Users/mpuzanov/.rpki-cache/tals/apnic.tal"
+        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
+        liftIO $ bootstrapTA appContext tal database
+    say $ "done " <> show result
 
 
 
