@@ -2,17 +2,18 @@
 + extract SIA from certificates
 + do validation concurrently 
 
-- register new publication points while validating
-- save validation errors/warnings while traversing the tree
-- refactor roTx/rwTx machinery so that rwTx accept both RO/RW handlers
++ register new publication points while validating
 
+---------------------------------------------------------------------------
 
+- fix flaky behavior of the top-down
 - implement all the validations according to the RFCs (time, digests, etc.)
 
-Things to think about:
+- save validation errors/warnings while traversing the tree
 
-- https://github.com/robrix/fused-effects
-- http://hackage.haskell.org/package/capability
+- use co-log-concurrent
+- refactor roTx/rwTx machinery so that rwTx accept both RO/RW handlers
+
 
 
 Features to implement:

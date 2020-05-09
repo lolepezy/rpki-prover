@@ -339,13 +339,15 @@ parseWithTmp filename f = --LBS.readFile filename >>= f
   --   -- f =<< LBS.hGetContents h   
 
 
-createAppContext :: AppContext
-createAppContext = AppContext {
-    logger = createLogger,
-    config = Config getParallelism,
-    rsyncConf = RsyncConf "/tmp/rsync",
-    validationConfig = ValidationConfig $ 24 * 3600 
-}
+createAppContext :: IO AppContext
+createAppContext = do 
+    log' <- createLogger
+    pure $ AppContext {        
+        logger = log',
+        config = Config getParallelism,
+        rsyncConf = RsyncConf "/tmp/rsync",
+        validationConfig = ValidationConfig $ 24 * 3600 
+    }
 
 processRRDP :: LmdbEnv -> IO ()
 processRRDP env = do
@@ -359,8 +361,9 @@ processRRDP env = do
             ]
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     database <- createDatabase env    
-    as <- forM repos $ \repo ->
-        async $ runValidatorT conf $ fetchRepository createAppContext database repo
+    as <- forM repos $ \repo -> do
+        appContext <- createAppContext
+        async $ runValidatorT conf $ fetchRepository appContext database repo
 
     e <- forM as wait
 
@@ -371,19 +374,22 @@ saveRsyncRepo env = do
     database <- createDatabase env
     let repo = rsyncR (URI "rsync://rpki.ripe.net/repository")    
     let vc = vContext $ URI "something.cer"    
-    runValidatorT vc $ fetchRepository createAppContext database repo
+    appContext <- createAppContext
+    runValidatorT vc $ fetchRepository appContext database repo
 
 saveRsync :: p -> IO ()
 saveRsync env = do
     say "begin"  
-    e <- runValidatorT (vContext $ URI "something.cer") $ rsyncFile createAppContext 
+    appContext <- createAppContext
+    e <- runValidatorT (vContext $ URI "something.cer") $ rsyncFile appContext 
         (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
     say $ "done " <> show e
 
 loadRsync env = do
     say "begin"      
     store <- createObjectStore env        
-    void $ loadRsyncRepository createAppContext (URI "rsync://rpki.ripe.net/repository") 
+    appContext <- createAppContext
+    void $ loadRsyncRepository appContext (URI "rsync://rpki.ripe.net/repository") 
                 "/tmp/rsync/rsync___rpki.ripe.net_repository" store
     say $ "done "
 
@@ -405,7 +411,8 @@ getTACert =
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/apinic.tal"
         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
-        (u, ro) <- fetchTACertificate createAppContext tal
+        appContext <- liftIO createAppContext
+        (u, ro) <- fetchTACertificate appContext tal
         x <- vHoist $ validateTACert tal u ro
         pure (ro, x)
 
@@ -416,7 +423,7 @@ validateTreeFromTA env = do
     let repo = rsyncR (URI "rsync://rpki.apnic.net/member_repository/")        
     -- let repo = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing        
     database <- createDatabase env    
-    let appContext = createAppContext
+    appContext <- createAppContext
     let taName = TaName "Test TA"
     let vContext' = vContext $ URI "something.cer"
     x <- runValidatorT vContext' $ do
@@ -424,10 +431,10 @@ validateTreeFromTA env = do
         CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")        
         let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
         let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
-        lift3 $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
+        liftIO $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
         fetchRepository appContext database repo
         -- emptyTopDownContext taName
-        -- lift3 $ validateCA appContext vContext' database taName taCert
+        -- liftIO $ validateCA appContext vContext' database taName taCert
 
     say $ "x = " <> show x
 
@@ -435,18 +442,18 @@ validateTreeFromTA env = do
 
 validateTreeFromStore :: LmdbEnv -> IO ()
 validateTreeFromStore env = do       
-    let appContext = createAppContext
+    appContext <- createAppContext
     let taCertURI = URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer"
     database <- createDatabase env
     x <- runValidatorT (vContext taCertURI) $ do
         -- CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
         -- CerRO taCert <- rsyncFile (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")
         CerRO taCert <- rsyncFile appContext taCertURI
-        lift3 $ say $ "taCert = " <> show taCert
+        liftIO $ say $ "taCert = " <> show taCert
         let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
         let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
-        lift3 $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
-        -- lift3 $ validateCA conf (objectStore, resultStore, repositoryStore) taCert
+        liftIO $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
+        -- liftIO $ validateCA conf (objectStore, resultStore, repositoryStore) taCert
     say $ "x = " <> show x  
     pure ()  
 
@@ -455,10 +462,10 @@ validateFully :: LmdbEnv -> IO ()
 validateFully env = do
     say "begin"      
     database <- createDatabase env    
-    let appContext = createAppContext
+    appContext <- createAppContext
     result <- runValidatorT (vContext $ URI "something.cer") $ do
         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $             
-            BS.readFile "/Users/mpuzanov/.rpki-cache/tals/apnic.tal"
+            BS.readFile "/Users/mpuzanov/.rpki-cache/tals/ripe.tal"
         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
         liftIO $ bootstrapTA appContext tal database
     say $ "done " <> show result
@@ -482,8 +489,10 @@ say s = do
     t <- getCurrentTime
     putStrLn $ show t <> ": " <> ss
 
-createLogger :: AppLogger
-createLogger = AppLogger fullMessageAction
+createLogger :: IO AppLogger
+createLogger = do 
+    lock <- newMVar True
+    pure $ AppLogger fullMessageAction lock
     where
         fullMessageAction = upgradeMessageAction defaultFieldMap $ 
             cmapM fmtRichMessageDefault logTextStdout  

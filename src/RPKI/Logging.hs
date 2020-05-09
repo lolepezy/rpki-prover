@@ -6,6 +6,8 @@ module RPKI.Logging where
 import Colog
 
 import Control.Monad.IO.Class
+import Control.Concurrent.Lifted
+import Control.Concurrent.Async.Lifted
 
 import GHC.Stack (callStack, withFrozenCallStack)
 
@@ -18,17 +20,17 @@ class Logger logger where
     logDebug_ :: logger -> Text -> IO ()
 
 
-newtype AppLogger = AppLogger (LogAction IO Message)
+data AppLogger = AppLogger !(LogAction IO Message) !(MVar Bool)
 
 instance Logger AppLogger where
-    logError_ (AppLogger la) = logWhat E la 
-    logWarn_  (AppLogger la) = logWhat W la 
-    logInfo_  (AppLogger la) = logWhat I la 
-    logDebug_ (AppLogger la) = logWhat D la 
+    logError_ (AppLogger la lock) = logWhat E la lock
+    logWarn_  (AppLogger la lock) = logWhat W la lock
+    logInfo_  (AppLogger la lock) = logWhat I la lock
+    logDebug_ (AppLogger la lock) = logWhat D la lock
 
-logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
-logWhat sev la textMessage = do
-    withFrozenCallStack $ la <& Msg sev callStack textMessage
+logWhat :: Severity -> LogAction IO Message -> MVar Bool -> Text -> IO ()
+logWhat sev la lock textMessage = 
+    withMVar lock $ \_ -> withFrozenCallStack $ la <& Msg sev callStack textMessage
 
 
 logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => 
