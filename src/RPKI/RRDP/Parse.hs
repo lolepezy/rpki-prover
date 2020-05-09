@@ -68,8 +68,10 @@ parseSnapshot xml = makeSnapshot =<< folded
             Left $ BrokenXml "'publish' before 'snapshot'"
         foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri')]) = 
             Right (Just sn, SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps)
-        foldPubs (Just _, []) (X.StartElement "publish" as) = 
-            Left $ BrokenXml $ Text.pack $ "Wrong atrribute set " <> show as
+        foldPubs (Just sn, ps) (X.StartElement "publish" attributes) = 
+            case List.lookup "uri" attributes of
+                Nothing   -> Left $ BrokenXml $ Text.pack $ "Attribute list doesn't contain 'uri': " <> show attributes
+                Just uri' -> Right (Just sn, SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps)
 
         foldPubs (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
         foldPubs (Just sn, SnapshotPublish uri' (EncodedBase64 c) : ps) (X.CharacterData cd) = 
