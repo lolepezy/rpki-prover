@@ -18,10 +18,10 @@ repositoryGroup :: TestTree
 repositoryGroup = testGroup "PublicationPoints" [
         QC.testProperty
             "Generates the same hierarchy regardless of the order"
-            prop_creates_thesame_hierarchy_regardless_of_shuffle_map,
+            prop_creates_same_hierarchy_regardless_of_shuffle_map,
         QC.testProperty
-            "Updating repository tree gives back correct update status"
-            prop_updates_repository_tree_returns_correct_status
+            "Make sure RsyncMap is a semigroup"
+            prop_rsync_map_is_a_semigroup
     ]
 
 repositoriesURIs :: [RsyncPublicationPoint]
@@ -44,30 +44,41 @@ repositoriesURIs = map (\s -> RsyncPublicationPoint (URI $ "rsync://host1.com/" 
     ]
 
 
-prop_creates_thesame_hierarchy_regardless_of_shuffle_map :: QC.Property
-prop_creates_thesame_hierarchy_regardless_of_shuffle_map = 
-    QC.forAll (QC.shuffle repositoriesURIs) $ \repositories ->         
-        createRsyncMap repositories == initialMap
+prop_creates_same_hierarchy_regardless_of_shuffle_map :: QC.Property
+prop_creates_same_hierarchy_regardless_of_shuffle_map = 
+    QC.forAll (QC.shuffle repositoriesURIs) $ \rs ->         
+        createRsyncMap rs == initialMap
     where
         initialMap = createRsyncMap repositoriesURIs 
 
+prop_rsync_map_is_a_semigroup :: QC.Property
+prop_rsync_map_is_a_semigroup = 
+    QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->         
+        QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->         
+            QC.forAll (QC.sublistOf repositoriesURIs) $ \rs3 ->         
+                let 
+                    rm1 = createRsyncMap rs1
+                    rm2 = createRsyncMap rs2
+                    rm3 = createRsyncMap rs3
+                    in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3    
 
-prop_updates_repository_tree_returns_correct_status :: QC.Property
-prop_updates_repository_tree_returns_correct_status = monadicIO $ do
-    Now now <- run thisMoment
-    pickedUpUris <- pick $ QC.sublistOf repositoriesURIs
 
-    let leftOutURIs = Set.toList $ (Set.fromList repositoriesURIs) `Set.difference` (Set.fromList pickedUpUris)
-    let rsyncMap = foldr 
-            (\(RsyncPublicationPoint u) rm -> 
-                fst $ updateRepositoryStatus u rm (FailedAt now)) 
-            (createRsyncMap pickedUpUris)
-            pickedUpUris
+-- prop_updates_repository_tree_returns_correct_status :: QC.Property
+-- prop_updates_repository_tree_returns_correct_status = monadicIO $ do
+--     Now now <- run thisMoment
+--     pickedUpUris <- pick $ QC.sublistOf repositoriesURIs
 
-    let allPickedAreMergedAsAlreadtyExisting = all ( == FailedAt now) $ 
-            map (\(RsyncPublicationPoint u) -> snd $ u `merge` rsyncMap) pickedUpUris
+--     let leftOutURIs = Set.toList $ (Set.fromList repositoriesURIs) `Set.difference` (Set.fromList pickedUpUris)
+--     let rsyncMap = foldr 
+--             (\(RsyncPublicationPoint u) rm -> 
+--                 fst $ updateRepositoryStatus u rm (FailedAt now)) 
+--             (createRsyncMap pickedUpUris)
+--             pickedUpUris
 
-    let allLeftOutAreMergedAsNew = all ( == New) $ 
-            map (\(RsyncPublicationPoint u) -> snd $ u `merge` rsyncMap) leftOutURIs
+--     let allPickedAreMergedAsAlreadtyExisting = all ( == FailedAt now) $ 
+--             map (\(RsyncPublicationPoint u) -> u `merge` rsyncMap) pickedUpUris
+
+--     let allLeftOutAreMergedAsNew = all ( == New) $ 
+--             map (\(RsyncPublicationPoint u) -> snd $ u `merge` rsyncMap) leftOutURIs
     
-    assert $ allLeftOutAreMergedAsNew && allPickedAreMergedAsAlreadtyExisting
+--     assert $ allLeftOutAreMergedAsNew && allPickedAreMergedAsAlreadtyExisting
