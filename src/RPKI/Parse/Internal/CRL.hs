@@ -1,14 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Parse.Internal.CRL where
-
-import qualified Data.ByteString            as BS
-
+    
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
 import           Data.ASN1.Types
 import           Data.Bifunctor             (first)
+import qualified Data.ByteString            as BS
+
+import qualified Data.List                  as List
+import qualified Data.Set                   as Set
 
 import           Data.X509
 
@@ -40,8 +43,12 @@ parseCrl bs = do
     numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
     crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
-    pure $ \location -> makeCrl location (AKI $ KI aki') (U.sha256s bs) (signCrlF crlNumber')
-    where  
+    pure $ \location -> makeCrl 
+        location 
+        (AKI $ KI aki') 
+        (U.sha256s bs) 
+        (signCrlF crlNumber' )        
+    where          
         getCrl = onNextContainer Sequence $ do
             (asns, crl') <- getNextContainerMaybe Sequence >>= \case 
                 Nothing   -> throwParseError "Invalid CRL format"
@@ -52,9 +59,14 @@ parseCrl bs = do
             signatureId  <- getObject
             signatureVal <- parseSignature
             let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
-            pure (crl', 
-                \crlNumber' -> 
-                SignCRL crl' (SignatureAlgorithmIdentifier signatureId) signatureVal encoded crlNumber')
+
+            let revokedSerials = Set.fromList $ List.sort $ 
+                    map (\RevokedCertificate {..} -> Serial revokedSerialNumber) $ crlRevokedCertificates crl'
+
+            let mkSignCRL crlNumber' = SignCRL crl' 
+                        (SignatureAlgorithmIdentifier signatureId) 
+                        signatureVal encoded crlNumber' revokedSerials
+            pure (crl', mkSignCRL)                
         
         getCrlContent = do        
             x509Crl    <- parseX509CRL

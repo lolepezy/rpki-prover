@@ -2,7 +2,7 @@
 {-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.Validation.ObjectValidation where
-
+    
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.ASN1.BinaryEncoding
@@ -11,6 +11,9 @@ import           Data.ASN1.Types
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as LBS
 import           Data.Hourglass                     (DateTime, timeDiff)
+
+import qualified Data.Set                           as Set
+
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
 import           GHC.Generics
@@ -18,8 +21,8 @@ import           GHC.Generics
 import           System.Hourglass                   (dateCurrent)
 
 import           RPKI.AppMonad
-import           RPKI.Domain
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
@@ -27,6 +30,8 @@ import           RPKI.TAL
 import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
+
+
 
 -- | Current time that is to be passed into the environment of validating functions
 newtype Now = Now DateTime
@@ -222,8 +227,7 @@ validateNexUpdate (Now now) nextUpdateTime =
 -- | Check if CMS is on the revocation list
 isRevoked :: WithResourceCertificate c => c -> Validated CrlObject -> Bool
 isRevoked cert (Validated crlObject) =
-  not $ any (\RevokedCertificate {..} -> Serial revokedSerialNumber == serial) $ 
-    crlRevokedCertificates crl
+  Set.member serial revokenSerials
   where
     SignCRL {..} = extract crlObject
     serial = getSerial cert

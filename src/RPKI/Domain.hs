@@ -207,7 +207,8 @@ data SignCRL = SignCRL {
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BS.ByteString,
-        crlNumber          :: Integer
+        crlNumber          :: Integer,
+        revokenSerials     :: Set Serial
     } deriving stock (Show, Eq, Generic)
 
 -- TODO Define it
