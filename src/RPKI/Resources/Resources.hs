@@ -251,7 +251,7 @@ subtractAsn (ASRange a0 a1) (ASRange b0 b1) =
 
 
 optimiseAsns :: [AsResource] -> [AsResource]
-optimiseAsns = catMaybes . map f 
+optimiseAsns = mapMaybe f 
     where 
         f (AS a) = Just $ AS a
         f r@(ASRange a b) 

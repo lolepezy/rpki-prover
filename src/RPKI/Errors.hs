@@ -11,7 +11,6 @@ import           Data.Text            (Text)
 import qualified Data.Text            as Text
 
 import           Codec.Serialise
-import           Control.Exception
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.List          as List

@@ -29,7 +29,6 @@ import           Data.Word
 import           HaskellWorks.Data.Network.Ip.Ipv4     as V4
 import           HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           HaskellWorks.Data.Network.Ip.Range
-import           HaskellWorks.Data.Network.Ip.Validity
 
 import           RPKI.Domain
 import           RPKI.Repository
@@ -139,10 +138,10 @@ instance Arbitrary a => Arbitrary (NonEmpty a) where
     shrink = genericShrink
 
 instance Arbitrary AKI where
-    arbitrary = AKI . KI <$> BS.pack <$> replicateM 20 arbitrary
+    arbitrary = AKI . KI . BS.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary SKI where
-    arbitrary = SKI . KI <$> BS.pack <$> replicateM 20 arbitrary
+    arbitrary = SKI . KI . BS.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary KI where
     arbitrary = KI <$> arbitrary  

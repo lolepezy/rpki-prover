@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 
 module RPKI.Store.Base.Map where
 
@@ -34,7 +33,7 @@ delete tx (SMap _ s) k = S.delete tx s (storableKey k)
 
 fold :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> (a -> k -> v -> IO a) -> a -> IO a
-fold tx (SMap _ s) f a = S.foldS tx s f' a
+fold tx (SMap _ s) f = S.foldS tx s f'
     where
         f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
 

@@ -5,35 +5,34 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module RPKI.Domain where
 
-import qualified Data.ByteString as BS
-import qualified Data.Text as Text
+import qualified Data.ByteString          as BS
+import qualified Data.Text                as Text
 
-import Codec.Serialise
-import Data.Hex
+import           Codec.Serialise
+import           Data.Hex
 
-import Data.Kind (Type)
-import Data.List.NonEmpty
-import Data.Hourglass
+import           Data.Hourglass
+import           Data.Kind                (Type)
+import           Data.List.NonEmpty
 
-import GHC.Generics
+import           GHC.Generics
 
-import qualified Data.X509 as X509
+import qualified Data.X509                as X509
 
-import Data.ASN1.OID
-import Data.ASN1.Types
+import           Data.ASN1.OID
+import           Data.ASN1.Types
 
--- import Text.URI (URI)
--- import qualified Text.URI as URI
+import           Data.Set             (Set)
 
-import RPKI.Resources.Resources as RS
-import RPKI.Resources.Types
-import RPKI.Serialise.Orphans
+import           RPKI.Resources.Resources as RS
+import           RPKI.Resources.Types
+import           RPKI.Serialise.Orphans
+
+
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving stock (Show, Eq, Ord, Generic)

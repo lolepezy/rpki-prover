@@ -56,6 +56,7 @@ extra-deps:
   - stm-containers-1.1.0.4
   - stm-hamt-1.2.0.2
   - streaming-utils-0.2.0.0
+  - co-log-concurrent-0.5.0.0
   
 
 # Override default flag values for local packages and extra-deps

@@ -513,6 +513,6 @@ appTxEx :: (Storage s, WithStorage s ws, Exception exc) =>
 appTxEx ws err f txF = do
     env <- ask
     -- TODO Make it less ugly and complicated
-    t <- lift3 $ try $ txF (storage ws) $ runValidatorT env . f
+    t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
     validatorT $ pure $ either ((, mempty) . Left . err) id t
 

@@ -8,7 +8,8 @@ import Colog hiding (extract)
 
 import Control.Monad
 import Control.Parallel.Strategies hiding ((.|))
-import Control.Concurrent.Async
+import Control.Concurrent.Async.Lifted
+import Control.Concurrent.Lifted
 
 import qualified Data.ByteString                as BS
 import qualified Data.ByteString.Lazy           as LBS

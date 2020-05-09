@@ -81,7 +81,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             pure (repoFromSnapshot snapshot, validations)            
 
         useDeltas sortedDeltas notification = do
-            parallelism' <- liftIO $ dynamicPara $ parallelism config
+            parallelism' <- liftIO $ dynamicParaIO $ parallelism config
             rawContents <- parallel parallelism' sortedDeltas downloadDelta    
             deltas      <- forM rawContents $ \case
                                 Left e                -> appError e
