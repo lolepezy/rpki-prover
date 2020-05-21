@@ -1,5 +1,4 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE RecordWildCards     #-}
 
 module RPKI.Validation.Crypto where
 
@@ -18,19 +17,19 @@ validateSignature rpkiObject parentCert =
         pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
 
         getSign (CerRO resourceCert) = 
-            (algorithm, signedData, signature)
+            (algorithm, signedData, signature')
             where    
                 CertificateWithSignature {
                     cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
-                    cwsSignature = SignatureValue signature,
+                    cwsSignature = SignatureValue signature',
                     cwsEncoded = signedData
                 } = getCertWithSignature resourceCert     
                 
-        getSign (CrlRO crl) = (algorithm, encoded, signature)
+        getSign (CrlRO crl) = (algorithm, encoded, signature')
             where
                 SignCRL { 
                     signatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
-                    signatureValue = SignatureValue signature,
+                    signatureValue = SignatureValue signature',
                     encodedValue = encoded 
                 } = extract crl
 
@@ -38,13 +37,13 @@ validateSignature rpkiObject parentCert =
         getSign (RoaRO signObject) = getSignCMS signObject
         getSign (GbrRO signObject) = getSignCMS signObject        
 
-        getSignCMS cms = (algorithm, encodedCert, signature)
+        getSignCMS cms = (algorithm, encodedCert, signature')
             where                 
                 CertificateWithSignature
                     _
                     (SignatureAlgorithmIdentifier algorithm) 
-                    (SignatureValue signature) 
-                    encodedCert = getEECert $ signObject
+                    (SignatureValue signature') 
+                    encodedCert = getEECert signObject
                 CMS signObject = extract cms
 
 

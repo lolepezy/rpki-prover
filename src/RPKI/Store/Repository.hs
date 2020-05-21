@@ -100,7 +100,9 @@ getTaPublicationPoints :: (MonadIO m, Storage s) =>
                         Tx s mode -> RepositoryStore s -> TaName -> m PublicationPoints
 getTaPublicationPoints tx s taName' = liftIO $ do
         (rrdpList, rsyncList) <- MM.foldS tx (perTA s) taName' mergeRepos ([], [])
-        pure $ PublicationPoints (RrdpMap $ Map.fromList rrdpList) (RsyncMap $ Map.fromList rsyncList)
+        pure $ PublicationPoints 
+            (RrdpMap $ Map.fromList rrdpList) 
+            (RsyncMap $ Map.fromList rsyncList)
     where
         mergeRepos result@(rrdps, rsyncs) _ index = 
             case index of 

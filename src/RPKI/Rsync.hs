@@ -11,7 +11,6 @@ import           Data.Bifunctor
 
 import           Control.Concurrent.STM
 import           Control.Lens
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 import           Control.Monad
 import           Control.Monad.Except

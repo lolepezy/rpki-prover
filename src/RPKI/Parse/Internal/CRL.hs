@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Parse.Internal.CRL where
     
@@ -11,8 +10,6 @@ import           Data.ASN1.Parse
 import           Data.ASN1.Types
 import           Data.Bifunctor             (first)
 import qualified Data.ByteString            as BS
-
-import qualified Data.List                  as List
 import qualified Data.Set                   as Set
 
 import           Data.X509

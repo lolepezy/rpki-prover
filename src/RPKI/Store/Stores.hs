@@ -128,46 +128,6 @@ allVResults tx (VResultStore s) = liftIO $ reverse <$> M.fold tx s f []
     where
         f ros vc vr = pure $! (vc, vr) : ros
 
-
--- data RepositoryStore s = RepositoryStore {
---     repositories      :: SMap "repositories" s URI SRepository,
---     repositoriesPerTA :: SMultiMap "repositoriesPerTA" s TaName URI
--- }
-
--- instance Storage s => WithStorage s (RepositoryStore s) where
---     storage (RepositoryStore s _) = storage s
-
-
--- putRepository :: (MonadIO m, Storage s) => 
---                 Tx s 'RW -> RepositoryStore s -> SRepository -> TaName -> m ()
--- putRepository tx s r taName' = liftIO $ do 
---     let repoUri = key r
---     M.put tx (repositories s) repoUri r
---     MM.put tx (repositoriesPerTA s) taName' repoUri
-
--- updateRepositoryStatus :: (MonadIO m, Storage s) => 
---                         Tx s 'RW -> RepositoryStore s -> Repository -> RepositoryStatus -> m ()
--- updateRepositoryStatus tx s r status' = liftIO $ do 
---     let repoUri = repositoryURI r
---     getRepository tx s repoUri >>= \case
---         Nothing -> pure ()
---         Just r' -> M.put tx (repositories s) repoUri $ SRepository r' status'
-
-
--- getRepository :: (MonadIO m, Storage s) => 
---                 Tx s 'RW -> RepositoryStore s -> URI -> m (Maybe Repository)
--- getRepository tx s repoUri = liftIO $ fmap repo <$> M.get tx (repositories s) repoUri 
-
--- getTaPublicationPoints :: (MonadIO m, Storage s) => 
---                         Tx s mode -> RepositoryStore s -> TaName -> m [SRepository]
--- getTaPublicationPoints tx s taName' = liftIO $ MM.fold tx (repositoriesPerTA s) taName' f []
---     where
---         f ros _ uri' =   
---             M.get tx (repositories s) uri' >>= \case
---                 Just rs -> pure $! rs : ros
---                 Nothing -> pure ros
-
-
 data DB s = DB {
     taStore :: TAStore s, 
     repositoryStore :: RepositoryStore s, 

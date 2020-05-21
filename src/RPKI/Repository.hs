@@ -416,24 +416,3 @@ shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) uris =
                         Nothing             -> []
                         Just (ParentURI pu) -> (u', ParentURI pu) : gatherPathToRoot pu
                         Just r@(Root _)     -> [(u', r)]
-
-{- 
-
-let rrdp1 = RrdpRepository (URI "u1") Nothing New
-let rrdp2 = RrdpRepository (URI "u2") Nothing New
-
-import Data.Map as M
-let rrdps = M.fromList $ Prelude.map (\r@RrdpRepository {..} -> (uri, r)  ) [rrdp1, rrdp2]
-
-let rsyncs = M.fromList [ (URI "u1/path/a", ParentURI (URI "u1/path")),  ( URI "u1/path", Root New)  ]
-
-
-------
-
-import Data.Map as Map
-Now now <- thisMoment 
-let globalPPs = PublicationPoints {rrdps = Map.fromList [], rsyncs = RsyncMap (Map.fromList [(URI {unURI = "rsync://repository.lacnic.net/rpki/lacnic/"},Root (FetchedAt now))])}
-let publicationPoint = RsyncPP (RsyncPublicationPoint {uri = URI {unURI = "rsync://repository.lacnic.net/rpki/lacnic/"}})
-
-
--}

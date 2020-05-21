@@ -5,7 +5,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.Store.Base.LMDB where
 
@@ -97,7 +96,7 @@ instance Storage LmdbStorage where
         LMMap.deleteKV tx db ks vs
 
     deleteAllMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
-        withMultiCursor tx db $ \c -> do
+        withMultiCursor tx db $ \c ->
             LMMap.lookupFirstValue c ks >>= \case
                 Nothing -> pure ()
                 Just _  -> LMMap.deleteValues c
@@ -121,7 +120,7 @@ instance Storage LmdbStorage where
 foldGeneric tx db f a0 withC makeProducer =
     withC tx db $ \c -> do
         z <- newIORef a0
-        runEffect $ makeProducer c >-> do
+        void $ runEffect $ makeProducer c >-> do
             forever $ do
                 Lmdb.KeyValue k v <- await
                 lift $ do 

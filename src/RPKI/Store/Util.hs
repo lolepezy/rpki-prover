@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 module RPKI.Store.Util where
 
 import           RPKI.Store.Base.Map      (SMap (..))
