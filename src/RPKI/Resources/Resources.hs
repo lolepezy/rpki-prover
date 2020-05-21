@@ -200,6 +200,12 @@ emptyAllRS = AllResources emptyRS emptyRS emptyRS
 emptyAll :: PrefixesAndAsns
 emptyAll = PrefixesAndAsns IS.empty IS.empty IS.empty
 
+toPrefixesAndAsns :: AllResources -> PrefixesAndAsns
+toPrefixesAndAsns (AllResources ipv4 ipv6 asn) = PrefixesAndAsns (get ipv4) (get ipv6) (get asn)
+    where 
+        get (RS r) = r
+        get Inherit = IS.empty
+
 
 containsAsn :: AsResource -> AsResource -> Bool
 containsAsn (AS a) (AS b) = a == b

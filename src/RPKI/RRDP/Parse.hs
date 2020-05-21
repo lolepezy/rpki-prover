@@ -7,6 +7,7 @@ import           Control.Monad
 import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Short      as BSS
 import qualified Data.ByteString.Base64     as B64
 import qualified Data.ByteString.Lazy       as LBS
 import           Data.Hex                   (unhex)
@@ -20,7 +21,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.RRDP.Types
 
-import           RPKI.Util                  (convert, trim, isSpace_)
+import           RPKI.Util                  (convert, trim, isSpace_, mkHash)
 
 
 type NOTIF = (Maybe (Version, SessionId, Serial), Maybe SnapshotInfo, [DeltaInfo])
@@ -66,15 +67,15 @@ parseSnapshot xml = makeSnapshot =<< folded
             Left $ BrokenXml "More than one 'snapshot'"
         foldPubs (Nothing, _) (X.StartElement "publish" _)  = 
             Left $ BrokenXml "'publish' before 'snapshot'"
-        foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri')]) = 
-            Right (Just sn, SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps)
-        foldPubs (Just sn, ps) (X.StartElement "publish" attributes) = 
+        -- foldPubs (Just sn, ps) (X.StartElement "publish" [("uri", uri')]) = 
+        --     Right (Just sn, let !z = SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps in z)
+        foldPubs (Just !sn, ps) (X.StartElement "publish" attributes) = 
             case List.lookup "uri" attributes of
                 Nothing   -> Left $ BrokenXml $ Text.pack $ "Attribute list doesn't contain 'uri': " <> show attributes
-                Just uri' -> Right (Just sn, SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps)
+                Just !uri' -> Right (Just sn, let !z = SnapshotPublish (URI $ convert uri') (EncodedBase64 "") : ps in z)
 
-        foldPubs (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
-        foldPubs (Just sn, SnapshotPublish uri' (EncodedBase64 c) : ps) (X.CharacterData cd) = 
+        foldPubs (Just !sn, []) (X.CharacterData _)            = Right (Just sn, [])
+        foldPubs (Just !sn, SnapshotPublish uri' (EncodedBase64 c) : ps) (X.CharacterData cd) = 
             let !nc = c <> trim cd
                 !sp = SnapshotPublish uri' (EncodedBase64 nc) : ps
                 in Right (Just sn, sp)      
@@ -135,7 +136,7 @@ parseMeta as = do
     s'  <- toEither NoSerial $ parseInteger s
     v   <- toEither NoVersion $ List.lookup "version" as
     v'  <- toEither NoVersion $ parseInteger v            
-    pure (Version v', SessionId $ sId, Serial s')
+    pure (Version v', SessionId $ BSS.toShort sId, Serial s')
 
 parseSnapshotInfo :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError SnapshotInfo
 parseSnapshotInfo as = do
@@ -175,7 +176,7 @@ parseDeltaWithdraw as = do
 -- Some auxiliary things
 
 makeHash :: BS.ByteString -> Maybe Hash
-makeHash bs = Hash . toBytes <$> hexString bs
+makeHash bs = mkHash . toBytes <$> hexString bs
 
 -- Parsing HEX stuff
 newtype HexString = HexString BS.ByteString 

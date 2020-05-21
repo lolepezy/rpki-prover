@@ -25,7 +25,7 @@ repositoryGroup = testGroup "PublicationPoints" [
     ]
 
 repositoriesURIs :: [RsyncPublicationPoint]
-repositoriesURIs = map (\s -> RsyncPublicationPoint (URI $ "rsync://host1.com/" <> s)) $ [
+repositoriesURIs = map (\s -> RsyncPublicationPoint (URI $ "rsync://host1.com/" <> s)) [
         "a",
         "a/b",
         "a/c",
@@ -47,9 +47,9 @@ repositoriesURIs = map (\s -> RsyncPublicationPoint (URI $ "rsync://host1.com/" 
 prop_creates_same_hierarchy_regardless_of_shuffle_map :: QC.Property
 prop_creates_same_hierarchy_regardless_of_shuffle_map = 
     QC.forAll (QC.shuffle repositoriesURIs) $ \rs ->         
-        createRsyncMap rs == initialMap
+        fromRsyncPPs rs == initialMap
     where
-        initialMap = createRsyncMap repositoriesURIs 
+        initialMap = fromRsyncPPs repositoriesURIs 
 
 prop_rsync_map_is_a_semigroup :: QC.Property
 prop_rsync_map_is_a_semigroup = 
@@ -57,9 +57,9 @@ prop_rsync_map_is_a_semigroup =
         QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->         
             QC.forAll (QC.sublistOf repositoriesURIs) $ \rs3 ->         
                 let 
-                    rm1 = createRsyncMap rs1
-                    rm2 = createRsyncMap rs2
-                    rm3 = createRsyncMap rs3
+                    rm1 = fromRsyncPPs rs1
+                    rm2 = fromRsyncPPs rs2
+                    rm3 = fromRsyncPPs rs3
                     in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3    
 
 
@@ -72,13 +72,13 @@ prop_rsync_map_is_a_semigroup =
 --     let rsyncMap = foldr 
 --             (\(RsyncPublicationPoint u) rm -> 
 --                 fst $ updateRepositoryStatus u rm (FailedAt now)) 
---             (createRsyncMap pickedUpUris)
+--             (fromRsyncPPs pickedUpUris)
 --             pickedUpUris
 
 --     let allPickedAreMergedAsAlreadtyExisting = all ( == FailedAt now) $ 
---             map (\(RsyncPublicationPoint u) -> u `merge` rsyncMap) pickedUpUris
+--             map (\(RsyncPublicationPoint u) -> u `mergeRsyncPP` rsyncMap) pickedUpUris
 
 --     let allLeftOutAreMergedAsNew = all ( == New) $ 
---             map (\(RsyncPublicationPoint u) -> snd $ u `merge` rsyncMap) leftOutURIs
+--             map (\(RsyncPublicationPoint u) -> snd $ u `mergeRsyncPP` rsyncMap) leftOutURIs
     
 --     assert $ allLeftOutAreMergedAsNew && allPickedAreMergedAsAlreadtyExisting

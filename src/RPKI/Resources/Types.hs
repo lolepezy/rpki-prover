@@ -79,11 +79,6 @@ data IpResourceSet = IpResourceSet
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-data PrefixeSet = PrefixeSet 
-    !(IntervalSet Ipv4Prefix) 
-    !(IntervalSet Ipv6Prefix)
-    deriving stock (Show, Eq, Ord, Generic) 
-
 newtype IpResources = IpResources IpResourceSet
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
@@ -116,7 +111,7 @@ newtype VerifiedRS a = VerifiedRS a
 
 class (WithSetOps p, Eq (Point p), Ord (Point p)) => Interval p where
     type Point p :: Type
-    start :: p -> (Point p)
+    start :: p -> Point p
 
 -- | Representation of the resource set
 newtype IntervalSet a = IntervalSet (Vector a) 

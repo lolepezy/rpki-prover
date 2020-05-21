@@ -6,15 +6,15 @@
 
 module RPKI.RRDP.Update where
 
-import           Control.Lens                   ((^.))
+import           Control.Lens                     ((^.))
 import           Control.Monad.Except
 
-import           Data.Bifunctor                 (first, second)
-import qualified Data.ByteString.Lazy           as LBS
-import Data.String.Interpolate.IsString
-import qualified Data.List                      as List
-import qualified Data.Text                      as Text
-import qualified Network.Wreq                   as WR
+import           Data.Bifunctor                   (first, second)
+import qualified Data.ByteString.Lazy             as LBS
+import qualified Data.List                        as List
+import           Data.String.Interpolate.IsString
+import qualified Data.Text                        as Text
+import qualified Network.Wreq                     as WR
 
 import           GHC.Generics
 
@@ -30,21 +30,22 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Stores               as Stores
-import qualified RPKI.Util                       as U
+import qualified RPKI.Store.Stores                as Stores
+import qualified RPKI.Util                        as U
 
-import qualified Data.ByteString.Streaming       as Q
+import qualified Data.ByteString.Streaming        as Q
 import           Data.ByteString.Streaming.HTTP
 
-import qualified Crypto.Hash.SHA256              as S256
+import qualified Crypto.Hash.SHA256               as S256
 
-import           System.IO                       (Handle, hClose)
-import           System.IO.Posix.MMap.Lazy       (unsafeMMapFile)
-import           System.IO.Temp                  (withSystemTempFile)
+import           System.IO                        (Handle, hClose)
+import           System.IO.Posix.MMap.Lazy        (unsafeMMapFile)
+import           System.IO.Temp                   (withSystemTempFile)
 
-import           Control.Concurrent.Async.Lifted as AsyncL
+import           Control.Concurrent.Async.Lifted  as AsyncL
 import           Control.Exception.Lifted
 import           Data.IORef.Lifted
+
 
 {- 
     TODO 
@@ -72,7 +73,8 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
     where
         hoistHere = vHoist . fromEither . first RrdpE
         
-        useSnapshot (SnapshotInfo uri hash) = do        
+        useSnapshot (SnapshotInfo uri hash) = do 
+            logDebugM logger [i|Downloading snapshot: #{unURI uri} |]       
             rawContent <- fromEitherM $ downloadHashedContent uri hash
                                 (RrdpE . CantDownloadSnapshot . show)                 
                                 (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
@@ -154,7 +156,7 @@ streamHttpToFileAndHash (URI uri) errorMapping destinationHandle =
                         modifyIORef' hash (`S256.update` chunk) >> pure chunk) $ 
                     responseBody resp
             h' <- readIORef hash        
-            pure $! Hash $ S256.finalize h'
+            pure $! U.mkHash $ S256.finalize h'
 
 
 -- | Download HTTP stream into memory bytestring
@@ -211,97 +213,112 @@ updateObjectForRrdpRepository :: Storage s =>
                                 RrdpRepository ->
                                 Stores.RpkiObjectStore s ->
                                 ValidatorT vc IO (RrdpRepository, Validations)
-updateObjectForRrdpRepository appContext@AppContext{..} repository objectStore =
-    updateRrdpRepo appContext repository saveSnapshot saveDelta
+updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } objectStore = do
+    added   <- newIORef (0 :: Int)
+    removed <- newIORef (0 :: Int)
+    repo <- updateRepo' added removed
+    a <- readIORef added        
+    r <- readIORef removed
+    logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}|]
+    pure repo
     where
-        saveSnapshot (Snapshot _ _ _ snapshotItems) = do
-            logDebugM logger [i|Using snapshot for the repository: #{repository} |]
-            fromTry 
-                (StorageE . StorageError . U.fmtEx)                
-                (txConsumeFold 
-                    (parallelism config) 
-                    snapshotItems 
-                    storableToChan 
-                    (rwTx objectStore) 
-                    chanToStorage   
-                    (mempty :: Validations))                        
+        updateRepo' added removed =     
+            updateRrdpRepo appContext repository saveSnapshot saveDelta
             where
-                storableToChan (SnapshotPublish uri encodedb64) = do
-                    a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
-                    pure (uri, a)
-                
-                chanToStorage tx (uri, a) validations = 
-                    AsyncL.wait a >>= \case                        
-                        SError e   -> do
-                            logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                            pure $ validations <> mError (vContext uri) e
-                        SObject so -> do 
-                            Stores.putObject tx objectStore so
-                            pure validations
+                saveSnapshot (Snapshot _ _ _ snapshotItems) = do
+                    logDebugM logger [i|Saving snapshot for the repository: #{repository} |]
+                    fromTry 
+                        (StorageE . StorageError . U.fmtEx)                
+                        (txConsumeFold 
+                            (parallelism config) 
+                            snapshotItems 
+                            storableToChan 
+                            (rwTx objectStore) 
+                            chanToStorage   
+                            (mempty :: Validations))                        
+                    where
+                        storableToChan (SnapshotPublish uri encodedb64) = do
+                            logDebugM logger [i|rrdp uri = #{uri}|]                            
+                            a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
+                            pure (uri, a)
+                                                
+                        chanToStorage tx (uri, a) validations = 
+                            AsyncL.wait a >>= \case                        
+                                SError e   -> do
+                                    logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
+                                    pure $ validations <> mError (vContext uri) e
+                                SObject so -> do 
+                                    Stores.putObject tx objectStore so
+                                    void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+                                    pure validations
 
-        saveDelta :: [Delta] -> ValidatorT conf IO Validations
-        saveDelta deltas =            
-            fromTry (StorageE . StorageError . U.fmtEx) 
-                (txConsumeFold 
-                    (parallelism config) 
-                    deltaItems 
-                    storableToChan 
-                    (rwTx objectStore) 
-                    chanToStorage 
-                    (mempty :: Validations))
-            where
-                deltaItems :: [DeltaItem] = concatMap (\(Delta _ _ _ dis) -> dis) deltas                        
+                saveDelta :: [Delta] -> ValidatorT conf IO Validations
+                saveDelta deltas =            
+                    fromTry (StorageE . StorageError . U.fmtEx) 
+                        (txConsumeFold 
+                            (parallelism config) 
+                            deltaItems 
+                            storableToChan 
+                            (rwTx objectStore) 
+                            chanToStorage 
+                            (mempty :: Validations))
+                    where
+                        deltaItems :: [DeltaItem] = concatMap (\(Delta _ _ _ dis) -> dis) deltas                        
 
-                storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
-                storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
-                    a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
-                    pure $ maybe (Add uri a) (Replace uri a) hash
+                        storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
+                        storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
+                            a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
+                            pure $ maybe (Add uri a) (Replace uri a) hash
 
-                storableToChan (DW (DeltaWithdraw _ hash)) = 
-                    pure $ Delete hash
+                        storableToChan (DW (DeltaWithdraw _ hash)) = 
+                            pure $ Delete hash
 
-                chanToStorage tx op validations =
-                    case op of
-                        Delete hash                -> do
-                            Stores.deleteObject tx objectStore hash
-                            pure validations
-                        Add uri async'             -> addObject tx uri async' validations
-                        Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
-                
-                addObject tx uri a validations =
-                    AsyncL.wait a >>= \case              
-                        SError e -> do
-                            logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                            pure $ validations <> mError (vContext uri) e
-                        SObject so@(StorableObject ro _) -> do
-                            let h = getHash ro
-                            Stores.getByHash tx objectStore h >>= \case
-                                Nothing -> Stores.putObject tx objectStore so
-                                (Just _ :: Maybe RpkiObject) -> pure ()                                    
-                            pure validations
-
-                replaceObject tx uri a oldHash validations = 
-                    AsyncL.wait a >>= \case
-                        SError e -> do
-                            logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                            pure $ validations <> mError (vContext uri) e
-                        SObject so@(StorableObject ro _) ->                                    
-                            Stores.getByHash tx objectStore oldHash >>= \case 
-                                Nothing -> do
-                                    logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
-                                    pure $ validations <> mWarning (vContext uri) 
-                                        (VWarning $ RrdpE $ NoObjectToReplace uri oldHash)
-                                (Just _ :: Maybe RpkiObject) -> do 
-                                    Stores.deleteObject tx objectStore oldHash
-                                    let newHash = getHash ro
-                                    Stores.getByHash tx objectStore newHash >>= \case 
-                                        Nothing -> do
+                        chanToStorage tx op validations =
+                            case op of
+                                Delete hash                -> do
+                                    Stores.deleteObject tx objectStore hash
+                                    pure validations
+                                Add uri async'             -> addObject tx uri async' validations
+                                Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
+                        
+                        addObject tx uri a validations =
+                            AsyncL.wait a >>= \case              
+                                SError e -> do
+                                    logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
+                                    pure $ validations <> mError (vContext uri) e
+                                SObject so@(StorableObject ro _) -> do
+                                    let h = getHash ro
+                                    Stores.getByHash tx objectStore h >>= \case
+                                        Nothing -> do 
                                             Stores.putObject tx objectStore so
-                                            pure validations
-                                        (Just _ :: Maybe RpkiObject)  -> do
-                                            logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
+                                            void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+                                        (Just _ :: Maybe RpkiObject) -> pure ()                                    
+                                    pure validations
+
+                        replaceObject tx uri a oldHash validations = 
+                            AsyncL.wait a >>= \case
+                                SError e -> do
+                                    logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
+                                    pure $ validations <> mError (vContext uri) e
+                                SObject so@(StorableObject ro _) ->                                    
+                                    Stores.getByHash tx objectStore oldHash >>= \case 
+                                        Nothing -> do
+                                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
                                             pure $ validations <> mWarning (vContext uri) 
-                                                (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
+                                                (VWarning $ RrdpE $ NoObjectToReplace uri oldHash)
+                                        (Just _ :: Maybe RpkiObject) -> do 
+                                            Stores.deleteObject tx objectStore oldHash
+                                            void $ atomicModifyIORef' removed $ \c -> (c + 1, ())
+                                            let newHash = getHash ro
+                                            Stores.getByHash tx objectStore newHash >>= \case 
+                                                Nothing -> do
+                                                    Stores.putObject tx objectStore so
+                                                    void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+                                                    pure validations
+                                                (Just _ :: Maybe RpkiObject)  -> do
+                                                    logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
+                                                    pure $ validations <> mWarning (vContext uri) 
+                                                        (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
 
         parseAndProcess (URI u) b64 =     
             case parsed of

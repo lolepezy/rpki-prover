@@ -63,7 +63,7 @@ findLatestMftByAKI :: (MonadIO m, Storage s) =>
 findLatestMftByAKI tx store aki' = liftIO $ 
     MM.foldS tx (mftByAKI store) aki' f Nothing >>= \case
         Nothing        -> pure Nothing
-        Just (hash, _) -> do
+        Just (hash, _) -> 
             getByHash tx store hash >>= \case
                 Just (MftRO mft) -> pure $ Just mft
                 _                -> pure Nothing
@@ -90,7 +90,7 @@ findMftsByAKI tx store aki' = liftIO $
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
 getAll tx store = liftIO $ reverse <$> M.fold tx (objects store) f []
     where
-        f ros _ v = pure $ fromSValue v : ros
+        f ros _ v = pure $! fromSValue v : ros
 
 
 -- | TA Store 
@@ -121,6 +121,12 @@ instance Storage s => WithStorage s (VResultStore s) where
 putVResult :: (MonadIO m, Storage s) => 
             Tx s 'RW -> VResultStore s -> VResult -> m ()
 putVResult tx (VResultStore s) vr = liftIO $ M.put tx s (path vr) vr
+
+allVResults :: (MonadIO m, Storage s) => 
+                Tx s mode -> VResultStore s -> m [(VContext, VResult)]
+allVResults tx (VResultStore s) = liftIO $ reverse <$> M.fold tx s f []
+    where
+        f ros vc vr = pure $! (vc, vr) : ros
 
 
 -- data RepositoryStore s = RepositoryStore {
@@ -170,4 +176,4 @@ data DB s = DB {
 }
 
 instance Storage s => WithStorage s (DB s) where
-    storage (DB {..}) = storage taStore
+    storage DB {..} = storage taStore

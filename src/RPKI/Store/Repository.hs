@@ -59,12 +59,15 @@ instance Storage s => WithStorage s (RepositoryStore s) where
 
 putRepositories :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RepositoryStore s -> PublicationPoints -> TaName -> m ()
-putRepositories tx RepositoryStore {..} PublicationPoints {..} taName' = liftIO $ do
-    let RsyncMap rsyncs' = rsyncs
+putRepositories tx RepositoryStore {..} 
+                PublicationPoints { 
+                    rsyncs = RsyncMap rsyncs',
+                    rrdps = RrdpMap rrdps' } 
+                taName' = liftIO $ do    
     forM_ (Map.toList rsyncs') $ \(u, p) -> do
             M.put tx rsyncS u p    
             MM.put tx perTA taName' (u, Rsync)
-    forM_ (Map.toList rrdps) $ \(u, p) -> do
+    forM_ (Map.toList rrdps') $ \(u, p) -> do
             M.put tx rrdpS u p    
             MM.put tx perTA taName' (u, RRDP)
 
@@ -78,10 +81,10 @@ applyChangeSet :: (MonadIO m, Storage s) =>
 applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' = 
     liftIO $ do
         forM_ rrdpChanges $ \case 
-            Put r@(RrdpRepository{..})  -> do
+            Put r@RrdpRepository{..}  -> do
                 M.put tx rrdpS uri r
                 MM.put tx perTA taName' (uri, RRDP)                        
-            Remove (RrdpRepository{..}) -> do 
+            Remove RrdpRepository{..} -> do 
                 M.delete tx rrdpS uri 
                 MM.delete tx perTA taName' (uri, RRDP)
         forM_ rsyncChanges $ \case 
@@ -97,16 +100,16 @@ getTaPublicationPoints :: (MonadIO m, Storage s) =>
                         Tx s mode -> RepositoryStore s -> TaName -> m PublicationPoints
 getTaPublicationPoints tx s taName' = liftIO $ do
         (rrdpList, rsyncList) <- MM.foldS tx (perTA s) taName' mergeRepos ([], [])
-        pure $ PublicationPoints (Map.fromList rrdpList) (RsyncMap $ Map.fromList rsyncList)
+        pure $ PublicationPoints (RrdpMap $ Map.fromList rrdpList) (RsyncMap $ Map.fromList rsyncList)
     where
         mergeRepos result@(rrdps, rsyncs) _ index = 
             case index of 
                 (uri', RRDP) -> 
                     M.get tx (rrdpS s) uri' >>= \case
-                        Just r  -> pure $! ((uri', r) : rrdps, rsyncs)
+                        Just r  -> pure ((uri', r) : rrdps, rsyncs)
                         Nothing -> pure result                
                 (uri', Rsync) -> 
                     M.get tx (rsyncS s) uri' >>= \case
-                        Just r  -> pure $! (rrdps, (uri', r) : rsyncs)
+                        Just r  -> pure (rrdps, (uri', r) : rsyncs)
                         Nothing -> pure result
                 

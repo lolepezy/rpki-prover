@@ -98,6 +98,7 @@ parseSignedObject eContentParse =
                   where 
                     encodedCert = encodeASN1' DER $ 
                       [Start Sequence] <> asns <> [End Sequence]                                
+                    --   [Start Sequence] <> [End Sequence]                                
 
     parseSignerInfo = SignerInfos <$>
       parseVersion <*>

@@ -1,6 +1,4 @@
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.RRDP.Types where
 
@@ -16,26 +14,26 @@ data Notification = Notification {
 } deriving (Show, Eq, Ord, Generic)
 
 data SnapshotInfo = SnapshotInfo !URI !Hash
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data SnapshotPublish = SnapshotPublish !URI !EncodedBase64
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data Snapshot = Snapshot !Version !SessionId !Serial [SnapshotPublish]
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data DeltaInfo = DeltaInfo !URI !Hash !Serial
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data DeltaItem = DP DeltaPublish | DW DeltaWithdraw
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data DeltaPublish = DeltaPublish !URI !(Maybe Hash) !EncodedBase64
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data DeltaWithdraw = DeltaWithdraw !URI !Hash
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data Delta = Delta !Version !SessionId !Serial [DeltaItem]
-    deriving (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 

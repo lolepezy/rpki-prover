@@ -8,7 +8,6 @@ module RPKI.Errors where
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Text            (Text)
-import qualified Data.Text            as Text
 
 import           Codec.Serialise
 import           Data.List.NonEmpty (NonEmpty (..))
@@ -31,7 +30,7 @@ newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data ValidationError = InvalidCert Text.Text |
+data ValidationError = InvalidCert Text |
                         ParentDoesntHaveResources |
                         NoAKIinManifest |
                         ROACannotBeAParent |
@@ -41,18 +40,19 @@ data ValidationError = InvalidCert Text.Text |
                         ObjectIsTooSmall Integer |
                         ObjectIsTooBig Integer |
                         TACertificateLocalIsNewer Serial Serial |
-                        InvalidSignature Text.Text |                        
+                        InvalidSignature Text |                        
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension BS.ByteString |
                         NoMFT AKI Locations |
                         NoMFTNoRepository AKI Locations |
                         NoCRLOnMFT AKI Locations |
-                        MoreThanOneCRLOnMFT AKI Locations |
+                        MoreThanOneCRLOnMFT AKI Locations [(Text, Hash)] |
                         NoCRLExists AKI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |
-                        NextUpdateTimeIsBeforeNow DateTime |
+                        NextUpdateTimeIsInThePast DateTime |
+                        ThisUpdateTimeIsInTheFuture DateTime |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |
@@ -67,7 +67,7 @@ data ValidationError = InvalidCert Text.Text |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
-data RrdpError = BrokenXml Text.Text | 
+data RrdpError = BrokenXml Text | 
                 BrokenSerial BS.ByteString |
                 NoSessionId |
                 NoSerial | 
@@ -97,18 +97,18 @@ data RrdpError = BrokenXml Text.Text |
     deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError Int LBS.ByteString |
-                    FileReadError Text.Text |
-                    RsyncRunningError Text.Text |
-                    RsyncDirError Text.Text
+                    FileReadError Text |
+                    RsyncRunningError Text |
+                    RsyncDirError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data StorageError = StorageError Text.Text |
-                    DeserialisationError Text.Text
+data StorageError = StorageError Text |
+                    DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype TALError = TALError Text.Text 
+newtype TALError = TALError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
@@ -117,13 +117,13 @@ newtype VContext = VContext (NonEmpty URI)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data AppError = ParseE (ParseError Text.Text) | 
+data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 
                 RrdpE RrdpError |
                 RsyncE RsyncError |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
-                UnspecifiedE Text.Text
+                UnspecifiedE Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -144,7 +144,10 @@ data VProblem = VErr AppError | VWarn VWarning
 newtype Validations = Validations (Map VContext (Set VProblem))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype (Monoid, Semigroup)
+    deriving newtype (Monoid)
+
+instance Semigroup Validations where
+    (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
 mError :: VContext -> AppError -> Validations
 mError vc e = Validations $ Map.singleton vc $ Set.fromList [VErr e]

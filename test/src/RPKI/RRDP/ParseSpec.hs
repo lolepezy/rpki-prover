@@ -6,7 +6,8 @@
 
 module RPKI.RRDP.ParseSpec where
 
-import           Data.Hex                             (hex)
+import           Data.ByteString.Short             as BSS
+import           Data.Hex                          (hex)
 
 import           RPKI.Domain
 import           RPKI.RRDP.Parse
@@ -15,13 +16,14 @@ import           RPKI.RRDP.Types
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Monadic
 import           Test.Tasty
-import           Test.Tasty.QuickCheck                as QC
+import           Test.Tasty.QuickCheck             as QC
 
 import           Data.String.Interpolate
 
-import           RPKI.Util                            (convert)
+import           RPKI.Util                         (convert)
 
-import RPKI.Orphans
+import           RPKI.Orphans
+
 
 rrdpXmlLazyParsingGroup :: TestTree
 rrdpXmlLazyParsingGroup = testGroup "RRDP Hexpat parsing"
@@ -78,9 +80,9 @@ deltaToXml (Delta (Version v) (SessionId sess) (Serial s) items) =
     item (DP (DeltaPublish (URI u) Nothing (EncodedBase64 c))) =
       [i|<publish uri="#{u}">#{c}</publish>|]
     item (DP (DeltaPublish (URI u) (Just (Hash hash)) (EncodedBase64 c))) =
-      [i|<publish uri="#{u}" hash="#{hex hash}">#{c}</publish>|]
+      [i|<publish uri="#{u}" hash="#{hex $ BSS.fromShort hash}">#{c}</publish>|]
     item (DW (DeltaWithdraw (URI u) (Hash hash))) =
-      [i|<withdraw uri="#{u}" hash="#{hex hash}"></withdraw>|]
+      [i|<withdraw uri="#{u}" hash="#{hex $ BSS.fromShort hash}"></withdraw>|]
 
 
 notificationToXml :: Notification -> String
@@ -92,10 +94,10 @@ notificationToXml Notification {
       ..
     } =
   [i|<notification version="#{v}" session_id="#{sid}" serial="#{s}">
-      <snapshot uri="#{su}" hash="#{hex sh}"></snapshot>
+      <snapshot uri="#{su}" hash="#{hex $ BSS.fromShort sh}"></snapshot>
       #{concatMap delta deltas}
   </notification>|]
   where
     delta (DeltaInfo (URI u) (Hash hash) (Serial ds)) =
-      [i|<delta uri="#{u}" hash="#{hex hash}" serial="#{ds}"></delta>|]  
+      [i|<delta uri="#{u}" hash="#{hex $ BSS.fromShort hash}" serial="#{ds}"></delta>|]  
 

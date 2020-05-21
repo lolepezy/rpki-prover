@@ -117,53 +117,50 @@ validateResourceCert ::
   Validated CrlObject ->
   PureValidator conf (Validated c)
 validateResourceCert (Now now) cert parentCert vcrl = do
-  let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
-  signatureCheck $ validateCertSignature cert parentCert
-  when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
-  when (now < before) $ vPureError CertificateIsInTheFuture
-  when (now > after) $ vPureError CertificateIsExpired
-  unless (correctSkiAki cert parentCert)
-    $ vPureError
-    $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
-  void $ validateResourceCertExtensions cert
-  pure $ Validated cert
-  where
-    correctSkiAki c (getSKI -> SKI s) =
-      maybe False (\(AKI a) -> a == s) $ getAKI c
+    let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
+    signatureCheck $ validateCertSignature cert parentCert
+    when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
+    when (now < before) $ vPureError CertificateIsInTheFuture
+    when (now > after) $ vPureError CertificateIsExpired
+    unless (correctSkiAki cert parentCert)
+        $ vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+    void $ validateResourceCertExtensions cert
+    pure $ Validated cert
+    where
+        correctSkiAki c (getSKI -> SKI s) =
+            maybe False (\(AKI a) -> a == s) $ getAKI c
 
-validateResources ::
-  ( WithResourceCertificate c,
-    WithResourceCertificate parent
-  ) =>
-  Maybe (VerifiedRS PrefixesAndAsns) ->
-  c ->
-  parent ->
-  PureValidator conf (VerifiedRS PrefixesAndAsns)
+validateResources :: (WithResourceCertificate c, WithResourceCertificate parent) =>
+                    Maybe (VerifiedRS PrefixesAndAsns) ->
+                    c ->
+                    parent ->
+                    PureValidator conf (VerifiedRS PrefixesAndAsns)
 validateResources
   verifiedResources
   (getRC -> ResourceCertificate cert)
   (getRC -> ResourceCertificate parentCert) =
     validateChildParentResources
-      validationRFC
-      (withRFC cert resources)
-      (withRFC parentCert resources)
-      verifiedResources
+        validationRFC
+        (withRFC cert resources)
+        (withRFC parentCert resources)
+        verifiedResources
     where
-      validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
+        validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::
-  WithResourceCertificate c =>
-  Now ->
-  CrlObject ->
-  c ->
-  PureValidator conf (Validated CrlObject)
+    WithResourceCertificate c =>
+    Now ->
+    CrlObject ->
+    c ->
+    PureValidator conf (Validated CrlObject)
 validateCrl now crlObject parentCert = do
-  signatureCheck $ validateCRLSignature crlObject parentCert
-  void $ validateNexUpdate now (crlNextUpdate crl)
-  pure $ Validated crlObject
-  where
-    SignCRL {..} = extract crlObject
+    signatureCheck $ validateCRLSignature crlObject parentCert
+    void $ validateNextUpdate now nextUpdateTime
+    void $ validateThisUpdate now thisUpdateTime
+    pure $ Validated crlObject
+    where
+        SignCRL {..} = extract crlObject
 
 validateMft ::
   (WithResourceCertificate c, WithSKI c) =>
@@ -173,10 +170,12 @@ validateMft ::
   Validated CrlObject ->
   PureValidator conf (Validated MftObject)
 validateMft now mft parentCert crl = do
-  void $ validateCms now (extract mft) parentCert crl $ \m -> do
-    void $ validateNexUpdate now $ Just $ nextTime $ getCMSContent m
-    pure m
-  pure $ Validated mft
+    void $ validateCms now (extract mft) parentCert crl $ \m -> do
+        let cmsContent = getCMSContent m
+        void $ validateNextUpdate now $ Just $ nextTime cmsContent
+        void $ validateThisUpdate now $ thisTime cmsContent
+        pure m
+    pure $ Validated mft
 
 validateRoa ::
   (WithResourceCertificate c, WithSKI c) =>
@@ -216,13 +215,19 @@ validateCms now cms parentCert crl extraValidation = do
   Validated <$> extraValidation cms
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
-validateNexUpdate :: Now -> Maybe DateTime -> PureValidator conf DateTime
-validateNexUpdate (Now now) nextUpdateTime =
+validateNextUpdate :: Now -> Maybe DateTime -> PureValidator conf DateTime
+validateNextUpdate (Now now) nextUpdateTime =
   case nextUpdateTime of
     Nothing -> vPureError NextUpdateTimeNotSet
     Just nextUpdate
-      | nextUpdate < now -> vPureError $ NextUpdateTimeIsBeforeNow nextUpdate
+      | nextUpdate < now -> vPureError $ NextUpdateTimeIsInThePast nextUpdate
       | otherwise -> pure nextUpdate
+
+-- | Validate the thisUpdateTeim for objects that have it (MFT, CRLs)
+validateThisUpdate :: Now -> DateTime -> PureValidator conf DateTime
+validateThisUpdate (Now now) thisUpdateTime     
+      | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime
+      | otherwise             = pure thisUpdateTime
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithResourceCertificate c => c -> Validated CrlObject -> Bool
@@ -252,5 +257,5 @@ validateSize s =
       | otherwise -> pure s
 
 notTooLongAgo :: ValidationConfig -> DateTime -> Now -> Bool
-notTooLongAgo ValidationConfig {..} at (Now now) = 
-    timeDiff now at < refetchIntervalAfterRepositoryFailure
+notTooLongAgo ValidationConfig {..} inThePast (Now now) = 
+    timeDiff now inThePast < refetchIntervalAfterRepositoryFailure

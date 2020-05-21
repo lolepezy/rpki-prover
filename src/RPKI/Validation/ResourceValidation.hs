@@ -1,5 +1,5 @@
-{-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE NumericUnderscores #-}
+
 module RPKI.Validation.ResourceValidation where
 
 import           RPKI.AppMonad
@@ -24,13 +24,13 @@ validateChildParentResources validationRFC childResources parentResources verifi
       f c4 c6 ca
 
     check :: Interval a => 
-            (RSet (IntervalSet a)) -> 
-            (RSet (IntervalSet a)) -> 
+            RSet (IntervalSet a) -> 
+            RSet (IntervalSet a) -> 
             (VerifiedRS PrefixesAndAsns -> IntervalSet a) -> 
             PureValidator conf (IS.ResourceCheckResult a)
     check c p verifiedSub = 
       case verifiedResources of 
-        Nothing -> do 
+        Nothing -> 
           case (c, p) of 
             (_,       Inherit) -> vPureError InheritWithoutParentResources
             (Inherit, RS ps)   -> pure $ Left $ Nested ps

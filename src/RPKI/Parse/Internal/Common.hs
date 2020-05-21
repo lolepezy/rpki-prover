@@ -126,8 +126,8 @@ getExtsSign = getExts . cwsX509certificate
 parseKI :: BS.ByteString -> ParseResult KI
 parseKI bs = case decodeASN1' BER bs of
     Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
-    Right [OctetString bytes] -> pure $ KI bytes
-    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ KI bytes
+    Right [OctetString bytes] -> pure $ mkKI bytes
+    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ mkKI bytes
     Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
 
 oid2Hash :: OID -> ParseASN1 HashALG

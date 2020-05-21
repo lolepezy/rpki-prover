@@ -5,35 +5,35 @@
 module RPKI.Orphans where
 
 import Control.Monad
+import qualified Data.ByteString                      as BS
+import qualified Data.ByteString.Base64               as B64
+import qualified Data.ByteString.Short                as BSS
+import qualified Data.List                            as List
 
-import qualified Data.ByteString                       as BS
-import qualified Data.List                       as List
-import qualified Data.ByteString.Base64                as B64
-
-import Data.List.NonEmpty (NonEmpty)
+import           Data.List.NonEmpty                   (NonEmpty)
 
 import           Test.QuickCheck
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Instances.ByteString
-import           Test.QuickCheck.Instances.Vector
 import           Test.QuickCheck.Instances.Text
+import           Test.QuickCheck.Instances.Vector
 import           Test.QuickCheck.Monadic
 
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
-import           Data.X509                             as X509
 import           Data.Bits
 import           Data.Word
+import           Data.X509                            as X509
 
-import           HaskellWorks.Data.Network.Ip.Ipv4     as V4
-import           HaskellWorks.Data.Network.Ip.Ipv6     as V6
+import           HaskellWorks.Data.Network.Ip.Ipv4    as V4
+import           HaskellWorks.Data.Network.Ip.Ipv6    as V6
 import           HaskellWorks.Data.Network.Ip.Range
 
 import           RPKI.Domain
 import           RPKI.Repository
-import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
 
 import           Time.Types
@@ -41,15 +41,16 @@ import           Time.Types
 import           Crypto.Error
 import           Data.Hourglass
 
-import qualified Crypto.PubKey.Curve25519              as X25519
-import qualified Crypto.PubKey.Curve448                as X448
-import qualified Crypto.PubKey.DSA                     as DSA
-import qualified Crypto.PubKey.Ed25519                 as Ed25519
-import qualified Crypto.PubKey.Ed448                   as Ed448
-import qualified Crypto.PubKey.RSA                     as RSA
+import qualified Crypto.PubKey.Curve25519             as X25519
+import qualified Crypto.PubKey.Curve448               as X448
+import qualified Crypto.PubKey.DSA                    as DSA
 import           Crypto.PubKey.ECC.Types
+import qualified Crypto.PubKey.Ed25519                as Ed25519
+import qualified Crypto.PubKey.Ed448                  as Ed448
+import qualified Crypto.PubKey.RSA                    as RSA
 
-import           RPKI.Util                             (convert)
+import           RPKI.Util                            (convert, mkHash)
+
 
 
 instance Arbitrary URI where
@@ -60,14 +61,14 @@ instance Arbitrary URI where
     shrink = genericShrink
 
 instance Arbitrary Hash where
-    arbitrary = Hash . BS.pack <$> replicateM 32 arbitrary
+    arbitrary = mkHash . BS.pack <$> replicateM 32 arbitrary
 
 instance Arbitrary Serial where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary SessionId where
-    arbitrary = SessionId . convert <$> 
+    arbitrary = SessionId . BSS.toShort . convert <$> 
         (listOf1 $ elements $ ['a'..'z'] ++ ['0'..'9'])
 
 instance Arbitrary Version where
@@ -138,10 +139,10 @@ instance Arbitrary a => Arbitrary (NonEmpty a) where
     shrink = genericShrink
 
 instance Arbitrary AKI where
-    arbitrary = AKI . KI . BS.pack <$> replicateM 20 arbitrary
+    arbitrary = AKI . mkKI . BS.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary SKI where
-    arbitrary = SKI . KI . BS.pack <$> replicateM 20 arbitrary
+    arbitrary = SKI . mkKI . BS.pack <$> replicateM 20 arbitrary
 
 instance Arbitrary KI where
     arbitrary = KI <$> arbitrary  

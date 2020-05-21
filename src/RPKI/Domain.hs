@@ -10,6 +10,8 @@
 module RPKI.Domain where
 
 import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Short    as BSS
+import           Data.Text                (Text)
 import qualified Data.Text                as Text
 
 import           Codec.Serialise
@@ -52,14 +54,14 @@ forRFC (WithStrict_ (WithRFC a))       f _ = f a
 forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
 -- TODO Use library type?
-newtype Hash = Hash BS.ByteString deriving stock (Show, Eq, Ord, Generic)
+newtype Hash = Hash BSS.ShortByteString deriving stock (Show, Eq, Ord, Generic)
 
 newtype URI  = URI { unURI :: Text.Text } deriving stock (Show, Eq, Ord, Generic)
-newtype KI   = KI  BS.ByteString deriving stock (Show, Eq, Ord, Generic)
+newtype KI   = KI  BSS.ShortByteString deriving stock (Show, Eq, Ord, Generic)
 newtype SKI  = SKI KI deriving stock (Show, Eq, Ord, Generic)
 newtype AKI  = AKI KI deriving stock (Show, Eq, Ord, Generic)
 
-newtype SessionId = SessionId BS.ByteString deriving stock (Show, Eq, Ord, Generic)
+newtype SessionId = SessionId BSS.ShortByteString deriving stock (Show, Eq, Ord, Generic)
 newtype Serial = Serial Integer deriving stock (Show, Eq, Ord, Generic)
 newtype Version = Version Integer deriving stock (Show, Eq, Ord, Generic)
 
@@ -188,9 +190,9 @@ newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
 
 data Roa = Roa     
-    {-# UNPACK #-} !ASN 
+    !ASN 
     !IpPrefix    
-    {-# UNPACK #-} !Int
+    !Int
     deriving stock (Show, Eq, Ord, Generic)
 
 data Manifest = Manifest {
@@ -198,11 +200,12 @@ data Manifest = Manifest {
         fileHashAlg :: X509.HashALG, 
         thisTime    :: DateTime, 
         nextTime    :: DateTime, 
-        mftEntries  :: [(Text.Text, Hash)]
+        mftEntries  :: [(Text, Hash)]
     } deriving stock (Show, Eq, Generic)
 
 data SignCRL = SignCRL {
-        crl                :: X509.CRL,
+        thisUpdateTime     :: DateTime,
+        nextUpdateTime     :: Maybe DateTime,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BS.ByteString,
@@ -392,10 +395,13 @@ getSerial (getRC -> ResourceCertificate rc) =
     Serial $ X509.certSerial $ cwsX509certificate $ withRFC rc certX509 
 
 hexHash :: Hash -> String
-hexHash (Hash bs) = show $ hex bs
+hexHash (Hash bs) = show $ hex $ BSS.fromShort bs
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
+
+mkKI :: BS.ByteString -> KI
+mkKI = KI . BSS.toShort
 
 getCMSContent :: CMS a -> a
 getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so

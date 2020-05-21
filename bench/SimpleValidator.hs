@@ -3,11 +3,13 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE QuasiQuotes        #-}
 
 import Colog hiding (extract)
 
 import Control.Monad
 import Control.Parallel.Strategies hiding ((.|))
+import           Control.Concurrent.STM
 import Control.Concurrent.Async.Lifted
 import Control.Concurrent.Lifted
 
@@ -19,6 +21,14 @@ import qualified Data.Text                      as Text
 
 import           Data.Maybe
 
+import           Data.String.Interpolate.IsString
+
+import           Data.ASN1.BinaryEncoding
+import           Data.ASN1.Encoding
+import           Data.ASN1.Parse
+import           Data.ASN1.Types
+
+import           Data.X509
 import           Data.X509.Validation
 
 import           System.FilePath.Find
@@ -34,7 +44,10 @@ import qualified Data.ByteString.Streaming      as Q
 import           Data.ByteString.Streaming.HTTP
 import           Streaming
 
+import           Data.List.NonEmpty (NonEmpty(..))
+
 import System.IO.Posix.MMap.Lazy (unsafeMMapFile)
+import qualified System.IO.Posix.MMap as Mmap
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
 
@@ -50,22 +63,14 @@ import           RPKI.RRDP.Update
 import           RPKI.TAL
 import           RPKI.Rsync
 import           RPKI.Store.Stores
+import           RPKI.Store.Repository (getTaPublicationPoints)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ObjectValidation
+
+import RPKI.Store.Base.Storable 
+
 import qualified RPKI.Util  as U
 import RPKI.Store.Util
-
-
-makeLmdbMap :: ModeBool e => Environment e -> IO (Database Hash BS.ByteString)
-makeLmdbMap env = 
-    withTransaction env $ \tx -> openDatabase tx (Just "objects") dbSettings 
-    where
-        dbSettings = makeSettings (SortNative NativeSortLexographic) hashCodec valCodec      
-        hashCodec = Codec encodeHash (Decoding decodeHash)
-        encodeHash = encodeThroughByteString (\(Hash bs) -> bs)
-        decodeHash c p = Hash <$> decodeByteString c p
-        valCodec = byteString
-
 
 
 runValidate :: IO ()
@@ -345,20 +350,22 @@ createAppContext = do
     log' <- createLogger
     pure $ AppContext {        
         logger = log',
-        config = Config getParallelism,
-        rsyncConf = RsyncConf "/tmp/rsync",
-        validationConfig = ValidationConfig $ 24 * 3600 
+        config = Config {
+            parallelism = getParallelism,
+            rsyncConf = RsyncConf "/tmp/rsync",
+            validationConfig = ValidationConfig $ 24 * 3600 
+        }
     }
 
 processRRDP :: LmdbEnv -> IO ()
 processRRDP env = do
     say "begin"      
     let repos = [
-                rrdpR (URI "https://rrdp.ripe.net/notification.xml"),
-                rrdpR (URI "https://rrdp.arin.net/notification.xml"),
-                rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
-                rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
-                rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
+                rrdpR (URI "https://rrdp.ripe.net/notification.xml")
+                -- rrdpR (URI "https://rrdp.arin.net/notification.xml"),
+                -- rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
+                -- rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
+                -- rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
             ]
     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
     database <- createDatabase env    
@@ -444,17 +451,19 @@ validateTreeFromTA env = do
 validateTreeFromStore :: LmdbEnv -> IO ()
 validateTreeFromStore env = do       
     appContext <- createAppContext
-    let taCertURI = URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer"
+    let taCertURI = URI "rsync://repository.lacnic.net/rpki/lacnic/rta-lacnic-rpki.cer"
     database <- createDatabase env
     x <- runValidatorT (vContext taCertURI) $ do
-        -- CerRO taCert <- rsyncFile (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
-        -- CerRO taCert <- rsyncFile (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")
         CerRO taCert <- rsyncFile appContext taCertURI
-        liftIO $ say $ "taCert = " <> show taCert
-        let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
-        let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
-        liftIO $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
-        -- liftIO $ validateCA conf (objectStore, resultStore, repositoryStore) taCert
+        let taName = TaName "Test TA"
+        storedPubPoints <- roAppTxEx database storageError $ \tx -> 
+                                getTaPublicationPoints tx (repositoryStore database) taName
+        topDownContext <- emptyTopDownContext appContext taName storedPubPoints taCert
+        fromTry (UnspecifiedE . U.fmtEx) $
+                validateCA appContext (VContext (taCertURI :| [])) database topDownContext taCert    
+
+        Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
+        logDebugM (logger appContext) [i| TA: #{taName} validCount = #{validCount} |]                                
     say $ "x = " <> show x  
     pure ()  
 
@@ -464,11 +473,18 @@ validateFully env = do
     say "begin"      
     database <- createDatabase env    
     appContext <- createAppContext
-    result <- runValidatorT (vContext $ URI "something.cer") $ do
-        t <- fromTry (RsyncE . FileReadError . U.fmtEx) $             
-            BS.readFile "/Users/mpuzanov/.rpki-cache/tals/ripe.tal"
-        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
-        liftIO $ bootstrapTA appContext tal database
+    let tals = [ "afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal" ]
+    -- let tals = [ "apnic.tal" ]
+
+    as <- forM tals $ \tal -> async $
+        runValidatorT (vContext $ URI "something.cer") $ do
+            t <- fromTry (RsyncE . FileReadError . U.fmtEx) $             
+                BS.readFile $ "/Users/mpuzanov/.rpki-cache/tals/" <> tal
+            talContent <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
+            liftIO $ bootstrapTA appContext talContent database
+
+    result <- forM as wait
+
     say $ "done " <> show result
 
 
@@ -476,11 +492,28 @@ validateFully env = do
 main :: IO ()
 main = do 
     -- mkLmdb "./data"  >>= void . saveRsyncRepo
-    mkLmdb "./data" 100 >>= processRRDP
+    -- mkLmdb "./data" 100 >>= processRRDP
+    -- testBigCrl
     -- mkLmdb "./data/" >>= void . saveRsyncRepo
-    -- mkLmdb "./data/" >>= validateTreeFromStore
+    -- mkLmdb "./data/" 100 >>= validateTreeFromStore
     -- mkLmdb "./data/" >>= validateTreeFromTA
-    -- mkLmdb "./data/" 100 >>= validateFully
+    mkLmdb "./data/" 100 >>= validateFully
+
+testBigCrl :: IO ()
+testBigCrl = do 
+    -- b <- Mmap.unsafeMMapFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/DEFAULT/28/854c9b-b32d-427c-883f-ac314a8c99d6/1/MVNeG0ke-OOpeCSbLlrCGcZncvY.crl"
+    b <- Mmap.unsafeMMapFile "/Users/mpuzanov/ripe/tmp/rpki/repo/ripe.net/DEFAULT/KpSo3VVK5wEHIJnHC2QHVV3d5mk.crl"
+
+    -- let Right z = decodeASN1' BER b
+    -- say $ show $ length  z
+
+
+    case readObject "test.crl" b of
+        Left e ->
+            say $ "Error: " <> show e
+        Right ro -> do 
+            let StorableObject _ (SValue (Storable bs)) = toStorableObject ro
+            say $ show $ BS.length bs
 
 
 

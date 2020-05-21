@@ -10,8 +10,10 @@ module RPKI.Rsync where
 import           Data.Bifunctor
 
 import           Control.Concurrent.STM
+import           Control.Lens
+import           Data.Generics.Product.Fields
+import           Data.Generics.Product.Typed
 import           Control.Monad
-import           Control.Monad.Reader
 import           Control.Monad.Except
 import           UnliftIO.Exception                    hiding (fromEither, fromEitherM)
 
@@ -54,7 +56,7 @@ rsyncFile :: AppContext ->
             URI -> 
             ValidatorT vc IO RpkiObject
 rsyncFile AppContext{..} uri = do
-    let RsyncConf {..} = rsyncConf
+    let RsyncConf {..} = rsyncConf config
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
@@ -80,11 +82,11 @@ updateObjectForRsyncRepository :: Storage s =>
                 RpkiObjectStore s -> 
                 ValidatorT vc IO (RsyncRepository, Validations)
 updateObjectForRsyncRepository 
-    appContenxt@AppContext{..} 
+    appContext@AppContext{..} 
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) 
     objectStore = do     
 
-    let RsyncConf {..} = rsyncConf    
+    let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncDirectory
 
@@ -99,7 +101,7 @@ updateObjectForRsyncRepository
     case exitCode of  
         ExitSuccess -> do 
             (validations, count) <- fromEitherM $ 
-                loadRsyncRepository appContenxt uri destination objectStore
+                loadRsyncRepository appContext uri destination objectStore
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
@@ -136,7 +138,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
             first (RsyncE . FileReadError . U.fmtEx) <$> try (
                 readFiles queue rootPath 
                     `finally` 
-                    (atomically $ Q.writeTBQueue queue Nothing))
+                    atomically (Q.writeTBQueue queue Nothing))
 
         readFiles queue currentPath = do
             names <- getDirectoryContents currentPath
@@ -149,6 +151,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         when (supportedExtension path) $ do                            
                             a <- Unlift.async $ readAndParseObject path                            
                             let uri = pathToUri repositoryUrl rootPath path
+                            logDebugM logger [i|rsync uri = #{uri}|]
                             atomically $ Q.writeTBQueue queue $ Just (uri, a)
             where
                 readAndParseObject filePath = do                                         
@@ -169,8 +172,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 try (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
             where            
                 go tx validations = 
-                    (atomically $ Q.readTBQueue queue) >>= \case 
-                        Nothing -> pure validations
+                    atomically (Q.readTBQueue queue) >>= \case 
+                        Nothing       -> pure validations
                         Just (uri, a) -> try (Unlift.wait a) >>= process tx uri validations >>= go tx
 
                 process tx uri validations = \case
@@ -185,8 +188,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         getByHash tx objectStore h >>= \case 
                             Nothing -> do
                                 putObject tx objectStore so
-                                void $ atomicModifyIORef counter $ \c -> (c + 1, ())
-                            (Just _ :: Maybe RpkiObject) -> pure ()
+                                void $ atomicModifyIORef' counter $ \c -> (c + 1, ())
+                            Just _ -> pure ()
                                 -- TODO Add location
                                 -- logDebug_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
                         pure validations
@@ -233,7 +236,8 @@ getFileSize path = withFile path ReadMode hFileSize
 
 
 -- | Slightly heuristical 
--- TODO Make it more effectient and simpler, introduce NormalisedURI and NormalisedPath
+-- TODO Make it more effectient and simpler, introduce NormalisedURI and NormalisedPath 
+-- and don't check it here.
 pathToUri :: URI -> FilePath -> FilePath -> URI
 pathToUri (URI rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
     let 

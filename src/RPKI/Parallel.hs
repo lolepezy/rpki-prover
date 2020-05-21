@@ -26,18 +26,18 @@ dynamicParaIO = atomically . dynamicPara
 fixedPara :: Natural -> Parallelism
 fixedPara = Fixed
 
-atLeastOneThread :: Natural -> Natural
-atLeastOneThread n = if n < 2 then 1 else n - 1
+atLeastOne :: Natural -> Natural
+atLeastOne n = if n < 2 then 1 else n
 
 parallel :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
             Parallelism -> t a -> (a -> m b) -> m (t b)
 parallel parallelism as f =
     case parallelism of 
         Fixed n                     -> doFixed n
-        Dynamic currentPara maxPara -> doDynamic currentPara maxPara
+        Dynamic currentPara maxPara -> doDynamic1 currentPara maxPara
     where 
         doFixed para =
-            snd <$> bracketChan (atLeastOneThread para) writeAll readAll AsyncL.cancel
+            snd <$> bracketChan (atLeastOne para) writeAll readAll AsyncL.cancel
             where
                 writeAll queue = forM_ as $ \a -> do
                     aa <- AsyncL.async $ f a
@@ -45,36 +45,47 @@ parallel parallelism as f =
                 readAll queue = forM as $ \_ ->         
                     AsyncL.wait =<< (liftIO . atomically $ Q.readTBQueue queue)    
 
-        doDynamic currentPara maxPara =
-            snd <$> bracketChan (atLeastOneThread maxPara) writeAll readAll cancelIt
+        -- doDynamic currentPara maxPara = do
+        --     current <- liftIO $ readTVarIO currentPara
+        --     snd <$> bracketChan (atLeastOne $ min current maxPara) writeAll readAll cancelIt
+        --     where
+        --         cancelIt aa = do 
+        --             liftIO $ atomically $ modifyTVar' currentPara decN
+        --             AsyncL.cancel aa
+
+        --         writeAll queue = forM_ as $ \a -> 
+        --             join $ liftIO $ atomically $ do 
+        --                 c <- readTVar currentPara
+        --                 if c >= maxPara
+        --                     then retry
+        --                     else 
+        --                         -- TODO lock?
+        --                         pure $ do 
+        --                         aa <- AsyncL.async $ f a
+        --                         liftIO $ atomically $ do 
+        --                             -- TODO unlock?
+        --                             Q.writeTBQueue queue aa
+        --                             modifyTVar' currentPara incN
+
+        --         readAll queue = forM as $ \_ -> do
+        --             aa <- liftIO $ atomically $ do                         
+        --                 modifyTVar' currentPara decN
+        --                 Q.readTBQueue queue
+        --             AsyncL.wait aa
+
+        doDynamic1 currentPara maxPara = do
+            current <- liftIO $ readTVarIO currentPara
+            snd <$> bracketChan (atLeastOne $ min current maxPara) writeAll readAll AsyncL.cancel
             where
-                cancelIt aa = do 
-                    liftIO $ atomically $ modifyTVar' currentPara decN
-                    AsyncL.cancel aa
+                writeAll queue = forM_ as $ \a -> do
+                    aa <- AsyncL.async $ f a
+                    liftIO $ atomically $ Q.writeTBQueue queue aa
+                readAll queue = forM as $ \_ ->         
+                    AsyncL.wait =<< (liftIO . atomically $ Q.readTBQueue queue)    
 
-                writeAll queue = forM_ as $ \a -> 
-                    join $ liftIO $ atomically $ do 
-                        c <- readTVar currentPara
-                        if c >= maxPara
-                            then retry
-                            else 
-                                -- TODO lock?
-                                pure $ do 
-                                aa <- AsyncL.async $ f a
-                                liftIO $ atomically $ do 
-                                    -- TODO unlock?
-                                    Q.writeTBQueue queue aa
-                                    modifyTVar' currentPara incN
-
-                readAll queue = forM as $ \_ -> do
-                    aa <- liftIO $ atomically $ do                         
-                        modifyTVar' currentPara decN
-                        Q.readTBQueue queue
-                    AsyncL.wait aa
-
-        incN, decN :: Natural -> Natural
-        incN c = c + 1
-        decN c = if c <= 1 then 1 else c - 1
+        -- incN, decN :: Natural -> Natural
+        -- incN c = c + 1
+        -- decN c = if c <= 1 then 1 else c - 1
 
 
 -- | Utility function for a specific case of producer-consumer pair 
@@ -90,7 +101,7 @@ txConsumeFold :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
             m r
 txConsumeFold poolSize as produce withTx consume accum0 =
     snd <$> bracketChan 
-                (atLeastOneThread poolSize)
+                (atLeastOne poolSize)
                 writeAll 
                 readAll 
                 (const $ pure ())

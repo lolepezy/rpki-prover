@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Logging where
 
@@ -7,7 +6,6 @@ import Colog
 
 import Control.Monad.IO.Class
 import Control.Concurrent.Lifted
-import Control.Concurrent.Async.Lifted
 
 import GHC.Stack (callStack, withFrozenCallStack)
 

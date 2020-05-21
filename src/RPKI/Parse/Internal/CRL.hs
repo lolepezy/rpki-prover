@@ -3,6 +3,8 @@
 
 module RPKI.Parse.Internal.CRL where
     
+import           Control.Monad
+
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
@@ -23,11 +25,8 @@ import qualified RPKI.Util                  as U
 parseCrl :: BS.ByteString -> ParseResult (URI -> CrlObject)
 parseCrl bs = do
     asns                <- first (fmtErr . show) $ decodeASN1' BER bs
-    (x509crl, signCrlF) <- first fmtErr $ runParseASN1 getCrl asns  
-    exts <- case crlExtensions x509crl of
-                Extensions Nothing           -> Left $ fmtErr "No CRL extensions"
-                Extensions (Just extensions) -> Right extensions
-    akiBS <- case extVal exts id_authorityKeyId of
+    (extensions, signCrlF) <- first fmtErr $ runParseASN1 getCrl asns      
+    akiBS <- case extVal extensions id_authorityKeyId of
                 Nothing -> Left $ fmtErr "No AKI in CRL"
                 Just a  -> Right a
 
@@ -36,7 +35,7 @@ parseCrl bs = do
                 Right [Start Sequence, Other Context 0 ki, End Sequence] -> Right ki
                 Right s -> Left $ fmtErr $ "Unknown AKI format: " <> show s
     
-    crlNumberBS :: BS.ByteString  <- case extVal exts id_crlNumber of
+    crlNumberBS :: BS.ByteString  <- case extVal extensions id_crlNumber of
                 Nothing -> Left $ fmtErr "No CRL number in CRL"
                 Just n  -> Right n
 
@@ -45,61 +44,71 @@ parseCrl bs = do
 
     pure $ \location -> makeCrl 
         location 
-        (AKI $ KI aki') 
+        (AKI $ mkKI aki') 
         (U.sha256s bs) 
         (signCrlF crlNumber' )        
     where          
         getCrl = onNextContainer Sequence $ do
-            (asns, crl') <- getNextContainerMaybe Sequence >>= \case 
+            (asns, z) <- getNextContainerMaybe Sequence >>= \case 
                 Nothing   -> throwParseError "Invalid CRL format"
                 Just asns -> 
                     case runParseASN1 getCrlContent asns of
                         Left e  -> throwParseError $ "Invalid CRL format: " <> e
                         Right c -> pure (asns, c)
-            signatureId  <- getObject
+
+            let (thisUpdate, nextUpdate, extensions, revokedSerials) = z
+
+            signatureId :: SignatureALG <- getObject
             signatureVal <- parseSignature
+
             let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
 
-            let revokedSerials = Set.fromList $ List.sort $ 
-                    map (\RevokedCertificate {..} -> Serial revokedSerialNumber) $ crlRevokedCertificates crl'
-
-            let mkSignCRL crlNumber' = SignCRL crl' 
+            let mkSignCRL crlNumber' = SignCRL 
+                        thisUpdate 
+                        nextUpdate
                         (SignatureAlgorithmIdentifier signatureId) 
                         signatureVal encoded crlNumber' revokedSerials
-            pure (crl', mkSignCRL)                
+            pure (extensions, mkSignCRL)            
         
         getCrlContent = do        
-            x509Crl    <- parseX509CRL
-            extensions <- onNextContainer (Container Context 0) $ 
-                            onNextContainer Sequence $ getMany getObject 
-            pure $ x509Crl { crlExtensions = Extensions (Just extensions) }
-
-        -- This is copy-pasted from the Data.X509.CRL to fix getRevokedCertificates 
-        -- which should be more flexible.
-        parseX509CRL = 
-            CRL <$> (getNext >>= getVersion)
-                <*> getObject
-                <*> getObject
-                <*> (getNext >>= getThisUpdate)
-                <*> getNextUpdate
-                <*> getRevokedCertificates
-                <*> getObject
+            -- This is copy-pasted from the Data.X509.CRL to fix getRevokedCertificates 
+            -- which should be more flexible.            
+            _ :: Integer           <- getNext >>= getVersion
+            _ :: SignatureALG      <- getObject
+            _ :: DistinguishedName <- getObject
+            thisUpdate      <- getNext >>= getThisUpdate
+            nextUpdate      <- getNextUpdate
+            revokedSerials  <- getRevokedSerials
+            _ :: Extensions <- getObject        
+            extensions      <- onNextContainer (Container Context 0) $ 
+                                    onNextContainer Sequence $ getMany getObject             
+            pure (thisUpdate, nextUpdate, extensions, revokedSerials)
             where 
-                getVersion (IntVal v) = pure $ fromIntegral v
+                getVersion (IntVal v) = pure $! fromIntegral v
                 getVersion _          = throwParseError "Unexpected type for version"
 
                 getThisUpdate (ASN1Time _ t _) = pure t
-                getThisUpdate t                = throwParseError $ "Bad this update format, expecting time" <> show t
+                getThisUpdate t                = throwParseError $ "Bad this update format, expecting time: " <> show t
 
                 getNextUpdate = getNextMaybe $ \case 
                     (ASN1Time _ tnext _) -> Just tnext
                     _                    -> Nothing
 
-                getRevokedCertificates = 
-                    onNextContainerMaybe Sequence (getMany getObject) >>= \case
-                        Nothing -> pure []
-                        Just rc -> pure rc
+                getRevokedSerials = 
+                    onNextContainerMaybe Sequence (getMany getSerial) >>= \case
+                        Nothing -> pure Set.empty
+                        Just rc -> pure $! Set.fromList rc
+                    where
+                        getSerial = onNextContainer Sequence $ 
+                            replicateM 2 getNext >>= \case 
+                                [IntVal serial, _] -> pure $! Serial serial                            
+                                s                  -> throwParseError $ "That's not a serial: " <> show s
+                                
+                                
+                            
 
+
+                    
 
 
 
