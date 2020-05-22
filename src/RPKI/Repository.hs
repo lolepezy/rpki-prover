@@ -279,10 +279,8 @@ emptyPublicationPoints = PublicationPoints mempty mempty
 -- | Update repository and return the status of the repository 
 -- | as it was before the update.
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
-mergePP publicationPoint pps =
-    case publicationPoint of  
-        RrdpPP  r -> meergeRrdpPP r pps            
-        RsyncPP r -> mergeRsyncPP r pps            
+mergePP (RrdpPP r) = meergeRrdpPP r
+mergePP (RsyncPP r) = mergeRsyncPP r    
 
 
 
@@ -338,11 +336,11 @@ publicationPointsFromCert cert =
 publicationPointsFromCertObject :: CerObject -> Either ValidationError (URI, PublicationPoint)
 publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
+
 data Change a = Put a | Remove a 
     deriving stock (Show, Eq, Ord, Generic)
 
-
--- | Derive a change set to apply to the 
+-- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> 
             ([Change RrdpRepository], [Change (URI, RsyncParent)])
 changeSet 
@@ -357,10 +355,8 @@ changeSet
 
         rsyncOldList = Map.toList rsyncOld
         rsyncNewList = Map.toList rsyncNew
-        rsyncOldSet = Set.fromList rsyncOldList
-        rsyncNewSet = Set.fromList $ Map.toList rsyncNew
-        putNewRsyncs    = map Put    $ filter (not . (`Set.member` rsyncOldSet)) rsyncNewList
-        removeOldRsyncs = map Remove $ filter (not . (`Set.member` rsyncNewSet)) rsyncOldList
+        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList
+        removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList
 
 
 -- | Derive a change set to apply to the 
@@ -397,6 +393,8 @@ updateStatuses
                     (rrdps', (uri, Root newStatus) : rsyncs')
 
 
+-- Limit PublicationPoints only to the set of URIs in the set that comes the first argument.
+-- For rsync, also add all the parent URLs.
 shrinkTo :: PublicationPoints -> Set URI -> PublicationPoints
 shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) uris = 
     PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs')

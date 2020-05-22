@@ -52,7 +52,8 @@ import           Data.IORef.Lifted
     1) Replace IO with some reasonable Monad (MonadIO + MonadMask/MonadUnliftIO/MonadBaseControl).
     2) Maybe return bracketed IO actions instead of exectuting them.
 -}
-updateRrdpRepo :: AppContext ->
+updateRrdpRepo :: WithVContext vc => 
+                AppContext ->
                 RrdpRepository ->                 
                 (Snapshot -> ValidatorT vc IO Validations) ->
                 ([Delta]  -> ValidatorT vc IO Validations) ->

@@ -96,8 +96,8 @@ emptyTopDownContext AppContext {..} taName publicationPoints certificate = liftI
         dynamicPara (parallelism config) <*>
         newTVar (Stats 0)
 
-incValid :: MonadIO m => TopDownContext -> m ()
-incValid TopDownContext {..} = liftIO $ atomically $ 
+oneMoreValid :: MonadIO m => TopDownContext -> m ()
+oneMoreValid TopDownContext {..} = liftIO $ atomically $ 
     modifyTVar' objectStats $ \s -> s { validCount = validCount s + 1 }
 
 
@@ -138,7 +138,7 @@ bootstrapTA env tal database =
                     let fetchUpdatedPPs = updateStatuses storedPubPoints flattenedStatuses
                     topDownContext <- emptyTopDownContext appContext taName' fetchUpdatedPPs taCert
                     -- this is for TA cert
-                    incValid topDownContext
+                    oneMoreValid topDownContext
 
                     logDebugM logger [i| fetchUpdatedPPs = #{fetchUpdatedPPs} |]
 
@@ -253,7 +253,7 @@ validateCA env vContext' database@DB {..} topDownContext@TopDownContext{..} cert
     let validateAll = do
             treeValidations <- runValidatorT vContext' $ 
                     validateTree env database certificate topDownContext
-            queueVResult appContext topDownContext $ toValidations vContext' treeValidations    
+            queueVResult appContext topDownContext $ snd treeValidations
             pure treeValidations
 
     -- Write validation results in a separate thread to avoid blocking on the 
@@ -350,14 +350,12 @@ validateCA env vContext' database@DB {..} topDownContext@TopDownContext{..} cert
 -- | Do top-down validation starting from the given certificate
 -- Returns the discovered publication points that are not registered 
 -- in the top-down context yet.
-validateTree :: (Has AppContext env, 
-                Has VContext vc, 
-                Storage s) =>
+validateTree :: (Has AppContext env, Storage s) =>
                 env ->
                 DB s ->
                 CerObject ->
                 TopDownContext ->
-                ValidatorT vc IO PublicationPoints
+                ValidatorT VContext IO PublicationPoints
 validateTree env database certificate topDownContext = do      
     let appContext@AppContext {..} = getter env    
 
@@ -368,7 +366,7 @@ validateTree env database certificate topDownContext = do
     let validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
     case publicationPointsFromCertObject certificate of
-        Left e                      -> appError $ ValidationE e
+        Left e                  -> appError $ ValidationE e
         Right (u, discoveredPP) -> 
             do            
             logDebugM logger [i| pp =  #{unURI u}, cert = #{getLocations certificate}
@@ -407,56 +405,58 @@ validateTree env database certificate topDownContext = do
             let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
 
             -- this for the certificate
-            incValid topDownContext
+            oneMoreValid topDownContext
 
             mft <- findMft childrenAki locations
-            logDebugM logger [i|mft=#{getLocations mft}|]
+            -- this for the manifest
+            oneMoreValid topDownContext                                
 
-            (_, crlHash) <- case findCrlOnMft mft of 
-                []    -> vError $ NoCRLOnMFT childrenAki locations
-                [crl] -> pure crl
-                crls  -> vError $ MoreThanOneCRLOnMFT childrenAki locations crls
+            forChild (NonEmpty.head $ getLocations mft) $ do
+                logDebugM logger [i|mft=#{getLocations mft}|]
 
-            let objectStore' = objectStore database
-            crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
-            case crlObject of 
-                Nothing          -> vError $ NoCRLExists childrenAki locations    
-                Just (CrlRO crl) -> do      
+                (_, crlHash) <- case findCrlOnMft mft of 
+                    []    -> vError $ NoCRLOnMFT childrenAki locations
+                    [crl] -> pure crl
+                    crls  -> vError $ MoreThanOneCRLOnMFT childrenAki locations crls
 
-                    logDebugM logger [i|crl=#{getLocations crl}|]
+                let objectStore' = objectStore database
+                crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                case crlObject of 
+                    Nothing          -> vError $ NoCRLExists childrenAki locations    
+                    Just (CrlRO crl) -> do      
 
-                    validCrl <- vHoist $ do          
-                        crl' <- validateCrl (now topDownContext) crl certificate
-                        void $ validateMft (now topDownContext) mft certificate crl'
-                        pure crl'                                        
+                        validCrl <- forChild (NonEmpty.head $ getLocations crl) $ do    
+                            logDebugM logger [i|crl=#{getLocations crl}|]
+                            vHoist $ do          
+                                crl' <- validateCrl (now topDownContext) crl certificate
+                                void $ validateMft (now topDownContext) mft certificate crl'
+                                pure crl'                                        
 
-                    -- this for the CRL
-                    incValid topDownContext
-                    -- this for the manifest
-                    incValid topDownContext                    
-                        
-                    -- TODO Check locations and give warnings if it's wrong
-                    let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
-                                            map snd $ mftEntries $ getCMSContent $ extract mft
+                        -- this for the CRL
+                        oneMoreValid topDownContext                        
+                            
+                        -- TODO Check locations and give warnings if it's wrong
+                        let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
+                                                map snd $ mftEntries $ getCMSContent $ extract mft
 
-                    logDebugM logger [i|childrenHashes size=#{length childrenHashes}|]
+                        logDebugM logger [i|childrenHashes size=#{length childrenHashes}|]
 
-                    mftProblems <- parallel (parallelismDegree topDownContext) childrenHashes $ \h -> do            
-                        ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
-                        case ro of 
-                            Nothing  -> pure $ Left $ ManifestEntryDontExist h
-                            Just ro' -> Right <$> liftIO (validateChild vContext' appContext validCrl ro')
+                        mftProblems <- parallel (parallelismDegree topDownContext) childrenHashes $ \h -> do            
+                            ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
+                            case ro of 
+                                Nothing  -> pure $ Left $ ManifestEntryDontExist h
+                                Just ro' -> Right <$> liftIO (validateChild vContext' appContext validCrl ro')
 
-                    -- TODO Here we should act depending on how strict we want to be,  
-                    -- Interrupt the whole thing or just continue with a warning            
-                    case mftProblems of
-                        [] -> pure emptyPublicationPoints
-                        _  -> do 
-                            let (broken, pps) = partitionEithers mftProblems
-                            mapM_ vWarn broken
-                            pure $! mconcat pps 
+                        -- TODO Here we should act depending on how strict we want to be,  
+                        -- Interrupt the whole thing or just continue with a warning            
+                        case mftProblems of
+                            [] -> pure emptyPublicationPoints
+                            _  -> do 
+                                let (broken, pps) = partitionEithers mftProblems
+                                mapM_ vWarn broken
+                                pure $! mconcat pps 
 
-                Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations   
+                    Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations   
 
         findMft :: Has VContext env => 
                     AKI -> Locations -> ValidatorT env IO MftObject
@@ -475,31 +475,33 @@ validateTree env database certificate topDownContext = do
         validateChild parentContext appContext@AppContext {..} validCrl ro = 
             case ro of
                 CerRO childCert -> do 
-                    result <- runValidatorT childContext $ do
+                    (r, validations) <- runValidatorT childContext $ do
                             childVerifiedResources <- vHoist $ do                 
                                 void $ validateResourceCert (now topDownContext) childCert certificate validCrl                
                                 validateResources (verifiedResources topDownContext) childCert certificate 
                             validateTree env database childCert 
                                 topDownContext { verifiedResources = Just childVerifiedResources }
-                    queueVResult appContext topDownContext $ toValidations childContext result
-                    pure $ case result of
-                        (Left _, _)    -> emptyPublicationPoints
-                        (Right pps, _) -> pps
+                    queueVResult appContext topDownContext validations
+                    pure $ case r of
+                        Left _    -> emptyPublicationPoints
+                        Right pps -> pps
 
                 RoaRO roa -> withEmptyPPs $ do 
-                                z <- queueVResult appContext topDownContext $ toValidations childContext $ 
-                                        runPureValidator childContext $                                     
+                                let (r, validations) = runPureValidator childContext $                                     
                                             void $ validateRoa (now topDownContext) roa certificate validCrl
-                                incValid topDownContext
-                                let vrps = getCMSContent (extract roa :: CMS [Roa])
-                                forM_ vrps $ \vrp ->
-                                    logDebugM logger [i|vrp=#{vrp}|]
-                                pure z
+                                queueVResult appContext topDownContext validations
+                                case r of 
+                                    Left _  -> pure ()
+                                    Right _ -> do                                
+                                        oneMoreValid topDownContext
+                                        let vrps = getCMSContent (extract roa :: CMS [Roa])
+                                        forM_ vrps $ \vrp ->
+                                            logDebugM logger [i|vrp=#{vrp}, roa=#{NonEmpty.head $ getLocations roa} |]
                 GbrRO gbr -> withEmptyPPs $ do
-                                z <- queueVResult appContext topDownContext $ toValidations childContext $ 
+                                z <- queueVResult appContext topDownContext $ snd $ 
                                     runPureValidator childContext $ 
                                         void $ validateGbr (now topDownContext) gbr certificate validCrl
-                                incValid topDownContext
+                                oneMoreValid topDownContext
                                 pure z
                 -- TODO Anything else?
                 _ -> withEmptyPPs $ pure ()
@@ -528,7 +530,9 @@ writeVResults :: (Storage s) => AppLogger -> TopDownContext -> VResultStore s ->
 writeVResults logger topDownContext resultStore =
     withQueue (resultQueue topDownContext) $ \vr -> do
         logDebug_ logger [i|VResult: #{vr}.|]
-        rwTx resultStore $ \tx -> putVResult tx resultStore vr
+        -- TODO Fix it, saving it results in MDB_BAD_VALSIZE
+        -- it most probably means the key size is wrong
+        -- rwTx resultStore $ \tx -> putVResult tx resultStore vr
 
 
 -- TODO Optimise so that it reads the queue in big chunks
@@ -538,11 +542,6 @@ withQueue queue f = do
     case z of
         Nothing -> pure ()
         Just s  -> f s >> withQueue queue f
-
-toValidations :: VContext -> (Either AppError a, Validations) -> Validations
-toValidations vc (Left e, vs) = vs <> mError vc e
-toValidations _ (Right _, vs) = vs
-
 
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: Has VContext vc => 

@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
@@ -17,6 +19,8 @@ import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+
+import Data.Generics.Product.Typed
 
 import           Data.Hourglass       (DateTime)
 
@@ -157,3 +161,15 @@ mWarning vc w = Validations $ Map.singleton vc $ Set.fromList [VWarn w]
 
 emptyValidations :: Validations -> Bool 
 emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
+
+class WithVContext v where
+    getVC :: v -> VContext
+    childVC :: URI -> v -> v
+
+instance {-# OVERLAPPING #-} WithVContext VContext where
+    getVC = id
+    childVC = flip childVContext
+
+instance (Generic a, HasType VContext a) => WithVContext a where 
+    getVC = getTyped
+    childVC u v = setTyped (childVContext (getVC v) u) v

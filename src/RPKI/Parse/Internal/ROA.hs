@@ -34,8 +34,8 @@ parseRoa bs = do
             mconcat <$> onNextContainer Sequence (getMany $
                 onNextContainer Sequence $ 
                 getAddressFamily "Expected an address family here" >>= \case 
-                    Right Ipv4F -> getRoa asId ipv4
-                    Right Ipv6F -> getRoa asId ipv6
+                    Right Ipv4F -> getRoa asId $ \bs' nzBits -> Ipv4P $ make bs' (fromIntegral nzBits)
+                    Right Ipv6F -> getRoa asId $ \bs' nzBits -> Ipv6P $ make bs' (fromIntegral nzBits)                
                     Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
         getRoa :: Int -> (BS.ByteString -> Word64 -> IpPrefix) -> ParseASN1 [Roa]
@@ -49,6 +49,3 @@ parseRoa bs = do
                 Nothing -> throwParseError "Unexpected ROA content"
             where 
                 mkRoa bs' nz = Roa (ASN (fromIntegral asId)) (mkPrefix bs' nz)
-
-        ipv4 bs' nzBits = Ipv4P $ make bs' (fromIntegral nzBits)
-        ipv6 bs' nzBits = Ipv6P $ make bs' (fromIntegral nzBits)
