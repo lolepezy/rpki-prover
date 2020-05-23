@@ -29,8 +29,3 @@ data ValidationConfig = ValidationConfig {
 
 getParallelism :: Natural 
 getParallelism = fromMaybe 1 $ toNatural numCapabilities
-
-data AppContext = AppContext {
-    logger :: AppLogger, 
-    config :: Config    
-} deriving stock (Generic)

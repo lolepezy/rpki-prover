@@ -59,7 +59,7 @@ import           RPKI.Parse.Parse
 import           RPKI.TopDown
 import           RPKI.Logging
 import           RPKI.Config
-import           RPKI.RRDP.Update
+import           RPKI.Execution
 import           RPKI.TAL
 import           RPKI.Rsync
 import           RPKI.Store.Stores
@@ -176,14 +176,16 @@ parseWithTmp filename f = --LBS.readFile filename >>= f
 
 createAppContext :: IO AppContext
 createAppContext = do 
-    log' <- createLogger
+    log'         <- createLogger
+    dynamicState <- createDynamicState
     pure $ AppContext {        
         logger = log',
         config = Config {
             parallelism = getParallelism,
             rsyncConf = RsyncConf "/tmp/rsync",
             validationConfig = ValidationConfig $ 24 * 3600 
-        }
+        },
+        dynamicState = dynamicState
     }
 
 processRRDP :: LmdbEnv -> IO ()

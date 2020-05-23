@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Store.Data where
 
@@ -36,12 +35,8 @@ data STA = STA {
 data SRepository = SRepository !Repository !RepositoryStatus
     deriving (Show, Eq, Ord, Generic, Serialise)
 
--- instance WithKey SRepository URI where
---     key (SRepository (RrdpR (RrdpRepository{..} )) _) = uri
---     key (SRepository (RsyncR (RsyncPublicationPoint{..})) _) = uri
-
 instance WithKey VResult VContext where
-    key vr = path vr
+    key = path
 
 instance WithKey STA Locations where
-    key ta = certLocations $ tal ta
+    key = certLocations . tal

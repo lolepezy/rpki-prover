@@ -1,45 +1,80 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 module RPKI.Execution where
 
-import           Control.Monad.Except
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Except
+import           Data.String.Interpolate
 
 import           Control.Concurrent.STM
 
-import           Data.String.Interpolate
+import           Codec.Serialise
+import           GHC.Generics
 
-import qualified Data.ByteString            as BS
-import           Data.Has
-import qualified Data.List.NonEmpty         as NonEmpty
+import           Data.Int
+
+import           Data.Hourglass                   (timeGetNanoSeconds)
+import           Time.Types
+
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
 
 import           RPKI.AppMonad
-import           RPKI.Errors
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.Repository
-import           RPKI.Logging
-import           RPKI.Rsync
 import           RPKI.TAL
-import           RPKI.Store.Base.Storage
-import           RPKI.Store.Stores
-import           RPKI.Util                  (convert, fmtEx)
+import           RPKI.Logging
+import           RPKI.Config
+import           RPKI.Validation.ObjectValidation
+
+-- It's some sequence of versions that is equal to the current 
+-- timestamp in nanoseconds.
+newtype WorldVersion = WorldVersion Int64
+    deriving (Show, Eq, Ord, Generic, Serialise)
+
+newtype DynamicState = DynamicState {
+    world :: TVar WorldVersion
+} deriving stock (Generic)
+
+data AppContext = AppContext {
+    logger :: AppLogger, 
+    config :: Config,
+    dynamicState :: DynamicState
+} deriving stock (Generic)
+
+-- 
+createDynamicState :: IO DynamicState
+createDynamicState = do
+    Now now <- thisMoment
+    let NanoSeconds nano = timeGetNanoSeconds now
+    DynamicState <$> atomically (newTVar $ WorldVersion nano)
+
+-- 
+updateWorldVerion :: DynamicState -> IO WorldVersion
+updateWorldVerion DynamicState {..} = do
+    Now now <- thisMoment
+    let NanoSeconds nano = timeGetNanoSeconds now
+    let wolrdVersion = WorldVersion nano
+    atomically $ writeTVar world wolrdVersion
+    pure wolrdVersion
 
 
-data Task = CheckTACertificate (TAL -> Task) |
-            FetchRepository (Repository -> Task) |
-            FetchAndValidate (Repository -> Task) |
-            TaskSequence [Task] |
-            Noop
 
 
+-- data Task = CheckTACertificate (TAL -> Task) |
+--             FetchRepository (Repository -> Task) |
+--             FetchAndValidate (Repository -> Task) |
+--             TaskSequence [Task] |
+--             Noop
 
-init :: TAL -> [Task]
-init tal = [
-        CheckTACertificate (\_ -> Noop)
-    ]
+-- init :: TAL -> [Task]
+-- init tal = [
+--         CheckTACertificate (\_ -> Noop)
+--     ]
+
 
 
 {-

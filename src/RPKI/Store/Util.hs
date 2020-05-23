@@ -39,9 +39,9 @@ createRepositoryStore e = do
 createResultStore :: LmdbEnv -> IO (VResultStore LmdbStorage)
 createResultStore e = do
     let lmdb = LmdbStorage e
-    rMap <- create e    
+    rMap <- createMulti e    
     pure $ VResultStore {
-        results = SMap lmdb rMap
+        results = SMultiMap lmdb rMap
     }
 
 createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
@@ -65,7 +65,7 @@ mkLmdb fileName maxReaders =
         createSemaphore maxReaders
     where
         -- TODO Make it configurable
-        mapSize = 8*1024*1024*1024
+        mapSize = 64*1024*1024*1024
         maxDatabases = 120
 
 closeLmdb :: Environment e -> IO ()

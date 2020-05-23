@@ -12,6 +12,7 @@ import           RPKI.Errors
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
+import           RPKI.Execution
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -112,19 +113,19 @@ ifJust a f = maybe (pure ()) f a
 
 -- | Validation result store
 newtype VResultStore s = VResultStore {
-    results  :: SMap "results" s VContext VResult
+    results :: SMultiMap "results" s WorldVersion VResult
 }
 
 instance Storage s => WithStorage s (VResultStore s) where
     storage (VResultStore s) = storage s
 
 putVResult :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> VResultStore s -> VResult -> m ()
-putVResult tx (VResultStore s) vr = liftIO $ M.put tx s (path vr) vr
+            Tx s 'RW -> VResultStore s -> WorldVersion -> VResult -> m ()
+putVResult tx (VResultStore s) wv vr = liftIO $ MM.put tx s wv vr
 
 allVResults :: (MonadIO m, Storage s) => 
-                Tx s mode -> VResultStore s -> m [(VContext, VResult)]
-allVResults tx (VResultStore s) = liftIO $ reverse <$> M.fold tx s f []
+                Tx s mode -> VResultStore s -> WorldVersion -> m [(WorldVersion, VResult)]
+allVResults tx (VResultStore s) wv = liftIO $ reverse <$> MM.foldS tx s wv f []
     where
         f ros vc vr = pure $! (vc, vr) : ros
 

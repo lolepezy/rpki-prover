@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -13,12 +12,9 @@ import           Control.Monad
 import           Codec.Serialise
 import           GHC.Generics
 
-import qualified Data.List                as List
-import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 
 import           RPKI.Domain
-import           RPKI.Errors
 import           RPKI.Repository
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -26,9 +22,6 @@ import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storage
-
-import           RPKI.Store.Data
-
 
 
 data RepositoryType = Rsync | RRDP
@@ -44,18 +37,6 @@ data RepositoryStore s = RepositoryStore {
 instance Storage s => WithStorage s (RepositoryStore s) where
     storage (RepositoryStore s _ _) = storage s
 
-
--- putRepository :: (MonadIO m, Storage s) => 
---                 Tx s 'RW -> RepositoryStore s -> Repository -> TaName -> m ()
--- putRepository tx RepositoryStore {..} r taName' = liftIO $ do 
---     let repoUri = repositoryURI r
---     case r of 
---         RrdpR rrdp -> do
---             M.put tx rrdpS repoUri rrdp
---             MM.put tx perTA taName' (repoUri, RRDP)
---         RsyncR rsync -> do 
---             M.put tx rsyncS repoUri rsync    
---             MM.put tx perTA taName' (repoUri, Rsync)
 
 putRepositories :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RepositoryStore s -> PublicationPoints -> TaName -> m ()

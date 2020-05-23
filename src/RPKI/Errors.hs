@@ -12,8 +12,7 @@ import qualified Data.ByteString.Lazy as LBS
 import           Data.Text            (Text)
 
 import           Codec.Serialise
-import           Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NonEmpty
+import           Data.List.NonEmpty (NonEmpty (..), (<|))
 import qualified Data.List          as List
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
@@ -139,7 +138,7 @@ vContext :: URI -> VContext
 vContext u = VContext $ u :| []
 
 childVContext :: VContext -> URI -> VContext
-childVContext (VContext us) u = VContext $ u `NonEmpty.cons` us
+childVContext (VContext us) u = VContext $ u <| us
 
 data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
