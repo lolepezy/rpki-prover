@@ -6,6 +6,12 @@
 module RPKI.Store.Stores where
 
 import Control.Monad.IO.Class
+import  Codec.Serialise
+
+import Data.Int
+
+import           GHC.Generics
+import           GHC.TypeLits
 
 import           RPKI.Domain
 import           RPKI.Errors
@@ -18,6 +24,7 @@ import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Sequence
 
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
@@ -46,6 +53,10 @@ putObject tx store (StorableObject ro sv) = liftIO $ do
         case ro of
             MftRO mft -> MM.put tx (mftByAKI store) aki' (h, getMftNumber mft)
             _         -> pure ()
+
+hashExists :: (MonadIO m, Storage s) => 
+            Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
+hashExists tx store h = liftIO $ M.exists tx (objects store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
@@ -111,29 +122,59 @@ ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a
 
 
+newtype ArtificialKey = ArtificialKey Int64
+    deriving (Show, Eq, Generic, Serialise)
+
 -- | Validation result store
-newtype VResultStore s = VResultStore {
-    results :: SMultiMap "results" s WorldVersion VResult
+data VResultStore s = VResultStore {
+    keys    :: Sequence s,
+    results :: SMap "validation-results" s ArtificialKey VResult,
+    whToKey :: SMultiMap "wh-to-key" s WorldVersion ArtificialKey
 }
 
 instance Storage s => WithStorage s (VResultStore s) where
-    storage (VResultStore s) = storage s
+    storage (VResultStore s _ _) = storage s
 
 putVResult :: (MonadIO m, Storage s) => 
             Tx s 'RW -> VResultStore s -> WorldVersion -> VResult -> m ()
-putVResult tx (VResultStore s) wv vr = liftIO $ MM.put tx s wv vr
+putVResult tx VResultStore {..} wv vr = liftIO $ do 
+    SequenceValue k <- nextValue tx keys     
+    MM.put tx whToKey wv (ArtificialKey k)
+    M.put tx results (ArtificialKey k) vr
 
 allVResults :: (MonadIO m, Storage s) => 
-                Tx s mode -> VResultStore s -> WorldVersion -> m [(WorldVersion, VResult)]
-allVResults tx (VResultStore s) wv = liftIO $ reverse <$> MM.foldS tx s wv f []
+                Tx s mode -> VResultStore s -> WorldVersion -> m [VResult]
+allVResults tx VResultStore {..} wv = liftIO $ MM.foldS tx whToKey wv f []
     where
-        f ros vc vr = pure $! (vc, vr) : ros
+        f vrs _ artificialKey = 
+            maybe vrs (: vrs) <$> M.get tx results artificialKey            
+
+
+-- | VRP store
+newtype VRPStore s = VRPStore {
+    vrps :: SMultiMap "vrps" s WorldVersion Roa
+}
+
+instance Storage s => WithStorage s (VRPStore s) where
+    storage (VRPStore s) = storage s
+
+putVRP :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> VRPStore s -> WorldVersion -> Roa -> m ()
+putVRP tx (VRPStore s) wv vrp = liftIO $ MM.put tx s wv vrp
+
+allVRPs :: (MonadIO m, Storage s) => 
+            Tx s mode -> VRPStore s -> WorldVersion -> m [Roa]
+allVRPs tx (VRPStore s) wv = liftIO $ MM.foldS tx s wv f []
+    where
+        f ros _ vr = pure $! vr : ros
+
 
 data DB s = DB {
-    taStore :: TAStore s, 
+    taStore         :: TAStore s, 
     repositoryStore :: RepositoryStore s, 
-    objectStore :: RpkiObjectStore s,
-    resultStore :: VResultStore s
+    objectStore     :: RpkiObjectStore s,
+    resultStore     :: VResultStore s,
+    vrpStore        :: VRPStore s
 }
 
 instance Storage s => WithStorage s (DB s) where

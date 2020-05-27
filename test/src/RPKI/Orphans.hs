@@ -9,6 +9,7 @@ import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Base64               as B64
 import qualified Data.ByteString.Short                as BSS
 import qualified Data.List                            as List
+import qualified Data.Text                            as Text
 
 import           Data.List.NonEmpty                   (NonEmpty)
 
@@ -35,6 +36,8 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
+import           RPKI.Store.Data
+import           RPKI.Errors
 
 import           Time.Types
 
@@ -308,8 +311,54 @@ instance Arbitrary RsyncRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-
 instance Arbitrary RepositoryStatus where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+
+-- errors and warnings
+
+instance Arbitrary (ParseError Text.Text) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary VWarning where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ValidationError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary StorageError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RsyncError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary TALError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary AppError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary VProblem where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary VContext where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary VResult where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -374,6 +423,13 @@ instance Arbitrary V4.IpNetMask where
 instance Arbitrary V6.IpNetMask where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+instance Arbitrary PrefixesAndAsns where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+
+
 
 --- Crypto stuff
 

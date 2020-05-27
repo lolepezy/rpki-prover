@@ -12,8 +12,11 @@
 module RPKI.Store.StoresSpec where
 
 import           Control.Monad
+import qualified Data.ByteString                   as BS
+import           Data.Foldable
 import           Data.List                         as List
 import           Data.Maybe
+import qualified Data.Text                         as Text
 
 import           System.Directory
 import           System.IO.Temp
@@ -24,31 +27,47 @@ import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.Domain
-import           RPKI.Repository
+import           RPKI.Errors
+import           RPKI.Execution
 import           RPKI.Orphans
+import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
-import           RPKI.Store.Stores
 import           RPKI.Store.Repository
+import           RPKI.Store.Stores
 
-import           RPKI.Store.Base.LMDB (LmdbEnv)
+import           RPKI.Store.Base.LMDB              (LmdbEnv)
 
 import           RPKI.Store.Util
 
 
 
+
 storeGroup :: TestTree
-storeGroup = withObjectStore $ \io -> testGroup "Rpki object LMDB storage test"
+storeGroup = testGroup "LMDB storage tests"
     [
-        HU.testCase "Should insert and get" (should_insert_and_get_all_back_from_object_store io)        
+        -- objectStoreGroup,
+        validationResultStoreGroup
+    ]
+
+objectStoreGroup :: TestTree
+objectStoreGroup = withDB $ \io -> testGroup "Object storage test"
+    [
+        HU.testCase "Should insert and get back" (should_insert_and_get_all_back_from_object_store io)        
+    ]
+
+validationResultStoreGroup :: TestTree
+validationResultStoreGroup = withDB $ \io -> testGroup "Validation result storage test"
+    [
+        HU.testCase "Should insert and get back" (should_insert_and_get_all_back_from_validation_result_store io)        
     ]
 
 repositoryStoreGroup :: TestTree
-repositoryStoreGroup = withRepositoryStore $ \io -> testGroup "Repository LMDB storage test"
+repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
     [
         -- HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io),
         -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
@@ -59,15 +78,15 @@ repositoryStoreGroup = withRepositoryStore $ \io -> testGroup "Repository LMDB s
 sizes :: Storage s =>
         RpkiObjectStore s ->  IO (Int, Int, Int)
 sizes objectStore =
-    roTx objectStore $ \tx -> do
+    roTx objectStore $ \tx ->
         (,,) <$> M.size tx (objects objectStore)
             <*> MM.size tx (byAKI objectStore)
             <*> MM.size tx (mftByAKI objectStore)
 
 
-should_insert_and_get_all_back_from_object_store :: IO ((FilePath, LmdbEnv), RpkiObjectStore LmdbStorage) -> HU.Assertion
+should_insert_and_get_all_back_from_object_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_object_store io = do  
-    (_, objectStore) <- io
+    (_, DB {..}) <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [RpkiObject] <- removeMftNumberDuplicates <$> generateSome
@@ -78,8 +97,8 @@ should_insert_and_get_all_back_from_object_store io = do
     let ros2 = List.map (replaceAKI aki2) secondHalf
     let ros' = ros1 <> ros2 
 
-    rwTx objectStore $ \tx -> do
-        forM_ ros' $ \ro -> 
+    rwTx objectStore $ \tx -> 
+        for_ ros' $ \ro -> 
             putObject tx objectStore $ toStorableObject ro  
     
     sizes1 <- sizes objectStore
@@ -116,6 +135,28 @@ should_insert_and_get_all_back_from_object_store io = do
                     [ mft | MftRO mft <- ros, getAKI mft == Just a ]
                 
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'
+
+
+should_insert_and_get_all_back_from_validation_result_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+should_insert_and_get_all_back_from_validation_result_store io = do  
+    (_, DB {..}) <- io
+    -- vrs :: [VResult] <- forM [1 :: Int .. 2] $ const $ QC.generate arbitrary      
+    -- vr :: VResult <- QC.generate arbitrary    
+
+    let vr = VResult [] (vContext $ URI $ Text.pack $ replicate 500 'a')
+    world <- getWorldVerion =<< createDynamicState
+
+    let wb = storableKey world  
+    let SValue (Storable vb) = storableValue vr  
+ 
+    putStrLn $ "value size = " <> show (BS.length vb)
+
+    rwTx resultStore $ \tx -> putVResult tx resultStore world vr
+    vrs' <- roTx resultStore $ \tx -> allVResults tx resultStore world
+    
+    
+    HU.assertEqual "Not the same VResult" ([vr]) (sort vrs')
+
 
 
 -- should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, Env), RepositoryStore LmdbStorage) -> HU.Assertion
@@ -183,18 +224,8 @@ should_insert_and_get_all_back_from_object_store io = do
 generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
 
-withObjectStore :: (IO ((FilePath, LmdbEnv), RpkiObjectStore LmdbStorage) -> TestTree) -> TestTree
-withObjectStore testTree = withResource (makeLmdbStuff createObjectStore) releaseLmdb testTree
-
-withRepositoryStore :: (IO ((FilePath, LmdbEnv), RepositoryStore LmdbStorage) -> TestTree) -> TestTree
-withRepositoryStore testTree = withResource (makeLmdbStuff createRepositoryStore) releaseLmdb testTree
-
-withMM :: (IO ((FilePath, LmdbEnv), SMultiMap "testMM" LmdbStorage Int String) -> TestTree) -> TestTree
-withMM testTree = withResource (makeLmdbStuff mkMMap) releaseLmdb testTree
-    where
-        mkMMap e = do   
-            mm <- createMulti e
-            return $ SMultiMap (LmdbStorage e) mm
+withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
+withDB testTree = withResource (makeLmdbStuff createDatabase) releaseLmdb testTree
 
 
 makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)

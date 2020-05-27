@@ -16,6 +16,7 @@ import qualified Data.Text                as Text
 
 import           Codec.Serialise
 import           Data.Hex
+import           Data.Int
 
 import           Data.Hourglass
 import           Data.Kind                (Type)
@@ -189,10 +190,10 @@ data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
 
-data Roa = Roa     
-    !ASN 
-    !IpPrefix    
-    !Int
+data Roa = Roa !ASN !IpPrefix !Int16
+    deriving stock (Show, Eq, Ord, Generic)
+
+data PrefixWithLength = PrefixWithLength !IpPrefix !Int16
     deriving stock (Show, Eq, Ord, Generic)
 
 data Manifest = Manifest {

@@ -28,6 +28,7 @@ import           RPKI.Repository
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Config
+import           RPKI.Time
 import           RPKI.Validation.ObjectValidation
 
 -- It's some sequence of versions that is equal to the current 
@@ -61,6 +62,8 @@ updateWorldVerion DynamicState {..} = do
     atomically $ writeTVar world wolrdVersion
     pure wolrdVersion
 
+getWorldVerion :: DynamicState -> IO WorldVersion
+getWorldVerion DynamicState {..} = readTVarIO world    
 
 
 

@@ -12,7 +12,6 @@ import Control.Exception.Lifted
 import Control.Monad.Trans.Control
 import Control.Concurrent.Async.Lifted as AsyncL
 
-
 data Parallelism = Dynamic !(TVar Natural) Natural | Fixed Natural
 
 dynamicPara :: Natural -> STM Parallelism
@@ -123,12 +122,55 @@ bracketChan :: (MonadBaseControl IO m, MonadIO m) =>
                 m (b, c)
 bracketChan size produce consume kill = do
     queue <- liftIO $ atomically $ Q.newTBQueue size
-    (AsyncL.concurrently (produce queue) (consume queue))
+    AsyncL.concurrently (produce queue) (consume queue)
         `finally`
-        (killAll queue)
+        killAll queue
     where
         killAll queue = do
             a <- liftIO $ atomically $ Q.tryReadTBQueue queue
             case a of   
                 Nothing -> pure ()
                 Just as -> kill as >> killAll queue
+
+-- General closeable queue
+data QState = QWorks | QClosed
+
+data Quu a = Quu !(TBQueue a) !(TVar QState)    
+
+createQuu :: Natural -> STM (Quu a)
+createQuu n = do 
+    q <- newTBQueue n
+    s <- newTVar QWorks
+    pure $ Quu q s
+
+
+writeQuu :: Quu a -> a -> STM ()
+writeQuu (Quu q s) qe = 
+    readTVar s >>= \case 
+        QClosed -> pure ()
+        QWorks  -> Q.writeTBQueue q qe
+
+readQueueChunked :: Quu a -> Natural -> ([a] -> IO ()) -> IO ()
+readQueueChunked (Quu q queueState) chunkSize f = go
+    where 
+        go = do 
+            chunk' <- atomically $ do 
+                chunk <- readChunk chunkSize
+                case chunk of 
+                    [] -> readTVar queueState >>= \case 
+                            QClosed -> pure []
+                            QWorks  -> retry
+                    _ -> pure chunk
+            case chunk' of 
+                [] -> pure ()
+                chu -> f chu >> go
+
+        readChunk 0 = pure []
+        readChunk leftToRead = do 
+            z <- Q.tryReadTBQueue q
+            case z of 
+                Just z' -> (z' : ) <$> readChunk (leftToRead - 1)
+                Nothing -> pure []                
+
+closeQueue :: Quu a -> STM ()
+closeQueue (Quu _ s) = writeTVar s QClosed

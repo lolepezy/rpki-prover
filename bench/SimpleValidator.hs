@@ -8,6 +8,7 @@
 import Colog hiding (extract)
 
 import Control.Monad
+import Control.Exception
 import Control.Parallel.Strategies hiding ((.|))
 import           Control.Concurrent.STM
 import Control.Concurrent.Async.Lifted
@@ -60,6 +61,7 @@ import           RPKI.TopDown
 import           RPKI.Logging
 import           RPKI.Config
 import           RPKI.Execution
+import           RPKI.Parallel
 import           RPKI.TAL
 import           RPKI.Rsync
 import           RPKI.Store.Stores
@@ -71,6 +73,7 @@ import RPKI.Store.Base.Storable
 
 import qualified RPKI.Util  as U
 import RPKI.Store.Util
+
 
 
 runValidate :: IO ()
@@ -277,8 +280,6 @@ validateTreeFromTA env = do
 
     say $ "x = " <> show x
 
-
-
 validateTreeFromStore :: LmdbEnv -> IO ()
 validateTreeFromStore env = do       
     appContext <- createAppContext
@@ -305,7 +306,7 @@ validateFully env = do
     database <- createDatabase env    
     appContext <- createAppContext
     let tals = [ "afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal" ]
-    -- let tals = [ "apnic.tal" ]
+    -- let tals = [ "ripe.tal" ]
 
     as <- forM tals $ \tal -> async $
         runValidatorT (vContext $ URI "something.cer") $ do
@@ -346,6 +347,19 @@ testBigCrl = do
             let StorableObject _ (SValue (Storable bs)) = toStorableObject ro
             say $ show $ BS.length bs
 
+
+testQ :: IO ()
+testQ = do 
+    quu <- atomically $ createQuu 5
+    void $ concurrently (writeQ quu `finally` atomically (closeQueue quu)) (readQ quu)
+    where 
+        writeQ quu = forM_ [0..20 :: Int] $ \c ->
+            atomically $ writeQuu quu c            
+            
+        readQ quu = do 
+            readQueueChunked quu 10 (\c -> putStrLn $ "c = " <> show c)
+            pure ()
+        
 
 
 say :: String -> IO ()
