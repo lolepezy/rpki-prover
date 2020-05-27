@@ -89,8 +89,8 @@ instance Storage LmdbStorage where
     foldS (LmdbTx tx) LmdbStore {..} f a0 =
         foldGeneric tx db f a0 withCursor LMap.firstForward        
 
-    putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
-        withMultiCursor tx db $ \c -> LMMap.insert c ks bs
+    putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) = 
+        withMultiCursor tx db $ \c -> LMMap.insert c ks vs
 
     deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =   
         LMMap.deleteKV tx db ks vs

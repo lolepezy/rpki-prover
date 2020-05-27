@@ -240,7 +240,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                             (mempty :: Validations))                        
                     where
                         storableToChan (SnapshotPublish uri encodedb64) = do
-                            logDebugM logger [i|rrdp uri = #{uri}|]                            
+                            -- logDebugM logger [i|rrdp uri = #{uri}|]                            
                             a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
                             pure (uri, a)
                                                 
@@ -289,12 +289,10 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                                     pure $ validations <> mError (vContext uri) e
                                 SObject so@(StorableObject ro _) -> do
-                                    let h = getHash ro
-                                    Stores.getByHash tx objectStore h >>= \case
-                                        Nothing -> do 
-                                            Stores.putObject tx objectStore so
-                                            void $ atomicModifyIORef' added $ \c -> (c + 1, ())
-                                        (Just _ :: Maybe RpkiObject) -> pure ()                                    
+                                    alreadyThere <- Stores.hashExists tx objectStore (getHash ro)
+                                    unless alreadyThere $ do                                    
+                                        Stores.putObject tx objectStore so
+                                        void $ atomicModifyIORef' added $ \c -> (c + 1, ())                                    
                                     pure validations
 
                         replaceObject tx uri a oldHash validations = 
@@ -302,25 +300,30 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                 SError e -> do
                                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                                     pure $ validations <> mError (vContext uri) e
-                                SObject so@(StorableObject ro _) ->                                    
-                                    Stores.getByHash tx objectStore oldHash >>= \case 
-                                        Nothing -> do
-                                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
-                                            pure $ validations <> mWarning (vContext uri) 
-                                                (VWarning $ RrdpE $ NoObjectToReplace uri oldHash)
-                                        (Just _ :: Maybe RpkiObject) -> do 
+                                SObject so@(StorableObject ro _) -> do        
+                                    oldOneIsAlreadyThere <- Stores.hashExists tx objectStore oldHash                           
+                                    if oldOneIsAlreadyThere 
+                                        then do 
                                             Stores.deleteObject tx objectStore oldHash
                                             void $ atomicModifyIORef' removed $ \c -> (c + 1, ())
                                             let newHash = getHash ro
-                                            Stores.getByHash tx objectStore newHash >>= \case 
-                                                Nothing -> do
-                                                    Stores.putObject tx objectStore so
-                                                    void $ atomicModifyIORef' added $ \c -> (c + 1, ())
-                                                    pure validations
-                                                (Just _ :: Maybe RpkiObject)  -> do
+                                            newOneIsAlreadyThere <- Stores.hashExists tx objectStore newHash
+                                            if newOneIsAlreadyThere
+                                                then do
                                                     logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
                                                     pure $ validations <> mWarning (vContext uri) 
                                                         (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
+                                                else do                                             
+                                                    Stores.putObject tx objectStore so
+                                                    void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+                                                    pure validations                                            
+                                        else do 
+                                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
+                                            pure $ validations <> mWarning (vContext uri) 
+                                                (VWarning $ RrdpE $ NoObjectToReplace uri oldHash)                                            
+                                    
+
+                                                    
 
         parseAndProcess (URI u) b64 =     
             case parsed of
@@ -329,7 +332,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
             where
                 parsed = do
                     DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-                    first ParseE $ readObject (Text.unpack u) b
+                    first ParseE $ readObject (Text.unpack u) b                
                     
 
 data DeltaOp a = Delete !Hash 

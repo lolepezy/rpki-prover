@@ -1,10 +1,10 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.Validation.ObjectValidation where
     
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
@@ -18,8 +18,6 @@ import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
 import           GHC.Generics
 
-import           System.Hourglass                   (dateCurrent)
-
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
@@ -27,21 +25,14 @@ import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
 import           RPKI.TAL
+import           RPKI.Time
 import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 
 
-
--- | Current time that is to be passed into the environment of validating functions
-newtype Now = Now DateTime
-  deriving (Show, Eq, Ord)
-
 newtype Validated a = Validated a
-  deriving (Show, Eq, Generic)
-
-thisMoment :: MonadIO m => m Now
-thisMoment = liftIO $ Now <$> dateCurrent
+    deriving stock (Show, Eq, Generic)
 
 validateResourceCertExtensions :: WithResourceCertificate c => c -> PureValidator conf c
 validateResourceCertExtensions cert =

@@ -110,8 +110,7 @@ instance Semigroup RsyncMap where
     rs1 <> rs2 = rs1 `mergeRsyncs` rs2
 
 instance Semigroup RrdpMap where
-    RrdpMap rs1 <> RrdpMap rs2 = 
-        RrdpMap $ Map.unionWith (<>) rs1 rs2        
+    RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
 
 instance Monoid PublicationPoints where
     mempty = emptyPublicationPoints

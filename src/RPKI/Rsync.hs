@@ -151,7 +151,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         when (supportedExtension path) $ do                            
                             a <- Unlift.async $ readAndParseObject path                            
                             let uri = pathToUri repositoryUrl rootPath path
-                            logDebugM logger [i|rsync uri = #{uri}|]
+                            -- logDebugM logger [i|rsync uri = #{uri}|]
                             atomically $ Q.writeTBQueue queue $ Just (uri, a)
             where
                 readAndParseObject filePath = do                                         
@@ -184,14 +184,14 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         logError_ logger [i|An error parsing or serialising the object: #{e}|]
                         pure $ validations <> mError (vContext uri) e
                     Right (SObject so@(StorableObject ro _)) -> do                        
-                        let h = getHash ro
-                        getByHash tx objectStore h >>= \case 
-                            Nothing -> do
+                        alreadyThere <- hashExists tx objectStore (getHash ro)
+                        if alreadyThere 
+                            then do
+                                -- complain
+                                pure ()
+                            else do 
                                 putObject tx objectStore so
-                                void $ atomicModifyIORef' counter $ \c -> (c + 1, ())
-                            Just _ -> pure ()
-                                -- TODO Add location
-                                -- logDebug_ logger [i|There's an existing object with hash: #{hexHash h}, ignoring the new one.|]
+                                atomicModifyIORef' counter $ \c -> (c + 1, ())                            
                         pure validations
                     
 

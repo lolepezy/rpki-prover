@@ -1,4 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
 module RPKI.Store.Util where
+
+
+import Data.Text (Text)
 
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -11,52 +15,42 @@ import           RPKI.Store.Stores
 import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
 
-createObjectStore :: LmdbEnv -> IO (RpkiObjectStore LmdbStorage)
-createObjectStore e = do
-    let lmdb = LmdbStorage e
-    objMap <- create e
-    akiIndex <- createMulti e
-    mftAkiIndex <- createMulti e
 
-    return $ RpkiObjectStore {
-        objects = SMap lmdb objMap,
-        byAKI = SMultiMap lmdb akiIndex,
-        mftByAKI = SMultiMap lmdb mftAkiIndex
-    }
+createObjectStore :: LmdbEnv -> IO (RpkiObjectStore LmdbStorage)
+createObjectStore e =
+    RpkiObjectStore <$>
+        (SMap lmdb <$> create e) <*>
+        (SMultiMap lmdb <$> createMulti e) <*>
+        (SMultiMap lmdb <$> createMulti e)
+    where 
+        lmdb = LmdbStorage e        
 
 createRepositoryStore :: LmdbEnv -> IO (RepositoryStore LmdbStorage)
-createRepositoryStore e = do
-    let lmdb = LmdbStorage e
-    rMap1 <- create e
-    rMap2 <- create e
-    perTaMap <- createMulti e
-    pure $ RepositoryStore {
-        rrdpS = SMap lmdb rMap1,
-        rsyncS = SMap lmdb rMap2,
-        perTA = SMultiMap lmdb perTaMap
-    }
+createRepositoryStore e = 
+    RepositoryStore <$>
+        (SMap lmdb <$> create e) <*>
+        (SMap lmdb <$> create e) <*>
+        (SMultiMap lmdb <$> createMulti e)
+    where 
+        lmdb = LmdbStorage e
 
 createResultStore :: LmdbEnv -> IO (VResultStore LmdbStorage)
-createResultStore e = do
-    let lmdb = LmdbStorage e
-    rMap <- createMulti e    
-    pure $ VResultStore {
-        results = SMultiMap lmdb rMap
-    }
+createResultStore e = 
+    VResultStore <$> 
+        createSequenceStore e "vresult-key" <*>
+        (SMap lmdb <$> create e) <*>
+        (SMultiMap lmdb <$> createMulti e)
+    where 
+        lmdb = LmdbStorage e
+
+createVRPStore :: LmdbEnv -> IO (VRPStore LmdbStorage)
+createVRPStore e = VRPStore . SMultiMap (LmdbStorage e) <$> createMulti e    
 
 createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
-createTAStore e = do
-    let lmdb = LmdbStorage e
-    rMap <- create e
-    pure $ TAStore (SMap lmdb rMap)
+createTAStore e = TAStore . SMap (LmdbStorage e) <$> create e    
 
-createSequenceStore :: LmdbEnv -> IO (SequenceStore LmdbStorage)
-createSequenceStore e = do
-    let lmdb = LmdbStorage e
-    rMap <- create e
-    pure $ SequenceStore {
-        sequences = SMap lmdb rMap
-    }
+createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
+createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> create e    
 
 mkLmdb :: FilePath -> Int -> IO LmdbEnv
 mkLmdb fileName maxReaders = 
@@ -77,4 +71,5 @@ createDatabase e = DB <$>
     createTAStore e <*>
     createRepositoryStore e <*>
     createObjectStore e <*>
-    createResultStore e
+    createResultStore e <*>
+    createVRPStore e

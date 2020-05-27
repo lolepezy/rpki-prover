@@ -10,6 +10,7 @@ import GHC.TypeLits
 
 import RPKI.Store.Base.Storage as S
 import RPKI.Store.Base.Storable
+import Data.Maybe (isJust)
 
 data SMap (name :: Symbol) s k v where
     SMap :: Storage s => s -> SMapImpl s name -> SMap name s k v
@@ -26,6 +27,10 @@ get :: (Serialise k, Serialise v) =>
 get tx (SMap _ s) k = do
     msv <- S.get tx s (storableKey k)
     pure $ fromStorable . (\(SValue z) -> z) <$> msv
+
+exists :: (Serialise k) =>
+        Tx s m -> SMap name s k v -> k -> IO Bool
+exists tx (SMap _ s) k = isJust <$> S.get tx s (storableKey k)    
 
 delete :: (Serialise k, Serialise v) =>
             Tx s 'RW -> SMap name s k v -> k -> IO ()
