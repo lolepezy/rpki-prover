@@ -17,6 +17,7 @@ import qualified Data.ByteString                       as BS
 import           Data.Kind
 import           Data.Vector                           (Vector)
 import           Data.Word
+import           Data.Int
 import           GHC.Generics
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
@@ -41,7 +42,7 @@ data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-newtype ASN = ASN Word32
+newtype ASN = ASN Int32
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (NFData, Serialise)  
     deriving newtype Enum

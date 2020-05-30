@@ -20,6 +20,8 @@
 ---------------------------------------------------------------------------
 
 
+- Fix broken tree traversal!!!!!!
+
 - Do not save repositories as one big transaction, it's not going to be a problem to save smaller chunks of objects.
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 - 

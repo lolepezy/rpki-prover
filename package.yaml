@@ -30,6 +30,7 @@ default-extensions: ViewPatterns, LambdaCase, ScopedTypeVariables,
 
 dependencies:
 - base >= 4.7 && < 5
+- aeson
 - asn1-encoding
 - asn1-parse
 - asn1-types
@@ -39,10 +40,10 @@ dependencies:
 - bytestring
 - bytestring-conversion
 - bytestring-mmap
+- cassava
 - cborg
 - containers
 - conduit
-- http-conduit
 - co-log
 - co-log-core
 - cryptonite
@@ -59,6 +60,8 @@ dependencies:
 - hex
 - hexpat
 - hourglass
+- hourglass-orphans
+- http-conduit
 - hw-ip
 - interpolate
 - lens
@@ -76,6 +79,10 @@ dependencies:
 - primitive
 - semigroups
 - serialise
+- servant
+- servant-cassava
+- servant-server
+- servant-swagger-ui
 - stm
 - stm-chans
 - stm-containers
@@ -103,6 +110,7 @@ dependencies:
 - unliftio
 - unliftio-core
 - vector
+- warp
 
 
 ghc-options:

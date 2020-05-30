@@ -7,18 +7,19 @@
 
 import Colog hiding (extract)
 
-import Control.Monad
-import Control.Exception
-import Control.Parallel.Strategies hiding ((.|))
+import           Control.Concurrent.Async.Lifted
+import           Control.Concurrent.Lifted
 import           Control.Concurrent.STM
-import Control.Concurrent.Async.Lifted
-import Control.Concurrent.Lifted
+import           Control.Exception
+import           Control.Monad
+import           Control.Parallel.Strategies     hiding ((.|))
 
-import qualified Data.ByteString                as BS
-import qualified Data.ByteString.Lazy           as LBS
-import           Data.MultiMap                  (MultiMap)
-import qualified Data.MultiMap                  as MultiMap
-import qualified Data.Text                      as Text
+import qualified Data.ByteString                 as BS
+import qualified Data.ByteString.Lazy            as LBS
+import           Data.MultiMap                   (MultiMap)
+import qualified Data.MultiMap                   as MultiMap
+import qualified Data.Text                       as Text
+
 
 import           Data.Maybe
 
