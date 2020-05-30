@@ -42,7 +42,7 @@ data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-newtype ASN = ASN Int32
+newtype ASN = ASN Word32
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (NFData, Serialise)  
     deriving newtype Enum
