@@ -126,7 +126,8 @@ bootstrapTA :: Storage s =>
             AppContext s -> TAL -> IO (Either AppError (), Validations)
 bootstrapTA appContext@AppContext {..} tal = 
     runValidatorT taContext $ do         
-        nextStep <- validateTACertificateFromTAL appContext tal 
+        (nextStep, elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal 
+        logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]
         case nextStep of
             SameTACert taCert repos     -> fetchAndValidate taCert repos
             UpdatedTACert newCert repos -> fetchAndValidate newCert repos        
@@ -224,7 +225,7 @@ fetchRepository :: (MonadIO m, Storage s) =>
                 AppContext s -> Repository -> m FetchResult
 fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ do
     Now now <- thisMoment
-    (r, v) <- runValidatorT (vContext $ repositoryURI repo) $ 
+    ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ repositoryURI repo) $ 
         case repo of
             RsyncR r -> 
                 first RsyncR <$> updateObjectForRsyncRepository appContext r objectStore                                
@@ -235,7 +236,8 @@ fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ 
             logErrorM logger [i|Fetching repository #{repositoryURI repo} failed: #{e} |]
             let repoContext' = vContext $ repositoryURI repo
             pure $ FetchFailure repo (FailedAt now) (mError repoContext' e <> v)
-        Right (resultRepo, vs) ->
+        Right (resultRepo, vs) -> do
+            logDebugM logger [i|Fetched repository #{repositoryURI repo}, took #{elapsed}ms.|]
             pure $ FetchSuccess resultRepo (FetchedAt now) (vs <> v)
 
 
@@ -258,73 +260,71 @@ validateCA env vContext' topDownContext certificate = do
     validateCAWithQueue appContext vContext' topDownContext certificate CreateQ
 
 
-data QuuWhat = CreateQ | AlreadyCreatedQ
+data QWhat = CreateQ | AlreadyCreatedQ
 
 validateCAWithQueue :: Storage s => 
                         AppContext s -> 
                         VContext -> 
                         TopDownContext s -> 
                         CerObject -> 
-                        QuuWhat -> IO ()
+                        QWhat -> IO ()
 validateCAWithQueue 
     appContext@AppContext {..} 
     vc 
     topDownContext@TopDownContext{..} 
     certificate quuWhat = do 
-    logDebugM logger [i| Starting to validate #{NonEmpty.head $ getLocations certificate}|]
+    let certificateURL = NonEmpty.head $ getLocations certificate
+    logDebugM logger [i| Starting to validate #{certificateURL}|]
 
     let work = do 
             (pps, validations) <- runValidatorT vc $ validateTree appContext topDownContext certificate
             queueVResult appContext topDownContext validations            
             pickUpNewPPsAndValidateDown pps
 
-    case quuWhat of 
-        CreateQ -> do            
-            -- Write validation results in a separate thread to avoid blocking on the 
-            -- database with writing transactions during the validation process                     
-            fst <$> concurrently 
-                        (work `finally` atomically (closeQueue databaseQueue))
-                        (drainQueue appContext topDownContext)                
+    (_, elapsed) <- timedMS $ case quuWhat of 
+                        CreateQ -> do            
+                            -- Write validation results in a separate thread to avoid blocking on the 
+                            -- database with writing transactions during the validation process                     
+                            fst <$> concurrently 
+                                        (work `finally` atomically (closeQueue databaseQueue))
+                                        (executeQueuedTxs appContext topDownContext)                
+                        
+                        AlreadyCreatedQ -> work
         
-        AlreadyCreatedQ -> work
-        
+    logDebugM logger [i|Validated #{certificateURL}, took #{elapsed}ms.|]
     where
-
+        -- From the set of discovered PPs figure out which must be fetched, 
+        -- fetch them and validate, starting from the cerfificates in the 
+        -- waiting list
         pickUpNewPPsAndValidateDown (Left _) = pure ()
         pickUpNewPPsAndValidateDown (Right discoveredPPs) = do            
                 ppsToFetch <- atomically $ do 
-                        globalPPs           <- readTVar publicationPoints                    
-                        alreadyTakenCareOf  <- readTVar takenCareOf
+                    globalPPs           <- readTVar publicationPoints                    
+                    alreadyTakenCareOf  <- readTVar takenCareOf
 
-                        let newGlobalPPs     = globalPPs <> discoveredPPs
-                        let discoveredURIs   = allURIs discoveredPPs
-                        let urisToTakeCareOf = Set.difference discoveredURIs alreadyTakenCareOf
+                    let newGlobalPPs     = globalPPs <> discoveredPPs
+                    let discoveredURIs   = allURIs discoveredPPs
+                    let urisToTakeCareOf = Set.difference discoveredURIs alreadyTakenCareOf
 
-                        writeTVar publicationPoints newGlobalPPs                                        
-                        modifyTVar' takenCareOf (<> discoveredURIs) 
-                        
-                        pure $ newGlobalPPs `shrinkTo` urisToTakeCareOf
+                    writeTVar publicationPoints newGlobalPPs                                        
+                    modifyTVar' takenCareOf (<> discoveredURIs) 
+                    
+                    pure $ newGlobalPPs `shrinkTo` urisToTakeCareOf
                 
                 let (_, rootToPps) = repositoryHierarchy discoveredPPs
                     
                 let newRepositories = filter ((New ==) . repositoryStatus) $ Map.elems $ repositories ppsToFetch
 
-                -- logDebugM logger [i|discoveredPPs = #{discoveredPPs}, 
-                --                     ppsToFetch = #{ppsToFetch} 
-                --                     repositories ppsToFetch = #{repositories ppsToFetch} 
-                --                     |]
-
-                forM_ newRepositories $ \r -> 
-                    logDebugM logger [i|new url = #{repositoryURI r}|]
+                -- forM_ newRepositories $ \r -> 
+                --     logDebugM logger [i|new url = #{repositoryURI r}|]
 
                 -- for all new repositories, drill down recursively
                 void $ parallel parallelismDegree newRepositories $ \repo -> do 
                     validations <- fetchAndValidateWaitingList rootToPps repo
                     queueVResult appContext topDownContext validations
 
-                logDebugM logger [i| Finished validating #{NonEmpty.head $ getLocations certificate}|]  
-
-
+        -- Fetch the PP and validate all the certificates from the waiting 
+        -- list of this PP.
         fetchAndValidateWaitingList rootToPps repo = do
             logDebugM logger [i|Fetching #{repo} |]
             result <- fetchRepository appContext repo                                
@@ -332,21 +332,14 @@ validateCAWithQueue
                     FetchFailure r s _ -> (r, s)
                     FetchSuccess r s _ -> (r, s)                
 
-            -- logDebugM logger [i|statusUpdate = #{statusUpdate} |]
-
             atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
                 updateStatuses pubPoints [statusUpdate]            
-
-            -- ppsAfterFetch <- readTVarIO publicationPoints                
-
-            -- logDebugM logger [i|ppsAfterFetch = #{ppsAfterFetch} |]            
 
             case result of
                 FetchFailure _ _ v -> pure v 
                 FetchSuccess _ _ v -> do
                     let fetchedPPs = fromMaybe Set.empty $ Map.lookup repo rootToPps
                     waitingListPerPP <- readTVarIO ppWaitingList
-                    -- logDebugM logger [i| waitingListPerPP = #{waitingListPerPP}|]
 
                     let waitingHashesForThesePPs  = fromMaybe Set.empty $ fold $ 
                             Set.map (\pp -> publicationPointURI pp `Map.lookup` waitingListPerPP) fetchedPPs
@@ -547,10 +540,10 @@ queueVResult AppContext { database = DB {..} } TopDownContext {..} validations =
                                     \tx -> putVResult tx resultStore worldVersion vResult
 
 
--- Write into the database all the 
-drainQueue :: Storage s => 
+-- Execute writing transactions from the queue
+executeQueuedTxs :: Storage s => 
             AppContext s -> TopDownContext s -> IO ()
-drainQueue AppContext {..} TopDownContext {..} = do
+executeQueuedTxs AppContext {..} TopDownContext {..} = do
     -- read element in chunks to make transactions not too frequent
     readQueueChunked databaseQueue 1000 $ \quuElems ->
         rwTx database $ \tx -> 
