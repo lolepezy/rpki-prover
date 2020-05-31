@@ -140,22 +140,15 @@ should_insert_and_get_all_back_from_object_store io = do
 should_insert_and_get_all_back_from_validation_result_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_validation_result_store io = do  
     (_, DB {..}) <- io
-    -- vrs :: [VResult] <- forM [1 :: Int .. 2] $ const $ QC.generate arbitrary      
-    -- vr :: VResult <- QC.generate arbitrary    
+    vrs :: [VResult] <- forM [1 :: Int .. 100] $ const $ QC.generate arbitrary      
 
-    let vr = VResult [] (vContext $ URI $ Text.pack $ replicate 500 'a')
     world <- getWorldVerion =<< createDynamicState
 
-    let wb = storableKey world  
-    let SValue (Storable vb) = storableValue vr  
- 
-    putStrLn $ "value size = " <> show (BS.length vb)
-
-    rwTx resultStore $ \tx -> putVResult tx resultStore world vr
+    rwTx resultStore $ \tx -> for_ vrs $ \vr -> putVResult tx resultStore world vr
     vrs' <- roTx resultStore $ \tx -> allVResults tx resultStore world
     
     
-    HU.assertEqual "Not the same VResult" ([vr]) (sort vrs')
+    HU.assertEqual "Not the same VResult" (sort vrs) (sort vrs')
 
 
 
