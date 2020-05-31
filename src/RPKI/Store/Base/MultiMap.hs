@@ -37,3 +37,9 @@ foldS tx (SMultiMap _ s) k f a = S.foldMuForKey tx s (storableKey k) f' a
 
 size :: Tx s m -> SMultiMap name s k v -> IO Int
 size tx (SMultiMap _ s) = S.foldMu tx s (\a _ _ -> pure $! a + 1) 0
+
+allForKey :: (Serialise k, Serialise v) =>
+            Tx s m -> SMultiMap name s k v -> k -> IO [v]
+allForKey tx (SMultiMap _ s) k = reverse <$> S.foldMuForKey tx s (storableKey k) f []
+    where
+        f z _ (SValue sv) = pure $! fromStorable sv : z

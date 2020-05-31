@@ -11,10 +11,8 @@ import  Codec.Serialise
 import Data.Int
 
 import           GHC.Generics
-import           GHC.TypeLits
 
 import           RPKI.Domain
-import           RPKI.Errors
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
@@ -41,7 +39,7 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
-getByHash tx store h = liftIO $ (fromSValue <$>) <$> M.get tx (objects store) h
+getByHash tx store h = (fromSValue <$>) <$> liftIO (M.get tx (objects store) h)
 
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> m ()
@@ -75,10 +73,11 @@ findLatestMftByAKI :: (MonadIO m, Storage s) =>
 findLatestMftByAKI tx store aki' = liftIO $ 
     MM.foldS tx (mftByAKI store) aki' f Nothing >>= \case
         Nothing        -> pure Nothing
-        Just (hash, _) -> 
-            getByHash tx store hash >>= \case
-                Just (MftRO mft) -> pure $ Just mft
-                _                -> pure Nothing
+        Just (hash, _) -> do 
+            o <- getByHash tx store hash
+            pure $ case o of 
+                Just (MftRO mft) -> Just mft
+                _                -> Nothing
     where
         f latest _ (hash, mftNum) = 
             pure $ case latest of 
@@ -94,15 +93,12 @@ findMftsByAKI tx store aki' = liftIO $
     where
         f mfts _ (h, _) = accumulate <$> getByHash tx store h
             where 
-                accumulate = \case          
-                    Just (MftRO mft) -> mft : mfts
-                    _ -> mfts            
+                accumulate (Just (MftRO mft)) = mft : mfts
+                accumulate _                  = mfts            
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
-getAll tx store = liftIO $ reverse <$> M.fold tx (objects store) f []
-    where
-        f ros _ v = pure $! fromSValue v : ros
+getAll tx store = map (fromSValue . snd) <$> liftIO (M.all tx (objects store))
 
 
 -- | TA Store 
@@ -164,17 +160,36 @@ putVRP tx (VRPStore s) wv vrp = liftIO $ MM.put tx s wv vrp
 
 allVRPs :: (MonadIO m, Storage s) => 
             Tx s mode -> VRPStore s -> WorldVersion -> m [Roa]
-allVRPs tx (VRPStore s) wv = liftIO $ MM.foldS tx s wv f []
-    where
-        f ros _ vr = pure $! vr : ros
+allVRPs tx (VRPStore s) wv = liftIO $ MM.allForKey tx s wv
 
 
+-- Version store
+newtype VersionStore s = VersionStore {
+    vrps :: SMap "versions" s WorldVersion VersionState
+}
+
+instance Storage s => WithStorage s (VersionStore s) where
+    storage (VersionStore s) = storage s
+
+
+putVersion :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> VersionStore s -> WorldVersion -> VersionState -> m ()
+putVersion tx (VersionStore s) wv vrp = liftIO $ M.put tx s wv vrp
+
+allVersions :: (MonadIO m, Storage s) => 
+            Tx s mode -> VersionStore s -> m [(WorldVersion, VersionState)]
+allVersions tx (VersionStore s) = liftIO $ M.all tx s
+
+
+
+-- All of the stores of the application in one place
 data DB s = DB {
     taStore         :: TAStore s, 
     repositoryStore :: RepositoryStore s, 
     objectStore     :: RpkiObjectStore s,
     resultStore     :: VResultStore s,
-    vrpStore        :: VRPStore s
+    vrpStore        :: VRPStore s,
+    versionStore    :: VersionStore s
 }
 
 instance Storage s => WithStorage s (DB s) where

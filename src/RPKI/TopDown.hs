@@ -15,7 +15,7 @@ import           Control.Monad.Reader
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
-import           Data.Generics.Product.Fields
+-- import           Data.Generics.Product.Fields
 
 import           GHC.Generics
 
@@ -287,7 +287,8 @@ validateCAWithQueue
                             -- database with writing transactions during the validation process                     
                             fst <$> concurrently 
                                         (work `finally` atomically (closeQueue databaseQueue))
-                                        (executeQueuedTxs appContext topDownContext)                
+                                        (executeQueuedTxs appContext topDownContext >> 
+                                         finishWorldVersion appContext topDownContext)
                         
                         AlreadyCreatedQ -> work
         
@@ -549,6 +550,12 @@ executeQueuedTxs AppContext {..} TopDownContext {..} = do
         rwTx database $ \tx -> 
             for_ quuElems $ \f -> f tx                
 
+
+
+finishWorldVersion :: Storage s => 
+                        AppContext s -> TopDownContext s -> IO ()
+finishWorldVersion AppContext { database = DB {..} } TopDownContext {..} =
+    rwTx versionStore $ \tx -> putVersion tx versionStore worldVersion FinishedVersion
 
 
 -- | Fetch TA certificate based on TAL location(s)

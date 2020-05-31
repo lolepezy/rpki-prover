@@ -44,3 +44,9 @@ fold tx (SMap _ s) f = S.foldS tx s f'
 
 size :: Tx s m -> SMap name s k v -> IO Int
 size tx (SMap _ s) = S.foldS tx s (\a _ _ -> pure $! a + 1) 0
+
+all :: (Serialise k, Serialise v) =>
+        Tx s m -> SMap name s k v -> IO [(k, v)]
+all tx (SMap _ s) = reverse <$> S.foldS tx s f []
+    where
+        f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z

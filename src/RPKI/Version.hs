@@ -1,12 +1,9 @@
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE RecordWildCards            #-}
 
 module RPKI.Version where
-
-import           Data.String.Interpolate
 
 import           Control.Concurrent.STM
 
@@ -15,31 +12,29 @@ import           GHC.Generics
 
 import           Data.Int
 
-import           Data.Hourglass                   (timeGetNanoSeconds)
+import           Data.Hourglass         (timeGetNanoSeconds)
 import           Time.Types
 
-import           Data.Map.Strict                  (Map)
-import qualified Data.Map.Strict                  as Map
-
-import           RPKI.AppMonad
-import           RPKI.Domain
-import           RPKI.Errors
-import           RPKI.Repository
-import           RPKI.TAL
 import           RPKI.Logging
-import           RPKI.Config
 import           RPKI.Time
-import           RPKI.Validation.ObjectValidation
 
 
 -- It's some sequence of versions that is equal to the current 
 -- timestamp in nanoseconds.
 newtype WorldVersion = WorldVersion Int64
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 newtype DynamicState = DynamicState {
     world :: TVar WorldVersion
 } deriving stock (Generic)
+
+
+data VersionState = NewVersion | FinishedVersion
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+
+
 
 -- 
 createDynamicState :: IO DynamicState

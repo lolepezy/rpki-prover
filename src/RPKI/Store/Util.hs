@@ -49,8 +49,12 @@ createVRPStore e = VRPStore . SMultiMap (LmdbStorage e) <$> createMulti e
 createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
 createTAStore e = TAStore . SMap (LmdbStorage e) <$> create e    
 
+createVersionStore :: LmdbEnv -> IO (VersionStore LmdbStorage)
+createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> create e    
+
 createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
 createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> create e    
+
 
 mkLmdb :: FilePath -> Int -> IO LmdbEnv
 mkLmdb fileName maxReaders = 
@@ -58,7 +62,7 @@ mkLmdb fileName maxReaders =
         initializeReadWriteEnvironment mapSize maxReaders maxDatabases fileName <*>
         createSemaphore maxReaders
     where
-        -- TODO Make it configurable
+        -- TODO Make it configurable?
         mapSize = 64*1024*1024*1024
         maxDatabases = 120
 
@@ -72,4 +76,5 @@ createDatabase e = DB <$>
     createRepositoryStore e <*>
     createObjectStore e <*>
     createResultStore e <*>
-    createVRPStore e
+    createVRPStore e <*>
+    createVersionStore e

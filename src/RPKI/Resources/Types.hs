@@ -17,7 +17,6 @@ import qualified Data.ByteString                       as BS
 import           Data.Kind
 import           Data.Vector                           (Vector)
 import           Data.Word
-import           Data.Int
 import           GHC.Generics
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
