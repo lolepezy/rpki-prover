@@ -299,7 +299,7 @@ validateCAWithQueue
         -- waiting list
         pickUpNewPPsAndValidateDown (Left _) = pure ()
         pickUpNewPPsAndValidateDown (Right discoveredPPs) = do            
-                ppsToFetch <- atomically $ do 
+            ppsToFetch <- atomically $ do 
                     globalPPs           <- readTVar publicationPoints                    
                     alreadyTakenCareOf  <- readTVar takenCareOf
 
@@ -311,18 +311,18 @@ validateCAWithQueue
                     modifyTVar' takenCareOf (<> discoveredURIs) 
                     
                     pure $ newGlobalPPs `shrinkTo` urisToTakeCareOf
+            
+            let (_, rootToPps) = repositoryHierarchy discoveredPPs
                 
-                let (_, rootToPps) = repositoryHierarchy discoveredPPs
-                    
-                let newRepositories = filter ((New ==) . repositoryStatus) $ Map.elems $ repositories ppsToFetch
+            let newRepositories = filter ((New ==) . repositoryStatus) $ Map.elems $ repositories ppsToFetch
 
-                -- forM_ newRepositories $ \r -> 
-                --     logDebugM logger [i|new url = #{repositoryURI r}|]
+            -- forM_ newRepositories $ \r -> 
+            --     logDebugM logger [i|new url = #{repositoryURI r}|]
 
-                -- for all new repositories, drill down recursively
-                void $ parallel parallelismDegree newRepositories $ \repo -> do 
-                    validations <- fetchAndValidateWaitingList rootToPps repo
-                    queueVResult appContext topDownContext validations
+            -- for all new repositories, drill down recursively
+            void $ parallel parallelismDegree newRepositories $ \repo -> do 
+                validations <- fetchAndValidateWaitingList rootToPps repo
+                queueVResult appContext topDownContext validations
 
         -- Fetch the PP and validate all the certificates from the waiting 
         -- list of this PP.
