@@ -3,7 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
 
-module RPKI.Store.Stores where
+module RPKI.Store.Database where
 
 import Control.Monad.IO.Class
 import  Codec.Serialise
@@ -18,7 +18,7 @@ import           RPKI.Errors
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
-import           RPKI.Execution
+import           RPKI.Version
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM

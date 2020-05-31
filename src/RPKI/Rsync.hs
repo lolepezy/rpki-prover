@@ -33,7 +33,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Stores
+import           RPKI.Store.Database
 import qualified RPKI.Util                             as U
 
 import qualified Control.Concurrent.STM.TBQueue as Q
@@ -52,7 +52,7 @@ import System.IO.Posix.MMap (unsafeMMapFile)
 import qualified UnliftIO.Async as Unlift
 
 -- | Download one file using rsync
-rsyncFile :: AppContext -> 
+rsyncFile :: AppContext s -> 
             URI -> 
             ValidatorT vc IO RpkiObject
 rsyncFile AppContext{..} uri = do
@@ -77,7 +77,7 @@ rsyncFile AppContext{..} uri = do
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: Storage s => 
-                AppContext ->
+                AppContext s ->
                 RsyncRepository -> 
                 RpkiObjectStore s -> 
                 ValidatorT vc IO (RsyncRepository, Validations)
@@ -117,7 +117,7 @@ updateObjectForRsyncRepository
 -- 
 -- | Is not supposed to throw exceptions, only report errors through Either.
 loadRsyncRepository :: Storage s => 
-                        AppContext ->
+                        AppContext s ->
                         URI -> 
                         FilePath -> 
                         RpkiObjectStore s -> 

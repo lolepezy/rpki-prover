@@ -31,7 +31,7 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Stores                as Stores
+import qualified RPKI.Store.Database                as Stores
 import qualified RPKI.Util                        as U
 
 import qualified Data.ByteString.Streaming        as Q
@@ -54,7 +54,7 @@ import           Data.IORef.Lifted
     2) Maybe return bracketed IO actions instead of exectuting them.
 -}
 updateRrdpRepo :: WithVContext vc => 
-                AppContext ->
+                AppContext s ->
                 RrdpRepository ->                 
                 (Snapshot -> ValidatorT vc IO Validations) ->
                 ([Delta]  -> ValidatorT vc IO Validations) ->
@@ -211,7 +211,7 @@ nextSerial (Serial s) = Serial $ s + 1
 
 
 updateObjectForRrdpRepository :: Storage s => 
-                                AppContext ->
+                                AppContext s ->
                                 RrdpRepository ->
                                 Stores.RpkiObjectStore s ->
                                 ValidatorT vc IO (RrdpRepository, Validations)

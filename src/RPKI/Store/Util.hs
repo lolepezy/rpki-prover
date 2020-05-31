@@ -11,7 +11,7 @@ import           Lmdb.Connection
 import           Lmdb.Types
 import           RPKI.Store.Base.LMDB
 
-import           RPKI.Store.Stores
+import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
 

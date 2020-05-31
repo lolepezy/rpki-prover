@@ -65,7 +65,7 @@ import           RPKI.Execution
 import           RPKI.Parallel
 import           RPKI.TAL
 import           RPKI.Rsync
-import           RPKI.Store.Stores
+import           RPKI.Store.Database
 import           RPKI.Store.Repository (getTaPublicationPoints)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ObjectValidation

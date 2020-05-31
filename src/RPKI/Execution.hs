@@ -29,41 +29,18 @@ import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Config
 import           RPKI.Time
-import           RPKI.Validation.ObjectValidation
+import           RPKI.Version
+import           RPKI.Store.Database
+import           RPKI.Store.Base.LMDB
 
--- It's some sequence of versions that is equal to the current 
--- timestamp in nanoseconds.
-newtype WorldVersion = WorldVersion Int64
-    deriving (Show, Eq, Ord, Generic, Serialise)
 
-newtype DynamicState = DynamicState {
-    world :: TVar WorldVersion
-} deriving stock (Generic)
-
-data AppContext = AppContext {
+data AppContext s = AppContext {
     logger :: AppLogger, 
     config :: Config,
-    dynamicState :: DynamicState
+    dynamicState :: DynamicState,
+    database :: DB s
 } deriving stock (Generic)
 
--- 
-createDynamicState :: IO DynamicState
-createDynamicState = do
-    Now now <- thisMoment
-    let NanoSeconds nano = timeGetNanoSeconds now
-    DynamicState <$> atomically (newTVar $ WorldVersion nano)
-
--- 
-updateWorldVerion :: DynamicState -> IO WorldVersion
-updateWorldVerion DynamicState {..} = do
-    Now now <- thisMoment
-    let NanoSeconds nano = timeGetNanoSeconds now
-    let wolrdVersion = WorldVersion nano
-    atomically $ writeTVar world wolrdVersion
-    pure wolrdVersion
-
-getWorldVerion :: DynamicState -> IO WorldVersion
-getWorldVerion DynamicState {..} = readTVarIO world    
 
 
 

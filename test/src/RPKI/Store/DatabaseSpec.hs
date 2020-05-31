@@ -9,7 +9,7 @@
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE TypeApplications          #-}
 
-module RPKI.Store.StoresSpec where
+module RPKI.Store.DatabaseSpec where
 
 import           Control.Monad
 import qualified Data.ByteString                   as BS
@@ -28,7 +28,7 @@ import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Execution
+import           RPKI.Version
 import           RPKI.Orphans
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
@@ -38,7 +38,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-import           RPKI.Store.Stores
+import           RPKI.Store.Database
 
 import           RPKI.Store.Base.LMDB              (LmdbEnv)
 
@@ -50,7 +50,7 @@ import           RPKI.Store.Util
 storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
-        -- objectStoreGroup,
+        objectStoreGroup,
         validationResultStoreGroup
     ]
 

@@ -15,6 +15,7 @@ import           Control.Monad.Reader
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
+import           Data.Generics.Product.Fields
 
 import           GHC.Generics
 
@@ -48,10 +49,11 @@ import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-import           RPKI.Store.Stores
+import           RPKI.Store.Database
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                        (fmtEx)
+import           RPKI.Version
 import           RPKI.Validation.ObjectValidation
 
 
@@ -97,7 +99,7 @@ createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
     VerifiedRS $ toPrefixesAndAsns $ withRFC certificate resources
 
-emptyTopDownContext :: MonadIO m => AppContext -> TaName -> PublicationPoints -> CerObject -> m (TopDownContext s)
+emptyTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -> CerObject -> m (TopDownContext s)
 emptyTopDownContext AppContext {..} taName publicationPoints certificate = liftIO $ do             
     now          <- thisMoment
     worldVersion <- updateWorldVerion dynamicState
@@ -120,11 +122,11 @@ oneMoreValid TopDownContext {..} = liftIO $ atomically $
 -- | Initial bootstrap of the TA: do everything needed to start up the validator, 
 -- | * download and parse TA certificate
 -- | * fetch the repositories
-bootstrapTA :: (Has AppContext env, Storage s) => 
-                env -> TAL -> DB s -> IO (Either AppError (), Validations)
-bootstrapTA env tal database = 
+bootstrapTA :: Storage s => 
+            AppContext s -> TAL -> IO (Either AppError (), Validations)
+bootstrapTA appContext@AppContext {..} tal = 
     runValidatorT taContext $ do         
-        nextStep <- validateTACertificateFromTAL env tal database 
+        nextStep <- validateTACertificateFromTAL appContext tal 
         case nextStep of
             SameTACert taCert repos     -> fetchAndValidate taCert repos
             UpdatedTACert newCert repos -> fetchAndValidate newCert repos        
@@ -134,7 +136,7 @@ bootstrapTA env tal database =
             parallelism' <- liftIO $ dynamicParaIO $ parallelism config
             fetchStatuses <- parallel parallelism' repos $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
-                fetchRepository appContext database repo
+                fetchRepository appContext repo
 
             case partitionFailedSuccess (NonEmpty.toList fetchStatuses) of 
                 ([], _) -> do
@@ -153,7 +155,7 @@ bootstrapTA env tal database =
                     oneMoreValid topDownContext
 
                     fromTry (UnspecifiedE . fmtEx) $
-                        validateCA env taCertURI database topDownContext taCert                    
+                        validateCA appContext taCertURI topDownContext taCert                    
 
                     -- get publication points from the topDownContext and save it to the database
                     pubPointAfterTopDown <- liftIO $ readTVarIO (publicationPoints topDownContext)
@@ -171,14 +173,13 @@ bootstrapTA env tal database =
             
         taCertURI = vContext $ NonEmpty.head $ certLocations tal
         taName' = getTaName tal
-        appContext@AppContext {..} = getter env
         taContext = vContext $ getTaURI tal
 
 
 -- | Valiidate TA starting from the TAL.
-validateTACertificateFromTAL :: (Has AppContext env, Has VContext vc, Storage s) => 
-                                env -> TAL -> DB s -> ValidatorT vc IO TACertValidationResult
-validateTACertificateFromTAL env tal DB {..} = do    
+validateTACertificateFromTAL :: (Has VContext vc, Storage s) => 
+                                AppContext s -> TAL -> ValidatorT vc IO TACertValidationResult
+validateTACertificateFromTAL appContext@AppContext { database = DB {..}, ..} tal = do    
     (uri', ro) <- fetchTACertificate appContext tal
     newCert    <- vHoist $ validateTACert tal uri' ro      
     rwAppTxEx taStore storageError
@@ -210,8 +211,7 @@ validateTACertificateFromTAL env tal DB {..} = do
                     putTA tx taStore (STA tal newCert repos)
                     pure $ UpdatedTACert newCert repos
 
-        taName' = getTaName tal
-        appContext@AppContext {..} = getter env
+        taName' = getTaName tal        
      
 
 data FetchResult = 
@@ -221,8 +221,8 @@ data FetchResult =
 
 -- | Download repository
 fetchRepository :: (MonadIO m, Storage s) => 
-                AppContext -> DB s -> Repository -> m FetchResult
-fetchRepository appContext@AppContext {..} DB {..} repo = liftIO $ do
+                AppContext s -> Repository -> m FetchResult
+fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ do
     Now now <- thisMoment
     (r, v) <- runValidatorT (vContext $ repositoryURI repo) $ 
         case repo of
@@ -251,33 +251,31 @@ partitionFailedSuccess = go
 
 
 
-validateCA :: (Has AppContext env, Storage s) =>
-            env -> VContext -> DB s -> TopDownContext s -> CerObject -> IO ()
-validateCA env vContext' database topDownContext certificate = do    
+validateCA :: Storage s =>
+            AppContext s -> VContext -> TopDownContext s -> CerObject -> IO ()
+validateCA env vContext' topDownContext certificate = do    
     let appContext@AppContext {..} = getter env
-    validateCACreateQueue appContext database vContext' topDownContext certificate CreateQ
+    validateCAWithQueue appContext vContext' topDownContext certificate CreateQ
 
 
 data QuuWhat = CreateQ | AlreadyCreatedQ
 
-validateCACreateQueue :: Storage s => 
-                        AppContext -> 
-                        DB s -> 
+validateCAWithQueue :: Storage s => 
+                        AppContext s -> 
                         VContext -> 
                         TopDownContext s -> 
                         CerObject -> 
                         QuuWhat -> IO ()
-validateCACreateQueue 
+validateCAWithQueue 
     appContext@AppContext {..} 
-    database@DB {..}
     vc 
     topDownContext@TopDownContext{..} 
     certificate quuWhat = do 
     logDebugM logger [i| Starting to validate #{NonEmpty.head $ getLocations certificate}|]
 
     let work = do 
-            (pps, validations) <- runValidatorT vc $ validateTree appContext database topDownContext certificate
-            queueVResult appContext topDownContext database validations            
+            (pps, validations) <- runValidatorT vc $ validateTree appContext topDownContext certificate
+            queueVResult appContext topDownContext validations            
             pickUpNewPPsAndValidateDown pps
 
     case quuWhat of 
@@ -286,7 +284,7 @@ validateCACreateQueue
             -- database with writing transactions during the validation process                     
             fst <$> concurrently 
                         (work `finally` atomically (closeQueue databaseQueue))
-                        (drainQueue appContext topDownContext database)                
+                        (drainQueue appContext topDownContext)                
         
         AlreadyCreatedQ -> work
         
@@ -322,14 +320,14 @@ validateCACreateQueue
                 -- for all new repositories, drill down recursively
                 void $ parallel parallelismDegree newRepositories $ \repo -> do 
                     validations <- fetchAndValidateWaitingList rootToPps repo
-                    queueVResult appContext topDownContext database validations
+                    queueVResult appContext topDownContext validations
 
                 logDebugM logger [i| Finished validating #{NonEmpty.head $ getLocations certificate}|]  
 
 
         fetchAndValidateWaitingList rootToPps repo = do
             logDebugM logger [i|Fetching #{repo} |]
-            result <- fetchRepository appContext database repo                                
+            result <- fetchRepository appContext repo                                
             let statusUpdate = case result of
                     FetchFailure r s _ -> (r, s)
                     FetchSuccess r s _ -> (r, s)                
@@ -354,7 +352,7 @@ validateCACreateQueue
                             Set.map (\pp -> publicationPointURI pp `Map.lookup` waitingListPerPP) fetchedPPs
 
                     void $ parallel parallelismDegree (Set.toList waitingHashesForThesePPs) $ \hash -> do
-                            o <- roTx database $ \tx -> getByHash tx objectStore hash
+                            o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                             case o of 
                                 Just (CerRO waitingCertificate) -> do
                                     -- logDebugM logger [i| #{getLocations c} was waiting for #{fetchedPPs}|]
@@ -364,7 +362,7 @@ validateCACreateQueue
                                             -- as it is already has been verified
                                             verifiedResources = Just $ createVerifiedResources certificate
                                         }
-                                    validateCACreateQueue appContext database certVContext 
+                                    validateCAWithQueue appContext certVContext 
                                             childTopDownContext waitingCertificate AlreadyCreatedQ
                                 ro ->
                                     logErrorM logger
@@ -377,12 +375,11 @@ validateCACreateQueue
 -- Returns the discovered publication points that are not registered 
 -- in the top-down context yet.
 validateTree :: Storage s =>
-                AppContext ->
-                DB s ->
+                AppContext s ->
                 TopDownContext s ->
                 CerObject ->                
                 ValidatorT VContext IO PublicationPoints
-validateTree appContext@AppContext {..} database topDownContext certificate = do          
+validateTree appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO $ publicationPoints topDownContext
 
     -- logDebugM logger [i| validateTree, globalPPs = #{globalPPs} |]                
@@ -497,9 +494,9 @@ validateTree appContext@AppContext {..} database topDownContext certificate = do
                                     Validated validCert <- validateResourceCert now childCert certificate validCrl
                                     validateResources verifiedResources childCert validCert 
                             let childTopDownContext = topDownContext { verifiedResources = Just childVerifiedResources }
-                            validateTree appContext database childTopDownContext childCert 
+                            validateTree appContext childTopDownContext childCert 
                                     
-                    queueVResult appContext topDownContext database validations
+                    queueVResult appContext topDownContext validations
                     pure $ case r of
                         Left _    -> emptyPublicationPoints
                         Right pps -> pps
@@ -507,15 +504,15 @@ validateTree appContext@AppContext {..} database topDownContext certificate = do
                 RoaRO roa -> withEmptyPPs $ do 
                     let (r, validations) = runPureValidator childContext $                                     
                                 void $ validateRoa (now topDownContext) roa certificate validCrl
-                    queueVResult appContext topDownContext database validations
+                    queueVResult appContext topDownContext validations
                     case r of 
                         Left _  -> pure ()
                         Right _ -> do                                
                             oneMoreValid topDownContext
-                            queueVRP appContext topDownContext database $ getCMSContent (extract roa :: CMS [Roa])
+                            queueVRP appContext topDownContext $ getCMSContent (extract roa :: CMS [Roa])
 
                 GbrRO gbr -> withEmptyPPs $ do
-                    z <- queueVResult appContext topDownContext database $ snd $ 
+                    z <- queueVResult appContext topDownContext $ snd $ 
                         runPureValidator childContext $ 
                             void $ validateGbr (now topDownContext) gbr certificate validCrl
                     oneMoreValid topDownContext
@@ -529,16 +526,16 @@ validateTree appContext@AppContext {..} database topDownContext certificate = do
                 withEmptyPPs f = f >> pure emptyPublicationPoints
 
 
-queueVRP :: Storage s => AppContext -> TopDownContext s -> DB s -> [Roa] -> IO ()
-queueVRP AppContext {..} TopDownContext {..} DB {..} roas = 
+queueVRP :: Storage s => AppContext s -> TopDownContext s -> [Roa] -> IO ()
+queueVRP AppContext { database = DB {..} } TopDownContext {..} roas = 
     for_ roas $ \vrp -> 
         atomically $ writeQuu databaseQueue $ \tx -> 
             putVRP tx vrpStore worldVersion vrp 
 
 
 -- | Put validation result into a queue for writing
-queueVResult :: Storage s => AppContext -> TopDownContext s -> DB s -> Validations -> IO ()
-queueVResult AppContext {..} TopDownContext {..} DB {..} validations = do
+queueVResult :: Storage s => AppContext s -> TopDownContext s -> Validations -> IO ()
+queueVResult AppContext { database = DB {..} } TopDownContext {..} validations = do
     case validations of
         Validations validationsMap
             | emptyValidations validations -> pure ()
@@ -552,8 +549,8 @@ queueVResult AppContext {..} TopDownContext {..} DB {..} validations = do
 
 -- Write into the database all the 
 drainQueue :: Storage s => 
-            AppContext -> TopDownContext s -> DB s -> IO ()
-drainQueue AppContext {..} TopDownContext {..} database@DB {..} = do
+            AppContext s -> TopDownContext s -> IO ()
+drainQueue AppContext {..} TopDownContext {..} = do
     -- read element in chunks to make transactions not too frequent
     readQueueChunked databaseQueue 1000 $ \quuElems ->
         rwTx database $ \tx -> 
@@ -563,7 +560,7 @@ drainQueue AppContext {..} TopDownContext {..} database@DB {..} = do
 
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: Has VContext vc => 
-                    AppContext -> TAL -> ValidatorT vc IO (URI, RpkiObject)
+                    AppContext s -> TAL -> ValidatorT vc IO (URI, RpkiObject)
 fetchTACertificate appContext tal = 
     go $ NonEmpty.toList $ certLocations tal
     where
