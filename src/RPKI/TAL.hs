@@ -45,7 +45,7 @@ getTaName tal = case tal of
     PropertiesTAL {..} -> maybe (uri2TaName certificateLocation) TaName caName
     RFC_TAL {..}       -> uri2TaName $ NonEmpty.head certificateLocations
     where 
-        uri2TaName = \(URI t) -> TaName t
+        uri2TaName (URI t) = TaName t
 
 getTaURI :: TAL -> URI
 getTaURI PropertiesTAL {..} = certificateLocation
