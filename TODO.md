@@ -17,11 +17,15 @@
 + Fix MDB_BAD_VALSIZE, but first associate VRs with a timestamp
 + Fix broken tree traversal (Word32 -> Int32 was a bad idea)
 + Add timing of the main building blocks
++ Add version storage and connect versions with VRPs and other stuff
 
 ---------------------------------------------------------------------------
 
+- Read config and CLI options
+- Have a cache directory (.rpki-data (tals, lmsb, rsync, tmp))
+- 
 
-- Add version storage and connect versions with VRPs and other stuff
+
 - Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects.
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 

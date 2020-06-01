@@ -26,7 +26,7 @@ timed action = do
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
     pure (z, s * 1000_000_000 + ns)
 
-timedMS :: MonadIO m => m a -> m (a, Int)
+timedMS :: MonadIO m => m a -> m (a, Int64)
 timedMS action = do 
     (z, ns) <- timed action   
     pure (z, fromIntegral (ns `div` 1000_000))

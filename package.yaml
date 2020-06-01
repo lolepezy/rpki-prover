@@ -74,6 +74,8 @@ dependencies:
 - monad-control
 - mtl
 - multimap
+- optparse-applicative
+- optparse-generic
 - parallel
 - pipes
 - primitive
@@ -129,10 +131,11 @@ executables:
     source-dirs:         app
     ghc-options:
     - -threaded
-    - -rtsopts
-    - -Wall
-    - -with-rtsopts=-N    
-    # - -O2    
+    - -static
+    - -O2
+    - -Wall    
+    cc-options: -static
+    ld-options: -static -pthread  
     dependencies:
     - rpki-prover  
 

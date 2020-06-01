@@ -1,3 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE QuasiQuotes       #-}
+
 module Main where
 
 import           Colog
@@ -9,9 +14,20 @@ import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
 
 import           Data.Bifunctor
-import qualified Data.ByteString                 as BS
+import qualified Data.ByteString                  as BS
+import qualified Data.List                        as List
+import           Data.Text                        (Text)
+import qualified Data.Text                        as Text
 
-import qualified Network.Wai.Handler.Warp        as Warp
+import           Data.String.Interpolate.IsString
+
+import qualified Network.Wai.Handler.Warp         as Warp
+
+import           System.Directory                 (getDirectoryContents)
+import           System.Environment
+import           System.FilePath                  ((</>))
+
+import           Options.Generic
 
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -20,12 +36,15 @@ import           RPKI.Errors
 import           RPKI.Execution
 import           RPKI.Http.Server
 import           RPKI.Logging
+import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.TopDown
-import           RPKI.Util                       (convert, fmtEx)
+import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
+
+
 
 --
 servantAPI :: IO ()
@@ -45,26 +64,48 @@ main = do
         (runValidatorApp appContext)
 
 
--- runValidatorApp :: IO ()
-runValidatorApp appContext = do     
+runValidatorApp :: Storage s => AppContext s -> IO ()
+runValidatorApp appContext = do
     let tals = [ "afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal" ]
     -- let tals = [ "ripe.tal" ]
 
     void $ updateWorldVerion $ dynamicState appContext
-
-    as <- forM tals $ \tal -> async $
-        runValidatorT (vContext $ URI $ convert tal) $ do
-            t <- fromTry (RsyncE . FileReadError . fmtEx) $             
-                BS.readFile $ "/Users/mpuzanov/.rpki-cache/tals/" <> tal
-            talContent <- vHoist $ fromEither $ first TAL_E $ parseTAL $ convert t                        
-            liftIO $ bootstrapTA appContext talContent
-
-    result <- forM as wait
-    putStrLn $ "done: " <> show result
+    result <- bootstapAllTAs appContext
+    -- putStrLn $ "done: " <> show result
     pure ()
 
--- runHttpApi :: IO ()
+
+bootstapAllTAs :: Storage s => AppContext s -> IO [(Either AppError (), Validations)]
+bootstapAllTAs appContext@AppContext {..} = do
+    talFileNames <- listTALFiles
+    asyncs <- forM talFileNames $ \talFileName -> 
+        async $ do
+            (talContent, vs) <- runValidatorT (vContext $ URI $ convert talFileName) $ do
+                                    t <- fromTry (RsyncE . FileReadError . fmtEx) $ BS.readFile talFileName
+                                    vHoist $ fromEither $ first TAL_E $ parseTAL $ convert t    
+            case talContent of 
+                Left e -> do
+                    logError_ logger [i|Error reading TAL #{talFileName}, e = #{e}.|]
+                    pure (Left e, vs)
+                Right talContent' -> 
+                    bootstrapTA appContext talContent'
+
+    forM asyncs wait
+
+
+listTALFiles :: IO [FilePath]
+listTALFiles = do 
+    home <- getEnv "HOME"
+    let talDirectory = home </> ".rpki" </> "tals"
+    names <- getDirectoryContents talDirectory
+    pure $ map (talDirectory </>) $ 
+            filter (".tal" `List.isSuffixOf`) $ 
+            filter (`notElem` [".", ".."]) names
+
+
+runHttpApi :: Storage s => AppContext s -> IO ()
 runHttpApi appContext = Warp.run 9999 $ httpApi appContext
+
 
 createAppContext :: DB s -> IO (AppContext s)
 createAppContext database' = do 
@@ -91,3 +132,6 @@ createLogger = do
             cmapM fmtRichMessageDefault logTextStdout  
           
 
+data Options = Options {
+
+}

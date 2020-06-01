@@ -85,5 +85,10 @@ extra-deps:
 
 # allow-newer: true
 
+# system-ghc: false
 # docker:
-#   enable: true
+#   image: fpco/stack-build:lts-14.27
+#   # enable: true
+#   run-args:
+#   - --ulimit=nofile=60000
+#   set-user: true
