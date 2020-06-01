@@ -65,6 +65,7 @@ import           RPKI.Execution
 import           RPKI.Parallel
 import           RPKI.TAL
 import           RPKI.Rsync
+import           RPKI.Version
 import           RPKI.Store.Database
 import           RPKI.Store.Repository (getTaPublicationPoints)
 import           RPKI.Validation.Crypto
@@ -178,10 +179,10 @@ parseWithTmp filename f = --LBS.readFile filename >>= f
   --   -- f =<< LBS.hGetContents h   
 
 
-createAppContext :: IO AppContext
-createAppContext = do 
-    log'         <- createLogger
-    dynamicState <- createDynamicState
+createAppContext :: DB s -> IO (AppContext s)
+createAppContext database' = do 
+    log'  <- createLogger
+    state <- createDynamicState
     pure $ AppContext {        
         logger = log',
         config = Config {
@@ -189,52 +190,30 @@ createAppContext = do
             rsyncConf = RsyncConf "/tmp/rsync",
             validationConfig = ValidationConfig $ 24 * 3600 
         },
-        dynamicState = dynamicState
-    }
+        dynamicState = state,
+        database = database'
+    } 
 
-processRRDP :: LmdbEnv -> IO ()
-processRRDP env = do
-    say "begin"      
-    let repos = [
-                rrdpR (URI "https://rrdp.ripe.net/notification.xml")
-                -- rrdpR (URI "https://rrdp.arin.net/notification.xml"),
-                -- rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
-                -- rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
-                -- rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
-            ]
-    let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
-    database <- createDatabase env    
-    as <- forM repos $ \repo -> do
-        appContext <- createAppContext
-        async $ runValidatorT conf $ fetchRepository appContext database repo
+-- processRRDP :: LmdbEnv -> IO ()
+-- processRRDP env = do
+--     say "begin"      
+--     let repos = [
+--                 rrdpR (URI "https://rrdp.ripe.net/notification.xml")
+--                 -- rrdpR (URI "https://rrdp.arin.net/notification.xml"),
+--                 -- rrdpR (URI "https://rrdp.apnic.net/notification.xml"),
+--                 -- rrdpR (URI "https://rrdp.afrinic.net/notification.xml"),
+--                 -- rrdpR (URI "https://rrdp.afrinic.net/broken.xml")
+--             ]
+--     let conf = (createLogger, Config getParallelism, vContext $ URI "something.cer")
+--     database <- createDatabase env    
+--     as <- forM repos $ \repo -> do
+--         appContext <- createAppContext
+--         async $ runValidatorT conf $ fetchRepository appContext database repo
 
-    e <- forM as wait
+--     e <- forM as wait
 
-    say $ "result " <> show e
+--     say $ "result " <> show e
     -- <> show e
-
-saveRsyncRepo env = do  
-    database <- createDatabase env
-    let repo = rsyncR (URI "rsync://rpki.ripe.net/repository")    
-    let vc = vContext $ URI "something.cer"    
-    appContext <- createAppContext
-    runValidatorT vc $ fetchRepository appContext database repo
-
-saveRsync :: p -> IO ()
-saveRsync env = do
-    say "begin"  
-    appContext <- createAppContext
-    e <- runValidatorT (vContext $ URI "something.cer") $ rsyncFile appContext 
-        (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
-    say $ "done " <> show e
-
-loadRsync env = do
-    say "begin"      
-    store <- createObjectStore env        
-    appContext <- createAppContext
-    void $ loadRsyncRepository appContext (URI "rsync://rpki.ripe.net/repository") 
-                "/tmp/rsync/rsync___rpki.ripe.net_repository" store
-    say $ "done "
 
 -- processTAL :: LmdbEnv -> IO ()
 -- processTAL env = do
@@ -249,15 +228,15 @@ loadRsync env = do
 --         pure x
 --     say $ "done " <> show result
 
-getTACert = 
-    runValidatorT (vContext $ URI "something.cer") $ do
-        t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-            BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/apinic.tal"
-        tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
-        appContext <- liftIO createAppContext
-        (u, ro) <- fetchTACertificate appContext tal
-        x <- vHoist $ validateTACert tal u ro
-        pure (ro, x)
+-- getTACert = 
+--     runValidatorT (vContext $ URI "something.cer") $ do
+--         t <- fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+--             BS.readFile "/Users/mpuzanov/Projects/rpki-validator-3/rpki-validator/src/main/resources/packaging/generic/workdirs/preconfigured-tals/apinic.tal"
+--         tal <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t        
+--         appContext <- liftIO createAppContext
+--         (u, ro) <- fetchTACertificate appContext tal
+--         x <- vHoist $ validateTACert tal u ro
+--         pure (ro, x)
 
 
 validateTreeFromTA :: LmdbEnv -> IO ()
@@ -266,7 +245,7 @@ validateTreeFromTA env = do
     let repo = rsyncR (URI "rsync://rpki.apnic.net/member_repository/")        
     -- let repo = RrdpRepository (URI "https://rrdp.apnic.net/notification.xml") Nothing        
     database <- createDatabase env    
-    appContext <- createAppContext
+    appContext <- createAppContext database
     let taName = TaName "Test TA"
     let vContext' = vContext $ URI "something.cer"
     x <- runValidatorT vContext' $ do
@@ -275,7 +254,7 @@ validateTreeFromTA env = do
         let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
         let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
         liftIO $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
-        fetchRepository appContext database repo
+        fetchRepository appContext repo
         -- emptyTopDownContext taName
         -- liftIO $ validateCA appContext vContext' database taName taCert
 
@@ -283,9 +262,9 @@ validateTreeFromTA env = do
 
 validateTreeFromStore :: LmdbEnv -> IO ()
 validateTreeFromStore env = do       
-    appContext <- createAppContext
-    let taCertURI = URI "rsync://repository.lacnic.net/rpki/lacnic/rta-lacnic-rpki.cer"
     database <- createDatabase env
+    appContext <- createAppContext database
+    let taCertURI = URI "rsync://repository.lacnic.net/rpki/lacnic/rta-lacnic-rpki.cer"    
     x <- runValidatorT (vContext taCertURI) $ do
         CerRO taCert <- rsyncFile appContext taCertURI
         let taName = TaName "Test TA"
@@ -293,7 +272,7 @@ validateTreeFromStore env = do
                                 getTaPublicationPoints tx (repositoryStore database) taName
         topDownContext <- emptyTopDownContext appContext taName storedPubPoints taCert
         fromTry (UnspecifiedE . U.fmtEx) $
-                validateCA appContext (VContext (taCertURI :| [])) database topDownContext taCert    
+                validateCA appContext (VContext (taCertURI :| [])) topDownContext taCert    
 
         Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
         logDebugM (logger appContext) [i| TA: #{taName} validCount = #{validCount} |]                                
@@ -305,7 +284,7 @@ validateFully :: LmdbEnv -> IO ()
 validateFully env = do
     say "begin"      
     database <- createDatabase env    
-    appContext <- createAppContext
+    appContext <- createAppContext database
     let tals = [ "afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal" ]
     -- let tals = [ "ripe.tal" ]
 
@@ -314,7 +293,7 @@ validateFully env = do
             t <- fromTry (RsyncE . FileReadError . U.fmtEx) $             
                 BS.readFile $ "/Users/mpuzanov/.rpki-cache/tals/" <> tal
             talContent <- vHoist $ fromEither $ first TAL_E $ parseTAL $ U.convert t                        
-            liftIO $ bootstrapTA appContext talContent database
+            liftIO $ bootstrapTA appContext talContent
 
     result <- forM as wait
 

@@ -35,19 +35,22 @@ main :: IO ()
 main = do
     -- load config file and apply command line options
     -- initialise environment and LMDB
-    concurrently
-        runHttpApi
-        runValidatorApp
-    return ()
 
-
-runValidatorApp :: IO ()
-runValidatorApp = do 
     lmdbEnv  <- mkLmdb "./data" 1000
     database' <- createDatabase lmdbEnv
     appContext <- createAppContext database'
+
+    void $ concurrently
+        (runHttpApi appContext)
+        (runValidatorApp appContext)
+
+
+-- runValidatorApp :: IO ()
+runValidatorApp appContext = do     
     let tals = [ "afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal" ]
     -- let tals = [ "ripe.tal" ]
+
+    void $ updateWorldVerion $ dynamicState appContext
 
     as <- forM tals $ \tal -> async $
         runValidatorT (vContext $ URI $ convert tal) $ do
@@ -60,8 +63,8 @@ runValidatorApp = do
     putStrLn $ "done: " <> show result
     pure ()
 
-runHttpApi :: IO ()
-runHttpApi = Warp.run 9999 httpApi  
+-- runHttpApi :: IO ()
+runHttpApi appContext = Warp.run 9999 $ httpApi appContext
 
 createAppContext :: DB s -> IO (AppContext s)
 createAppContext database' = do 

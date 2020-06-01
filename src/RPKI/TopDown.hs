@@ -102,7 +102,7 @@ createVerifiedResources (getRC -> ResourceCertificate certificate) =
 emptyTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -> CerObject -> m (TopDownContext s)
 emptyTopDownContext AppContext {..} taName publicationPoints certificate = liftIO $ do             
     now          <- thisMoment
-    worldVersion <- updateWorldVerion dynamicState
+    worldVersion <- getWorldVerion dynamicState
     atomically $ TopDownContext (Just $ createVerifiedResources certificate) <$> 
         createQuu 100000 <*>
         newTVar publicationPoints <*>
@@ -272,7 +272,7 @@ validateCAWithQueue
     appContext@AppContext {..} 
     vc 
     topDownContext@TopDownContext{..} 
-    certificate quuWhat = do 
+    certificate qWhat = do 
     let certificateURL = NonEmpty.head $ getLocations certificate
     logDebugM logger [i| Starting to validate #{certificateURL}|]
 
@@ -281,16 +281,16 @@ validateCAWithQueue
             queueVResult appContext topDownContext validations            
             pickUpNewPPsAndValidateDown pps
 
-    (_, elapsed) <- timedMS $ case quuWhat of 
-                        CreateQ -> do            
-                            -- Write validation results in a separate thread to avoid blocking on the 
-                            -- database with writing transactions during the validation process                     
-                            fst <$> concurrently 
-                                        (work `finally` atomically (closeQueue databaseQueue))
-                                        (executeQueuedTxs appContext topDownContext >> 
-                                         finishWorldVersion appContext topDownContext)
-                        
-                        AlreadyCreatedQ -> work
+    (_, elapsed) <- timedMS $ case qWhat of 
+        CreateQ -> do            
+            -- Write validation results in a separate thread to avoid blocking on the 
+            -- database with writing transactions during the validation process                     
+            fst <$> concurrently 
+                        (work `finally` atomically (closeQueue databaseQueue))
+                        (executeQueuedTxs appContext topDownContext >> 
+                            finishWorldVersion appContext topDownContext)
+        
+        AlreadyCreatedQ -> work
         
     logDebugM logger [i|Validated #{certificateURL}, took #{elapsed}ms.|]
     where
@@ -311,7 +311,7 @@ validateCAWithQueue
                     modifyTVar' takenCareOf (<> discoveredURIs) 
                     
                     pure $ newGlobalPPs `shrinkTo` urisToTakeCareOf
-            
+
             let (_, rootToPps) = repositoryHierarchy discoveredPPs
                 
             let newRepositories = filter ((New ==) . repositoryStatus) $ Map.elems $ repositories ppsToFetch

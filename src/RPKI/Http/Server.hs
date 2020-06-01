@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -6,7 +7,10 @@
 
 module RPKI.Http.Server where
 
+import           Control.Monad.IO.Class
+
 import Data.Proxy
+import Data.List (maximumBy)
 
 import           Data.Aeson
 import           Servant
@@ -19,17 +23,29 @@ import qualified Servant.Types.SourceT as S
 
 import           RPKI.Http.Api
 import           RPKI.Domain
+import           RPKI.Execution
+import           RPKI.Version
+import           RPKI.Store.Base.Storage
+import           RPKI.Store.Database
 import           RPKI.Resources.Types
 
-validatorServer :: Server API
-validatorServer = 
-    pure allVRPs
-    :<|> pure allVRPs
+validatorServer :: Storage s => AppContext s -> Server API
+validatorServer AppContext { database = DB {..}} = 
+    liftIO getVRPs
+    :<|> liftIO getVRPs
     -- :<|> pure (S.source [])
     where
-        allVRPs = replicate 200000 (VRP (ASN 123) prefix 18)
-        prefix = Ipv4P $ Ipv4Prefix (read "10.0.0.0/16")
+        getVRPs = 
+            roTx versionStore $ \tx -> do 
+                versions <- allVersions tx versionStore
+                case versions of
+                    [] -> pure []
+                    vs -> do 
+                        let lastVersion = maximum [ v | (v, FinishedVersion) <- vs ]
+                        map toVRPs <$> allVRPs tx vrpStore lastVersion
+        
+        toVRPs (Roa a p len) = VRP a p len
 
 
-httpApi :: Application
-httpApi = serve api validatorServer
+httpApi :: Storage s => AppContext s -> Application
+httpApi = serve api . validatorServer

@@ -5,10 +5,10 @@
 
 module RPKI.Store.Database where
 
-import Control.Monad.IO.Class
-import  Codec.Serialise
+import           Codec.Serialise
+import           Control.Monad.IO.Class
 
-import Data.Int
+import           Data.Int
 
 import           GHC.Generics
 
@@ -26,6 +26,7 @@ import           RPKI.Store.Sequence
 
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
+
 
 
 data RpkiObjectStore s = RpkiObjectStore {
