@@ -150,7 +150,10 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    # - -O2
+    - -static
+    - -O2
+    cc-options: -static
+    ld-options: -static -pthread      
     dependencies:
     - rpki-prover
     - QuickCheck

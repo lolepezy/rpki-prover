@@ -116,6 +116,11 @@ newtype TALError = TALError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
+newtype InitError = InitError Text 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype Semigroup
+
 newtype VContext = VContext (NonEmpty URI) 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -126,6 +131,7 @@ data AppError = ParseE (ParseError Text) |
                 RsyncE RsyncError |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
+                InitE InitError |
                 UnspecifiedE Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
