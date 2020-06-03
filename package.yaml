@@ -131,11 +131,13 @@ executables:
     source-dirs:         app
     ghc-options:
     - -threaded
-    - -static
+    # - -static
     - -O2
     - -Wall    
-    cc-options: -static
-    ld-options: -static -pthread  
+    - -rtsopts
+    - -with-rtsopts=-N    
+    # cc-options: -static
+    # ld-options: -static -pthread  
     dependencies:
     - rpki-prover  
 
@@ -150,10 +152,10 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    - -static
+    # - -static
     - -O2
-    cc-options: -static
-    ld-options: -static -pthread      
+    # cc-options: -static
+    # ld-options: -static -pthread      
     dependencies:
     - rpki-prover
     - QuickCheck

@@ -41,6 +41,7 @@ import           RPKI.Store.Base.LMDB hiding (getEnv)
 import           RPKI.Store.Database
 import           RPKI.Store.Util
 import           RPKI.TAL
+import           RPKI.Time
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
@@ -65,19 +66,16 @@ main = do
 
 
 runValidatorApp :: AppEnv -> IO ()
-runValidatorApp appContext = do
-    -- let tals = [ "afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal" ]
-    -- let tals = [ "ripe.tal" ]
-
-    void $ updateWorldVerion $ dynamicState appContext
-    result <- bootstapAllTAs appContext
-    -- putStrLn $ "done: " <> show result
-    pure ()
+runValidatorApp appContext@AppContext {..} = do    
+    worldVersion <- updateWorldVerion dynamicState
+    (result, elapsed) <- timedMS $ bootstapAllTAs appContext
+    completeWorldVersion appContext worldVersion
+    logDebug_ logger [i|Validated all TAs, took #{elapsed}ms.|]
 
 
 bootstapAllTAs :: AppEnv -> IO [(Either AppError (), Validations)]
 bootstapAllTAs appContext@AppContext {..} = do
-    talFileNames <- listTALFiles
+    talFileNames <- listTALFiles $ talDirectory config
     asyncs <- forM talFileNames $ \talFileName -> 
         async $ do
             (talContent, vs) <- runValidatorT (vContext $ URI $ convert talFileName) $ do
@@ -101,9 +99,10 @@ runHttpApi appContext = Warp.run 9999 $ httpApi appContext
 createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
 createAppContext log' = do
 
-    -- TODO Make it configuratble?
-    let rootDir = ".rpki"        
-
+    -- TODO Make it configurable?
+    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
+    let rootDir = home </> ".rpki"
+    
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
@@ -114,12 +113,18 @@ createAppContext log' = do
 
     state  <- liftIO createDynamicState
 
+    -- TODO read stuff from the config, CLI
     pure $ AppContext {        
         logger = log',
         config = Config {
-            parallelism = getParallelism,
-            rsyncConf = RsyncConf rsyncd,
-            validationConfig = ValidationConfig $ 24 * 3600 
+            talDirectory = tald,
+            parallelism  = getParallelism,
+            rsyncConf    = RsyncConf rsyncd,
+            rrdpConf     = RrdpConf tmpd,
+            validationConfig = ValidationConfig {
+                rrdpRepositoryRefreshInterval  = 2 * 60,
+                rsyncRepositoryRefreshInterval = 10 * 60
+            }
         },
         dynamicState = state,
         database = database'
@@ -136,10 +141,8 @@ createLogger = do
           
 
 
-listTALFiles :: IO [FilePath]
-listTALFiles = do 
-    home <- getEnv "HOME"
-    let talDirectory = home </> ".rpki" </> "tals"
+listTALFiles :: FilePath -> IO [FilePath]
+listTALFiles talDirectory = do     
     names <- getDirectoryContents talDirectory
     pure $ map (talDirectory </>) $ 
             filter (".tal" `List.isSuffixOf`) $ 

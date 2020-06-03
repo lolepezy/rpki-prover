@@ -41,7 +41,7 @@ import qualified Crypto.Hash.SHA256               as S256
 
 import           System.IO                        (Handle, hClose)
 import           System.IO.Posix.MMap.Lazy        (unsafeMMapFile)
-import           System.IO.Temp                   (withSystemTempFile)
+import           System.IO.Temp                   (withTempFile)
 
 import           Control.Concurrent.Async.Lifted  as AsyncL
 import           Control.Exception.Lifted
@@ -74,10 +74,12 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
                 \e -> appWarn e >> useSnapshot snapshotInfo
     where
         hoistHere = vHoist . fromEither . first RrdpE
-        
+                
+        Config {..} = config
+
         useSnapshot (SnapshotInfo uri hash) = do 
-            logDebugM logger [i|Downloading snapshot: #{unURI uri} |]       
-            rawContent <- fromEitherM $ downloadHashedContent uri hash
+            logDebugM logger [i|Downloading snapshot: #{unURI uri} |]        
+            rawContent <- fromEitherM $ downloadHashedContent rrdpConf uri hash
                                 (RrdpE . CantDownloadSnapshot . show)                 
                                 (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
             snapshot    <- hoistHere $ parseSnapshot rawContent
@@ -85,7 +87,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             pure (repoFromSnapshot snapshot, validations)            
 
         useDeltas sortedDeltas notification = do
-            parallelism' <- liftIO $ dynamicParaIO $ parallelism config
+            parallelism' <- liftIO $ dynamicParaIO parallelism
             rawContents <- parallel parallelism' sortedDeltas downloadDelta    
             deltas      <- forM rawContents $ \case
                                 Left e                -> appError e
@@ -94,7 +96,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             pure (repoFromDeltas deltas notification, validations)
             where
                 downloadDelta di@(DeltaInfo uri hash serial) = do
-                    rawContent <- downloadHashedContent uri hash
+                    rawContent <- downloadHashedContent rrdpConf uri hash
                         (RrdpE . CantDownloadDelta . show)                         
                         (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)                    
                     pure $! (di,) <$> rawContent
@@ -117,17 +119,18 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
 -- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
 -- safe to use them after returning from this function.
 downloadHashedContent :: (MonadIO m) => 
+                        RrdpConf ->
                         URI -> 
                         Hash -> 
                         (SomeException -> e) ->
                         (Hash -> Either e LBS.ByteString) ->
                         m (Either e LBS.ByteString)
-downloadHashedContent uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
+downloadHashedContent RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
-    withSystemTempFile tmpFileName $ \name fd -> 
+    withTempFile tmpRoot tmpFileName $ \name fd -> 
         streamHttpToFileAndHash uri cantDownload fd >>= \case        
             Left e -> pure (Left e)
             Right actualHash 

@@ -189,11 +189,7 @@ validateTACertificateFromTAL appContext@AppContext { database = DB {..}, ..} tal
             case r of
                 Nothing -> do
                     -- it's a new TA, store it and trigger all the other actions
-                    let c = cwsX509certificate $ getCertWithSignature newCert
-                    logInfoM logger [i| Storing new #{taName'}, 
-                        getRrdpNotifyUri newCert = #{getRrdpNotifyUri c}, 
-                        getRepositoryUri newCert = #{getRepositoryUri c}|]
-                                                            
+                    let c = cwsX509certificate $ getCertWithSignature newCert                                                            
                     storeTaCert tx newCert
 
                 Just STA { taCert, initialRepositories } ->
@@ -287,8 +283,7 @@ validateCAWithQueue
             -- database with writing transactions during the validation process                     
             fst <$> concurrently 
                         (work `finally` atomically (closeQueue databaseQueue))
-                        (executeQueuedTxs appContext topDownContext >> 
-                            finishWorldVersion appContext topDownContext)
+                        (executeQueuedTxs appContext topDownContext)
         
         AlreadyCreatedQ -> work
         
@@ -391,11 +386,12 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                 Just New -> stopHere discoveredPP
 
                 Just (FetchedAt time) 
-                    | notTooLongAgo validationConfig time (now topDownContext) -> validateThisCertAndGoDown                           
-                    | otherwise                                                -> stopHere discoveredPP
+                    | notTooLongAgo discoveredPP validationConfig time (now topDownContext) -> 
+                            validateThisCertAndGoDown                           
+                    | otherwise -> stopHere discoveredPP
 
                 Just (FailedAt time)
-                    | notTooLongAgo validationConfig time (now topDownContext) -> 
+                    | notTooLongAgo discoveredPP validationConfig time (now topDownContext) -> 
                             appError $ ValidationE $ PublicationPointIsNotAvailable $ publicationPointURI discoveredPP
                     | otherwise -> stopHere discoveredPP
 
@@ -409,6 +405,13 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             modifyTVar (ppWaitingList topDownContext) $ \m -> 
                 Map.unionWith (<>) m (Map.singleton (publicationPointURI pp) (Set.singleton $ getHash cert))
              
+        notTooLongAgo publicationPoint ValidationConfig {..} momendTnThePast (Now now) = 
+            closeEnoughMoments momendTnThePast now (interval publicationPoint)
+            where
+                interval (RrdpPP _)  = rrdpRepositoryRefreshInterval
+                interval (RsyncPP _) = rsyncRepositoryRefreshInterval
+
+
         validateThisCertAndGoDown = do
             vContext' :: VContext <- asks getter
             let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
@@ -552,9 +555,9 @@ executeQueuedTxs AppContext {..} TopDownContext {..} = do
 
 
 
-finishWorldVersion :: Storage s => 
-                        AppContext s -> TopDownContext s -> IO ()
-finishWorldVersion AppContext { database = DB {..} } TopDownContext {..} =
+completeWorldVersion :: Storage s => 
+                        AppContext s -> WorldVersion -> IO ()
+completeWorldVersion AppContext { database = DB {..} } worldVersion =
     rwTx versionStore $ \tx -> putVersion tx versionStore worldVersion FinishedVersion
 
 

@@ -346,6 +346,10 @@ instance Arbitrary TALError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary InitError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary AppError where
     arbitrary = genericArbitrary
     shrink = genericShrink

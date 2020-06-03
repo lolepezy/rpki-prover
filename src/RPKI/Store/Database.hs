@@ -182,7 +182,6 @@ allVersions :: (MonadIO m, Storage s) =>
 allVersions tx (VersionStore s) = liftIO $ M.all tx s
 
 
-
 -- All of the stores of the application in one place
 data DB s = DB {
     taStore         :: TAStore s, 

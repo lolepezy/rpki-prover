@@ -6,7 +6,7 @@ module RPKI.Time where
 import Data.Int
 
 import           Control.Monad.IO.Class (liftIO, MonadIO)
-import           Data.Hourglass         (NanoSeconds(..), Seconds(..), DateTime, timeDiffP)
+import           Data.Hourglass         (NanoSeconds(..), Seconds(..), DateTime, timeDiffP, timeDiff)
 import           System.Hourglass       (dateCurrent)
 
 
@@ -30,3 +30,7 @@ timedMS :: MonadIO m => m a -> m (a, Int64)
 timedMS action = do 
     (z, ns) <- timed action   
     pure (z, fromIntegral (ns `div` 1000_000))
+
+closeEnoughMoments :: DateTime -> DateTime -> Seconds -> Bool
+closeEnoughMoments firstMoment secondMoment interval = 
+    timeDiff secondMoment firstMoment < interval

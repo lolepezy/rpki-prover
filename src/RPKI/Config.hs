@@ -9,13 +9,14 @@ import Numeric.Natural
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
 
-import RPKI.Logging
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
 data Config = Config {
+    talDirectory :: FilePath,
     parallelism :: Natural,
     rsyncConf :: RsyncConf,
+    rrdpConf :: RrdpConf,
     validationConfig :: ValidationConfig
 } deriving stock (Show, Eq, Ord, Generic)
 
@@ -23,8 +24,13 @@ newtype RsyncConf = RsyncConf {
     rsyncRoot :: FilePath
 } deriving stock (Show, Eq, Ord, Generic)
 
+newtype RrdpConf = RrdpConf {
+    tmpRoot :: FilePath
+} deriving stock (Show, Eq, Ord, Generic)
+
 data ValidationConfig = ValidationConfig {
-    refetchIntervalAfterRepositoryFailure :: Seconds
+    rrdpRepositoryRefreshInterval :: Seconds,
+    rsyncRepositoryRefreshInterval :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 getParallelism :: Natural 

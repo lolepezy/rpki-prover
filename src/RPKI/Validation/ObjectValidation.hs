@@ -246,7 +246,3 @@ validateSize s =
       | s < 10 -> Left $ ObjectIsTooSmall s
       | s > 50_000_000 -> Left $ ObjectIsTooBig s
       | otherwise -> pure s
-
-notTooLongAgo :: ValidationConfig -> DateTime -> Now -> Bool
-notTooLongAgo ValidationConfig {..} inThePast (Now now) = 
-    timeDiff now inThePast < refetchIntervalAfterRepositoryFailure
