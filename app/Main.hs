@@ -17,13 +17,14 @@ import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.Text                        (Text)
-import qualified Data.Text                        as Text
 
 import           Data.String.Interpolate.IsString
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
-import           System.Directory                 (getDirectoryContents, doesDirectoryExist)
+import           System.Directory                 (getDirectoryContents, 
+                                                    doesDirectoryExist, 
+                                                    listDirectory, removeFile)
 import           System.Environment
 import           System.FilePath                  ((</>))
 
@@ -36,9 +37,7 @@ import           RPKI.Errors
 import           RPKI.Execution
 import           RPKI.Http.Server
 import           RPKI.Logging
-import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.LMDB hiding (getEnv)
-import           RPKI.Store.Database
 import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.Time
@@ -53,12 +52,12 @@ type AppEnv = AppContext LmdbStorage
 main :: IO ()
 main = do
     -- load config file and apply command line options    
-    log <- createLogger
+    logger <- createLogger
 
-    (appContext, validations) <- runValidatorT (vContext $ URI "configuration") $ createAppContext log
+    (appContext, validations) <- runValidatorT (vContext $ URI "configuration") $ createAppContext logger
     case appContext of
         Left e ->
-            logError_ log [i|Couldn't initialise: #{e}|]
+            logError_ logger [i|Couldn't initialise: #{e}|]
         Right appContext' ->
             void $ concurrently
                 (runHttpApi appContext')
@@ -110,6 +109,10 @@ createAppContext log' = do
 
     lmdbEnv   <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb 1000
     database' <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
+
+    -- clean up tmp directory if it's not empty
+    fromTry (InitE . InitError . fmtEx) $ 
+        listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
 
     state  <- liftIO createDynamicState
 
