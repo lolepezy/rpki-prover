@@ -24,8 +24,9 @@
 
 ---------------------------------------------------------------------------
 
-- Read config and CLI options
+- Fix RRDP so that it uses deltas properly
 - Add periodic re-validation
+- Read config and CLI options
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 
 - Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects.
