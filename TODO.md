@@ -17,25 +17,21 @@
 + Fix MDB_BAD_VALSIZE, but first associate VRs with a timestamp
 + Fix broken tree traversal (Word32 -> Int32 was a bad idea)
 + Add timing of the main building blocks
++ Make WorldVersion more precise, update it only periodically and at proper moments
 + Add version storage and connect versions with VRPs and other stuff
++ Have a cache directory (.rpki-data (tals, lmsb, rsync, tmp))
+
 
 ---------------------------------------------------------------------------
 
 - Read config and CLI options
-- Have a cache directory (.rpki-data (tals, lmsb, rsync, tmp))
-- 
-
-
-- Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects.
+- Add periodic re-validation
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 
-- Make WorldVersion more precise, update it only periodically and at proper moments
+- Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects.
+- Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.
 
-- Have more general framework for "thread that read from the channel and does stuff"
-
-
-- Keep in LMDB only the necessary part of an object after checking it's 
-
+- Keep in LMDB only the necessary part of an object after checking it's signature.
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)
 
 
