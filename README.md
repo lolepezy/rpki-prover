@@ -31,6 +31,5 @@ The instruction below is for linux, but it can work equally for *BSD or Mac (Win
    4. Do `stack install` inside of the rpki-prover
    5. Run `rpki-prover-exe` from the `~/.local/bin`
 
-Normally it prints quite a lot of logs about what it's doing. After it prints "" VRPs can be fetched by executing
-`curl -s http://localhost:9999/vrps.csv`.
+Normally it prints quite a lot of logs about what it's doing. After it prints "Validated all TAs, took ..." VRPs can be fetched by executing `curl -s http://localhost:9999/vrps.csv`.
  
