@@ -26,7 +26,7 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
    - Install these libraries: `sudo apt-get install liblmdb-dev liblzma-dev libexpat1-dev` (or your system's version of it)
    - Install `stack` as described here `https://docs.haskellstack.org/en/stable/install_and_upgrade/`
    - Clone https://github.com/lolepezy/rpki-prover/
-   - Do `stack install` inside of the rpki-prover. It should take quite some time (30-50 minutes as it has to build all the required libraries)
+   - Do `stack install rpki-prover:rpki-prover-exe` inside of the rpki-prover. It should take quite some time (30-50 minutes as it has to build all the required libraries)
    - Run `mkdirs.sh` script. It will create some directory structure inside of ~/.rpki and download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
    - Run `rpki-prover-exe` from the `~/.local/bin`
 
