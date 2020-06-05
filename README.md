@@ -20,3 +20,17 @@ Future work
 - SLURM support
 - Packaging and a Docker image
 - Fancy UI
+
+Buildgin from sources:
+
+The instruction below is for linux, but it can work equally for *BSD or Mac (Windows support is not planned or tested)
+    
+   1. Install these libraries: `sudo apt-get install liblmdb-dev liblzma-dev libexpat1-dev` (or your system's version of it)
+   2. Install `stack` as described here `https://docs.haskellstack.org/en/stable/install_and_upgrade/`
+   3. Clone https://github.com/lolepezy/rpki-prover/
+   4. Do `stack install` inside of the rpki-prover
+   5. Run `rpki-prover-exe` from the `~/.local/bin`
+
+Normally it prints quite a lot of logs about what it's doing. After it prints "" VRPs can be fetched by executing
+`curl -s http://localhost:9999/vrps.csv`.
+ 
