@@ -4,7 +4,6 @@
 {-# LANGUAGE QuasiQuotes       #-}
 
 module Main where
-
 import           Colog
 
 import           Control.Monad
@@ -22,9 +21,7 @@ import           Data.String.Interpolate.IsString
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
-import           System.Directory                 (getDirectoryContents, 
-                                                    doesDirectoryExist, 
-                                                    listDirectory, removeFile)
+import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory, removeFile)
 import           System.Environment
 import           System.FilePath                  ((</>))
 
@@ -37,14 +34,14 @@ import           RPKI.Errors
 import           RPKI.Execution
 import           RPKI.Http.Server
 import           RPKI.Logging
-import           RPKI.Store.Base.LMDB hiding (getEnv)
+import           RPKI.Parallel
+import           RPKI.Store.Base.LMDB             hiding (getEnv)
 import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
-
 
 type AppEnv = AppContext LmdbStorage
 
@@ -96,7 +93,7 @@ runHttpApi appContext = Warp.run 9999 $ httpApi appContext
 
 
 createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
-createAppContext log' = do
+createAppContext logger = do
 
     -- TODO Make it configurable?
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
@@ -107,21 +104,28 @@ createAppContext log' = do
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
     lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
 
-    lmdbEnv   <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb 1000
-    database' <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
+    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb 1000
+    database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
 
     -- clean up tmp directory if it's not empty
     fromTry (InitE . InitError . fmtEx) $ 
         listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
 
-    state  <- liftIO createDynamicState
+    dynamicState <- liftIO createDynamicState
+
+    let parallelism = Parallelism getParallelism 64
+
+    appThreads <- liftIO $ do 
+        cpuThreads <- makeThreadsIO $ cpuParallelism parallelism
+        ioThreads  <- makeThreadsIO $ ioParallelism parallelism
+        pure $ AppThreads cpuThreads ioThreads
 
     -- TODO read stuff from the config, CLI
     pure $ AppContext {        
-        logger = log',
+        logger = logger,
         config = Config {
             talDirectory = tald,
-            parallelism  = getParallelism,
+            parallelism  = parallelism,
             rsyncConf    = RsyncConf rsyncd,
             rrdpConf     = RrdpConf tmpd,
             validationConfig = ValidationConfig {
@@ -129,8 +133,9 @@ createAppContext log' = do
                 rsyncRepositoryRefreshInterval = 10 * 60
             }
         },
-        dynamicState = state,
-        database = database'
+        dynamicState = dynamicState,
+        database = database,
+        appThreads = appThreads
     }
 
 createLogger :: IO AppLogger

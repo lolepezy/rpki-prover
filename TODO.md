@@ -24,10 +24,14 @@
 
 ---------------------------------------------------------------------------
 
+- Download TA cert by HTTPS 
 - Fix RRDP so that it uses deltas properly
 - Add periodic re-validation
+- Have full path from the top repoistory to all the delegates ones in the VContext.
 - Read config and CLI options
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
+
+- Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
 
 - Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects.
 - Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.

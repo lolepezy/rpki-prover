@@ -4,7 +4,6 @@ mkdir -p ${HOME}/.rpki/cache
 mkdir -p ${HOME}/.rpki/tmp
 mkdir -p ${HOME}/.rpki/rsync
 mkdir -p ${HOME}/.rpki/tals
-mkdir -p ${HOME}/.rpki/tals
 
 cd ${HOME}/.rpki/tals
 

@@ -5,8 +5,9 @@
 {-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.RRDP.Update where
-
 import           Control.Lens                     ((^.))
+import           Data.Generics.Product.Fields
+import           Data.Generics.Product.Typed
 import           Control.Monad.Except
 
 import           Data.Bifunctor                   (first, second)
@@ -20,9 +21,9 @@ import           GHC.Generics
 
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Execution
 import           RPKI.Domain
 import           RPKI.Errors
+import           RPKI.Execution
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -31,7 +32,8 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database                as Stores
+import qualified RPKI.Store.Database              as Stores
+import           RPKI.Time
 import qualified RPKI.Util                        as U
 
 import qualified Data.ByteString.Streaming        as Q
@@ -43,9 +45,9 @@ import           System.IO                        (Handle, hClose)
 import           System.IO.Posix.MMap.Lazy        (unsafeMMapFile)
 import           System.IO.Temp                   (withTempFile)
 
-import           Control.Concurrent.Async.Lifted  as AsyncL
 import           Control.Exception.Lifted
 import           Data.IORef.Lifted
+
 
 
 {- 
@@ -86,9 +88,8 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             validations <- handleSnapshot snapshot
             pure (repoFromSnapshot snapshot, validations)            
 
-        useDeltas sortedDeltas notification = do
-            parallelism' <- liftIO $ dynamicParaIO parallelism
-            rawContents <- parallel parallelism' sortedDeltas downloadDelta    
+        useDeltas sortedDeltas notification = do            
+            rawContents <- parallelTasks (ioThreads appThreads) sortedDeltas downloadDelta
             deltas      <- forM rawContents $ \case
                                 Left e                -> appError e
                                 Right (_, rawContent) -> hoistHere $ parseDelta rawContent
@@ -220,22 +221,24 @@ updateObjectForRrdpRepository :: Storage s =>
                                 ValidatorT vc IO (RrdpRepository, Validations)
 updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } objectStore = do
     added   <- newIORef (0 :: Int)
-    removed <- newIORef (0 :: Int)
-    repo <- updateRepo' added removed
+    removed <- newIORef (0 :: Int)        
+    (repo, elapsed) <- timedMS $ updateRepo' (cpuThreads appThreads) added removed
     a <- readIORef added        
     r <- readIORef removed
-    logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}|]
+    logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}, took #{elapsed}ms|]
     pure repo
     where
-        updateRepo' added removed =     
+        updateRepo' threads added removed =     
             updateRrdpRepo appContext repository saveSnapshot saveDelta
             where
-                saveSnapshot (Snapshot _ _ _ snapshotItems) = do
+                cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
+
+                saveSnapshot (Snapshot _ _ _ snapshotItems) = do                    
                     logDebugM logger [i|Saving snapshot for the repository: #{repository} |]
                     fromTry 
                         (StorageE . StorageError . U.fmtEx)                
                         (txConsumeFold 
-                            (parallelism config) 
+                            cpuParallelism
                             snapshotItems 
                             storableToChan 
                             (rwTx objectStore) 
@@ -243,12 +246,13 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                             (mempty :: Validations))                        
                     where
                         storableToChan (SnapshotPublish uri encodedb64) = do
-                            -- logDebugM logger [i|rrdp uri = #{uri}|]                            
-                            a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
-                            pure (uri, a)
+                            -- logDebugM logger [i|rrdp uri = #{uri}|]               
+                            task <- (pure $! parseAndProcess uri encodedb64) `submitStrict` threads
+                            -- a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
+                            pure (uri, task)
                                                 
                         chanToStorage tx (uri, a) validations = 
-                            AsyncL.wait a >>= \case                        
+                            waitTask a >>= \case                        
                                 SError e   -> do
                                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                                     pure $ validations <> mError (vContext uri) e
@@ -261,7 +265,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                 saveDelta deltas =            
                     fromTry (StorageE . StorageError . U.fmtEx) 
                         (txConsumeFold 
-                            (parallelism config) 
+                            cpuParallelism
                             deltaItems 
                             storableToChan 
                             (rwTx objectStore) 
@@ -270,10 +274,11 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                     where
                         deltaItems :: [DeltaItem] = concatMap (\(Delta _ _ _ dis) -> dis) deltas                        
 
-                        storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
+                        -- storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
                         storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
-                            a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
-                            pure $ maybe (Add uri a) (Replace uri a) hash
+                            -- a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
+                            task <- (pure $! parseAndProcess uri encodedb64) `submitStrict` threads
+                            pure $ maybe (Add uri task) (Replace uri task) hash
 
                         storableToChan (DW (DeltaWithdraw _ hash)) = 
                             pure $ Delete hash
@@ -287,7 +292,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                 Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
                         
                         addObject tx uri a validations =
-                            AsyncL.wait a >>= \case              
+                            waitTask a >>= \case              
                                 SError e -> do
                                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                                     pure $ validations <> mError (vContext uri) e
@@ -299,7 +304,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                     pure validations
 
                         replaceObject tx uri a oldHash validations = 
-                            AsyncL.wait a >>= \case
+                            waitTask a >>= \case
                                 SError e -> do
                                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                                     pure $ validations <> mError (vContext uri) e
@@ -324,10 +329,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                             logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
                                             pure $ validations <> mWarning (vContext uri) 
                                                 (VWarning $ RrdpE $ NoObjectToReplace uri oldHash)                                            
-                                    
-
-                                                    
-
+                                                                                    
         parseAndProcess (URI u) b64 =     
             case parsed of
                 Left e   -> SError e
@@ -338,7 +340,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                     first ParseE $ readObject (Text.unpack u) b                
                     
 
-data DeltaOp a = Delete !Hash 
-                | Add !URI !(Async a) 
-                | Replace !URI !(Async a) !Hash
+data DeltaOp m a = Delete !Hash 
+                | Add !URI !(Task m a) 
+                | Replace !URI !(Task m a) !Hash
 

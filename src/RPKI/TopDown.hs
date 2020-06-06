@@ -40,7 +40,6 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parallel
-import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
@@ -84,13 +83,12 @@ data TopDownContext s = TopDownContext {
 
     -- Element of the queue used to asynchronously write discovered VRPs and 
     -- validation results (and potentially anything else) to the database.
-    databaseQueue               :: Quu (Tx s 'RW -> IO ()),
+    databaseQueue               :: ClosableQueue (Tx s 'RW -> IO ()),
     publicationPoints           :: TVar PublicationPoints,
     ppWaitingList               :: TVar (Map URI (Set Hash)),
     takenCareOf                 :: TVar (Set URI),
     taName                      :: TaName, 
-    now                         :: Now,
-    parallelismDegree           :: Parallelism,
+    now                         :: Now,    
     objectStats                 :: TVar Stats,
     worldVersion                :: WorldVersion
 }
@@ -104,13 +102,12 @@ emptyTopDownContext AppContext {..} taName publicationPoints certificate = liftI
     now          <- thisMoment
     worldVersion <- getWorldVerion dynamicState
     atomically $ TopDownContext (Just $ createVerifiedResources certificate) <$> 
-        createQuu 100000 <*>
+        createClosableQueue 100000 <*>
         newTVar publicationPoints <*>
         newTVar Map.empty <*>
         newTVar Set.empty <*>
         pure taName <*> 
-        pure now <*>
-        dynamicPara (parallelism config) <*>
+        pure now <*>        
         newTVar (Stats 0) <*>
         pure worldVersion
 
@@ -134,8 +131,8 @@ bootstrapTA appContext@AppContext {..} tal =
     where
 
         fetchAndValidate taCert repos = do            
-            parallelism' <- liftIO $ dynamicParaIO $ parallelism config
-            fetchStatuses <- parallel parallelism' repos $ \repo -> do 
+            -- parallelism' <- liftIO $ dynamicParaIO $ parallelism config
+            fetchStatuses <- parallelTasks (ioThreads appThreads) repos $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
                 fetchRepository appContext repo
 
@@ -187,9 +184,8 @@ validateTACertificateFromTAL appContext@AppContext { database = DB {..}, ..} tal
         $ \tx -> do
             r <- getTA tx taStore taName'
             case r of
-                Nothing -> do
-                    -- it's a new TA, store it and trigger all the other actions
-                    let c = cwsX509certificate $ getCertWithSignature newCert                                                            
+                Nothing ->
+                    -- it's a new TA, store it and trigger all the other actions                    
                     storeTaCert tx newCert
 
                 Just STA { taCert, initialRepositories } ->
@@ -315,7 +311,7 @@ validateCAWithQueue
             --     logDebugM logger [i|new url = #{repositoryURI r}|]
 
             -- for all new repositories, drill down recursively
-            void $ parallel parallelismDegree newRepositories $ \repo -> do 
+            void $ parallelTasks (ioThreads appThreads) newRepositories $ \repo -> do
                 validations <- fetchAndValidateWaitingList rootToPps repo
                 queueVResult appContext topDownContext validations
 
@@ -340,22 +336,24 @@ validateCAWithQueue
                     let waitingHashesForThesePPs  = fromMaybe Set.empty $ fold $ 
                             Set.map (\pp -> publicationPointURI pp `Map.lookup` waitingListPerPP) fetchedPPs
 
-                    void $ parallel parallelismDegree (Set.toList waitingHashesForThesePPs) $ \hash -> do
-                            o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
-                            case o of 
-                                Just (CerRO waitingCertificate) -> do
-                                    -- logDebugM logger [i| #{getLocations c} was waiting for #{fetchedPPs}|]
-                                    let certVContext = vContext $ NonEmpty.head $ getLocations waitingCertificate
-                                    let childTopDownContext = topDownContext { 
-                                            -- we should start from the resource set of this certificate
-                                            -- as it is already has been verified
-                                            verifiedResources = Just $ createVerifiedResources certificate
-                                        }
-                                    validateCAWithQueue appContext certVContext 
-                                            childTopDownContext waitingCertificate AlreadyCreatedQ
-                                ro ->
-                                    logErrorM logger
-                                        [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]
+                    void $ parallelTasks 
+                            (cpuThreads appThreads) 
+                            (Set.toList waitingHashesForThesePPs) $ \hash -> do                    
+                                o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
+                                case o of 
+                                    Just (CerRO waitingCertificate) -> do
+                                        -- logDebugM logger [i| #{getLocations c} was waiting for #{fetchedPPs}|]
+                                        let certVContext = vContext $ NonEmpty.head $ getLocations waitingCertificate
+                                        let childTopDownContext = topDownContext { 
+                                                -- we should start from the resource set of this certificate
+                                                -- as it is already has been verified
+                                                verifiedResources = Just $ createVerifiedResources certificate
+                                            }
+                                        validateCAWithQueue appContext certVContext 
+                                                childTopDownContext waitingCertificate AlreadyCreatedQ
+                                    ro ->
+                                        logErrorM logger
+                                            [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]
                     pure v
         
     
@@ -451,7 +449,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                         let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
                                                 map snd $ mftEntries $ getCMSContent $ extract mft
 
-                        mftProblems <- parallel (parallelismDegree topDownContext) childrenHashes $ \h -> do            
+                        mftProblems <- parallelTasks (cpuThreads appThreads) childrenHashes $ \h -> do
                             ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
                             case ro of 
                                 Nothing  -> pure $ Left $ ManifestEntryDontExist h
@@ -526,7 +524,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
 queueVRP :: Storage s => AppContext s -> TopDownContext s -> [Roa] -> IO ()
 queueVRP AppContext { database = DB {..} } TopDownContext {..} roas = 
     for_ roas $ \vrp -> 
-        atomically $ writeQuu databaseQueue $ \tx -> 
+        atomically $ writeClosableQueue databaseQueue $ \tx -> 
             putVRP tx vrpStore worldVersion vrp 
 
 
@@ -540,7 +538,7 @@ queueVResult AppContext { database = DB {..} } TopDownContext {..} validations =
                 void $ flip Map.traverseWithKey validationsMap $ 
                         \vc' problems -> 
                             let vResult = VResult (Set.toList problems) vc'   
-                            in atomically $ writeQuu databaseQueue $ 
+                            in atomically $ writeClosableQueue databaseQueue $ 
                                     \tx -> putVResult tx resultStore worldVersion vResult
 
 

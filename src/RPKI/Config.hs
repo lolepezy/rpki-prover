@@ -12,9 +12,14 @@ import Data.Maybe (fromMaybe)
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
+data Parallelism = Parallelism {
+    cpuParallelism :: Natural,
+    ioParallelism :: Natural
+} deriving stock (Show, Eq, Ord, Generic)
+
 data Config = Config {
     talDirectory :: FilePath,
-    parallelism :: Natural,
+    parallelism :: Parallelism,
     rsyncConf :: RsyncConf,
     rrdpConf :: RrdpConf,
     validationConfig :: ValidationConfig

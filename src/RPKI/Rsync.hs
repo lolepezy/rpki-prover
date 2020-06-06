@@ -7,49 +7,49 @@
 
 module RPKI.Rsync where
 
+import           Control.Lens                     ((^.))
+import           Data.Generics.Product.Fields
+import           Data.Generics.Product.Typed
+
 import           Data.Bifunctor
 
 import           Control.Concurrent.STM
-import           Control.Lens
-import           Data.Generics.Product.Typed
+
 import           Control.Monad
 import           Control.Monad.Except
-import           UnliftIO.Exception                    hiding (fromEither, fromEitherM)
+import           UnliftIO.Exception               hiding (fromEither, fromEitherM)
 
-import qualified Data.ByteString                       as BS
-import Data.String.Interpolate.IsString
-import qualified Data.Text                             as Text
+import qualified Data.ByteString                  as BS
 import           Data.IORef
+import           Data.String.Interpolate.IsString
+import qualified Data.Text                        as Text
 
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Execution
 import           RPKI.Domain
-import           RPKI.Repository
 import           RPKI.Errors
+import           RPKI.Execution
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
-import           RPKI.Validation.ObjectValidation
-import           RPKI.Store.Base.Storage
+import           RPKI.Repository
 import           RPKI.Store.Base.Storable
+import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import qualified RPKI.Util                             as U
+import qualified RPKI.Util                        as U
+import           RPKI.Validation.ObjectValidation
 
-import qualified Control.Concurrent.STM.TBQueue as Q
+import qualified Control.Concurrent.STM.TBQueue   as Q
 
-import           System.Directory                      (createDirectoryIfMissing,
-                                                        doesDirectoryExist,
-                                                        getDirectoryContents)
-import           System.FilePath                       ((</>))
+import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
+import           System.FilePath                  ((</>))
 
-import           System.IO
 import           System.Exit
+import           System.IO
 import           System.Process.Typed
 
-import System.IO.Posix.MMap (unsafeMMapFile)
+import           System.IO.Posix.MMap             (unsafeMMapFile)
 
-import qualified UnliftIO.Async as Unlift
 
 -- | Download one file using rsync
 rsyncFile :: AppContext s -> 
@@ -124,15 +124,19 @@ loadRsyncRepository :: Storage s =>
                         IO (Either AppError (Validations, Integer))
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do        
         counter <- newIORef 0
+        let cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
+
         (r1, r2) <- bracketChan 
-                        (parallelism config)
+                        cpuParallelism
                         traverseFS
                         (saveObjects counter)
                         kill
         c <- readIORef counter        
         pure $ void r1 >> (, c) <$> r2            
     where
-        kill = maybe (pure ()) (Unlift.cancel . snd)
+        kill = maybe (pure ()) (cancelTask . snd)
+
+        threads = cpuThreads appThreads
 
         traverseFS queue = 
             first (RsyncE . FileReadError . U.fmtEx) <$> try (
@@ -148,11 +152,12 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 doesDirectoryExist path >>= \case
                     True  -> readFiles queue path
                     False -> 
-                        when (supportedExtension path) $ do                            
-                            a <- Unlift.async $ readAndParseObject path                            
+                        when (supportedExtension path) $ do         
+                            task <- (readAndParseObject path) `submitStrict` threads                   
+                            -- task <- Unlift.async $ readAndParseObject path                            
                             let uri = pathToUri repositoryUrl rootPath path
                             -- logDebugM logger [i|rsync uri = #{uri}|]
-                            atomically $ Q.writeTBQueue queue $ Just (uri, a)
+                            atomically $ Q.writeTBQueue queue $ Just (uri, task)
             where
                 readAndParseObject filePath = do                                         
                     (_, content)  <- getSizeAndContent filePath                
@@ -174,7 +179,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 go tx validations = 
                     atomically (Q.readTBQueue queue) >>= \case 
                         Nothing       -> pure validations
-                        Just (uri, a) -> try (Unlift.wait a) >>= process tx uri validations >>= go tx
+                        Just (uri, a) -> try (waitTask a) >>= process tx uri validations >>= go tx
 
                 process tx uri validations = \case
                     Left (e :: SomeException) -> do
