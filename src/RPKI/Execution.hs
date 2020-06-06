@@ -11,15 +11,15 @@ import           RPKI.Version
 import           RPKI.Store.Database
 
 
-data AppThreads = AppThreads {
-    cpuThreads :: Threads,
-    ioThreads :: Threads
+data AppBottleneck = AppBottleneck {
+    cpuBottleneck :: Bottleneck,
+    ioBottleneck :: Bottleneck
 }
 
 data AppContext s = AppContext {
-    logger :: AppLogger, 
-    config :: Config,
+    logger       :: AppLogger, 
+    config       :: Config,
     dynamicState :: DynamicState,
-    database :: DB s,
-    appThreads :: AppThreads
+    database     :: DB s,
+    appThreads   :: AppBottleneck
 } deriving stock (Generic)

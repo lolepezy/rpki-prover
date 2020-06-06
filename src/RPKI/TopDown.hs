@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE OverloadedLabels           #-}
 
 module RPKI.TopDown where
 
@@ -44,6 +45,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Update
+import           RPKI.RRDP.Http
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
@@ -51,7 +53,7 @@ import           RPKI.Store.Repository
 import           RPKI.Store.Database
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx)
+import           RPKI.Util                        (isRsyncURI, fmtEx)
 import           RPKI.Version
 import           RPKI.Validation.ObjectValidation
 
@@ -131,8 +133,7 @@ bootstrapTA appContext@AppContext {..} tal =
     where
 
         fetchAndValidate taCert repos = do            
-            -- parallelism' <- liftIO $ dynamicParaIO $ parallelism config
-            fetchStatuses <- parallelTasks (ioThreads appThreads) repos $ \repo -> do 
+            fetchStatuses <- parallelTasks (ioBottleneck appThreads) repos $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
                 fetchRepository appContext repo
 
@@ -311,7 +312,7 @@ validateCAWithQueue
             --     logDebugM logger [i|new url = #{repositoryURI r}|]
 
             -- for all new repositories, drill down recursively
-            void $ parallelTasks (ioThreads appThreads) newRepositories $ \repo -> do
+            void $ parallelTasks (ioBottleneck appThreads) newRepositories $ \repo -> do
                 validations <- fetchAndValidateWaitingList rootToPps repo
                 queueVResult appContext topDownContext validations
 
@@ -337,7 +338,7 @@ validateCAWithQueue
                             Set.map (\pp -> publicationPointURI pp `Map.lookup` waitingListPerPP) fetchedPPs
 
                     void $ parallelTasks 
-                            (cpuThreads appThreads) 
+                            (cpuBottleneck appThreads) 
                             (Set.toList waitingHashesForThesePPs) $ \hash -> do                    
                                 o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                                 case o of 
@@ -369,9 +370,7 @@ validateTree :: Storage s =>
 validateTree appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO $ publicationPoints topDownContext
 
-    -- logDebugM logger [i| validateTree, globalPPs = #{globalPPs} |]                
-
-    let validationConfig = appContext ^. typed @Config . typed @ValidationConfig
+    let validationConfig = appContext ^. typed @Config . typed
 
     case publicationPointsFromCertObject certificate of
         Left e                  -> appError $ ValidationE e
@@ -449,7 +448,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                         let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
                                                 map snd $ mftEntries $ getCMSContent $ extract mft
 
-                        mftProblems <- parallelTasks (cpuThreads appThreads) childrenHashes $ \h -> do
+                        mftProblems <- parallelTasks (cpuBottleneck appThreads) childrenHashes $ \h -> do
                             ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
                             case ro of 
                                 Nothing  -> pure $ Left $ ManifestEntryDontExist h
@@ -560,19 +559,27 @@ completeWorldVersion AppContext { database = DB {..} } worldVersion =
 
 
 -- | Fetch TA certificate based on TAL location(s)
-fetchTACertificate :: Has VContext vc => 
+fetchTACertificate :: WithVContext vc => 
                     AppContext s -> TAL -> ValidatorT vc IO (URI, RpkiObject)
-fetchTACertificate appContext tal = 
+fetchTACertificate appContext@AppContext {..} tal = 
     go $ NonEmpty.toList $ certLocations tal
     where
         go []         = throwError $ TAL_E $ TALError "No certificate location could be fetched."
-        go (u : uris) = ((u,) <$> rsyncFile appContext u) `catchError` goToNext 
+        go (u : uris) = fetchTaCert `catchError` goToNext 
             where 
                 goToNext e = do            
-                    let message = [i| Failed to fetch #{u}: #{e}|]
-                    logErrorM (logger appContext) message
+                    let message = [i|Failed to fetch #{u}: #{e}|]
+                    logErrorM logger message
                     validatorWarning $ VWarning e
                     go uris
+
+                fetchTaCert = do                     
+                    logInfoM logger [i|Fetching TA certiicate from #{u}..|]
+                    (u,) <$> fetcher appContext u
+                    where
+                        fetcher = if isRsyncURI u 
+                                    then rsyncRpkiObject 
+                                    else fetchRpkiObject
 
 
 

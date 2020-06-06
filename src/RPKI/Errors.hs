@@ -89,6 +89,7 @@ data RrdpError = BrokenXml Text |
                 ContentInWithdraw BS.ByteString |
                 LocalSerialBiggerThanRemote Serial Serial |
                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
+                CantDownloadFile Text |
                 CantDownloadNotification String |
                 CantDownloadSnapshot String |
                 CantDownloadDelta String |

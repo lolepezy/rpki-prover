@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -54,3 +55,14 @@ fmtEx = Text.pack . show
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
+
+
+-- Some URL utilities 
+isRsyncURI, isRrdpURI, isHttpsURI, isHttpURI :: URI -> Bool
+isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
+isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u 
+isHttpURI (URI u) = "http://" `Text.isPrefixOf` u
+isRrdpURI u = isHttpURI u || isHttpsURI u
+
+isParentOf :: URI -> URI -> Bool
+isParentOf (URI p) (URI c) = p `Text.isPrefixOf` c

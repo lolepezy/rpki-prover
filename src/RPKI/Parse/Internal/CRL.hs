@@ -92,11 +92,11 @@ parseCrl bs = do
                     _                    -> Nothing
 
                 getRevokedSerials = 
-                    onNextContainerMaybe Sequence (getMany getSerial) >>= \case
+                    onNextContainerMaybe Sequence (getMany getCrlSerial) >>= \case
                         Nothing -> pure Set.empty
                         Just rc -> pure $! Set.fromList rc
                     where
-                        getSerial = onNextContainer Sequence $ 
+                        getCrlSerial = onNextContainer Sequence $ 
                             replicateM 2 getNext >>= \case 
                                 [IntVal serial, _] -> pure $! Serial serial                            
                                 s                  -> throwParseError $ "That's not a serial: " <> show s

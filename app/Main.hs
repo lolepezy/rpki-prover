@@ -113,12 +113,13 @@ createAppContext logger = do
 
     dynamicState <- liftIO createDynamicState
 
+    -- TODO Make it configurable
     let parallelism = Parallelism getParallelism 64
 
     appThreads <- liftIO $ do 
-        cpuThreads <- makeThreadsIO $ cpuParallelism parallelism
-        ioThreads  <- makeThreadsIO $ ioParallelism parallelism
-        pure $ AppThreads cpuThreads ioThreads
+        cpuBottleneck <- makeBottleneckIO $ cpuParallelism parallelism
+        ioBottleneck  <- makeBottleneckIO $ ioParallelism parallelism
+        pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     -- TODO read stuff from the config, CLI
     pure $ AppContext {        
@@ -127,7 +128,12 @@ createAppContext logger = do
             talDirectory = tald,
             parallelism  = parallelism,
             rsyncConf    = RsyncConf rsyncd,
-            rrdpConf     = RrdpConf tmpd,
+            rrdpConf     = RrdpConf { 
+                tmpRoot = tmpd,
+                -- Do not download files bigger than 1Gb
+                -- TODO Make it configurable
+                maxSize = Size 1024 * 1024 * 1024
+            },
             validationConfig = ValidationConfig {
                 rrdpRepositoryRefreshInterval  = 2 * 60,
                 rsyncRepositoryRefreshInterval = 10 * 60

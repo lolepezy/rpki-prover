@@ -52,10 +52,10 @@ import           System.IO.Posix.MMap             (unsafeMMapFile)
 
 
 -- | Download one file using rsync
-rsyncFile :: AppContext s -> 
-            URI -> 
-            ValidatorT vc IO RpkiObject
-rsyncFile AppContext{..} uri = do
+rsyncRpkiObject :: AppContext s -> 
+                    URI -> 
+                    ValidatorT vc IO RpkiObject
+rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncOneFile
@@ -136,7 +136,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
     where
         kill = maybe (pure ()) (cancelTask . snd)
 
-        threads = cpuThreads appThreads
+        threads = cpuBottleneck appThreads
 
         traverseFS queue = 
             first (RsyncE . FileReadError . U.fmtEx) <$> try (

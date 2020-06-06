@@ -249,8 +249,8 @@ validateTreeFromTA env = do
     let taName = TaName "Test TA"
     let vContext' = vContext $ URI "something.cer"
     x <- runValidatorT vContext' $ do
-        -- CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
-        CerRO taCert <- rsyncFile appContext (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")        
+        -- CerRO taCert <- rsyncRpkiObject appContext (URI "rsync://rpki.ripe.net/ta/ripe-ncc-ta.cer")
+        CerRO taCert <- rsyncRpkiObject appContext (URI "rsync://rpki.apnic.net/repository/apnic-rpki-root-iana-origin.cer")        
         let e1 = getRrdpNotifyUri (cwsX509certificate $ getCertWithSignature taCert)
         let e2 = getRepositoryUri (cwsX509certificate $ getCertWithSignature taCert)
         liftIO $ say $ "taCert SIA = " <> show e1 <> ", " <> show e2
@@ -266,7 +266,7 @@ validateTreeFromStore env = do
     appContext <- createAppContext database
     let taCertURI = URI "rsync://repository.lacnic.net/rpki/lacnic/rta-lacnic-rpki.cer"    
     x <- runValidatorT (vContext taCertURI) $ do
-        CerRO taCert <- rsyncFile appContext taCertURI
+        CerRO taCert <- rsyncRpkiObject appContext taCertURI
         let taName = TaName "Test TA"
         storedPubPoints <- roAppTxEx database storageError $ \tx -> 
                                 getTaPublicationPoints tx (repositoryStore database) taName

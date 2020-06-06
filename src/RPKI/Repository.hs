@@ -30,6 +30,7 @@ import           RPKI.Errors
 import           RPKI.Parse.Parse
 
 import           RPKI.TAL
+import           RPKI.Util
 
 
 data RepositoryStatus = New | FailedAt DateTime | FetchedAt DateTime
@@ -245,7 +246,7 @@ mergeRsyncs (RsyncMap m1) (RsyncMap m2) =
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed @RsyncMap %~ (RsyncMap (Map.singleton u (Root New)) <>)
+    pps & typed %~ (RsyncMap (Map.singleton u (Root New)) <>)
 
 meergeRrdpPP :: RrdpRepository -> PublicationPoints -> PublicationPoints
 meergeRrdpPP r@RrdpRepository { uri = u } pps = 
@@ -311,14 +312,6 @@ createRepositoriesFromTAL tal (cwsX509certificate . getCertWithSignature -> cert
                 | isRsyncURI u -> Right (u, rsyncR u)
                 | otherwise    -> Left $ UnknownUriType u
         
-
-isRsyncURI, isRrdpURI :: URI -> Bool
-isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
-isRrdpURI (URI u) = "http://" `Text.isPrefixOf` u || "https://" `Text.isPrefixOf` u                        
-
-isParentOf :: URI -> URI -> Bool
-isParentOf (URI p) (URI c) = p `Text.isPrefixOf` c
-
 
 -- | Create repository from the publication points of the certificate.
 publicationPointsFromCert :: Certificate -> Either ValidationError (URI, PublicationPoint)

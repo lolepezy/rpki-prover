@@ -10,12 +10,10 @@ import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 import           Control.Monad.Except
 
-import           Data.Bifunctor                   (first, second)
-import qualified Data.ByteString.Lazy             as LBS
+import           Data.Bifunctor                   (first)
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
-import qualified Network.Wreq                     as WR
 
 import           GHC.Generics
 
@@ -30,24 +28,14 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
+import           RPKI.RRDP.Http
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as Stores
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 
-import qualified Data.ByteString.Streaming        as Q
-import           Data.ByteString.Streaming.HTTP
-
-import qualified Crypto.Hash.SHA256               as S256
-
-import           System.IO                        (Handle, hClose)
-import           System.IO.Posix.MMap.Lazy        (unsafeMMapFile)
-import           System.IO.Temp                   (withTempFile)
-
-import           Control.Exception.Lifted
 import           Data.IORef.Lifted
-
 
 
 {- 
@@ -63,9 +51,10 @@ updateRrdpRepo :: WithVContext vc =>
                 ValidatorT vc IO (RrdpRepository, Validations)
 updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot handleDeltas = do
 
-    notificationXml <- fromEitherM $ fetch repoUri (RrdpE . CantDownloadNotification . show)    
-    notification    <- hoistHere $ parseNotification notificationXml
-    nextStep        <- hoistHere $ rrdpNextStep repo notification
+    (notificationXml, _) <- fromEitherM $ downloadContentLazy 
+                                rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
+    notification         <- hoistHere $ parseNotification notificationXml
+    nextStep             <- hoistHere $ rrdpNextStep repo notification
 
     case nextStep of
         NothingToDo                         -> pure (repo, mempty)
@@ -81,7 +70,7 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
 
         useSnapshot (SnapshotInfo uri hash) = do 
             logDebugM logger [i|Downloading snapshot: #{unURI uri} |]        
-            rawContent <- fromEitherM $ downloadHashedContent rrdpConf uri hash
+            (rawContent, _) <- fromEitherM $ downloadHashedContent rrdpConf uri hash
                                 (RrdpE . CantDownloadSnapshot . show)                 
                                 (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
             snapshot    <- hoistHere $ parseSnapshot rawContent
@@ -89,10 +78,10 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             pure (repoFromSnapshot snapshot, validations)            
 
         useDeltas sortedDeltas notification = do            
-            rawContents <- parallelTasks (ioThreads appThreads) sortedDeltas downloadDelta
+            rawContents <- parallelTasks (ioBottleneck appThreads) sortedDeltas downloadDelta
             deltas      <- forM rawContents $ \case
-                                Left e                -> appError e
-                                Right (_, rawContent) -> hoistHere $ parseDelta rawContent
+                                Left e                     -> appError e
+                                Right (_, (rawContent, _)) -> hoistHere $ parseDelta rawContent
             validations <- handleDeltas deltas
             pure (repoFromDeltas deltas notification, validations)
             where
@@ -110,66 +99,6 @@ updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot h
             where
                 newSessionId = sessionId notification
                 newSerial = List.maximum $ map (\(Delta _ _ s _) -> s) ds        
-
-
--- | Download HTTP content to a temporary file, compare the hash and return 
--- lazy ByteString content mapped onto a temporary file. Snapshots (and probably 
--- some deltas) can be big enough so that we don't want to keep them in memory.
---
--- NOTE: The file will be deleted from the temporary directory by withSystemTempFile, 
--- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
--- safe to use them after returning from this function.
-downloadHashedContent :: (MonadIO m) => 
-                        RrdpConf ->
-                        URI -> 
-                        Hash -> 
-                        (SomeException -> e) ->
-                        (Hash -> Either e LBS.ByteString) ->
-                        m (Either e LBS.ByteString)
-downloadHashedContent RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
-    -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
-    -- to minimize the heap. Snapshots can be pretty big, so we don't want 
-    -- a spike in heap usage.
-    let tmpFileName = U.convert $ U.normalizeUri u
-    withTempFile tmpRoot tmpFileName $ \name fd -> 
-        streamHttpToFileAndHash uri cantDownload fd >>= \case        
-            Left e -> pure (Left e)
-            Right actualHash 
-                | actualHash /= hash -> 
-                    pure $! hashMishmatch actualHash
-                | otherwise -> do
-                    hClose fd
-                    content <- unsafeMMapFile name
-                    pure (Right content)
-
-
--- | Download HTTP stream into a file while calculating its hash at the same time
-streamHttpToFileAndHash :: MonadIO m =>
-                            URI -> 
-                            (SomeException -> err) -> 
-                            Handle -> 
-                            m (Either err Hash)
-streamHttpToFileAndHash (URI uri) errorMapping destinationHandle = 
-    liftIO $ first errorMapping <$> try go    
-    where
-        go = do
-            req  <- parseRequest $ Text.unpack uri
-            tls  <- newManager tlsManagerSettings 
-            hash <- newIORef S256.init
-            withHTTP req tls $ \resp -> 
-                Q.hPut destinationHandle $ 
-                    Q.chunkMapM (\chunk -> 
-                        modifyIORef' hash (`S256.update` chunk) >> pure chunk) $ 
-                    responseBody resp
-            h' <- readIORef hash        
-            pure $! U.mkHash $ S256.finalize h'
-
-
--- | Download HTTP stream into memory bytestring
-fetch :: MonadIO m => URI -> (SomeException -> e) -> m (Either e LBS.ByteString)
-fetch (URI uri) err = liftIO $ do
-    r <- try (WR.get $ Text.unpack uri)
-    pure $! first err $ second (^. WR.responseBody) r            
 
 
 data Step = UseSnapshot SnapshotInfo
@@ -222,7 +151,7 @@ updateObjectForRrdpRepository :: Storage s =>
 updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } objectStore = do
     added   <- newIORef (0 :: Int)
     removed <- newIORef (0 :: Int)        
-    (repo, elapsed) <- timedMS $ updateRepo' (cpuThreads appThreads) added removed
+    (repo, elapsed) <- timedMS $ updateRepo' (cpuBottleneck appThreads) added removed
     a <- readIORef added        
     r <- readIORef removed
     logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}, took #{elapsed}ms|]
