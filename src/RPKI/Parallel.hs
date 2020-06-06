@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DerivingStrategies #-}
 module RPKI.Parallel where
 
 import Numeric.Natural
@@ -10,82 +12,10 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Exception.Lifted
 
 import Control.Monad.Trans.Control
-import Control.Concurrent.Async.Lifted as AsyncL
-
-data Parallelism = Dynamic !(TVar Natural) Natural | Fixed Natural
-
-dynamicPara :: Natural -> STM Parallelism
-dynamicPara n = do 
-    c <- newTVar 0
-    pure $ Dynamic c n
-
-dynamicParaIO :: Natural -> IO Parallelism
-dynamicParaIO = atomically . dynamicPara    
-
-fixedPara :: Natural -> Parallelism
-fixedPara = Fixed
+import Control.Concurrent.Async.Lifted
 
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
-
-parallel :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
-            Parallelism -> t a -> (a -> m b) -> m (t b)
-parallel parallelism as f =
-    case parallelism of 
-        Fixed n                     -> doFixed n
-        Dynamic currentPara maxPara -> doDynamic1 currentPara maxPara
-    where 
-        doFixed para =
-            snd <$> bracketChan (atLeastOne para) writeAll readAll AsyncL.cancel
-            where
-                writeAll queue = forM_ as $ \a -> do
-                    aa <- AsyncL.async $ f a
-                    liftIO $ atomically $ Q.writeTBQueue queue aa
-                readAll queue = forM as $ \_ ->         
-                    AsyncL.wait =<< (liftIO . atomically $ Q.readTBQueue queue)    
-
-        -- doDynamic currentPara maxPara = do
-        --     current <- liftIO $ readTVarIO currentPara
-        --     snd <$> bracketChan (atLeastOne $ min current maxPara) writeAll readAll cancelIt
-        --     where
-        --         cancelIt aa = do 
-        --             liftIO $ atomically $ modifyTVar' currentPara decN
-        --             AsyncL.cancel aa
-
-        --         writeAll queue = forM_ as $ \a -> 
-        --             join $ liftIO $ atomically $ do 
-        --                 c <- readTVar currentPara
-        --                 if c >= maxPara
-        --                     then retry
-        --                     else 
-        --                         -- TODO lock?
-        --                         pure $ do 
-        --                         aa <- AsyncL.async $ f a
-        --                         liftIO $ atomically $ do 
-        --                             -- TODO unlock?
-        --                             Q.writeTBQueue queue aa
-        --                             modifyTVar' currentPara incN
-
-        --         readAll queue = forM as $ \_ -> do
-        --             aa <- liftIO $ atomically $ do                         
-        --                 modifyTVar' currentPara decN
-        --                 Q.readTBQueue queue
-        --             AsyncL.wait aa
-
-        doDynamic1 currentPara maxPara = do
-            current <- liftIO $ readTVarIO currentPara
-            -- snd <$> bracketChan (atLeastOne $ min current maxPara) writeAll readAll AsyncL.cancel
-            snd <$> bracketChan maxPara writeAll readAll AsyncL.cancel
-            where
-                writeAll queue = forM_ as $ \a -> do
-                    aa <- AsyncL.async $ f a
-                    liftIO $ atomically $ Q.writeTBQueue queue aa
-                readAll queue = forM as $ \_ ->         
-                    AsyncL.wait =<< (liftIO . atomically $ Q.readTBQueue queue)    
-
-        -- incN, decN :: Natural -> Natural
-        -- incN c = c + 1
-        -- decN c = if c <= 1 then 1 else c - 1
 
 
 -- | Utility function for a specific case of producer-consumer pair 
@@ -112,9 +42,9 @@ txConsumeFold poolSize as produce withTx consume accum0 =
             where
                 f tx accum _ = do
                     a <- liftIO $ atomically $ Q.readTBQueue queue
-                    consume tx a accum        
+                    consume tx a accum       
 
-
+   
 
 -- data NextTx tx a = StartTx | FlushTx | InTx tx a
 
@@ -168,7 +98,7 @@ bracketChan :: (MonadBaseControl IO m, MonadIO m) =>
                 m (b, c)
 bracketChan size produce consume kill = do
     queue <- liftIO $ atomically $ Q.newTBQueue size
-    AsyncL.concurrently (produce queue) (consume queue)
+    concurrently (produce queue) (consume queue)
         `finally`
         killAll queue
     where
@@ -178,26 +108,29 @@ bracketChan size produce consume kill = do
                 Nothing -> pure ()
                 Just as -> kill as >> killAll queue
 
--- General closeable queue
+
 data QState = QWorks | QClosed
 
-data Quu a = Quu !(TBQueue a) !(TVar QState)    
+-- Simplest closeable queue  
+data ClosableQueue a = ClosableQueue !(TBQueue a) !(TVar QState)    
 
-createQuu :: Natural -> STM (Quu a)
-createQuu n = do 
+createClosableQueue :: Natural -> STM (ClosableQueue a)
+createClosableQueue n = do 
     q <- newTBQueue n
     s <- newTVar QWorks
-    pure $ Quu q s
+    pure $ ClosableQueue q s
 
 
-writeQuu :: Quu a -> a -> STM ()
-writeQuu (Quu q s) qe = 
+writeClosableQueue :: ClosableQueue a -> a -> STM ()
+writeClosableQueue (ClosableQueue q s) qe = 
     readTVar s >>= \case 
         QClosed -> pure ()
         QWorks  -> Q.writeTBQueue q qe
 
-readQueueChunked :: Quu a -> Natural -> ([a] -> IO ()) -> IO ()
-readQueueChunked (Quu q queueState) chunkSize f = go
+-- | Read elements from the queue in chunks and apply the function to 
+-- each chunk
+readQueueChunked :: ClosableQueue a -> Natural -> ([a] -> IO ()) -> IO ()
+readQueueChunked (ClosableQueue q queueState) chunkSize f = go
     where 
         go = do 
             chunk' <- atomically $ do 
@@ -211,8 +144,8 @@ readQueueChunked (Quu q queueState) chunkSize f = go
                 [] -> pure ()
                 chu -> f chu >> go              
 
-closeQueue :: Quu a -> STM ()
-closeQueue (Quu _ s) = writeTVar s QClosed
+closeQueue :: ClosableQueue a -> STM ()
+closeQueue (ClosableQueue _ s) = writeTVar s QClosed
 
 
 readChunk :: Natural -> TBQueue a -> STM [a]
@@ -222,3 +155,83 @@ readChunk leftToRead q = do
     case z of 
         Just z' -> (z' : ) <$> readChunk (leftToRead - 1) q
         Nothing -> pure []  
+
+
+-- | Simple straioghtforward implementation of a thread pool for submition of tasks.
+-- 
+parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+                Threads -> t a -> (a -> m b) -> m (t b)
+parallelTasks threads@Threads {..} as f =
+    snd <$> bracketChan (atLeastOne maxSize) writeAll readAll cancelTask            
+    where
+        writeAll queue = forM_ as $ \a -> do
+            task <- submit (f a) threads Requestor
+            liftIO $ atomically $ Q.writeTBQueue queue task
+        readAll queue = forM as $ \_ -> do
+            aa <- liftIO . atomically $ Q.readTBQueue queue
+            waitTask aa    
+
+-- Thread pool value, current and maximum size
+data Threads = Threads {
+    maxSize :: Natural,
+    currentSize :: TVar Natural
+}
+
+makeThreads :: Natural -> STM Threads
+makeThreads n = Threads n <$> newTVar 0
+
+makeThreadsIO :: Natural -> IO Threads
+makeThreadsIO = atomically . makeThreads
+
+-- Who is going to execute a task when there're no slots in the pool
+data OverflownPoolExecutor = Requestor | Submitter
+
+-- A task can be asyncronous, executed by the requester (lazy) 
+-- and executed by the submitrter (eager).
+data Task m a
+    = AsyncTask (Async (StM m a))
+    | RequestorTask (m a)
+    | SubmitterTask !a
+
+
+-- | If the pool is overflown, io will be execute by the caller of "waitPool"
+-- 
+submitLazy :: (MonadBaseControl IO m, MonadIO m) => m a -> Threads -> m (Task m a)                       
+submitLazy io pool = submit io pool Requestor
+
+-- | If the pool is overflown, io will be execute by the thread that tries to submit the task.
+-- 
+submitStrict :: (MonadBaseControl IO m, MonadIO m) => m a -> Threads -> m (Task m a)                       
+submitStrict io pool = submit io pool Submitter
+
+-- Common case
+submit :: (MonadBaseControl IO m, MonadIO m) => m a -> Threads -> OverflownPoolExecutor -> m (Task m a)
+submit io Threads {..} execution = 
+    join $ liftIO $ atomically $ do
+        size <- readTVar currentSize
+        if size >= maxSize             
+            then pure $ blockedCase execution
+            else do 
+                incSize
+                pure $! do 
+                    a <- async $ io `finally` liftIO (atomically decSize)
+                    pure $! AsyncTask a    
+        where
+            blockedCase Requestor  = pure $ RequestorTask io -- wrap it in RequestorTask
+            blockedCase Submitter = SubmitterTask <$> io  -- do it now      
+
+            incSize = modifyTVar' currentSize succ
+            decSize = modifyTVar' currentSize pred
+
+
+waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m a
+waitTask (RequestorTask t) = t
+waitTask (SubmitterTask a) = pure a
+waitTask (AsyncTask a)     = wait a
+
+cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m ()
+cancelTask (RequestorTask _) = pure ()
+cancelTask (SubmitterTask _) = pure ()
+cancelTask (AsyncTask a)     = cancel a
+
+        
