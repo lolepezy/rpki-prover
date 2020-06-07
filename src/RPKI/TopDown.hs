@@ -137,20 +137,19 @@ bootstrapTA appContext@AppContext {..} tal = do
             storedPubPoints <- roAppTxEx database storageError $ \tx -> 
                             getTaPublicationPoints tx (repositoryStore database) taName'                                            
 
-            let unknownSoFar = filter (\r -> not $ hasURI (getURI r) storedPubPoints) $ NonEmpty.toList repos            
-
-            let storedPPsToConsider = map fst $ 
+            let reposToFetch = map fst $ 
+                    -- filter the ones that are either new or need refetching
                     filter (\(pp, status) -> needsFetching pp status (config ^. typed) now) $ 
                     toRepoStatusPairs $ 
-                    storedPubPoints `shrinkTo` Set.fromList (map getURI $ NonEmpty.toList repos)
+                        -- merge repos that we want with the ones that are stored                     
+                        mergeRepos repos storedPubPoints
+                        -- we only care about URLs from 'repos', so shrink the PPs                        
+                            `shrinkTo` 
+                        Set.fromList (map getURI $ NonEmpty.toList repos)
 
-            let reposToFetch = storedPPsToConsider <> unknownSoFar
-
-            logDebugM logger [i| TA: #{taName'}, 
-                storedPubPoints = #{storedPubPoints}, 
-                unknownSoFar = #{unknownSoFar}, 
-                storedPPsToConsider = #{storedPPsToConsider},
-                reposToFetch = #{reposToFetch} |]                               
+            -- logDebugM logger [i| TA: #{taName'}, 
+            --     storedPubPoints = #{storedPubPoints}, 
+            --     reposToFetch = #{reposToFetch} |]                               
 
             fetchStatuses <- parallelTasks (ioBottleneck appThreads) reposToFetch $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
@@ -166,7 +165,7 @@ bootstrapTA appContext@AppContext {..} tal = do
                     -- the fetchStatuses of the fetch that we just performed
                     let fetchUpdatedPPs = updateStatuses storedPubPoints flattenedStatuses
 
-                    logDebugM logger [i| TA: #{taName'}, fetchUpdatedPPs = #{fetchUpdatedPPs}|]       
+                    -- logDebugM logger [i| TA: #{taName'}, fetchUpdatedPPs = #{fetchUpdatedPPs}|]       
 
                     topDownContext <- makeTopDownContext appContext taName' fetchUpdatedPPs now taCert
                     -- this is for TA cert
@@ -180,13 +179,13 @@ bootstrapTA appContext@AppContext {..} tal = do
 
                     let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
 
-                    logDebugM logger [i| 
-                                ------------------------------------------------------------
-                                TA: #{taName'} 
-                                changeSet' = #{changeSet'},
-                                pubPointAfterTopDown = #{pubPointAfterTopDown} 
-                                ------------------------------------------------------------
-                                |]  
+                    -- logDebugM logger [i| 
+                    --             ------------------------------------------------------------
+                    --             TA: #{taName'} 
+                    --             changeSet' = #{changeSet'},
+                    --             pubPointAfterTopDown = #{pubPointAfterTopDown} 
+                    --             ------------------------------------------------------------
+                    --             |]  
                 
                     Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
                     logDebugM logger [i| TA: #{taName'} validCount = #{validCount} |]                                    
@@ -194,10 +193,10 @@ bootstrapTA appContext@AppContext {..} tal = do
                     rwAppTxEx database storageError $ \tx -> 
                         applyChangeSet tx (repositoryStore database) changeSet' taName'                    
 
-                    pubPointsAfterSaving <- roAppTxEx database storageError $ \tx -> 
-                                    getTaPublicationPoints tx (repositoryStore database) taName'
+                    -- pubPointsAfterSaving <- roAppTxEx database storageError $ \tx -> 
+                    --                 getTaPublicationPoints tx (repositoryStore database) taName'
 
-                    logDebugM logger [i| TA: #{taName'} pubPointsAfterSaving = #{pubPointsAfterSaving} |]
+                    -- logDebugM logger [i| TA: #{taName'} pubPointsAfterSaving = #{pubPointsAfterSaving} |]
 
                 (broken, _) -> do
                     let brokenUrls = map (getURI . (^. _1)) broken
@@ -277,8 +276,6 @@ partitionFailedSuccess = go
         go (FetchFailure r rs v : frs) = let (fs, ss) = go frs in ((r, rs, v) : fs, ss)
 
 
-
-
 validateCA :: Storage s =>
             AppContext s -> VContext -> TopDownContext s -> CerObject -> IO ()
 validateCA env vContext' topDownContext certificate = do    
@@ -295,12 +292,12 @@ validateCAWithQueue :: Storage s =>
                         CerObject -> 
                         QWhat -> IO ()
 validateCAWithQueue 
-    appContext@AppContext {..} 
-    vc 
-    topDownContext@TopDownContext{..} 
-    certificate qWhat = do 
+        appContext@AppContext {..} 
+        vc 
+        topDownContext@TopDownContext{..} 
+        certificate qWhat = do 
     let certificateURL = NonEmpty.head $ getLocations certificate
-    logDebugM logger [i| Starting to validate #{certificateURL}|]
+    logDebugM logger [i|Starting to validate #{certificateURL}|]
 
     let work = do 
             (pps, validations) <- runValidatorT vc $ validateTree appContext topDownContext certificate
@@ -318,6 +315,7 @@ validateCAWithQueue
         AlreadyCreatedQ -> work
         
     logDebugM logger [i|Validated #{certificateURL}, took #{elapsed}ms.|]
+
     where
         -- From the set of discovered PPs figure out which must be fetched, 
         -- fetch them and validate, starting from the cerfificates in the 
@@ -339,10 +337,9 @@ validateCAWithQueue
 
             let (_, rootToPps) = repositoryHierarchy discoveredPPs
                 
-            let newRepositories = map fst $ filter ((New ==) . snd) $ toRepoStatusPairs ppsToFetch
-
-            -- forM_ newRepositories $ \r -> 
-            --     logDebugM logger [i|new url = #{repositoryURI r}|]
+            let newRepositories = map fst $ 
+                    filter (\(pp, status) -> needsFetching pp status (config ^. typed) now) $ 
+                    toRepoStatusPairs ppsToFetch
 
             -- for all new repositories, drill down recursively
             void $ parallelTasks (ioBottleneck appThreads) newRepositories $ \repo -> do

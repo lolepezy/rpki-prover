@@ -42,7 +42,7 @@ class Fetchable a where
     getFetchType :: a -> RepositoryFetchType
 
 data RepositoryStatus = New | FailedAt DateTime | FetchedAt DateTime
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving (Show, Eq, Generic, Serialise)
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: URI } 
     deriving stock (Show, Eq, Ord, Generic)    
@@ -105,7 +105,6 @@ instance Fetchable Repository where
     getFetchType (RrdpR _)  = RRDP
     getFetchType (RsyncR _) = Rsync
 
-
 instance Semigroup PublicationPoints where
     PublicationPoints rrdps1 rsyncs1 <> PublicationPoints rrdps2 rsyncs2 = 
         PublicationPoints (rrdps1 <> rrdps2) (rsyncs1 <> rsyncs2)
@@ -113,20 +112,25 @@ instance Semigroup PublicationPoints where
 instance Semigroup RrdpRepository where
     RrdpRepository { uri = u1, rrdpMeta = m1, status = s1 } <> 
         RrdpRepository { rrdpMeta = m2, status = s2 } = 
-        RrdpRepository u1 (chooseRrdpMeta m1 m2) (s1 <> s2)
-        where 
-            chooseRrdpMeta Nothing Nothing    = Nothing            
-            chooseRrdpMeta Nothing m@(Just _) = m
-            chooseRrdpMeta m@(Just _) _       = m
+        RrdpRepository u1 resultMeta resultStatus
+        where
+            (resultStatus, resultMeta) = 
+                if s1 >= s2 
+                    then (s1, m1)
+                    else (s2, m2)
 
 -- always use the latest one
+instance Ord RepositoryStatus where
+    compare s1 s2 = compare (timeAndStatus s1) (timeAndStatus s2)
+        where 
+            -- tuple with 0 and 1 is to take into account a weird 
+            -- case of compare (FailedAt t1) (FetchedAt t2) with t1 == t2.
+            timeAndStatus New           = (Nothing, 0 :: Int)
+            timeAndStatus (FailedAt t)  = (Just t, 0)
+            timeAndStatus (FetchedAt t) = (Just t, 1)            
+
 instance Semigroup RepositoryStatus where
-    rs1 <> rs2 = 
-        if getTime rs1 > getTime rs2 then rs1 else rs2
-            where 
-                getTime New = Nothing
-                getTime (FetchedAt t) = Just t
-                getTime (FailedAt t) = Just t
+    (<>) = max        
 
 instance Semigroup RsyncMap where
     rs1 <> rs2 = rs1 `mergeRsyncs` rs2
@@ -172,11 +176,19 @@ allURIs :: PublicationPoints -> Set URI
 allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) = 
     Map.keysSet rrdps <> Map.keysSet rsyncs
 
+
 findPublicationPointStatus :: URI -> PublicationPoints -> Maybe RepositoryStatus
 findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap) =     
     case Map.lookup u rrdps of 
         Just RrdpRepository {..} -> Just status
-        Nothing                  -> snd <$> findRepositoryStatus u rsyncMap
+        Nothing                  -> snd <$> findRsyncStatus rsyncMap
+    where        
+        findRsyncStatus (RsyncMap m) = go u
+            where
+                go u' =
+                    Map.lookup u' m >>= \case            
+                        ParentURI parentUri -> go parentUri
+                        Root status         -> pure (u, status)
 
 
 repositoryHierarchy :: PublicationPoints -> 
@@ -201,14 +213,6 @@ repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) =
                 Root status         -> Just $ RsyncRepository (RsyncPublicationPoint u) status
                 ParentURI parentUri -> findRoot parentUri        
                 
-
-findRepositoryStatus :: URI -> RsyncMap -> Maybe (URI, RepositoryStatus)
-findRepositoryStatus u (RsyncMap m) = go u
-    where
-        go u' =
-            Map.lookup u' m >>= \case            
-                ParentURI parentUri -> go parentUri
-                Root status         -> pure (u, status)
 
 
 mergeRsyncs :: RsyncMap -> RsyncMap -> RsyncMap
@@ -258,8 +262,12 @@ mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
     pps & typed %~ (RsyncMap (Map.singleton u (Root New)) <>)
 
-meergeRrdpPP :: RrdpRepository -> PublicationPoints -> PublicationPoints
-meergeRrdpPP r@RrdpRepository { uri = u } pps = 
+mergeRsyncRepo :: RsyncRepository -> PublicationPoints -> PublicationPoints
+mergeRsyncRepo (RsyncRepository (RsyncPublicationPoint u) status) pps = 
+    pps & typed %~ (RsyncMap (Map.singleton u (Root status)) <>)
+
+meergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
+meergeRrdp r@RrdpRepository { uri = u } pps = 
     let rrdpL = typed @RrdpMap . coerced
     in 
         case Map.lookup u (pps ^. rrdpL) of
@@ -289,9 +297,15 @@ emptyPublicationPoints = PublicationPoints mempty mempty
 -- | Update repository and return the status of the repository 
 -- | as it was before the update.
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
-mergePP (RrdpPP r) = meergeRrdpPP r
+mergePP (RrdpPP r) = meergeRrdp r
 mergePP (RsyncPP r) = mergeRsyncPP r    
 
+mergeRepo :: Repository -> PublicationPoints -> PublicationPoints
+mergeRepo (RrdpR r) = meergeRrdp r
+mergeRepo (RsyncR r) = mergeRsyncRepo r    
+
+mergeRepos :: Foldable t =>  t Repository -> PublicationPoints -> PublicationPoints
+mergeRepos repos pps = foldr mergeRepo pps repos
 
 
 -- | Extract repositories from URIs in TAL and in TA certificate,
