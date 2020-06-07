@@ -91,6 +91,7 @@ parseCrl bs = do
                     (ASN1Time _ tnext _) -> Just tnext
                     _                    -> Nothing
 
+                -- TODO This is heavy and eats a lot o heap for long revocation lists
                 getRevokedSerials = 
                     onNextContainerMaybe Sequence (getMany getCrlSerial) >>= \case
                         Nothing -> pure Set.empty

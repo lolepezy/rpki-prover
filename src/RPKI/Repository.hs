@@ -10,6 +10,7 @@ import           Codec.Serialise
 import           GHC.Generics
 import           Control.Lens
 import           Data.Generics.Product.Typed
+import           Data.Generics.Product.Fields
 
 import           Data.X509          (Certificate)
 
@@ -21,7 +22,6 @@ import qualified Data.Map.Strict    as Map
 import           Data.Maybe         (isJust)
 import           Data.Set           (Set)
 import qualified Data.Set           as Set
-import qualified Data.Text          as Text
 
 import           Data.Hourglass     (DateTime)
 
@@ -32,6 +32,14 @@ import           RPKI.Parse.Parse
 import           RPKI.TAL
 import           RPKI.Util
 
+
+data RepositoryFetchType = RRDP | Rsync
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass Serialise
+
+class Fetchable a where
+    getURI       :: a -> URI
+    getFetchType :: a -> RepositoryFetchType
 
 data RepositoryStatus = New | FailedAt DateTime | FetchedAt DateTime
     deriving (Show, Eq, Ord, Generic, Serialise)
@@ -85,6 +93,19 @@ newtype RrdpMap = RrdpMap (Map URI RrdpRepository)
     deriving newtype (Monoid)
 
 
+instance Fetchable PublicationPoint where
+    getURI (RrdpPP (RrdpRepository {..})) = uri
+    getURI (RsyncPP (RsyncPublicationPoint uri)) = uri
+    getFetchType (RrdpPP _)  = RRDP
+    getFetchType (RsyncPP _) = Rsync
+
+instance Fetchable Repository where
+    getURI (RrdpR (RrdpRepository {..})) = uri
+    getURI (RsyncR (RsyncRepository RsyncPublicationPoint {..} _)) = uri
+    getFetchType (RrdpR _)  = RRDP
+    getFetchType (RsyncR _) = Rsync
+
+
 instance Semigroup PublicationPoints where
     PublicationPoints rrdps1 rsyncs1 <> PublicationPoints rrdps2 rsyncs2 = 
         PublicationPoints (rrdps1 <> rrdps2) (rsyncs1 <> rsyncs2)
@@ -128,29 +149,18 @@ rrdpPP u = RrdpPP $ RrdpRepository u Nothing New
 toRepository :: PublicationPoint -> Repository
 toRepository (RrdpPP r) = RrdpR r
 toRepository (RsyncPP r) = RsyncR $ RsyncRepository r New
-
-repositoryURI :: Repository -> URI
-repositoryURI (RrdpR RrdpRepository {..}) = uri
-repositoryURI (RsyncR (RsyncRepository RsyncPublicationPoint {..} _)) = uri
-
-publicationPointURI :: PublicationPoint -> URI
-publicationPointURI (RrdpPP RrdpRepository {..}) = uri
-publicationPointURI (RsyncPP RsyncPublicationPoint {..}) = uri
   
 repositoryStatus :: Repository -> RepositoryStatus 
 repositoryStatus (RsyncR RsyncRepository {..}) = status
 repositoryStatus (RrdpR RrdpRepository {..})   = status
 
-rsyncRepositories :: RsyncMap -> [RsyncRepository]
-rsyncRepositories (RsyncMap rsyncMap) = 
-    [ RsyncRepository (RsyncPublicationPoint u) status | (u, Root status) <- Map.toList rsyncMap ]
-
-repositories :: PublicationPoints -> Map URI Repository
-repositories (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) = 
-    Map.map RrdpR rrdps <>
-    Map.fromList [ 
-        (u, RsyncR (RsyncRepository (RsyncPublicationPoint u) status)) | 
-        (u, Root status) <- Map.toList rsyncMap ]
+toRepoStatusPairs :: PublicationPoints -> [(Repository, RepositoryStatus)]
+toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) = 
+    rrdpList <> rsyncList
+    where 
+        rrdpList = map (\r -> (RrdpR r, r ^. typed)) (Map.elems rrdps)
+        rsyncList = [ (RsyncR (RsyncRepository (RsyncPublicationPoint u) status), status) | 
+                      (u, Root status) <- Map.toList rsyncMap ]
 
 
 hasURI :: URI -> PublicationPoints -> Bool

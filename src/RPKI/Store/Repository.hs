@@ -24,14 +24,10 @@ import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storage
 
 
-data RepositoryType = Rsync | RRDP
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
-
 data RepositoryStore s = RepositoryStore {
     rrdpS  :: SMap "rrdp-repositories" s URI RrdpRepository,
     rsyncS :: SMap "rsync-repositories" s URI RsyncParent,
-    perTA  :: SMultiMap "repositories-per-ta" s TaName (URI, RepositoryType)
+    perTA  :: SMultiMap "repositories-per-ta" s TaName (URI, RepositoryFetchType)
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
@@ -61,20 +57,29 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 m ()
 applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' = 
     liftIO $ do
-        forM_ rrdpChanges $ \case 
-            Put r@RrdpRepository{..}  -> do
-                M.put tx rrdpS uri r
-                MM.put tx perTA taName' (uri, RRDP)                        
-            Remove RrdpRepository{..} -> do 
+        -- Do the Remove first and only then Put
+        let (rrdpPuts, rrdpRemoves) = separate rrdpChanges        
+
+        forM_ rrdpRemoves $ \RrdpRepository{..} -> do 
                 M.delete tx rrdpS uri 
                 MM.delete tx perTA taName' (uri, RRDP)
-        forM_ rsyncChanges $ \case 
-            Put (uri', p)  -> do
-                M.put tx rsyncS uri' p
-                MM.put tx perTA taName' (uri', RRDP)                        
-            Remove (uri', _) -> do 
+        forM_ rrdpPuts $ \r@RrdpRepository{..} -> do 
+                M.put tx rrdpS uri r
+                MM.put tx perTA taName' (uri, RRDP)        
+
+        let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
+
+        forM_ rsyncRemoves $ \(uri', _) -> do
                 M.delete tx rsyncS uri'
-                MM.delete tx perTA taName' (uri', RRDP)        
+                MM.delete tx perTA taName' (uri', Rsync)                            
+        forM_ rsyncPuts $ \(uri', p) -> do
+                M.put tx rsyncS uri' p
+                MM.put tx perTA taName' (uri', Rsync)
+    where
+        separate = foldr f ([], [])
+            where 
+                f (Put r) (ps, rs) = (r : ps, rs) 
+                f (Remove r) (ps, rs) = (ps, r : rs) 
 
 
 getTaPublicationPoints :: (MonadIO m, Storage s) => 

@@ -20,16 +20,18 @@
 + Make WorldVersion more precise, update it only periodically and at proper moments
 + Add version storage and connect versions with VRPs and other stuff
 + Have a cache directory (.rpki-data (tals, lmsb, rsync, tmp))
++ Download TA cert by HTTPS 
 
 
 ---------------------------------------------------------------------------
 
-- Download TA cert by HTTPS 
 - Fix RRDP so that it uses deltas properly
+- Add tests for repository storafge
 - Add periodic re-validation
 - Have full path from the top repoistory to all the delegates ones in the VContext.
 - Read config and CLI options
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
+- Refactor the parallel two-thread stuff to use streaming
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
 

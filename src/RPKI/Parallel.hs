@@ -2,17 +2,18 @@
 {-# LANGUAGE DerivingStrategies #-}
 module RPKI.Parallel where
 
-import Numeric.Natural
-import Control.Monad
-import Control.Concurrent.STM
+import           Control.Concurrent.STM
+import           Control.Monad
+import           Numeric.Natural
 
-import qualified Control.Concurrent.STM.TBQueue as Q
+import qualified Control.Concurrent.STM.TBQueue  as Q
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Exception.Lifted
+import           Control.Exception.Lifted
+import           Control.Monad.IO.Class          (MonadIO, liftIO)
 
-import Control.Monad.Trans.Control
-import Control.Concurrent.Async.Lifted
+import           Control.Concurrent.Async.Lifted
+import           Control.Monad.Trans.Control
+import           Data.IORef.Lifted
 
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
@@ -159,17 +160,25 @@ readChunk leftToRead q = do
 
 -- | Simple straioghtforward implementation of a thread pool for submition of tasks.
 -- 
-parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+parallelTasks1 :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck -> t a -> (a -> m b) -> m (t b)
-parallelTasks threads@Bottleneck {..} as f =
+parallelTasks1 threads@Bottleneck {..} as f =
     snd <$> bracketChan (atLeastOne maxSize) writeAll readAll cancelTask            
     where
         writeAll queue = forM_ as $ \a -> do
-            task <- submit (f a) threads Requestor
+            task <- newTask (f a) threads Requestor
             liftIO $ atomically $ Q.writeTBQueue queue task
         readAll queue = forM as $ \_ -> do
             aa <- liftIO . atomically $ Q.readTBQueue queue
             waitTask aa    
+
+-- | Simple straioghtforward implementation of a thread pool for submition of tasks.
+-- 
+parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+                Bottleneck -> t a -> (a -> m b) -> m (t b)
+parallelTasks threads@Bottleneck {..} as f = do
+    tasks <- forM as $ \a -> newTask (f a) threads Submitter
+    forM tasks waitTask
 
 -- Thread pool value, current and maximum size
 data Bottleneck = Bottleneck {
@@ -183,8 +192,8 @@ makeBottleneck n = Bottleneck n <$> newTVar 0
 makeBottleneckIO :: Natural -> IO Bottleneck
 makeBottleneckIO = atomically . makeBottleneck
 
--- Who is going to execute a task when there're no slots in the pool
-data OverflownPoolExecutor = Requestor | Submitter
+-- Who is going to execute a task when the bottleneck is busy
+data BottleneckFullExecutor = Requestor | Submitter
 
 -- A task can be asyncronous, executed by the requestor
 -- and executed by the submitrter (eager).
@@ -196,17 +205,18 @@ data Task m a
 
 -- | If the pool is overflown, io will be execute by the caller of "waitPool"
 -- 
-submitLazy :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
-submitLazy io pool = submit io pool Requestor
+lazyTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
+lazyTask io bottleneck = newTask io bottleneck Requestor
 
--- | If the pool is overflown, io will be execute by the thread that tries to submit the task.
+-- | If the bottleneck is overflown, io will be execute by the thread that tries to newTask the task.
 -- 
-submitStrict :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
-submitStrict io pool = submit io pool Submitter
+strictTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
+strictTask io bottleneck = newTask io bottleneck Submitter
 
 -- Common case
-submit :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> OverflownPoolExecutor -> m (Task m a)
-submit io Bottleneck {..} execution = 
+newTask :: (MonadBaseControl IO m, MonadIO m) => 
+        m a -> Bottleneck -> BottleneckFullExecutor -> m (Task m a)
+newTask io Bottleneck {..} execution = 
     join $ liftIO $ atomically $ do
         size <- readTVar currentSize
         if size >= maxSize             
@@ -233,4 +243,39 @@ cancelTask (RequestorTask _) = pure ()
 cancelTask (SubmitterTask _) = pure ()
 cancelTask (AsyncTask a)     = cancel a
 
-        
+
+
+listProducer :: [a] -> IO (IO (Maybe a))
+listProducer as = do
+    current <- newIORef as
+    pure $ readIORef current >>= \case
+                [] -> pure Nothing
+                (a : as') -> do
+                    writeIORef current as'
+                    pure $ Just a 
+
+
+-- | Utility function for a specific case of producer-consumer pair 
+-- where consumer works within a transaction (represented as withTx function)
+--  
+-- txFold :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+--             Bottleneck ->
+--             m q ->                      -- ^ producer, called for every item of the traversed argument
+--             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
+--             (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
+--             r ->                        -- ^ fold initial value
+--             m r
+-- txFold bottleneck produce withTx consume accum0 =
+--     snd <$> bracketChan 
+--                 (atLeastOne bottleneckSize)
+--                 writeAll 
+--                 readAll 
+--                 (const $ pure ())
+--     where
+--         writeAll queue = forM_ as $
+--             liftIO . atomically . Q.writeTBQueue queue <=< produce
+--         readAll queue = withTx $ \tx -> foldM (f tx) accum0 as 
+--             where
+--                 f tx accum _ = do
+--                     a <- liftIO $ atomically $ Q.readTBQueue queue
+--                     consume tx a accum   

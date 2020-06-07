@@ -179,20 +179,57 @@ parseWithTmp filename f = --LBS.readFile filename >>= f
   --   -- f =<< LBS.hGetContents h   
 
 
-createAppContext :: DB s -> IO (AppContext s)
-createAppContext database' = do 
-    log'  <- createLogger
-    state <- createDynamicState
+createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
+createAppContext logger = do
+
+    -- TODO Make it configurable?
+    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
+    let rootDir = home </> ".rpki"
+    
+    tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
+    rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
+    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
+    lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
+
+    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb 1000
+    database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
+
+    -- clean up tmp directory if it's not empty
+    fromTry (InitE . InitError . fmtEx) $ 
+        listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
+
+    dynamicState <- liftIO createDynamicState
+
+    -- TODO Make it configurable
+    let parallelism = Parallelism getParallelism 64
+
+    appThreads <- liftIO $ do 
+        cpuBottleneck <- makeBottleneckIO $ cpuParallelism parallelism
+        ioBottleneck  <- makeBottleneckIO $ ioParallelism parallelism
+        pure $ AppBottleneck cpuBottleneck ioBottleneck
+
+    -- TODO read stuff from the config, CLI
     pure $ AppContext {        
-        logger = log',
+        logger = logger,
         config = Config {
-            parallelism = getParallelism,
-            rsyncConf = RsyncConf "/tmp/rsync",
-            validationConfig = ValidationConfig $ 24 * 3600 
+            talDirectory = tald,
+            parallelism  = parallelism,
+            rsyncConf    = RsyncConf rsyncd,
+            rrdpConf     = RrdpConf { 
+                tmpRoot = tmpd,
+                -- Do not download files bigger than 1Gb
+                -- TODO Make it configurable
+                maxSize = Size 1024 * 1024 * 1024
+            },
+            validationConfig = ValidationConfig {
+                rrdpRepositoryRefreshInterval  = 2 * 60,
+                rsyncRepositoryRefreshInterval = 10 * 60
+            }
         },
-        dynamicState = state,
-        database = database'
-    } 
+        dynamicState = dynamicState,
+        database = database,
+        appThreads = appThreads
+    }
 
 -- processRRDP :: LmdbEnv -> IO ()
 -- processRRDP env = do

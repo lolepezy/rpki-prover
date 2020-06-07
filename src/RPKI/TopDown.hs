@@ -99,9 +99,8 @@ createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
     VerifiedRS $ toPrefixesAndAsns $ withRFC certificate resources
 
-emptyTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -> CerObject -> m (TopDownContext s)
-emptyTopDownContext AppContext {..} taName publicationPoints certificate = liftIO $ do             
-    now          <- thisMoment
+makeTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -> Now -> CerObject -> m (TopDownContext s)
+makeTopDownContext AppContext {..} taName publicationPoints now certificate = liftIO $ do             
     worldVersion <- getWorldVerion dynamicState
     atomically $ TopDownContext (Just $ createVerifiedResources certificate) <$> 
         createClosableQueue 100000 <*>
@@ -123,7 +122,7 @@ oneMoreValid TopDownContext {..} = liftIO $ atomically $
 -- | * fetch the repositories
 bootstrapTA :: Storage s => 
             AppContext s -> TAL -> IO (Either AppError (), Validations)
-bootstrapTA appContext@AppContext {..} tal = 
+bootstrapTA appContext@AppContext {..} tal = do    
     runValidatorT taContext $ do         
         (nextStep, elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal 
         logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]
@@ -131,25 +130,45 @@ bootstrapTA appContext@AppContext {..} tal =
             SameTACert taCert repos     -> fetchAndValidate taCert repos
             UpdatedTACert newCert repos -> fetchAndValidate newCert repos        
     where
-
         fetchAndValidate taCert repos = do            
-            fetchStatuses <- parallelTasks (ioBottleneck appThreads) repos $ \repo -> do 
+
+            now <- thisMoment
+
+            storedPubPoints <- roAppTxEx database storageError $ \tx -> 
+                            getTaPublicationPoints tx (repositoryStore database) taName'                                            
+
+            let unknownSoFar = filter (\r -> not $ hasURI (getURI r) storedPubPoints) $ NonEmpty.toList repos            
+
+            let storedPPsToConsider = map fst $ 
+                    filter (\(pp, status) -> needsFetching pp status (config ^. typed) now) $ 
+                    toRepoStatusPairs $ 
+                    storedPubPoints `shrinkTo` Set.fromList (map getURI $ NonEmpty.toList repos)
+
+            let reposToFetch = storedPPsToConsider <> unknownSoFar
+
+            logDebugM logger [i| TA: #{taName'}, 
+                storedPubPoints = #{storedPubPoints}, 
+                unknownSoFar = #{unknownSoFar}, 
+                storedPPsToConsider = #{storedPPsToConsider},
+                reposToFetch = #{reposToFetch} |]                               
+
+            fetchStatuses <- parallelTasks (ioBottleneck appThreads) reposToFetch $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
                 fetchRepository appContext repo
 
-            case partitionFailedSuccess (NonEmpty.toList fetchStatuses) of 
+            case partitionFailedSuccess fetchStatuses of 
                 ([], _) -> do
-                    storedPubPoints <- roAppTxEx database storageError $ \tx -> 
-                            getTaPublicationPoints tx (repositoryStore database) taName'
-
-                    let flattenedStatuses = flip NonEmpty.map fetchStatuses $ \case 
+                    let flattenedStatuses = flip map fetchStatuses $ \case 
                             FetchFailure r s _ -> (r, s)
                             FetchSuccess r s _ -> (r, s)            
 
                     -- use publication points taken from the DB and updated with the 
                     -- the fetchStatuses of the fetch that we just performed
                     let fetchUpdatedPPs = updateStatuses storedPubPoints flattenedStatuses
-                    topDownContext <- emptyTopDownContext appContext taName' fetchUpdatedPPs taCert
+
+                    logDebugM logger [i| TA: #{taName'}, fetchUpdatedPPs = #{fetchUpdatedPPs}|]       
+
+                    topDownContext <- makeTopDownContext appContext taName' fetchUpdatedPPs now taCert
                     -- this is for TA cert
                     oneMoreValid topDownContext
 
@@ -157,8 +176,17 @@ bootstrapTA appContext@AppContext {..} tal =
                         validateCA appContext taCertURI topDownContext taCert                    
 
                     -- get publication points from the topDownContext and save it to the database
-                    pubPointAfterTopDown <- liftIO $ readTVarIO (publicationPoints topDownContext)
-                    let changeSet' = changeSet fetchUpdatedPPs pubPointAfterTopDown
+                    pubPointAfterTopDown <- liftIO $ readTVarIO $ publicationPoints topDownContext
+
+                    let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
+
+                    logDebugM logger [i| 
+                                ------------------------------------------------------------
+                                TA: #{taName'} 
+                                changeSet' = #{changeSet'},
+                                pubPointAfterTopDown = #{pubPointAfterTopDown} 
+                                ------------------------------------------------------------
+                                |]  
                 
                     Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
                     logDebugM logger [i| TA: #{taName'} validCount = #{validCount} |]                                    
@@ -166,8 +194,13 @@ bootstrapTA appContext@AppContext {..} tal =
                     rwAppTxEx database storageError $ \tx -> 
                         applyChangeSet tx (repositoryStore database) changeSet' taName'                    
 
+                    pubPointsAfterSaving <- roAppTxEx database storageError $ \tx -> 
+                                    getTaPublicationPoints tx (repositoryStore database) taName'
+
+                    logDebugM logger [i| TA: #{taName'} pubPointsAfterSaving = #{pubPointsAfterSaving} |]
+
                 (broken, _) -> do
-                    let brokenUrls = map (repositoryURI . (^. _1)) broken
+                    let brokenUrls = map (getURI . (^. _1)) broken
                     logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download|]
             
         taCertURI = vContext $ NonEmpty.head $ certLocations tal
@@ -218,7 +251,7 @@ fetchRepository :: (MonadIO m, Storage s) =>
                 AppContext s -> Repository -> m FetchResult
 fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ do
     Now now <- thisMoment
-    ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ repositoryURI repo) $ 
+    ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ getURI repo) $ 
         case repo of
             RsyncR r -> 
                 first RsyncR <$> updateObjectForRsyncRepository appContext r objectStore                                
@@ -226,11 +259,11 @@ fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ 
                 first RrdpR <$> updateObjectForRrdpRepository appContext r objectStore                    
     case r of
         Left e -> do                        
-            logErrorM logger [i|Fetching repository #{repositoryURI repo} failed: #{e} |]
-            let repoContext' = vContext $ repositoryURI repo
+            logErrorM logger [i|Fetching repository #{getURI repo} failed: #{e} |]
+            let repoContext' = vContext $ getURI repo
             pure $ FetchFailure repo (FailedAt now) (mError repoContext' e <> v)
         Right (resultRepo, vs) -> do
-            logDebugM logger [i|Fetched repository #{repositoryURI repo}, took #{elapsed}ms.|]
+            logDebugM logger [i|Fetched repository #{getURI repo}, took #{elapsed}ms.|]
             pure $ FetchSuccess resultRepo (FetchedAt now) (vs <> v)
 
 
@@ -306,7 +339,7 @@ validateCAWithQueue
 
             let (_, rootToPps) = repositoryHierarchy discoveredPPs
                 
-            let newRepositories = filter ((New ==) . repositoryStatus) $ Map.elems $ repositories ppsToFetch
+            let newRepositories = map fst $ filter ((New ==) . snd) $ toRepoStatusPairs ppsToFetch
 
             -- forM_ newRepositories $ \r -> 
             --     logDebugM logger [i|new url = #{repositoryURI r}|]
@@ -335,7 +368,7 @@ validateCAWithQueue
                     waitingListPerPP <- readTVarIO ppWaitingList
 
                     let waitingHashesForThesePPs  = fromMaybe Set.empty $ fold $ 
-                            Set.map (\pp -> publicationPointURI pp `Map.lookup` waitingListPerPP) fetchedPPs
+                            Set.map (\pp -> getURI pp `Map.lookup` waitingListPerPP) fetchedPPs
 
                     void $ parallelTasks 
                             (cpuBottleneck appThreads) 
@@ -374,43 +407,34 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
 
     case publicationPointsFromCertObject certificate of
         Left e                  -> appError $ ValidationE e
-        Right (u, discoveredPP) -> 
-            case findPublicationPointStatus u (discoveredPP `mergePP` globalPPs) of 
-                -- Both Nothing and Just New mean that it is a completely new piublication point, 
-                -- it is not fetched yet or it hasn't been seen. Nothing to do here, just add  
-                -- current certificate to the waiting list for this PP.                
-                Nothing  -> stopHere discoveredPP
-                Just New -> stopHere discoveredPP
+        Right (u, discoveredPP) -> do
+            let asIfItIsMerged = discoveredPP `mergePP` globalPPs
 
-                Just (FetchedAt time) 
-                    | notTooLongAgo discoveredPP validationConfig time (now topDownContext) -> 
-                            validateThisCertAndGoDown                           
-                    | otherwise -> stopHere discoveredPP
+            let stopDescend = do 
+                    -- remember to come back to this certificate when the PP ios fetched
+                    certificate `addToWaitingListOf` discoveredPP
+                    pure asIfItIsMerged
 
-                Just (FailedAt time)
-                    | notTooLongAgo discoveredPP validationConfig time (now topDownContext) -> 
-                            appError $ ValidationE $ PublicationPointIsNotAvailable $ publicationPointURI discoveredPP
-                    | otherwise -> stopHere discoveredPP
-
-    where
-        stopHere discoveredPP = do 
-            certificate `addToWaitingListOf` discoveredPP
-            pure $ mergePP discoveredPP emptyPublicationPoints                
-
+            case findPublicationPointStatus u asIfItIsMerged of 
+                -- this publication point hasn't been seen at all, so stop here
+                Nothing     -> stopDescend
+                
+                -- If it's been fetched too long ago, stop here and add the certificate 
+                -- to the waiting list of this PP
+                -- if the PP is fresh enough, proceed with the tree descend                
+                Just status -> let                
+                    needToRefetch = needsFetching discoveredPP status validationConfig (now topDownContext)                    
+                    in if needToRefetch
+                        then stopDescend 
+                        else validateThisCertAndGoDown                    
+    where        
         addToWaitingListOf :: CerObject -> PublicationPoint -> ValidatorT vc IO ()
         addToWaitingListOf cert pp = liftIO $ atomically $           
             modifyTVar (ppWaitingList topDownContext) $ \m -> 
-                Map.unionWith (<>) m (Map.singleton (publicationPointURI pp) (Set.singleton $ getHash cert))
-             
-        notTooLongAgo publicationPoint ValidationConfig {..} momendTnThePast (Now now) = 
-            closeEnoughMoments momendTnThePast now (interval publicationPoint)
-            where
-                interval (RrdpPP _)  = rrdpRepositoryRefreshInterval
-                interval (RsyncPP _) = rsyncRepositoryRefreshInterval
-
-
+                Map.unionWith (<>) m (Map.singleton (getURI pp) (Set.singleton $ getHash cert))
+        
         validateThisCertAndGoDown = do
-            vContext' :: VContext <- asks getter
+            vContext' :: VContext <- asks getVC
             let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
 
             -- this for the certificate
@@ -464,9 +488,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                                 pure $! mconcat pps 
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations   
-
-        findMft :: Has VContext env => 
-                    AKI -> Locations -> ValidatorT env IO MftObject
+    
         findMft childrenAki locations = do
             mft' <- liftIO $ roTx (objectStore database) $ \tx -> 
                 findLatestMftByAKI tx (objectStore database) childrenAki
@@ -518,6 +540,20 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                 childLocation = NonEmpty.head $ getLocations ro
 
                 withEmptyPPs f = f >> pure emptyPublicationPoints
+
+
+needsFetching :: Fetchable r => r -> RepositoryStatus -> ValidationConfig -> Now -> Bool
+needsFetching r status ValidationConfig {..} (Now now) = 
+    case status of
+        New            -> True
+        FetchedAt time -> tooLongAgo time
+        FailedAt time  -> tooLongAgo time
+    where
+        tooLongAgo momendTnThePast = 
+            not $ closeEnoughMoments momendTnThePast now (interval $ getFetchType r)
+            where
+                interval RRDP  = rrdpRepositoryRefreshInterval
+                interval Rsync = rsyncRepositoryRefreshInterval
 
 
 queueVRP :: Storage s => AppContext s -> TopDownContext s -> [Roa] -> IO ()

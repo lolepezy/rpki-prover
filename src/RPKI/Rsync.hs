@@ -153,7 +153,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     True  -> readFiles queue path
                     False -> 
                         when (supportedExtension path) $ do         
-                            task <- (readAndParseObject path) `submitStrict` threads                   
+                            task <- (readAndParseObject path) `strictTask` threads                   
                             -- task <- Unlift.async $ readAndParseObject path                            
                             let uri = pathToUri repositoryUrl rootPath path
                             -- logDebugM logger [i|rsync uri = #{uri}|]

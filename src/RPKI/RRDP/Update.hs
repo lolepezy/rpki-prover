@@ -158,7 +158,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
     pure repo
     where
         updateRepo' threads added removed =     
-            updateRrdpRepo appContext repository saveSnapshot saveDelta
+            updateRrdpRepo appContext repository saveSnapshot saveDeltas
             where
                 cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
 
@@ -176,7 +176,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                     where
                         storableToChan (SnapshotPublish uri encodedb64) = do
                             -- logDebugM logger [i|rrdp uri = #{uri}|]               
-                            task <- (pure $! parseAndProcess uri encodedb64) `submitStrict` threads
+                            task <- (pure $! parseAndProcess uri encodedb64) `strictTask` threads
                             -- a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
                             pure (uri, task)
                                                 
@@ -190,8 +190,10 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                     void $ atomicModifyIORef' added $ \c -> (c + 1, ())
                                     pure validations
 
-                saveDelta :: [Delta] -> ValidatorT conf IO Validations
-                saveDelta deltas =            
+                saveDeltas :: [Delta] -> ValidatorT conf IO Validations
+                saveDeltas deltas = do
+                    let serials = map (^. typed @Serial) deltas
+                    logDebugM logger [i|Saving deltas #{serials} for the repository: #{repository} |]
                     fromTry (StorageE . StorageError . U.fmtEx) 
                         (txConsumeFold 
                             cpuParallelism
@@ -206,7 +208,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                         -- storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
                         storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
                             -- a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
-                            task <- (pure $! parseAndProcess uri encodedb64) `submitStrict` threads
+                            task <- (pure $! parseAndProcess uri encodedb64) `strictTask` threads
                             pure $ maybe (Add uri task) (Replace uri task) hash
 
                         storableToChan (DW (DeltaWithdraw _ hash)) = 
