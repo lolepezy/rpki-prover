@@ -66,20 +66,20 @@ downloadContent RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
                     content <- mmap name
                     pure $ Right (content, size)
 
-downloadContentStrict :: MonadIO m => 
+downloadContentToStrictBS :: MonadIO m => 
                         RrdpConf ->
                         URI -> 
                         (SomeException -> e) ->
                         m (Either e (BS.ByteString, Size))
-downloadContentStrict rrdp uri cantDownload = 
+downloadContentToStrictBS rrdp uri cantDownload = 
     downloadContent rrdp uri cantDownload Mmap.unsafeMMapFile    
 
-downloadContentLazy :: MonadIO m => 
+downloadContentToLazyBS :: MonadIO m => 
                         RrdpConf ->
                         URI -> 
                         (SomeException -> e) ->
                         m (Either e (LBS.ByteString, Size))
-downloadContentLazy rrdp uri cantDownload = 
+downloadContentToLazyBS rrdp uri cantDownload = 
     downloadContent rrdp uri cantDownload MmapLazy.unsafeMMapFile    
 
 
@@ -166,7 +166,7 @@ fetchRpkiObject :: MonadIO m =>
                     URI ->             
                     ValidatorT vc m RpkiObject
 fetchRpkiObject appContext uri = do 
-    (content, _) <- fromEitherM $ downloadContentStrict 
+    (content, _) <- fromEitherM $ downloadContentToStrictBS 
                         (appContext ^. typed @Config . typed @RrdpConf)
                         uri 
                         (RrdpE . CantDownloadFile . U.fmtEx)

@@ -4,7 +4,9 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
 
-module RPKI.RRDP.Update where
+module RPKI.RRDP.Update 
+    (updateObjectForRrdpRepository) 
+    where
 import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
@@ -38,20 +40,26 @@ import qualified RPKI.Util                        as U
 import           Data.IORef.Lifted
 
 
-{- 
-    TODO 
-    1) Replace IO with some reasonable Monad (MonadIO + MonadMask/MonadUnliftIO/MonadBaseControl).
-    2) Maybe return bracketed IO actions instead of exectuting them.
--}
+-- | 
+--  Update RRDP repository, i.e. do the full cycle
+--    - download notifications file, parse it
+--    - decide what to do next based on it
+--    - download snapshot or deltas
+--    - do something appropriate with either of them
+-- 
 updateRrdpRepo :: WithVContext vc => 
                 AppContext s ->
                 RrdpRepository ->                 
                 (Snapshot -> ValidatorT vc IO Validations) ->
                 ([Delta]  -> ValidatorT vc IO Validations) ->
                 ValidatorT vc IO (RrdpRepository, Validations)
-updateRrdpRepo AppContext{..} repo@(RrdpRepository repoUri _ _) handleSnapshot handleDeltas = do
-
-    (notificationXml, _) <- fromEitherM $ downloadContentLazy 
+updateRrdpRepo 
+        AppContext{..} 
+        repo@(RrdpRepository repoUri _ _)    
+        handleSnapshot                       -- ^ function to handle the snapshot 
+        handleDeltas =                       -- ^ function to handle all deltas
+    do
+    (notificationXml, _) <- fromEitherM $ downloadContentToLazyBS 
                                 rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- hoistHere $ rrdpNextStep repo notification
@@ -109,6 +117,7 @@ data Step = UseSnapshot SnapshotInfo
         | NothingToDo
     deriving (Show, Eq, Ord, Generic)
 
+
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
 rrdpNextStep :: RrdpRepository -> Notification -> Either RrdpError Step
@@ -143,6 +152,9 @@ nextSerial :: Serial -> Serial
 nextSerial (Serial s) = Serial $ s + 1
 
 
+-- | 
+--  Update RRDP repository, actually saving all the objects in the DB.
+-- 
 updateObjectForRrdpRepository :: Storage s => 
                                 AppContext s ->
                                 RrdpRepository ->
@@ -157,11 +169,17 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
     logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}, took #{elapsed}ms|]
     pure repo
     where
-        updateRepo' threads added removed =     
+        updateRepo' bottleneck added removed =     
             updateRrdpRepo appContext repository saveSnapshot saveDeltas
             where
                 cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
 
+                {- Snapshot case, done in parallel by two thread
+                    - one thread to parse XML, reads base64s and pushes 
+                      CPU-intensive parsing tasks into the queue
+                    - one thread to save objects, read asyncs, waits for them
+                      and save the results into the DB.
+                -} 
                 saveSnapshot (Snapshot _ _ _ snapshotItems) = do                    
                     logDebugM logger [i|Saving snapshot for the repository: #{repository} |]
                     fromTry 
@@ -176,7 +194,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                     where
                         storableToChan (SnapshotPublish uri encodedb64) = do
                             -- logDebugM logger [i|rrdp uri = #{uri}|]               
-                            task <- (pure $! parseAndProcess uri encodedb64) `strictTask` threads
+                            task <- (pure $! parseAndProcess uri encodedb64) `strictTask` bottleneck
                             -- a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
                             pure (uri, task)
                                                 
@@ -187,9 +205,13 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                     pure $ validations <> mError (vContext uri) e
                                 SObject so -> do 
                                     Stores.putObject tx objectStore so
-                                    void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+                                    increment added
                                     pure validations
 
+                {-
+                    The same as snapshots but takes base64s from ordered 
+                    list of deltas.
+                -}
                 saveDeltas :: [Delta] -> ValidatorT conf IO Validations
                 saveDeltas deltas = do
                     let serials = map (^. typed @Serial) deltas
@@ -205,10 +227,8 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                     where
                         deltaItems :: [DeltaItem] = concatMap (\(Delta _ _ _ dis) -> dis) deltas                        
 
-                        -- storableToChan :: DeltaItem -> IO (DeltaOp (StorableUnit RpkiObject AppError))
                         storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
-                            -- a <- AsyncL.async $ pure $! parseAndProcess uri encodedb64
-                            task <- (pure $! parseAndProcess uri encodedb64) `strictTask` threads
+                            task <- (pure $! parseAndProcess uri encodedb64) `strictTask` bottleneck
                             pure $ maybe (Add uri task) (Replace uri task) hash
 
                         storableToChan (DW (DeltaWithdraw _ hash)) = 
@@ -231,7 +251,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                     alreadyThere <- Stores.hashExists tx objectStore (getHash ro)
                                     unless alreadyThere $ do                                    
                                         Stores.putObject tx objectStore so
-                                        void $ atomicModifyIORef' added $ \c -> (c + 1, ())                                    
+                                        increment added
                                     pure validations
 
                         replaceObject tx uri a oldHash validations = 
@@ -244,7 +264,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                     if oldOneIsAlreadyThere 
                                         then do 
                                             Stores.deleteObject tx objectStore oldHash
-                                            void $ atomicModifyIORef' removed $ \c -> (c + 1, ())
+                                            increment removed
                                             let newHash = getHash ro
                                             newOneIsAlreadyThere <- Stores.hashExists tx objectStore newHash
                                             if newOneIsAlreadyThere
@@ -254,7 +274,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                                         (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
                                                 else do                                             
                                                     Stores.putObject tx objectStore so
-                                                    void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+                                                    increment added
                                                     pure validations                                            
                                         else do 
                                             logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
@@ -269,7 +289,9 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                 parsed = do
                     DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
                     first ParseE $ readObject (Text.unpack u) b                
-                    
+
+        increment added = void $ atomicModifyIORef' added $ \c -> (c + 1, ())
+
 
 data DeltaOp m a = Delete !Hash 
                 | Add !URI !(Task m a) 
