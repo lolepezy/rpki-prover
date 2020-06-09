@@ -266,13 +266,13 @@ mergeRsyncRepo :: RsyncRepository -> PublicationPoints -> PublicationPoints
 mergeRsyncRepo (RsyncRepository (RsyncPublicationPoint u) status) pps = 
     pps & typed %~ (RsyncMap (Map.singleton u (Root status)) <>)
 
-meergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
-meergeRrdp r@RrdpRepository { uri = u } pps = 
-    let rrdpL = typed @RrdpMap . coerced
+mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
+mergeRrdp r@RrdpRepository { uri = u } pps = 
+    let rrdpLens = typed @RrdpMap . coerced
     in 
-        case Map.lookup u (pps ^. rrdpL) of
-            Nothing                             -> pps & rrdpL %~ (Map.insert u r)
-            Just existing@RrdpRepository { .. } -> pps & rrdpL %~ inserted
+        case Map.lookup u (pps ^. rrdpLens) of
+            Nothing                             -> pps & rrdpLens %~ (Map.insert u r)
+            Just existing@RrdpRepository { .. } -> pps & rrdpLens %~ inserted
                 where 
                     inserted m = if r == existing -- most often case
                                     then m 
@@ -297,11 +297,11 @@ emptyPublicationPoints = PublicationPoints mempty mempty
 -- | Update repository and return the status of the repository 
 -- | as it was before the update.
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
-mergePP (RrdpPP r) = meergeRrdp r
+mergePP (RrdpPP r) = mergeRrdp r
 mergePP (RsyncPP r) = mergeRsyncPP r    
 
 mergeRepo :: Repository -> PublicationPoints -> PublicationPoints
-mergeRepo (RrdpR r) = meergeRrdp r
+mergeRepo (RrdpR r) = mergeRrdp r
 mergeRepo (RsyncR r) = mergeRsyncRepo r    
 
 mergeRepos :: Foldable t =>  t Repository -> PublicationPoints -> PublicationPoints

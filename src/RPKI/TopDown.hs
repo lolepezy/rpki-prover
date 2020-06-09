@@ -23,7 +23,6 @@ import           GHC.Generics
 import           Data.Bifunctor
 import           Data.Either                      (partitionEithers)
 import           Data.Foldable
-import           Data.Has
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Map.Strict                  (Map)
@@ -135,7 +134,7 @@ bootstrapTA appContext@AppContext {..} tal = do
             now <- thisMoment
 
             storedPubPoints <- roAppTxEx database storageError $ \tx -> 
-                            getTaPublicationPoints tx (repositoryStore database) taName'                                            
+                            getTaPublicationPoints tx (repositoryStore database) taName'
 
             let reposToFetch = map fst $ 
                     -- filter the ones that are either new or need refetching
@@ -179,24 +178,11 @@ bootstrapTA appContext@AppContext {..} tal = do
 
                     let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
 
-                    -- logDebugM logger [i| 
-                    --             ------------------------------------------------------------
-                    --             TA: #{taName'} 
-                    --             changeSet' = #{changeSet'},
-                    --             pubPointAfterTopDown = #{pubPointAfterTopDown} 
-                    --             ------------------------------------------------------------
-                    --             |]  
-                
                     Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
                     logDebugM logger [i| TA: #{taName'} validCount = #{validCount} |]                                    
 
                     rwAppTxEx database storageError $ \tx -> 
-                        applyChangeSet tx (repositoryStore database) changeSet' taName'                    
-
-                    -- pubPointsAfterSaving <- roAppTxEx database storageError $ \tx -> 
-                    --                 getTaPublicationPoints tx (repositoryStore database) taName'
-
-                    -- logDebugM logger [i| TA: #{taName'} pubPointsAfterSaving = #{pubPointsAfterSaving} |]
+                        applyChangeSet tx (repositoryStore database) changeSet' taName'
 
                 (broken, _) -> do
                     let brokenUrls = map (getURI . (^. _1)) broken
@@ -208,7 +194,7 @@ bootstrapTA appContext@AppContext {..} tal = do
 
 
 -- | Valiidate TA starting from the TAL.
-validateTACertificateFromTAL :: (Has VContext vc, Storage s) => 
+validateTACertificateFromTAL :: (WithVContext vc, Storage s) => 
                                 AppContext s -> TAL -> ValidatorT vc IO TACertValidationResult
 validateTACertificateFromTAL appContext@AppContext { database = DB {..}, ..} tal = do    
     (uri', ro) <- fetchTACertificate appContext tal
@@ -278,8 +264,7 @@ partitionFailedSuccess = go
 
 validateCA :: Storage s =>
             AppContext s -> VContext -> TopDownContext s -> CerObject -> IO ()
-validateCA env vContext' topDownContext certificate = do    
-    let appContext@AppContext {..} = getter env
+validateCA appContext vContext' topDownContext certificate = do        
     validateCAWithQueue appContext vContext' topDownContext certificate CreateQ
 
 
