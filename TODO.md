@@ -27,10 +27,11 @@
 ---------------------------------------------------------------------------
 
 - Add tests for repository storage
-- Add periodic re-validation
-- Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 - Have full path from the top repoistory to all the delegates ones in the VContext.
+- Add periodic re-validation
 - Clean up objects that are not touched by validations or not touched by repository downloads
+- Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
+
 - Read config and CLI options
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 - Refactor the parallel two-thread stuff to use streaming

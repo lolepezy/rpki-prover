@@ -85,12 +85,12 @@ applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' =
 getTaPublicationPoints :: (MonadIO m, Storage s) => 
                         Tx s mode -> RepositoryStore s -> TaName -> m PublicationPoints
 getTaPublicationPoints tx s taName' = liftIO $ do
-        (rrdpList, rsyncList) <- MM.foldS tx (perTA s) taName' mergeRepos ([], [])
+        (rrdpList, rsyncList) <- MM.foldS tx (perTA s) taName' mergeAllRepos ([], [])
         pure $ PublicationPoints 
             (RrdpMap $ Map.fromList rrdpList) 
             (RsyncMap $ Map.fromList rsyncList)
     where
-        mergeRepos result@(rrdps, rsyncs) _ index = 
+        mergeAllRepos result@(rrdps, rsyncs) _ index = 
             case index of 
                 (uri', RRDP) -> 
                     M.get tx (rrdpS s) uri' >>= \case

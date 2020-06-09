@@ -43,6 +43,8 @@ import           RPKI.Store.Database
 import           RPKI.Store.Base.LMDB              (LmdbEnv)
 import           RPKI.Store.Util
 
+import RPKI.RepositorySpec
+
 
 
 storeGroup :: TestTree
@@ -50,6 +52,7 @@ storeGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
         validationResultStoreGroup
+        -- repositoryStoreGroup
     ]
 
 objectStoreGroup :: TestTree
@@ -67,7 +70,7 @@ validationResultStoreGroup = withDB $ \io -> testGroup "Validation result storag
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
     [
-        -- HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io),
+        HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io)
         -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
     ]
 
@@ -98,8 +101,6 @@ should_insert_and_get_all_back_from_object_store io = do
     rwTx objectStore $ \tx -> 
         for_ ros' $ \ro -> 
             putObject tx objectStore $ toStorableObject ro  
-    
-    sizes1 <- sizes objectStore
 
     extracted <- roTx objectStore $ \tx -> getAll tx objectStore
     HU.assertEqual "Not the same objects" (sortOn getHash extracted) (sortOn getHash ros')
@@ -113,13 +114,11 @@ should_insert_and_get_all_back_from_object_store io = do
         forM_ toDelete $ \ro -> 
         deleteObject tx objectStore (getHash ro)
 
-    sizes2 <- sizes objectStore
-
     compareLatestMfts objectStore toKeep aki1
     compareLatestMfts objectStore ros2 aki2  
 
     where
-        removeMftNumberDuplicates ros = List.nubBy sameMftNumber ros
+        removeMftNumberDuplicates = List.nubBy sameMftNumber
             where 
                 sameMftNumber ro1 ro2 = 
                     case (ro1, ro2) of
@@ -129,7 +128,7 @@ should_insert_and_get_all_back_from_object_store io = do
         compareLatestMfts objectStore ros a = do
             mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a         
             
-            let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber) $
+            let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber)
                     [ mft | MftRO mft <- ros, getAKI mft == Just a ]
                 
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'
@@ -144,41 +143,41 @@ should_insert_and_get_all_back_from_validation_result_store io = do
 
     rwTx resultStore $ \tx -> for_ vrs $ \vr -> putVResult tx resultStore world vr
     vrs' <- roTx resultStore $ \tx -> allVResults tx resultStore world
-    
-    
+
     HU.assertEqual "Not the same VResult" (sort vrs) (sort vrs')
 
 
 
--- should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, Env), RepositoryStore LmdbStorage) -> HU.Assertion
--- should_insert_and_get_all_back_from_repository_store io = do  
---     (_, repositoryStore) <- io 
+should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+should_insert_and_get_all_back_from_repository_store io = do  
+    (_, DB {..}) <- io
 
---     ros :: [Repository] <- nubBy (\r1 r2 -> repositoryURI r1 == repositoryURI r2) <$> 
---         (forM [1 :: Int .. 100] $ const $ QC.generate arbitrary)
+    taName1 <- TaName <$> QC.generate arbitrary
+    taName2 <- QC.generate $ (TaName <$> arbitrary) `QC.suchThat` (/= taName1)
 
---     taName1 <- TaName <$> QC.generate arbitrary
---     taName2 <- QC.generate $ (TaName <$> arbitrary) `QC.suchThat` (/= taName1)
+    putStrLn $ "11111111"
 
---     withTas <- forM ros $ \r -> do        
---         ta <- QC.generate $ QC.elements [taName1, taName2]
---         pure (r, ta)        
+    let rsyncPPs = mempty -- fromRsyncPPs repositoriesURIs 
+    rrdpMap :: RrdpMap <- QC.generate arbitrary
+    putStrLn $ "2222222"
+    putStrLn $ "rrdpMap = " <> show rrdpMap
+    -- let rrdpMap :: RrdpMap = mempty
 
---     rwTx repositoryStore $ \tx -> 
---         forM_ withTas $ \(repository, ta) ->            
---             putRepository tx repositoryStore repository ta
+    let createdPPs = rsyncPPs <> PublicationPoints rrdpMap mempty     
 
---     reposForTa1 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName1
---     reposForTa2 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName2
+    storedPps1 <- roTx repositoryStore $ \tx -> 
+                    getTaPublicationPoints tx repositoryStore taName1
 
---     let reposByTa ta = List.sort $ List.map fst $ List.filter ((== ta) . snd) withTas
+    let changeSet' = changeSet storedPps1 createdPPs
 
---     let assertForTa ta repos = HU.assertEqual 
---             ("Not the same repositories for " <> show ta) 
---             repos (reposFromList $ reposByTa ta)
+    rwTx repositoryStore $ \tx -> 
+            applyChangeSet tx repositoryStore changeSet' taName1
 
---     assertForTa taName1 reposForTa1
---     assertForTa taName2 reposForTa2
+    storedPps2 <- roTx repositoryStore $ \tx -> 
+                    getTaPublicationPoints tx repositoryStore taName1
+
+    HU.assertEqual "Not the same publication points" createdPPs storedPps2
+
 
 
 -- should_read_create_change_set_and_apply_repository_store :: IO ((FilePath, Env), RepositoryStore LmdbStorage) -> HU.Assertion

@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -53,6 +54,7 @@ import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
 
 import           RPKI.Util                            (convert, mkHash)
+import qualified Data.Map.Strict as Map
 
 
 
@@ -312,7 +314,13 @@ instance Arbitrary RsyncRepository where
     shrink = genericShrink
 
 instance Arbitrary RepositoryStatus where
-    arbitrary = genericArbitrary
+    arbitrary = arbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpMap where
+    arbitrary = do 
+        rrdps :: [RrdpRepository] <- arbitrary
+        pure $ RrdpMap $ Map.fromList [ (uri, r) | r@RrdpRepository{..} <- take 5 rrdps ]
     shrink = genericShrink
 
 
@@ -574,15 +582,14 @@ instance Arbitrary DistinguishedName where
 instance Arbitrary DateTime where
     arbitrary = timeConvert <$> (arbitrary :: Gen Elapsed)
 instance Arbitrary Elapsed where
-    arbitrary = Elapsed . Seconds <$> (choose (1, 100000000))
+    arbitrary = Elapsed . Seconds <$> choose (1, 100000000)
 
 instance Arbitrary Extensions where
     arbitrary = Extensions <$> oneof
         [ pure Nothing
-        , Just <$> (listOf1 $ oneof
+        , Just <$> listOf1 (oneof
             [ extensionEncode <$> arbitrary <*> (arbitrary :: Gen ExtKeyUsage)
-            ]
-            )
+            ])
         ]
 
 instance Arbitrary ExtKeyUsageFlag where
@@ -625,4 +632,4 @@ instance Arbitrary CRL where
                     <*> arbitrary
 
 arbitraryBS :: Int -> Int -> Gen BS.ByteString
-arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> (BS.pack <$> replicateM l arbitrary)
+arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> BS.pack <$> replicateM l arbitrary

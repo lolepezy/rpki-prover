@@ -6,7 +6,7 @@
 {-# LANGUAGE BangPatterns       #-}
 
 module RPKI.Rsync where
-
+    
 import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
@@ -14,10 +14,10 @@ import           Data.Generics.Product.Typed
 import           Data.Bifunctor
 
 import           Control.Concurrent.STM
+import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.Except
-import           UnliftIO.Exception               hiding (fromEither, fromEitherM)
 
 import qualified Data.ByteString                  as BS
 import           Data.IORef
@@ -41,7 +41,9 @@ import           RPKI.Validation.ObjectValidation
 
 import qualified Control.Concurrent.STM.TBQueue   as Q
 
-import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
+import           System.Directory                 (createDirectoryIfMissing,
+                                                   doesDirectoryExist,
+                                                   getDirectoryContents)
 import           System.FilePath                  ((</>))
 
 import           System.Exit
@@ -49,6 +51,7 @@ import           System.IO
 import           System.Process.Typed
 
 import           System.IO.Posix.MMap             (unsafeMMapFile)
+
 
 
 -- | Download one file using rsync

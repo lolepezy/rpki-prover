@@ -39,6 +39,22 @@ import           Data.IORef.Lifted
 import GHC.Generics (Generic)
 
 
+downloadToStrictBS :: MonadIO m => 
+                    RrdpConf ->
+                    URI -> 
+                    (SomeException -> e) ->
+                    m (Either e (BS.ByteString, Size))
+downloadToStrictBS rrdp uri cantDownload = 
+    downloadToBS rrdp uri cantDownload Mmap.unsafeMMapFile    
+
+downloadToLazyBS :: MonadIO m => 
+                    RrdpConf ->
+                    URI -> 
+                    (SomeException -> e) ->
+                    m (Either e (LBS.ByteString, Size))
+downloadToLazyBS rrdp uri cantDownload = 
+    downloadToBS rrdp uri cantDownload MmapLazy.unsafeMMapFile    
+
 
 -- | Download HTTP content to a temporary file and return lazy/strict ByteString content 
 -- mapped onto a temporary file. Snapshots (and probably some deltas) can be big 
@@ -47,13 +63,13 @@ import GHC.Generics (Generic)
 -- NOTE: The file will be deleted from the temporary directory by withSystemTempFile, 
 -- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
 -- safe to use them after returning from this function.
-downloadContent :: MonadIO m => 
+downloadToBS :: MonadIO m => 
                     RrdpConf ->
                     URI -> 
                     (SomeException -> e) ->
                     (FilePath -> IO bs) ->
                     m (Either e (bs, Size))
-downloadContent RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
+downloadToBS RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
@@ -66,33 +82,16 @@ downloadContent RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
                     content <- mmap name
                     pure $ Right (content, size)
 
-downloadContentToStrictBS :: MonadIO m => 
-                        RrdpConf ->
-                        URI -> 
-                        (SomeException -> e) ->
-                        m (Either e (BS.ByteString, Size))
-downloadContentToStrictBS rrdp uri cantDownload = 
-    downloadContent rrdp uri cantDownload Mmap.unsafeMMapFile    
-
-downloadContentToLazyBS :: MonadIO m => 
-                        RrdpConf ->
-                        URI -> 
-                        (SomeException -> e) ->
-                        m (Either e (LBS.ByteString, Size))
-downloadContentToLazyBS rrdp uri cantDownload = 
-    downloadContent rrdp uri cantDownload MmapLazy.unsafeMMapFile    
-
-
--- | Do the same as `downloadContent` but calculate sha256 hash of the data while 
+-- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
-downloadHashedContent :: (MonadIO m) => 
+downloadHashedLazyBS :: (MonadIO m) => 
                         RrdpConf ->
                         URI -> 
                         Hash -> 
                         (SomeException -> e) ->
                         (Hash -> Either e (LBS.ByteString, Size)) ->
                         m (Either e (LBS.ByteString, Size))
-downloadHashedContent RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
+downloadHashedLazyBS RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
@@ -109,7 +108,7 @@ downloadHashedContent RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch 
                     pure $ Right (content, size)
 
 
-data WhileDownloading = DoNothing | DoHashing
+data ActionWhileDownloading = DoNothing | DoHashing
 
 data OversizedDownloadStream = OversizedDownloadStream Size
     deriving stock (Show, Eq, Ord, Generic)    
@@ -123,7 +122,7 @@ instance Exception OversizedDownloadStream
 streamHttpToFileWithActions :: MonadIO m =>
                             URI -> 
                             (SomeException -> err) -> 
-                            WhileDownloading -> 
+                            ActionWhileDownloading -> 
                             Size -> 
                             Handle -> 
                             m (Either err (Hash, Size))
@@ -166,7 +165,7 @@ fetchRpkiObject :: MonadIO m =>
                     URI ->             
                     ValidatorT vc m RpkiObject
 fetchRpkiObject appContext uri = do 
-    (content, _) <- fromEitherM $ downloadContentToStrictBS 
+    (content, _) <- fromEitherM $ downloadToStrictBS 
                         (appContext ^. typed @Config . typed @RrdpConf)
                         uri 
                         (RrdpE . CantDownloadFile . U.fmtEx)

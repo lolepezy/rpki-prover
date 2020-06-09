@@ -4,9 +4,8 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
 
-module RPKI.RRDP.Update 
-    (updateObjectForRrdpRepository) 
-    where
+module RPKI.RRDP.Update where
+
 import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
@@ -47,19 +46,19 @@ import           Data.IORef.Lifted
 --    - download snapshot or deltas
 --    - do something appropriate with either of them
 -- 
-updateRrdpRepo :: WithVContext vc => 
+downloadAndUpdateRRDP :: WithVContext vc => 
                 AppContext s ->
                 RrdpRepository ->                 
                 (Snapshot -> ValidatorT vc IO Validations) ->
                 ([Delta]  -> ValidatorT vc IO Validations) ->
                 ValidatorT vc IO (RrdpRepository, Validations)
-updateRrdpRepo 
+downloadAndUpdateRRDP 
         AppContext{..} 
         repo@(RrdpRepository repoUri _ _)    
         handleSnapshot                       -- ^ function to handle the snapshot 
         handleDeltas =                       -- ^ function to handle all deltas
     do
-    (notificationXml, _) <- fromEitherM $ downloadContentToLazyBS 
+    (notificationXml, _) <- fromEitherM $ downloadToLazyBS 
                                 rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- hoistHere $ rrdpNextStep repo notification
@@ -78,7 +77,7 @@ updateRrdpRepo
 
         useSnapshot (SnapshotInfo uri hash) = do 
             logDebugM logger [i|Downloading snapshot: #{unURI uri} |]        
-            (rawContent, _) <- fromEitherM $ downloadHashedContent rrdpConf uri hash
+            (rawContent, _) <- fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
                                 (RrdpE . CantDownloadSnapshot . show)                 
                                 (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
             snapshot    <- hoistHere $ parseSnapshot rawContent
@@ -94,7 +93,7 @@ updateRrdpRepo
             pure (repoFromDeltas deltas notification, validations)
             where
                 downloadDelta di@(DeltaInfo uri hash serial) = do
-                    rawContent <- downloadHashedContent rrdpConf uri hash
+                    rawContent <- downloadHashedLazyBS rrdpConf uri hash
                         (RrdpE . CantDownloadDelta . show)                         
                         (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)                    
                     pure $! (di,) <$> rawContent
@@ -170,7 +169,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
     pure repo
     where
         updateRepo' bottleneck added removed =     
-            updateRrdpRepo appContext repository saveSnapshot saveDeltas
+            downloadAndUpdateRRDP appContext repository saveSnapshot saveDeltas
             where
                 cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
 

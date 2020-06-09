@@ -43,17 +43,14 @@ dependencies:
 - cassava
 - cborg
 - containers
-- conduit
 - co-log
 - co-log-core
 - cryptonite
 - cryptohash-sha256
-- data-has
 - deepseq
 - directory
 - dlist
 - exceptions
-- filemanip
 - filepath
 - generic-lens
 - hashable
@@ -61,7 +58,6 @@ dependencies:
 - hexpat
 - hourglass
 - hourglass-orphans
-- http-conduit
 - hw-ip
 - interpolate
 - lens
@@ -73,10 +69,8 @@ dependencies:
 - modern-uri
 - monad-control
 - mtl
-- multimap
 - optparse-applicative
 - optparse-generic
-- parallel
 - pipes
 - primitive
 - semigroups
@@ -98,7 +92,6 @@ dependencies:
 - time
 - transformers
 - temporary
-- validation
 - wreq
 - x509
 - x509-validation
@@ -109,8 +102,6 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
-- unliftio
-- unliftio-core
 - vector
 - warp
 
@@ -136,6 +127,7 @@ executables:
     - -Wall    
     - -rtsopts
     - -with-rtsopts=-N    
+    # - -fPIC
     # cc-options: -static
     # ld-options: -static -pthread  
     dependencies:
