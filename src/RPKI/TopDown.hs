@@ -469,20 +469,15 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                         let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
                                                 map snd $ mftEntries $ getCMSContent $ extract mft
 
-                        mftProblems <- parallelTasks (cpuBottleneck appThreads) childrenHashes $ \h -> do
+                        -- Be very strict about the manifest entries, if at least one of them 
+                        -- is broken, the whole manifest is considered broken.
+                        childrenResults <- parallelTasks (cpuBottleneck appThreads) childrenHashes $ \h -> do
                             ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
                             case ro of 
-                                Nothing  -> pure $ Left $ ManifestEntryDontExist h
-                                Just ro' -> Right <$> liftIO (validateChild vContext' validCrl ro')
+                                Nothing  -> vError $ ManifestEntryDontExist h
+                                Just ro' -> liftIO $ validateChild vContext' validCrl ro'
 
-                        -- TODO Here we should act depending on how strict we want to be,  
-                        -- Interrupt the whole thing or just continue with a warning            
-                        case mftProblems of
-                            [] -> pure emptyPublicationPoints
-                            _  -> do 
-                                let (broken, pps) = partitionEithers mftProblems
-                                mapM_ vWarn broken
-                                pure $! mconcat pps 
+                        pure $ mconcat childrenResults
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations   
     
