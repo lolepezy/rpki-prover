@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE DataKinds                 #-}
@@ -15,6 +16,7 @@ import           Control.Monad
 import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import           Data.List                         as List
+import qualified Data.Map.Strict                   as Map
 import           Data.Maybe
 import qualified Data.Text                         as Text
 
@@ -28,7 +30,6 @@ import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Version
 import           RPKI.Orphans
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
@@ -37,13 +38,16 @@ import           RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
-import           RPKI.Store.Repository
 import           RPKI.Store.Database
+import           RPKI.Store.Repository
+import           RPKI.Version
 
 import           RPKI.Store.Base.LMDB              (LmdbEnv)
 import           RPKI.Store.Util
 
-import RPKI.RepositorySpec
+import           RPKI.RepositorySpec
+import GHC.Generics (Generic)
+
 
 
 
@@ -51,8 +55,8 @@ storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
-        validationResultStoreGroup
-        -- repositoryStoreGroup
+        validationResultStoreGroup,
+        repositoryStoreGroup
     ]
 
 objectStoreGroup :: TestTree
@@ -147,68 +151,48 @@ should_insert_and_get_all_back_from_validation_result_store io = do
     HU.assertEqual "Not the same VResult" (sort vrs) (sort vrs')
 
 
-
 should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_repository_store io = do  
     (_, DB {..}) <- io
 
     taName1 <- TaName <$> QC.generate arbitrary
-    taName2 <- QC.generate $ (TaName <$> arbitrary) `QC.suchThat` (/= taName1)
 
-    putStrLn $ "11111111"
-
-    let rsyncPPs = mempty -- fromRsyncPPs repositoriesURIs 
-    rrdpMap :: RrdpMap <- QC.generate arbitrary
-    putStrLn $ "2222222"
-    putStrLn $ "rrdpMap = " <> show rrdpMap
-    -- let rrdpMap :: RrdpMap = mempty
+    let rsyncPPs = fromRsyncPPs repositoriesURIs 
+    rrdpMap :: RrdpMap <- QC.generate arbitrary    
 
     let createdPPs = rsyncPPs <> PublicationPoints rrdpMap mempty     
 
     storedPps1 <- roTx repositoryStore $ \tx -> 
                     getTaPublicationPoints tx repositoryStore taName1
 
-    let changeSet' = changeSet storedPps1 createdPPs
+    let changeSet1 = changeSet storedPps1 createdPPs
 
     rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet' taName1
+            applyChangeSet tx repositoryStore changeSet1 taName1
 
     storedPps2 <- roTx repositoryStore $ \tx -> 
                     getTaPublicationPoints tx repositoryStore taName1
 
     HU.assertEqual "Not the same publication points" createdPPs storedPps2
 
+    rsyncPPs2 <- fromRsyncPPs <$> QC.generate (QC.sublistOf repositoriesURIs)
 
+    let RrdpMap rrdpsM = rrdpMap    
+    keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
+    let rrdpMap2 = RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
 
--- should_read_create_change_set_and_apply_repository_store :: IO ((FilePath, Env), RepositoryStore LmdbStorage) -> HU.Assertion
--- should_read_create_change_set_and_apply_repository_store io = do  
---     (_, repositoryStore) <- io 
+    let shrunkPPs = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty     
 
---     ros :: [Repository] <- nubBy (\r1 r2 -> repositoryURI r1 == repositoryURI r2) <$> 
---         (forM [1 :: Int .. 100] $ const $ QC.generate arbitrary)
+    let changeSet2 = changeSet storedPps2 shrunkPPs
 
---     taName1 <- TaName <$> QC.generate arbitrary
---     taName2 <- QC.generate $ (TaName <$> arbitrary) `QC.suchThat` (/= taName1)
+    rwTx repositoryStore $ \tx -> 
+            applyChangeSet tx repositoryStore changeSet2 taName1
 
---     withTas <- forM ros $ \r -> do        
---         ta <- QC.generate $ QC.elements [taName1, taName2]
---         pure (r, ta)        
+    storedPps3 <- roTx repositoryStore $ \tx -> 
+                    getTaPublicationPoints tx repositoryStore taName1    
 
---     rwTx repositoryStore $ \tx -> 
---         forM_ withTas $ \(repository, ta) ->            
---             putRepository tx repositoryStore repository ta
+    HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
---     reposForTa1 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName1
---     reposForTa2 <- roTx repositoryStore $ \tx -> getTaPublicationPoints tx repositoryStore taName2
-
---     let reposByTa ta = List.sort $ List.map fst $ List.filter ((== ta) . snd) withTas
-
---     let assertForTa ta repos = HU.assertEqual 
---             ("Not the same repositories for " <> show ta) 
---             repos (reposFromList $ reposByTa ta)
-
---     assertForTa taName1 reposForTa1
---     assertForTa taName2 reposForTa2
     
 
 generateSome :: Arbitrary a => IO [a]

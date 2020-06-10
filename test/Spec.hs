@@ -17,7 +17,6 @@ main = defaultMain $ testGroup "All tests" [
         rrdpXmlLazyParsingGroup,
         rrdpUpdateSpec,
         storeGroup,
-        repositoryStoreGroup,
         resourceGroup,
         repositoryGroup
     ]  

@@ -74,7 +74,7 @@ instance Arbitrary Serial where
 
 instance Arbitrary SessionId where
     arbitrary = SessionId . BSS.toShort . convert <$> 
-        (listOf1 $ elements $ ['a'..'z'] ++ ['0'..'9'])
+        listOf1 (elements $ ['a'..'z'] ++ ['0'..'9'])
 
 instance Arbitrary Version where
     arbitrary = genericArbitrary
@@ -314,13 +314,13 @@ instance Arbitrary RsyncRepository where
     shrink = genericShrink
 
 instance Arbitrary RepositoryStatus where
-    arbitrary = arbitrary
+    arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary RrdpMap where
     arbitrary = do 
         rrdps :: [RrdpRepository] <- arbitrary
-        pure $ RrdpMap $ Map.fromList [ (uri, r) | r@RrdpRepository{..} <- take 5 rrdps ]
+        pure $ RrdpMap $ Map.fromList [ (uri, r) | r@RrdpRepository{..} <- rrdps ]
     shrink = genericShrink
 
 
