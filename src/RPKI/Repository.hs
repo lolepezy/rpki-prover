@@ -56,7 +56,7 @@ data RrdpRepository = RrdpRepository {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data PublicationPoint = RrdpPP !RrdpRepository | 
+data PublicationPoint = RrdpPP  !RrdpRepository | 
                         RsyncPP !RsyncPublicationPoint
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
@@ -364,34 +364,16 @@ changeSet
     (PublicationPoints (RrdpMap rrdpNew) (RsyncMap rsyncNew)) = 
     (putNewRrdps <> removeOldRrdps, putNewRsyncs <> removeOldRsyncs)
     where
+        -- TODO Don't generate removes if there's a PUT for the same URL
         rrdpOldSet = Set.fromList $ Map.elems rrdpOld
         rrdpNewSet = Set.fromList $ Map.elems rrdpNew
-        putNewRrdps    = map Put    $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew
+        putNewRrdps    = map Put    $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew        
         removeOldRrdps = map Remove $ filter (not . (`Set.member` rrdpNewSet)) $ Map.elems rrdpOld
 
         rsyncOldList = Map.toList rsyncOld
         rsyncNewList = Map.toList rsyncNew
-        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList
+        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList
-
-
--- | Derive a change set to apply to the 
-changeSetFromMap :: Map URI Repository -> Map URI Repository -> 
-                    ([Change RrdpRepository], [Change (URI, RsyncParent)])
-changeSetFromMap oldRepos newRepos = 
-    (putNewRrdps <> removeOldRrdps, putNewRsyncs <> removeOldRsyncs)
-    where
-        oldRepoList = Map.toList oldRepos
-        newRepoList = Map.toList newRepos
-
-        putNewRrdps    = [ Put r    | (u, rr@(RrdpR r)) <- newRepoList, Map.lookup u oldRepos /= Just rr ]
-        removeOldRrdps = [ Remove r | (u, rr@(RrdpR r)) <- oldRepoList, Map.lookup u newRepos /= Just rr ]
-
-        putNewRsyncs    = [ Put (u, Root status) | 
-            (u, r@(RsyncR (RsyncRepository _ status)) ) <- newRepoList, Map.lookup u oldRepos /= Just r ]
-
-        removeOldRsyncs = [ Remove (u, Root status) | 
-            (u, r@(RsyncR (RsyncRepository _ status))) <- newRepoList, Map.lookup u oldRepos /= Just r ]
 
 
 updateStatuses :: Foldable t => PublicationPoints -> t (Repository, RepositoryStatus) -> PublicationPoints
