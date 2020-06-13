@@ -32,6 +32,9 @@ Pros: cache will be smaller
 Cons: More complicated. Needs code to introduce repositoryId and store (objectHash -> repositoryId) mapping. Can cause delete-re-add kind of bevavior for sloppily maintained repositories.
 
 
+So far, the planned implementation is the "option 1".
+
+
 ## VRP cache
 
 - Clean up all previous VRPs in cache whenever the new version is completed.

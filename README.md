@@ -4,7 +4,7 @@ Implementation of the RPKI relying party software with the focus on a reasonable
 
 At the moment it is only the daemon written in Haskell and there's some work planned for the UI. It is only able to do the validation once and give out the VRPs. 
 
-Some of the decisions about the architecture and general flow are documented in ./doc/*.md files.
+Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. The doc/TODO.md file includes all the currently planned issue fixes and improvements.
 
 Currently implemented features are
 
