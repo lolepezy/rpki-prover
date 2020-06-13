@@ -4,6 +4,8 @@ Implementation of the RPKI relying party software with the focus on a reasonable
 
 At the moment it is only the daemon written in Haskell and there's some work planned for the UI. It is only able to do the validation once and give out the VRPs. 
 
+Some of the decisions about the architecture and general flow are documented in ./doc/*.md files.
+
 Currently implemented features are
 
 - Fetching from both rsync and RRDP repositories
@@ -14,7 +16,7 @@ Currently implemented features are
 
 Current and future work
 - Static binaries (at least for linux), packaging and a Docker image
-- Properly scheduled revalidation, cache cleanup
+- Cache cleanup, scheduled revalidation
 - Support for RTR protocol
 - SLURM support
 - Fancy UI

@@ -27,11 +27,10 @@
 
 ---------------------------------------------------------------------------
 
-- Delta processing can result in much bigger heap than snaphiost processing? fix it if that's the case.
+
 - Have full path from the top repoistory to all the delegates ones in the VContext.
 - Add periodic re-validation
 - Clean up objects that are not touched by validations or not touched by repository downloads
-- Clean up old VRPs 
 - Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Read config and CLI options
