@@ -2,52 +2,13 @@
 
 module RPKI.Validation.Crypto where
 
-import           Data.X509            hiding (getCertificate)
-import           Data.X509.Validation hiding (InvalidSignature)
+import           Data.X509            (certPubKey)
+import           Data.X509.Validation (SignatureVerification, verifySignature)
 
 import           RPKI.Domain
 
-    
--- | Validate that a given object was signed by the public key of the given certificate
-validateSignature :: RpkiObject -> CerObject -> SignatureVerification
-validateSignature rpkiObject parentCert = 
-    verifySignature signAlgorithm pubKey signData sign
-    where        
-        (signAlgorithm, signData, sign) = getSign rpkiObject
-        pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
 
-        getSign (CerRO resourceCert) = 
-            (algorithm, signedData, signature')
-            where    
-                CertificateWithSignature {
-                    cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
-                    cwsSignature = SignatureValue signature',
-                    cwsEncoded = signedData
-                } = getCertWithSignature resourceCert     
-                
-        getSign (CrlRO crl) = (algorithm, encoded, signature')
-            where
-                SignCRL { 
-                    signatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
-                    signatureValue = SignatureValue signature',
-                    encodedValue = encoded 
-                } = extract crl
-
-        getSign (MftRO signObject) = getSignCMS signObject
-        getSign (RoaRO signObject) = getSignCMS signObject
-        getSign (GbrRO signObject) = getSignCMS signObject        
-
-        getSignCMS cms = (algorithm, encodedCert, signature')
-            where                 
-                CertificateWithSignature
-                    _
-                    (SignatureAlgorithmIdentifier algorithm) 
-                    (SignatureValue signature') 
-                    encodedCert = getEECert signObject
-                CMS signObject = extract cms
-
-
--- | Validate the signature of a CRL object
+-- | Validate the signature of an certificate-holding object
 validateCertSignature :: (WithResourceCertificate c, WithResourceCertificate parent) => 
                         c -> parent -> SignatureVerification                
 validateCertSignature certificate parentCert = 
@@ -64,12 +25,12 @@ validateCertSignature certificate parentCert =
 -- | Validate the signature of a CRL object
 validateCRLSignature :: WithResourceCertificate c => CrlObject -> c -> SignatureVerification                
 validateCRLSignature crl parentCert = 
-    verifySignature signAlgorithm pubKey encoded signature
+    verifySignature signAlgorithm pubKey encoded signature'
     where
         pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
         SignCRL { 
             signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
-            signatureValue = (SignatureValue signature),
+            signatureValue = (SignatureValue signature'),
             encodedValue = encoded 
         } = extract crl
 

@@ -15,6 +15,10 @@ import           Control.Concurrent.Async.Lifted
 import           Control.Monad.Trans.Control
 import           Data.IORef.Lifted
 
+import RPKI.Time
+
+import Debug.Trace
+
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
@@ -46,50 +50,54 @@ txConsumeFold poolSize as produce withTx consume accum0 =
                     consume tx a accum       
 
    
-
--- data NextTx tx a = StartTx | FlushTx | InTx tx a
-
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
 --  
--- txConsumeFoldChunked :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
---             Natural ->            
---             t a ->                      -- ^ traversed collection
---             (a -> m q) ->               -- ^ producer, called for every item of the traversed argument
---             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
---             Natural -> 
---             (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
---             r ->                        -- ^ fold initial value
---             m r
--- txConsumeFoldChunked parallelismDegree as produce withTx chunkSize consume accum0 =
---     snd <$> bracketChan 
---                 (atLeastOne parallelismDegree)
---                 writeAll 
---                 (readAll chunkSize)
---                 (const $ pure ())
---     where
---         writeAll queue = forM_ as $
---             liftIO . atomically . Q.writeTBQueue queue <=< produce
+txConsumeFoldChunked :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+            Natural ->            
+            t a ->                      -- ^ traversed collection
+            (a -> m q) ->               -- ^ producer, called for every item of the traversed argument
+            ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
+            Natural -> 
+            (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
+            r ->                        -- ^ fold initial value
+            m r
+txConsumeFoldChunked parallelismDegree as produce withTx chunkSize consume accum0 =
+    snd <$> bracketChanClosable 
+                (atLeastOne parallelismDegree)
+                writeAll 
+                readAll 
+                (const $ pure ())
+    where
+        writeAll queue = forM_ as $
+            liftIO . atomically . writeClosableQueue queue <=< produce
 
---         readAll leftToRead queue = do 
---             n <- next
---             case n of
---                 StartTx -> withTx $ \tx -> foldM (f tx) accum0 as 
---                 InTx tx a  -> consume tx a accum
---             where                    
---                 next = do 
---                     z <- liftIO $ atomically $ Q.tryReadTBQueue queue    
---                     case z of 
---                         Nothing -> pure FlushTx
---                         Just a 
---                             | leftToRead == 0 -> pure FlushTx
---                             | otherwise       -> InTx a
+        readAll queue = 
+            go Nothing chunkSize accum0
+            where
+                go maybeTx leftToRead accum = do 
+                    n <- liftIO $ atomically $ readCQueue queue                            
+                    case n of
+                        Nothing      -> pure accum
+                        Just nextOne ->
+                            case maybeTx of
+                                Nothing -> do 
+                                    accum' <- do 
+                                        -- Now n1 <- thisMoment
+                                        -- traceM $ show n1 <> ": starting transaction"
+                                        withTx $ \tx -> do 
+                                            -- Now n2 <- thisMoment
+                                            -- traceM $ show n2 <> ": actually started transaction"
+                                            work tx nextOne
+                                    go Nothing chunkSize accum' 
+                                Just tx -> work tx nextOne
+                    where                    
+                        work tx element = do 
+                            accum' <- consume tx element accum
+                            case leftToRead of
+                                0 -> pure accum'
+                                _ -> go (Just tx) (leftToRead - 1) accum'
 
-            
-            -- where
-            --     f tx accum _ = do
-            --         a <- liftIO $ atomically $ Q.readTBQueue queue
-            --         consume tx a accum  
 
 bracketChan :: (MonadBaseControl IO m, MonadIO m) =>
                 Natural ->
@@ -110,13 +118,33 @@ bracketChan size produce consume kill = do
                 Just as -> kill as >> killAll queue
 
 
+bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
+                Natural ->
+                (ClosableQueue t -> m b) ->
+                (ClosableQueue t -> m c) ->
+                (t -> m w) ->
+                m (b, c)
+bracketChanClosable size produce consume kill = do
+    queue <- liftIO $ atomically $ newCQueue size
+    concurrently 
+            (produce queue `finally` liftIO (atomically $ closeQueue queue)) 
+            (consume queue)
+        `finally`
+            killAll queue
+    where
+        killAll queue = do
+            a <- liftIO $ atomically $ readCQueue queue
+            case a of   
+                Nothing -> pure ()
+                Just as -> kill as >> killAll queue
+
 data QState = QWorks | QClosed
 
 -- Simplest closeable queue  
 data ClosableQueue a = ClosableQueue !(TBQueue a) !(TVar QState)    
 
-createClosableQueue :: Natural -> STM (ClosableQueue a)
-createClosableQueue n = do 
+newCQueue :: Natural -> STM (ClosableQueue a)
+newCQueue n = do 
     q <- newTBQueue n
     s <- newTVar QWorks
     pure $ ClosableQueue q s
@@ -158,27 +186,32 @@ readChunk leftToRead q = do
         Nothing -> pure []  
 
 
--- | Simple straioghtforward implementation of a thread pool for submition of tasks.
--- 
-parallelTasks1 :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
-                Bottleneck -> t a -> (a -> m b) -> m (t b)
-parallelTasks1 threads@Bottleneck {..} as f =
-    snd <$> bracketChan (atLeastOne maxSize) writeAll readAll cancelTask            
-    where
-        writeAll queue = forM_ as $ \a -> do
-            task <- newTask (f a) threads Requestor
-            liftIO $ atomically $ Q.writeTBQueue queue task
-        readAll queue = forM as $ \_ -> do
-            aa <- liftIO . atomically $ Q.readTBQueue queue
-            waitTask aa    
+readCQueue :: ClosableQueue a -> STM (Maybe a)
+readCQueue (ClosableQueue q queueState) = do 
+    z <- Q.tryReadTBQueue q
+    case z of 
+        Just z' -> pure $ Just z'
+        Nothing -> 
+            readTVar queueState >>= \case 
+                QClosed -> pure Nothing
+                QWorks  -> retry
+
+readCQueuState :: ClosableQueue a -> STM QState
+readCQueuState (ClosableQueue _ queueState) = readTVar queueState
 
 -- | Simple straioghtforward implementation of a thread pool for submition of tasks.
 -- 
 parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck -> t a -> (a -> m b) -> m (t b)
-parallelTasks threads@Bottleneck {..} as f = do
-    tasks <- forM as $ \a -> newTask (f a) threads Submitter
+parallelTasks bottleneck@Bottleneck {..} as f = do
+    tasks <- forM as $ \a -> newTask (f a) bottleneck Submitter
     forM tasks waitTask
+
+parallelTasksN :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+                Natural -> t a -> (a -> m b) -> m (t b)
+parallelTasksN n as f = do
+    bottleneck <- liftIO $ atomically $ newBottleneck n
+    parallelTasks bottleneck as f    
 
 -- Thread pool value, current and maximum size
 data Bottleneck = Bottleneck {
@@ -186,11 +219,11 @@ data Bottleneck = Bottleneck {
     currentSize :: TVar Natural
 }
 
-makeBottleneck :: Natural -> STM Bottleneck
-makeBottleneck n = Bottleneck n <$> newTVar 0
+newBottleneck :: Natural -> STM Bottleneck
+newBottleneck n = Bottleneck n <$> newTVar 0
 
-makeBottleneckIO :: Natural -> IO Bottleneck
-makeBottleneckIO = atomically . makeBottleneck
+newBottleneckIO :: Natural -> IO Bottleneck
+newBottleneckIO = atomically . newBottleneck
 
 -- Who is going to execute a task when the bottleneck is busy
 data BottleneckFullExecutor = Requestor | Submitter
@@ -245,14 +278,14 @@ cancelTask (AsyncTask a)     = cancel a
 
 
 
-listProducer :: [a] -> IO (IO (Maybe a))
-listProducer as = do
-    current <- newIORef as
-    pure $ readIORef current >>= \case
-                [] -> pure Nothing
-                (a : as') -> do
-                    writeIORef current as'
-                    pure $ Just a 
+-- listProducer :: [a] -> IO (IO (Maybe a))
+-- listProducer as = do
+--     current <- newIORef as
+--     pure $ readIORef current >>= \case
+--                 [] -> pure Nothing
+--                 (a : as') -> do
+--                     writeIORef current as'
+--                     pure $ Just a 
 
 
 -- | Utility function for a specific case of producer-consumer pair 

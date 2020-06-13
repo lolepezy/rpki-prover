@@ -125,35 +125,35 @@ getFileNames = do
     find always expr repository 
 
       
-validateKeys :: [RpkiObject] -> Either String [SignatureVerification]
-validateKeys objects = 
-  case [ ro | ro <- objects, isNothing $ getAKI ro ] of
-    []      -> Left $ "No TA certificate"    
-    taCerts -> Right $ concat [ validateChildren ro | ro <- taCerts ]
-  where    
-    validateChildren :: RpkiObject -> [SignatureVerification]
-    validateChildren (CerRO parentCert) = concat childrenVerification 
-      where 
-        childrenVerification = parMap strategy 
-            (validateChildParent parentCert) $ 
-            children parentCert
-        strategy = parListChunk 1000 rseq
-    validateChildren _ = []
+-- validateKeys :: [RpkiObject] -> Either String [SignatureVerification]
+-- validateKeys objects = 
+--   case [ ro | ro <- objects, isNothing $ getAKI ro ] of
+--     []      -> Left $ "No TA certificate"    
+--     taCerts -> Right $ concat [ validateChildren ro | ro <- taCerts ]
+--   where    
+--     validateChildren :: RpkiObject -> [SignatureVerification]
+--     validateChildren (CerRO parentCert) = concat childrenVerification 
+--       where 
+--         childrenVerification = parMap strategy 
+--             (validateChildParent parentCert) $ 
+--             children parentCert
+--         strategy = parListChunk 1000 rseq
+--     validateChildren _ = []
 
-    validateChildParent parentCert = \case 
-      ro@(MftRO mft) -> eeSignAndCMSSign ro $ extract mft 
-      ro@(RoaRO roa) -> eeSignAndCMSSign ro $ extract roa
-      ro@(GbrRO gbr) -> eeSignAndCMSSign ro $ extract gbr
-      ro@(CerRO _) -> [validateSignature ro parentCert] <> validateChildren ro
-      where
-        eeSignAndCMSSign  :: RpkiObject -> CMS a -> [SignatureVerification]
-        eeSignAndCMSSign ro cms = [ validateCMSSignature cms, validateSignature ro parentCert ]            
+--     validateChildParent parentCert = \case 
+--       ro@(MftRO mft) -> eeSignAndCMSSign ro $ extract mft 
+--       ro@(RoaRO roa) -> eeSignAndCMSSign ro $ extract roa
+--       ro@(GbrRO gbr) -> eeSignAndCMSSign ro $ extract gbr
+--       ro@(CerRO _) -> [validateSignature ro parentCert] <> validateChildren ro
+--       where
+--         eeSignAndCMSSign  :: RpkiObject -> CMS a -> [SignatureVerification]
+--         eeSignAndCMSSign ro cms = [ validateCMSSignature cms, validateSignature ro parentCert ]            
 
-    children a = MultiMap.lookup (AKI ki) akiMap
-      where
-        SKI ki = getSKI a
+--     children a = MultiMap.lookup (AKI ki) akiMap
+--       where
+--         SKI ki = getSKI a
 
-    akiMap = byAKIMap objects
+--     akiMap = byAKIMap objects
     
 
 bySKIMap :: [RpkiObject] -> MultiMap SKI RpkiObject
@@ -204,8 +204,8 @@ createAppContext logger = do
     let parallelism = Parallelism getParallelism 64
 
     appThreads <- liftIO $ do 
-        cpuBottleneck <- makeBottleneckIO $ cpuParallelism parallelism
-        ioBottleneck  <- makeBottleneckIO $ ioParallelism parallelism
+        cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism
+        ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism
         pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     -- TODO read stuff from the config, CLI

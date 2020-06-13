@@ -84,8 +84,10 @@ downloadAndUpdateRRDP
             validations <- handleSnapshot snapshot
             pure (repoFromSnapshot snapshot, validations)            
 
-        useDeltas sortedDeltas notification = do            
-            rawContents <- parallelTasks (ioBottleneck appThreads) sortedDeltas downloadDelta
+        useDeltas sortedDeltas notification = do
+            -- TODO Do not thrash the same server with too big amount of parallel 
+            -- requests, it's mostly counter-productive and rude
+            rawContents <- parallelTasksN 4 sortedDeltas downloadDelta
             deltas      <- forM rawContents $ \case
                                 Left e                     -> appError e
                                 Right (_, (rawContent, _)) -> hoistHere $ parseDelta rawContent
@@ -162,10 +164,10 @@ updateObjectForRrdpRepository :: Storage s =>
 updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } objectStore = do
     added   <- newIORef (0 :: Int)
     removed <- newIORef (0 :: Int)        
-    (repo, elapsed) <- timedMS $ updateRepo' (cpuBottleneck appThreads) added removed
+    repo <- updateRepo' (cpuBottleneck appThreads) added removed
     a <- readIORef added        
     r <- readIORef removed
-    logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}, took #{elapsed}ms|]
+    logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}|]
     pure repo
     where
         updateRepo' bottleneck added removed =     
@@ -179,9 +181,8 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                     - one thread to save objects, read asyncs, waits for them
                       and save the results into the DB.
                 -} 
-                saveSnapshot (Snapshot _ _ _ snapshotItems) = do                    
-                    logDebugM logger [i|Saving snapshot for the repository: #{repository} |]
-                    fromTry 
+                saveSnapshot (Snapshot _ _ _ snapshotItems) = do                                        
+                    (r, elapsed) <- timedMS $ fromTry 
                         (StorageE . StorageError . U.fmtEx)                
                         (txConsumeFold 
                             cpuParallelism
@@ -190,6 +191,8 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                             (rwTx objectStore) 
                             chanToStorage   
                             (mempty :: Validations))                        
+                    logDebugM logger [i|Saved snapshot for the repository: #{repository}, took #{elapsed}ms |]
+                    pure r
                     where
                         storableToChan (SnapshotPublish uri encodedb64) = do
                             -- logDebugM logger [i|rrdp uri = #{uri}|]               

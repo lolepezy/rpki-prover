@@ -12,6 +12,7 @@ import           Data.Int
 import           Data.Proxy
 import           Data.Text            (Text)
 import qualified Data.ByteString.Short   as BSS
+import qualified Data.ByteString.Builder as BB
 
 import           GHC.Generics         (Generic)
 
@@ -57,11 +58,11 @@ instance DefaultOrdered VRP
 instance ToNamedRecord VRP
 
 instance ToField ASN where
-    toField (ASN as) = "AS" <> toField as
+    toField (ASN as) = ("AS" :: Csv.Field) <> toField as
 
 instance ToField IpPrefix where
-    toField (Ipv4P (Ipv4Prefix p)) = toField $ show p
-    toField (Ipv6P (Ipv6Prefix p)) = toField $ show p
+    toField (Ipv4P (Ipv4Prefix p)) = convert $ show p
+    toField (Ipv6P (Ipv6Prefix p)) = convert $ show p
 
 
 -- JSON

@@ -117,8 +117,8 @@ createAppContext logger = do
     let parallelism = Parallelism getParallelism 64
 
     appThreads <- liftIO $ do 
-        cpuBottleneck <- makeBottleneckIO $ cpuParallelism parallelism
-        ioBottleneck  <- makeBottleneckIO $ ioParallelism parallelism
+        cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism
+        ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism
         pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     -- TODO read stuff from the config, CLI

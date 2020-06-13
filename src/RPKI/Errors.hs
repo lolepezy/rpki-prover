@@ -176,6 +176,8 @@ instance {-# OVERLAPPING #-} WithVContext VContext where
     getVC = id
     childVC = flip childVContext
 
+-- TODO This one needs UnddecidableInstances which is probably bad, 
+-- so do something about it
 instance (Generic a, HasType VContext a) => WithVContext a where 
     getVC = getTyped
     childVC u v = setTyped (childVContext (getVC v) u) v

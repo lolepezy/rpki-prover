@@ -102,7 +102,7 @@ makeTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -
 makeTopDownContext AppContext {..} taName publicationPoints now certificate = liftIO $ do             
     worldVersion <- getWorldVerion dynamicState
     atomically $ TopDownContext (Just $ createVerifiedResources certificate) <$> 
-        createClosableQueue 100000 <*>
+        newCQueue 100000 <*>
         newTVar publicationPoints <*>
         newTVar Map.empty <*>
         newTVar Set.empty <*>
