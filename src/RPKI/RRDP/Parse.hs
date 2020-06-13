@@ -102,14 +102,15 @@ parseDelta xml = makeDelta =<< folded
             Left $ BrokenXml "'withdraw' before 'delta'"            
         foldItems (Just sn, ps) (X.StartElement "publish" as) = do
             dp <- parseDeltaPublish as
-            pure (Just sn, DP dp : ps)
+            pure (Just sn, let !z = DP dp : ps in z)
         foldItems (Just sn, ps) (X.StartElement "withdraw" as) = do
             dw <- parseDeltaWithdraw as
-            pure (Just sn, DW dw : ps)        
+            pure (Just sn, let !z = DW dw : ps in z)        
     
         foldItems (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])
         foldItems (Just sn, DP (DeltaPublish uri' h (EncodedBase64 c)) : ps) (X.CharacterData cd) = 
-            let nc = c <> trim cd in Right (Just sn, DP (DeltaPublish uri' h (EncodedBase64 nc)) : ps)
+            let !nc = c <> trim cd 
+            in Right (Just sn, let !z = DP (DeltaPublish uri' h (EncodedBase64 nc)) : ps in z)
         foldItems d@(Just _, DW (DeltaWithdraw _ _) : _) (X.CharacterData cd) = 
             if BS.all isSpace_ cd 
                 then Right d 

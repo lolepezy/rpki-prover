@@ -87,18 +87,15 @@ downloadAndUpdateRRDP
         useDeltas sortedDeltas notification = do
             -- TODO Do not thrash the same server with too big amount of parallel 
             -- requests, it's mostly counter-productive and rude
-            rawContents <- parallelTasksN 4 sortedDeltas downloadDelta
-            deltas      <- forM rawContents $ \case
-                                Left e                     -> appError e
-                                Right (_, (rawContent, _)) -> hoistHere $ parseDelta rawContent
+            deltas      <- parallelTasksN 4 sortedDeltas downloadDelta            
             validations <- handleDeltas deltas
             pure (repoFromDeltas deltas notification, validations)
             where
-                downloadDelta di@(DeltaInfo uri hash serial) = do
-                    rawContent <- downloadHashedLazyBS rrdpConf uri hash
-                        (RrdpE . CantDownloadDelta . show)                         
-                        (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)                    
-                    pure $! (di,) <$> rawContent
+                downloadDelta (DeltaInfo uri hash serial) = do
+                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
+                                        (RrdpE . CantDownloadDelta . show)                         
+                                        (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)    
+                    hoistHere $ parseDelta rawContent
 
         repoFromSnapshot :: Snapshot -> RrdpRepository
         repoFromSnapshot (Snapshot _ sid s _) = repo { rrdpMeta = Just (sid, s) }
