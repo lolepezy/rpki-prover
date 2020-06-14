@@ -27,15 +27,24 @@
 
 ---------------------------------------------------------------------------
 
-
+- Relationship between ExceptT, forM and channles -- it's all can be done better only with exceptions.
+- RRDP transaction must roll back in case of an error
+- Fix txConsumeFold for forM :: ExceptT a ... -> 
+- Delta processing can result in much bigger heap than snaphiost processing? fix it if that's the case.
 - Have full path from the top repoistory to all the delegates ones in the VContext.
+- add 'bootlneck' implementation as 'minimum of two bottlnecks at any moment'
+- it looks like validCount number is flaky and changes depending on (check it)
 - Add periodic re-validation
 - Clean up objects that are not touched by validations or not touched by repository downloads
+- Clean up old VRPs 
 - Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Read config and CLI options
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 - Refactor the parallel two-thread stuff to use streaming
+
+- Gather stats on hjow much objects are updated/deleted in delta/snapshot updates to make better 
+  choices when to download one of another.
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
 
