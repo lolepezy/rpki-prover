@@ -39,8 +39,6 @@ import           RPKI.Store.Database
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 
-import qualified Control.Concurrent.STM.TBQueue   as Q
-
 import           System.Directory                 (createDirectoryIfMissing,
                                                    doesDirectoryExist,
                                                    getDirectoryContents)
@@ -129,7 +127,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         counter <- newIORef 0
         let cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
 
-        (r1, r2) <- bracketChan 
+        (r1, r2) <- bracketChanClosable 
                         cpuParallelism
                         traverseFS
                         (saveObjects counter)
@@ -137,15 +135,13 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         c <- readIORef counter        
         pure $ void r1 >> (, c) <$> r2            
     where
-        kill = maybe (pure ()) (cancelTask . snd)
+        kill = cancelTask . snd
 
         threads = cpuBottleneck appThreads
 
         traverseFS queue = 
-            first (RsyncE . FileReadError . U.fmtEx) <$> try (
-                readFiles queue rootPath 
-                    `finally` 
-                    atomically (Q.writeTBQueue queue Nothing))
+            first (RsyncE . FileReadError . U.fmtEx) <$> 
+                try (readFiles queue rootPath)
 
         readFiles queue currentPath = do
             names <- getDirectoryContents currentPath
@@ -156,11 +152,9 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     True  -> readFiles queue path
                     False -> 
                         when (supportedExtension path) $ do         
-                            task <- (readAndParseObject path) `strictTask` threads                   
-                            -- task <- Unlift.async $ readAndParseObject path                            
+                            task <- (readAndParseObject path) `strictTask` threads                                          
                             let uri = pathToUri repositoryUrl rootPath path
-                            -- logDebugM logger [i|rsync uri = #{uri}|]
-                            atomically $ Q.writeTBQueue queue $ Just (uri, task)
+                            atomically $ writeCQueue queue (uri, task)
             where
                 readAndParseObject filePath = do                                         
                     (_, content)  <- getSizeAndContent filePath                
@@ -180,7 +174,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 try (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
             where            
                 go tx validations = 
-                    atomically (Q.readTBQueue queue) >>= \case 
+                    atomically (readCQueue queue) >>= \case 
                         Nothing       -> pure validations
                         Just (uri, a) -> try (waitTask a) >>= process tx uri validations >>= go tx
 

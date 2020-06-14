@@ -35,21 +35,23 @@ txConsumeFold :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
             r ->                        -- ^ fold initial value
             m r
 txConsumeFold poolSize as produce withTx consume accum0 =
-    snd <$> bracketChan 
+    snd <$> bracketChanClosable
                 (atLeastOne poolSize)
                 writeAll 
                 readAll 
-                (const $ pure ())
+                (\_ -> pure ())
     where
-        -- it will deadlock if monad is ExceptT and interrupts the forM_
-        -- in advance
-        writeAll queue = forM_ as $
-            liftIO . atomically . Q.writeTBQueue queue <=< produce
-        readAll queue = withTx $ \tx -> foldM (f tx) accum0 as 
+        writeAll queue = forM_ as $ \a -> do
+            p <- produce a
+            liftIO $ atomically $ writeCQueue queue p
+
+        readAll queue = withTx $ \tx -> go tx accum0
             where
-                f tx accum _ = do
-                    a <- liftIO $ atomically $ Q.readTBQueue queue
-                    consume tx a accum       
+                go tx accum = do                
+                    a <- liftIO $ atomically $ readCQueue queue
+                    case a of
+                        Nothing -> pure accum
+                        Just a' -> consume tx a' accum >>= go tx
 
    
 -- | Utility function for a specific case of producer-consumer pair 
@@ -72,7 +74,7 @@ txConsumeFoldChunked parallelismDegree as produce withTx chunkSize consume accum
                 (const $ pure ())
     where
         writeAll queue = forM_ as $
-            liftIO . atomically . writeClosableQueue queue <=< produce
+            liftIO . atomically . writeCQueue queue <=< produce
 
         readAll queue = 
             go Nothing chunkSize accum0
@@ -126,11 +128,12 @@ bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 (ClosableQueue t -> m c) ->
                 (t -> m w) ->
                 m (b, c)
-bracketChanClosable size produce consume kill = do
+bracketChanClosable size produce consume kill = do        
     queue <- liftIO $ atomically $ newCQueue size
+    let closeQ = liftIO $ atomically $ closeQueue queue
     concurrently 
-            (produce queue `finally` liftIO (atomically $ closeQueue queue)) 
-            (consume queue)
+            (produce queue `finally` closeQ) 
+            (consume queue `finally` closeQ)
         `finally`
             killAll queue
     where
@@ -151,9 +154,8 @@ newCQueue n = do
     s <- newTVar QWorks
     pure $ ClosableQueue q s
 
-
-writeClosableQueue :: ClosableQueue a -> a -> STM ()
-writeClosableQueue (ClosableQueue q s) qe = 
+writeCQueue :: ClosableQueue a -> a -> STM ()
+writeCQueue (ClosableQueue q s) qe =
     readTVar s >>= \case 
         QClosed -> pure ()
         QWorks  -> Q.writeTBQueue q qe
@@ -180,7 +182,7 @@ closeQueue (ClosableQueue _ s) = writeTVar s QClosed
 
 
 readChunk :: Natural -> TBQueue a -> STM [a]
-readChunk 0 _ = pure []
+readChunk 0 _          = pure []
 readChunk leftToRead q = do 
     z <- Q.tryReadTBQueue q
     case z of 
@@ -238,13 +240,11 @@ data Task m a
     | SubmitterTask !a
 
 
--- | If the pool is overflown, io will be execute by the caller of "waitPool"
--- 
+-- | If the bootleneck is full, io will be execute by the caller of "waitTask"
 lazyTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
 lazyTask io bottleneck = newTask io bottleneck Requestor
 
--- | If the bottleneck is overflown, io will be execute by the thread that tries to newTask the task.
--- 
+-- | If the bottleneck is full, io will be execute by the thread that calls newTask.
 strictTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
 strictTask io bottleneck = newTask io bottleneck Submitter
 
@@ -255,9 +255,10 @@ newTask io Bottleneck {..} execution =
     join $ liftIO $ atomically $ do
         size <- readTVar currentSize
         if size >= maxSize             
-            then pure $ case execution of
-                            Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask
-                            Submitter -> SubmitterTask <$> io    -- do it now      
+            then pure $ 
+                case execution of
+                    Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
+                    Submitter -> SubmitterTask <$> io    -- do it now                          
             else do 
                 incSize
                 pure $! do 
@@ -280,37 +281,6 @@ cancelTask (AsyncTask a)     = cancel a
 
 
 
--- listProducer :: [a] -> IO (IO (Maybe a))
--- listProducer as = do
---     current <- newIORef as
---     pure $ readIORef current >>= \case
---                 [] -> pure Nothing
---                 (a : as') -> do
---                     writeIORef current as'
---                     pure $ Just a 
 
 
--- | Utility function for a specific case of producer-consumer pair 
--- where consumer works within a transaction (represented as withTx function)
---  
--- txFold :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
---             Bottleneck ->
---             m q ->                      -- ^ producer, called for every item of the traversed argument
---             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
---             (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
---             r ->                        -- ^ fold initial value
---             m r
--- txFold bottleneck produce withTx consume accum0 =
---     snd <$> bracketChan 
---                 (atLeastOne bottleneckSize)
---                 writeAll 
---                 readAll 
---                 (const $ pure ())
---     where
---         writeAll queue = forM_ as $
---             liftIO . atomically . Q.writeTBQueue queue <=< produce
---         readAll queue = withTx $ \tx -> foldM (f tx) accum0 as 
---             where
---                 f tx accum _ = do
---                     a <- liftIO $ atomically $ Q.readTBQueue queue
---                     consume tx a accum   
+

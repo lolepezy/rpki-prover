@@ -536,7 +536,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
 queueVRP :: Storage s => AppContext s -> TopDownContext s -> [Roa] -> IO ()
 queueVRP AppContext { database = DB {..} } TopDownContext {..} roas = 
     for_ roas $ \vrp -> 
-        atomically $ writeClosableQueue databaseQueue $ \tx -> 
+        atomically $ writeCQueue databaseQueue $ \tx -> 
             putVRP tx vrpStore worldVersion vrp 
 
 
@@ -550,7 +550,7 @@ queueVResult AppContext { database = DB {..} } TopDownContext {..} validations =
                 void $ flip Map.traverseWithKey validationsMap $ 
                         \vc' problems -> 
                             let vResult = VResult (Set.toList problems) vc'   
-                            in atomically $ writeClosableQueue databaseQueue $ 
+                            in atomically $ writeCQueue databaseQueue $ 
                                     \tx -> putVResult tx resultStore worldVersion vResult
 
 
