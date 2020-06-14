@@ -239,9 +239,9 @@ fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ 
     ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ getURI repo) $ 
         case repo of
             RsyncR r -> 
-                first RsyncR <$> updateObjectForRsyncRepository appContext r objectStore                                
+                first RsyncR <$> updateObjectForRsyncRepository appContext r 
             RrdpR r -> 
-                first RrdpR <$> updateObjectForRrdpRepository appContext r objectStore                    
+                first RrdpR <$> updateObjectForRrdpRepository appContext r
     case r of
         Left e -> do                        
             logErrorM logger [i|Fetching repository #{getURI repo} failed: #{e} |]

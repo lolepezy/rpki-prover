@@ -79,15 +79,14 @@ rsyncRpkiObject AppContext{..} uri = do
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: Storage s => 
                 AppContext s ->
-                RsyncRepository -> 
-                RpkiObjectStore s -> 
+                RsyncRepository ->     
                 ValidatorT vc IO (RsyncRepository, Validations)
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
-    repo@(RsyncRepository (RsyncPublicationPoint uri) _) 
-    objectStore = do     
+    repo@(RsyncRepository (RsyncPublicationPoint uri) _) = do     
 
-    let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
+    let rsyncRoot   = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
+    let objectStore = appContext ^. field @"database" . field @"objectStore"
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncDirectory
 

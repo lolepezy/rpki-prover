@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -190,7 +191,7 @@ data DB s = DB {
     resultStore     :: VResultStore s,
     vrpStore        :: VRPStore s,
     versionStore    :: VersionStore s
-}
+} deriving stock (Generic)
 
 instance Storage s => WithStorage s (DB s) where
     storage DB {..} = storage taStore

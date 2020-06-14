@@ -14,7 +14,7 @@ import           RPKI.Store.Database
 data AppBottleneck = AppBottleneck {
     cpuBottleneck :: Bottleneck,
     ioBottleneck :: Bottleneck
-}
+} deriving stock (Generic)
 
 data AppContext s = AppContext {
     logger       :: AppLogger, 

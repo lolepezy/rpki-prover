@@ -248,6 +248,10 @@ lazyTask io bottleneck = newTask io bottleneck Requestor
 strictTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
 strictTask io bottleneck = newTask io bottleneck Submitter
 
+-- | If the bottleneck is full, io will be execute by the thread that calls newTask.
+pureTask :: (MonadBaseControl IO m, MonadIO m) => a -> Bottleneck -> m (Task m a)                       
+pureTask io = strictTask (pure $! io)
+
 -- Common case
 newTask :: (MonadBaseControl IO m, MonadIO m) => 
         m a -> Bottleneck -> BottleneckFullExecutor -> m (Task m a)
