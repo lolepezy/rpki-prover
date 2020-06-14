@@ -27,8 +27,13 @@
 
 ---------------------------------------------------------------------------
 
+- Relationship between ExceptT, forM and channles -- it's all can be done better only with exceptions.
+- RRDP transaction must roll back in case of an error
+- Fix txConsumeFold for forM :: ExceptT a ... -> 
 - Delta processing can result in much bigger heap than snaphiost processing? fix it if that's the case.
 - Have full path from the top repoistory to all the delegates ones in the VContext.
+- add 'bootlneck' implementation as 'minimum of two bottlnecks at any moment'
+- it looks like validCount number is flaky and changes depending on (check it)
 - Add periodic re-validation
 - Clean up objects that are not touched by validations or not touched by repository downloads
 - Clean up old VRPs 

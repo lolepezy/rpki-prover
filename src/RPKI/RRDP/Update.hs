@@ -87,15 +87,20 @@ downloadAndUpdateRRDP
         useDeltas sortedDeltas notification = do
             -- TODO Do not thrash the same server with too big amount of parallel 
             -- requests, it's mostly counter-productive and rude
-            deltas      <- parallelTasksN 4 sortedDeltas downloadDelta            
-            validations <- handleDeltas deltas
-            pure (repoFromDeltas deltas notification, validations)
+            
+            deltas       <- parallelTasksN 16 sortedDeltas downloadDelta            
+
+            -- TODO Optimise it, don't creat all the deltas at once, 
+            -- do parsing inside of the             
+            parsedDeltas <- forM deltas (hoistHere . parseDelta)
+
+            validations  <- handleDeltas parsedDeltas
+            pure (repoFromDeltas parsedDeltas notification, validations)
             where
                 downloadDelta (DeltaInfo uri hash serial) = do
-                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
+                    fst <$> (fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
                                         (RrdpE . CantDownloadDelta . show)                         
-                                        (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)    
-                    hoistHere $ parseDelta rawContent
+                                        (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial))
 
         repoFromSnapshot :: Snapshot -> RrdpRepository
         repoFromSnapshot (Snapshot _ sid s _) = repo { rrdpMeta = Just (sid, s) }
@@ -242,7 +247,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
                                 Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
                         
                         addObject tx uri a validations =
-                            waitTask a >>= \case              
+                            waitTask a >>= \case
                                 SError e -> do
                                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                                     pure $ validations <> mError (vContext uri) e

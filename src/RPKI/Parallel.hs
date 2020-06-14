@@ -41,6 +41,8 @@ txConsumeFold poolSize as produce withTx consume accum0 =
                 readAll 
                 (const $ pure ())
     where
+        -- it will deadlock if monad is ExceptT and interrupts the forM_
+        -- in advance
         writeAll queue = forM_ as $
             liftIO . atomically . Q.writeTBQueue queue <=< produce
         readAll queue = withTx $ \tx -> foldM (f tx) accum0 as 

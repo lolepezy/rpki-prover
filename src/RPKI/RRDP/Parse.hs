@@ -113,7 +113,7 @@ parseDelta xml = makeDelta =<< folded
             in Right (Just sn, let !z = DP (DeltaPublish uri' h (EncodedBase64 nc)) : ps in z)
         foldItems d@(Just _, DW (DeltaWithdraw _ _) : _) (X.CharacterData cd) = 
             if BS.all isSpace_ cd 
-                then Right d 
+                then let !z = Right d in z
                 else Left $ ContentInWithdraw cd
         foldItems x  _                                          = Right x
 
