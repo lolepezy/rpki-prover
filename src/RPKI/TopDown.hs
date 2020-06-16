@@ -10,7 +10,7 @@ module RPKI.TopDown where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception
+import           Control.Exception.Lifted
 import           Control.Monad.Except
 import           Control.Monad.Reader
 
@@ -21,7 +21,6 @@ import           Data.Generics.Product.Typed
 import           GHC.Generics
 
 import           Data.Bifunctor
-import           Data.Either                      (partitionEithers)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -327,9 +326,12 @@ validateCAWithQueue
                     toRepoStatusPairs ppsToFetch
 
             -- for all new repositories, drill down recursively
-            void $ parallelTasks (ioBottleneck appThreads) newRepositories $ \repo -> do
-                validations <- fetchAndValidateWaitingList rootToPps repo
-                queueVResult appContext topDownContext validations
+            void $ parallelTasks 
+                -- we don't want to consume both too much IO parallelism and CPU parallelism
+                (ioBottleneck appThreads <> cpuBottleneck appThreads) 
+                newRepositories $ \repo -> do
+                    validations <- fetchAndValidateWaitingList rootToPps repo
+                    queueVResult appContext topDownContext validations
 
         -- Fetch the PP and validate all the certificates from the waiting 
         -- list of this PP.

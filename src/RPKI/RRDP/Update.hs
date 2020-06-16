@@ -1,12 +1,16 @@
 {-# LANGUAGE MultiWayIf        #-}
+{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE BangPatterns      #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE RecordWildCards   #-}
+
 
 module RPKI.RRDP.Update where
+
+import           Control.Exception.Lifted
 import           Control.Lens                     ((^.))
 import           Control.Monad.Except
+import           Data.Generics.Labels
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
@@ -37,7 +41,8 @@ import           RPKI.Time
 import qualified RPKI.Util                        as U
 
 import           Data.IORef.Lifted
-import Data.Either (partitionEithers)
+
+import qualified Streaming.Prelude as S
 
 
 
@@ -52,13 +57,13 @@ downloadAndUpdateRRDP :: WithVContext vc =>
                 AppContext s ->
                 RrdpRepository ->                 
                 (LBS.ByteString   -> ValidatorT vc IO Validations) ->
-                ([LBS.ByteString] -> ValidatorT vc IO Validations) ->
+                (LBS.ByteString -> ValidatorT vc IO Validations) ->
                 ValidatorT vc IO (RrdpRepository, Validations)
 downloadAndUpdateRRDP 
-        AppContext{..} 
-        repo@(RrdpRepository repoUri _ _)    
+        appContext
+        repo@(RrdpRepository repoUri _ _)      
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
-        handleDeltasBS =                       -- ^ function to handle all deltas bytecontents
+        handleDeltaBS =                       -- ^ function to handle all deltas bytecontents
     do
     (notificationXml, _) <- fromEitherM $ downloadToLazyBS 
                                 rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
@@ -78,7 +83,11 @@ downloadAndUpdateRRDP
     where
         hoistHere = vHoist . fromEither . first RrdpE
                 
-        Config {..} = config
+        rrdpConf = appContext ^. typed @Config . typed
+        logger   = appContext ^. typed @AppLogger
+        ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck
+
+        -- Config {..} = config
 
         useSnapshot (SnapshotInfo uri hash) notification = do 
             logDebugM logger [i|Downloading snapshot: #{unURI uri} |]        
@@ -89,27 +98,41 @@ downloadAndUpdateRRDP
             validations <- handleSnapshotBS rawContent            
             pure (repo { rrdpMeta = rrdpMeta' }, validations)       
             where     
-                rrdpMeta' = Just (notification ^. typed @SessionId, notification ^. typed @Serial)
+                rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
 
         useDeltas sortedDeltas notification = do
             -- TODO Do not thrash the same server with too big amount of parallel 
-            -- requests, it's mostly counter-productive and rude
-            
-            deltaBSs       <- parallelTasksN 16 sortedDeltas downloadDelta            
+            -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much.         
+            localRepoBottleneck <- liftIO $ newBottleneckIO 4
+            -- validations         <- parallelTasks 
+            --                             (localRepoBottleneck <> ioBottleneck) 
+            --                             sortedDeltas downloadDelta            
+            validations <- parallelPipeline
+                                (localRepoBottleneck <> ioBottleneck)
+                                (S.each sortedDeltas)
+                                downloadDelta
+                                (\rawContent validations -> do 
+                                    vs <- handleDeltaBS rawContent
+                                    pure $ validations <> vs)
+                                (mempty :: Validations)
 
-            -- TODO Optimise it, don't creat all the deltas at once, 
-            -- do parsing inside of the             
-            -- parsedDeltas <- forM deltaBSs (hoistHere . parseDelta)            
+            -- validations         <- forM sortedDeltas downloadDelta
 
-            validations <- handleDeltasBS deltaBSs
+            logDebugM logger [i|All delta validations = #{validations} |]        
+            -- deltaBSs            <- forM sortedDeltas downloadDelta
+
+            -- validations <- handleDeltasBS deltaBSs
             pure (repo { rrdpMeta = rrdpMeta' }, validations)
+            -- pure (repo { rrdpMeta = rrdpMeta' }, mempty)
             where
                 downloadDelta (DeltaInfo uri hash serial) = do
-                    fst <$> (fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
-                                        (RrdpE . CantDownloadDelta . show)                         
-                                        (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial))        
+                    logDebugM logger [i|Downloading delta #{unURI uri}.|]
+                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
+                                            (RrdpE . CantDownloadDelta . show)
+                                            (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
+                    pure rawContent
 
-                newSerial = List.maximum $ map (\(DeltaInfo _ _ s) -> s) sortedDeltas
+                newSerial = List.maximum $ map (^. typed @Serial) sortedDeltas
                 rrdpMeta' = Just (notification ^. typed @SessionId, newSerial)
 
 
@@ -166,18 +189,18 @@ updateObjectForRrdpRepository :: Storage s =>
 updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } = do
     added   <- newIORef (0 :: Int)
     removed <- newIORef (0 :: Int)        
-    repo <- updateRepo' (cpuBottleneck appThreads) added removed
+    (repo, elapsed) <- timedMS $ updateRepo' (cpuBottleneck appThreads) added removed
+    -- logDebugM logger [i|Saved snapshot for the repository: #{repository}, took #{elapsed}ms |]
     a <- readIORef added        
     r <- readIORef removed
-    logInfoM logger [i|Added #{a} objects, removed #{r} for repository #{unURI uri'}|]
     pure repo
     where
         updateRepo' bottleneck added removed =     
             downloadAndUpdateRRDP 
                 appContext 
                 repository 
-                (saveSnapshot appContext repository) 
-                (saveDeltas appContext repository)
+                (saveSnapshot appContext) 
+                (saveDelta appContext)
         
 
 
@@ -187,24 +210,22 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepositor
 -} 
 saveSnapshot :: Storage s => 
                 AppContext s -> 
-                RrdpRepository -> 
                 LBS.ByteString -> 
                 ValidatorT vc IO Validations
-saveSnapshot appContext repository snapshotContent = do           
-    (Snapshot _ _ _ snapshotItems) <- vHoist $ 
+saveSnapshot appContext snapshotContent = do           
+    ((Snapshot _ _ _ snapshotItems), elapsed) <- timedMS $ vHoist $ 
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
+    logDebugM logger [i|Parsed, took #{elapsed}ms |]        
 
-    (r, elapsed) <- timedMS $ fromTry 
+    fromTry 
         (StorageE . StorageError . U.fmtEx)                
-        (txConsumeFold 
+        (txStreamFold 
             cpuParallelism
-            snapshotItems 
-            storableToChan 
+            (S.mapM storableToChan $ S.each snapshotItems)
             (rwTx objectStore)
             chanToStorage   
             (mempty :: Validations))                        
-    logDebugM logger [i|Saved snapshot for the repository: #{repository}, took #{elapsed}ms |]
-    pure r
+        
     where
         storableToChan (SnapshotPublish uri encodedb64) = do
             task <- (parseAndProcess uri encodedb64) `pureTask` bottleneck
@@ -221,37 +242,33 @@ saveSnapshot appContext repository snapshotContent = do
                     pure validations
 
         logger         = appContext ^. typed @AppLogger           
-        cpuParallelism = appContext ^. typed @Config . typed @Parallelism . field @"cpuParallelism"                      
-        bottleneck     = appContext ^. typed @AppBottleneck . field @"cpuBottleneck"                      
-        objectStore    = appContext ^. field @"database" . field @"objectStore"
+        cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+        bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck
+        objectStore    = appContext ^. #database . #objectStore
 
 
 {-
     The same as snapshots but takes base64s from ordered 
     list of deltas.
 -}
-saveDeltas :: Storage s => 
+saveDelta :: Storage s => 
             AppContext s -> 
-            RrdpRepository -> 
-            [LBS.ByteString] -> 
+            LBS.ByteString -> 
             ValidatorT conf IO Validations
-saveDeltas appContext repository deltaContents = do        
+saveDelta appContext deltaContent = do        
+    delta <- vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
+
+    let deltaItemS = S.each $ delta ^. typed @[DeltaItem]
     (r, elapsed) <- timedMS $ fromTry (StorageE . StorageError . U.fmtEx) 
-                        (txConsumeFold 
+                        (txStreamFold 
                             cpuParallelism
-                            deltaItems 
-                            storableToChan 
+                            (S.mapM storableToChan deltaItemS)
                             (rwTx objectStore) 
                             chanToStorage 
                             (mempty :: Validations))
-    logDebugM logger [i|Saving deltas #{serials} for the repository: #{repository}, took #{elapsed}ms.|]                            
-    pure r                    
-    where
-        parsed = partitionEithers $ map parseDelta deltaContents
-        parsedDeltas = snd parsed
-        serials = map (^. typed @Serial) parsedDeltas
-        deltaItems :: [DeltaItem] = concatMap (^. typed @[DeltaItem]) parsedDeltas                        
-
+    -- logDebugM logger [i|Saving deltas for the repository: #{repository}, took #{elapsed}ms.|]                            
+    pure r                 
+    where        
         storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
             task <- (parseAndProcess uri encodedb64) `pureTask` bottleneck
             pure $ maybe (Add uri task) (Replace uri task) hash
@@ -294,7 +311,7 @@ saveDeltas appContext repository deltaContents = do
                             newOneIsAlreadyThere <- Stores.hashExists tx objectStore newHash
                             if newOneIsAlreadyThere
                                 then do
-                                    logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
+                                    -- logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
                                     pure $ validations <> mWarning (vContext uri) 
                                         (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
                                 else do                                             
@@ -302,14 +319,14 @@ saveDeltas appContext repository deltaContents = do
                                     -- increment added
                                     pure validations                                            
                         else do 
-                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
+                            -- logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
                             pure $ validations <> mWarning (vContext uri) 
                                 (VWarning $ RrdpE $ NoObjectToReplace uri oldHash) 
 
         logger         = appContext ^. typed @AppLogger           
-        cpuParallelism = appContext ^. typed @Config . typed @Parallelism . field @"cpuParallelism"                      
-        bottleneck     = appContext ^. typed @AppBottleneck . field @"cpuBottleneck"                      
-        objectStore    = appContext ^. field @"database" . field @"objectStore"
+        cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+        bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
+        objectStore    = appContext ^. #database . #objectStore
 
 
 parseAndProcess :: URI -> EncodedBase64 -> StorableUnit RpkiObject AppError

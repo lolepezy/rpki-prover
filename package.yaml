@@ -169,3 +169,15 @@ tests:
     # - -O2
     dependencies:
     - rpki-prover
+
+  rrdp-perf:
+    main:                RrdpPerf.hs
+    source-dirs:         
+    - perf/rrdp
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -Wall
+    # - -O2
+    dependencies:
+    - rpki-prover

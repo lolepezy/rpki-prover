@@ -56,7 +56,7 @@ type SN = (Maybe (Version, SessionId, Serial), [SnapshotPublish])
 parseSnapshot :: LBS.ByteString -> Either RrdpError Snapshot
 parseSnapshot xml = makeSnapshot =<< folded
     where
-        makeSnapshot (Nothing, _) = Left NoSessionId
+        makeSnapshot (Nothing, _)           = Left NoSessionId
         makeSnapshot (Just (v, sid, s), ps) = Right $ Snapshot v sid s $ reverse ps
 
         folded = foldM foldPubs (Nothing, []) $ bs2Sax xml
@@ -87,7 +87,7 @@ type DT = (Maybe (Version, SessionId, Serial), [DeltaItem])
 parseDelta :: LBS.ByteString -> Either RrdpError Delta
 parseDelta xml = makeDelta =<< folded
     where
-        makeDelta (Nothing, _) = Left NoSessionId
+        makeDelta (Nothing, _)           = Left NoSessionId
         makeDelta (Just (v, sid, s), ps) = Right $ Delta v sid s $ reverse ps
 
         folded = foldM foldItems (Nothing, []) $ bs2Sax xml
@@ -101,10 +101,10 @@ parseDelta xml = makeDelta =<< folded
         foldItems (Nothing, _)  (X.StartElement "withdraw" _)  = 
             Left $ BrokenXml "'withdraw' before 'delta'"            
         foldItems (Just sn, ps) (X.StartElement "publish" as) = do
-            dp <- parseDeltaPublish as
+            !dp <- parseDeltaPublish as
             pure (Just sn, let !z = DP dp : ps in z)
         foldItems (Just sn, ps) (X.StartElement "withdraw" as) = do
-            dw <- parseDeltaWithdraw as
+            !dw <- parseDeltaWithdraw as
             pure (Just sn, let !z = DW dw : ps in z)        
     
         foldItems (Just sn, []) (X.CharacterData _)            = Right (Just sn, [])

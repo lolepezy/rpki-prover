@@ -6,27 +6,30 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.Errors where
+    
+import           Control.Exception.Lifted
 
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Text            (Text)
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Lazy        as LBS
+import           Data.Text                   (Text)
 
 import           Codec.Serialise
-import           Data.List.NonEmpty (NonEmpty (..), (<|))
-import qualified Data.List          as List
-import           Data.Map.Strict                  (Map)
-import qualified Data.Map.Strict                  as Map
-import           Data.Set                         (Set)
-import qualified Data.Set                         as Set
+import qualified Data.List                   as List
+import           Data.List.NonEmpty          (NonEmpty (..), (<|))
+import           Data.Map.Strict             (Map)
+import qualified Data.Map.Strict             as Map
+import           Data.Set                    (Set)
+import qualified Data.Set                    as Set
 
-import Data.Generics.Product.Typed
+import           Data.Generics.Product.Typed
 
-import           Data.Hourglass       (DateTime)
+import           Data.Hourglass              (DateTime)
 
 import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Resources.Types
+
 
 
 newtype ParseError s = ParseError s
@@ -181,3 +184,8 @@ instance {-# OVERLAPPING #-} WithVContext VContext where
 instance (Generic a, HasType VContext a) => WithVContext a where 
     getVC = getTyped
     childVC u v = setTyped (childVContext (getVC v) u) v
+
+newtype AppException = AppException AppError
+    deriving stock (Show, Eq, Ord, Generic)
+
+instance Exception AppException

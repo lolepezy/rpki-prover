@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DerivingStrategies #-}
 module RPKI.Parallel where
@@ -5,6 +6,9 @@ module RPKI.Parallel where
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Numeric.Natural
+
+import           Data.List.NonEmpty               (NonEmpty (..))
+import qualified Data.List.NonEmpty               as NonEmpty
 
 import qualified Control.Concurrent.STM.TBQueue  as Q
 
@@ -19,31 +23,68 @@ import RPKI.Time
 
 import Debug.Trace
 
+import Streaming
+import qualified Streaming.Prelude as S
+
+
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
 
+--  
+parallelPipeline :: (MonadBaseControl IO m, MonadIO m) =>
+            Bottleneck ->
+            Stream (Of s) m () ->
+            (s -> m p) ->          -- ^ producer
+            (p -> r -> m r) ->     -- ^ consumer, called for every item of the traversed argument
+            r ->                   -- ^ fold initial value
+            m r
+parallelPipeline bottleneck stream mapStream consume accum0 =
+    snd <$> bracketChanClosable
+                (chanSize bottleneck)
+                writeAll 
+                readAll 
+                cancelTask
+
+    where
+        chanSize (Bottleneck bottlenecks) = atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
+
+        writeAll queue = S.mapM_ toQueue stream
+            where 
+                toQueue s = do
+                    t <- newTask (mapStream s) bottleneck Submitter 
+                    liftIO $ atomically $ writeCQueue queue t
+
+        readAll queue = go accum0
+            where
+                go accum = do                
+                    t <- liftIO $ atomically $ readCQueue queue
+                    case t of
+                        Nothing -> pure accum
+                        Just t' -> do 
+                            p <- waitTask t'
+                            consume p accum >>= go
+
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
 --  
-txConsumeFold :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
+txStreamFold :: (MonadBaseControl IO m, MonadIO m) =>
             Natural ->
-            t a ->                      -- ^ traversed collection
-            (a -> m q) ->               -- ^ producer, called for every item of the traversed argument
+            Stream (Of q) m () ->
             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
-            (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
+            (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
             r ->                        -- ^ fold initial value
             m r
-txConsumeFold poolSize as produce withTx consume accum0 =
+txStreamFold poolSize stream withTx consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne poolSize)
                 writeAll 
                 readAll 
                 (\_ -> pure ())
     where
-        writeAll queue = forM_ as $ \a -> do
-            p <- produce a
-            liftIO $ atomically $ writeCQueue queue p
+        writeAll queue = S.mapM_ toQueue stream
+            where 
+                toQueue = liftIO . atomically . writeCQueue queue
 
         readAll queue = withTx $ \tx -> go tx accum0
             where
@@ -52,7 +93,6 @@ txConsumeFold poolSize as produce withTx consume accum0 =
                     case a of
                         Nothing -> pure accum
                         Just a' -> consume tx a' accum >>= go tx
-
    
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
@@ -63,7 +103,7 @@ txConsumeFoldChunked :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
             (a -> m q) ->               -- ^ producer, called for every item of the traversed argument
             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
             Natural -> 
-            (tx -> q -> r -> m r) ->    -- ^ producer, called for every item of the traversed argument
+            (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
             r ->                        -- ^ fold initial value
             m r
 txConsumeFoldChunked parallelismDegree as produce withTx chunkSize consume accum0 =
@@ -207,24 +247,18 @@ readCQueuState (ClosableQueue _ queueState) = readTVar queueState
 -- 
 parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck -> t a -> (a -> m b) -> m (t b)
-parallelTasks bottleneck@Bottleneck {..} as f = do
+parallelTasks bottleneck as f = do
     tasks <- forM as $ \a -> newTask (f a) bottleneck Submitter
     forM tasks waitTask
 
-parallelTasksN :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
-                Natural -> t a -> (a -> m b) -> m (t b)
-parallelTasksN n as f = do
-    bottleneck <- liftIO $ atomically $ newBottleneck n
-    parallelTasks bottleneck as f    
-
 -- Thread pool value, current and maximum size
-data Bottleneck = Bottleneck {
-    maxSize     :: !Natural,
-    currentSize :: TVar Natural
-}
+newtype Bottleneck = Bottleneck (NonEmpty (TVar Natural, Natural))
+    deriving newtype Semigroup
 
 newBottleneck :: Natural -> STM Bottleneck
-newBottleneck n = Bottleneck n <$> newTVar 0
+newBottleneck n = do 
+    currentSize <- newTVar 0
+    pure $ Bottleneck $ (currentSize, n) :| []
 
 newBottleneckIO :: Natural -> IO Bottleneck
 newBottleneckIO = atomically . newBottleneck
@@ -255,22 +289,25 @@ pureTask io = strictTask (pure $! io)
 -- Common case
 newTask :: (MonadBaseControl IO m, MonadIO m) => 
         m a -> Bottleneck -> BottleneckFullExecutor -> m (Task m a)
-newTask io Bottleneck {..} execution = 
-    join $ liftIO $ atomically $ do
-        size <- readTVar currentSize
-        if size >= maxSize             
-            then pure $ 
+newTask io (Bottleneck bottlenecks) execution = 
+    join $ liftIO $ atomically $ do     
+        eachHasSomeSpace <- forM bottlenecks $ \(currentSize, maxSize) -> do 
+                                    cs <- readTVar currentSize
+                                    pure $ cs < maxSize        
+        if and eachHasSomeSpace 
+            then do 
+                incSizes
+                pure $! do 
+                    a <- async $ io `finally` liftIO (atomically decSizes)
+                    pure $ AsyncTask a    
+            else pure $ 
                 case execution of
                     Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
-                    Submitter -> SubmitterTask <$> io    -- do it now                          
-            else do 
-                incSize
-                pure $! do 
-                    a <- async $ io `finally` liftIO (atomically decSize)
-                    pure $ AsyncTask a    
+                    Submitter -> SubmitterTask <$> io    -- do it now                                      
         where            
-            incSize = modifyTVar' currentSize succ
-            decSize = modifyTVar' currentSize pred
+            incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
+            decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
+
 
 
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m a

@@ -105,7 +105,8 @@ downloadHashedLazyBS RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch =
                 | otherwise -> do
                     hClose fd
                     content <- MmapLazy.unsafeMMapFile name
-                    pure $ Right (content, size)
+                    pure $! Right (content, size)
+                    -- pure $! Right (LBS.empty, size)
 
 
 data ActionWhileDownloading = DoNothing | DoHashing
@@ -144,7 +145,7 @@ streamHttpToFileWithActions (URI uri) errorMapping whileDownloading maxSize dest
             let perChunkAction chunk = do
                     hashingAction chunk
                     currentSize <- readIORef size
-                    let newSize = currentSize + (fromIntegral $ BS.length chunk :: Size)
+                    let !newSize = currentSize + (fromIntegral $ BS.length chunk :: Size)
                     if newSize > maxSize
                         then throwIO $ OversizedDownloadStream newSize
                         else writeIORef size newSize
@@ -154,9 +155,9 @@ streamHttpToFileWithActions (URI uri) errorMapping whileDownloading maxSize dest
                 Q.hPut destinationHandle $ 
                     Q.chunkMapM perChunkAction $ responseBody resp
 
-            h' <- readIORef hash        
-            s' <- readIORef size  
-            pure $! (U.mkHash $ S256.finalize h', s')
+            h <- readIORef hash        
+            s <- readIORef size  
+            pure $! (U.mkHash $ S256.finalize h, s)
      
 
 -- | Fetch arbitrary file using the streaming implementation

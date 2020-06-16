@@ -1,5 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE StrictData #-}
+-- {-# LANGUAGE StrictData #-}
 
 module RPKI.RRDP.Types where
 
