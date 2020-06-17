@@ -55,17 +55,19 @@ import qualified Streaming.Prelude as S
 -- 
 downloadAndUpdateRRDP :: WithVContext vc => 
                 AppContext s ->
+                HttpContext ->
                 RrdpRepository ->                 
                 (LBS.ByteString   -> ValidatorT vc IO Validations) ->
                 (LBS.ByteString -> ValidatorT vc IO Validations) ->
                 ValidatorT vc IO (RrdpRepository, Validations)
 downloadAndUpdateRRDP 
         appContext
+        httpContext
         repo@(RrdpRepository repoUri _ _)      
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                       -- ^ function to handle all deltas bytecontents
     do
-    (notificationXml, _) <- fromEitherM $ downloadToLazyBS 
+    (notificationXml, _) <- fromEitherM $ downloadToLazyBS httpContext
                                 rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- hoistHere $ rrdpNextStep repo notification
@@ -91,7 +93,7 @@ downloadAndUpdateRRDP
 
         useSnapshot (SnapshotInfo uri hash) notification = do 
             logDebugM logger [i|Downloading snapshot: #{unURI uri} |]        
-            (rawContent, _) <- fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
+            (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
                                 (RrdpE . CantDownloadSnapshot . show)                 
                                 (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
             -- snapshot    <- hoistHere $ parseSnapshot rawContent
@@ -127,7 +129,7 @@ downloadAndUpdateRRDP
             where
                 downloadDelta (DeltaInfo uri hash serial) = do
                     logDebugM logger [i|Downloading delta #{unURI uri}.|]
-                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS rrdpConf uri hash
+                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
                                             (RrdpE . CantDownloadDelta . show)
                                             (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                     pure rawContent
@@ -187,21 +189,20 @@ updateObjectForRrdpRepository :: Storage s =>
                                 RrdpRepository ->
                                 ValidatorT vc IO (RrdpRepository, Validations)
 updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } = do
-    added   <- newIORef (0 :: Int)
-    removed <- newIORef (0 :: Int)        
-    (repo, elapsed) <- timedMS $ updateRepo' (cpuBottleneck appThreads) added removed
-    -- logDebugM logger [i|Saved snapshot for the repository: #{repository}, took #{elapsed}ms |]
-    a <- readIORef added        
-    r <- readIORef removed
-    pure repo
-    where
-        updateRepo' bottleneck added removed =     
-            downloadAndUpdateRRDP 
-                appContext 
-                repository 
-                (saveSnapshot appContext) 
-                (saveDelta appContext)
-        
+    withHttp $ \httpContext -> do
+        added   <- newIORef (0 :: Int)
+        removed <- newIORef (0 :: Int)        
+        (repo, elapsed) <- timedMS $ 
+                downloadAndUpdateRRDP 
+                    appContext 
+                    httpContext
+                    repository 
+                    (saveSnapshot appContext) 
+                    (saveDelta appContext)
+        -- logDebugM logger [i|Saved snapshot for the repository: #{repository}, took #{elapsed}ms |]
+        a <- readIORef added        
+        r <- readIORef removed
+        pure repo            
 
 
 {- Snapshot case, done in parallel by two thread

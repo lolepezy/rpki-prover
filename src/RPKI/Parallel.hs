@@ -44,15 +44,14 @@ parallelPipeline bottleneck stream mapStream consume accum0 =
                 (chanSize bottleneck)
                 writeAll 
                 readAll 
-                cancelTask
-
+                cancel
     where
         chanSize (Bottleneck bottlenecks) = atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
 
         writeAll queue = S.mapM_ toQueue stream
             where 
                 toQueue s = do
-                    t <- newTask (mapStream s) bottleneck Submitter 
+                    t <- async $ mapStream s
                     liftIO $ atomically $ writeCQueue queue t
 
         readAll queue = go accum0
@@ -62,7 +61,7 @@ parallelPipeline bottleneck stream mapStream consume accum0 =
                     case t of
                         Nothing -> pure accum
                         Just t' -> do 
-                            p <- waitTask t'
+                            p <- wait t'
                             consume p accum >>= go
 
 -- | Utility function for a specific case of producer-consumer pair 

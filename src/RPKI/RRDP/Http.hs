@@ -39,21 +39,30 @@ import           Data.IORef.Lifted
 import GHC.Generics (Generic)
 
 
+newtype HttpContext =  HttpContext Manager
+
+withHttp :: MonadIO m => (HttpContext -> m a) -> m a
+withHttp f = do
+    tlsManager <- liftIO $ newManager tlsManagerSettings
+    f $ HttpContext tlsManager
+    
 downloadToStrictBS :: MonadIO m => 
+                    HttpContext ->
                     RrdpConf ->
                     URI -> 
                     (SomeException -> e) ->
                     m (Either e (BS.ByteString, Size))
-downloadToStrictBS rrdp uri cantDownload = 
-    downloadToBS rrdp uri cantDownload Mmap.unsafeMMapFile    
+downloadToStrictBS httpContext rrdp uri cantDownload = 
+    downloadToBS httpContext rrdp uri cantDownload Mmap.unsafeMMapFile    
 
 downloadToLazyBS :: MonadIO m => 
+                    HttpContext ->
                     RrdpConf ->
                     URI -> 
                     (SomeException -> e) ->
                     m (Either e (LBS.ByteString, Size))
-downloadToLazyBS rrdp uri cantDownload = 
-    downloadToBS rrdp uri cantDownload MmapLazy.unsafeMMapFile    
+downloadToLazyBS httpContext rrdp uri cantDownload = 
+    downloadToBS httpContext rrdp uri cantDownload MmapLazy.unsafeMMapFile    
 
 
 -- | Download HTTP content to a temporary file and return lazy/strict ByteString content 
@@ -64,18 +73,19 @@ downloadToLazyBS rrdp uri cantDownload =
 -- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
 -- safe to use them after returning from this function.
 downloadToBS :: MonadIO m => 
-                    RrdpConf ->
-                    URI -> 
-                    (SomeException -> e) ->
-                    (FilePath -> IO bs) ->
-                    m (Either e (bs, Size))
-downloadToBS RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
+                HttpContext ->
+                RrdpConf ->
+                URI -> 
+                (SomeException -> e) ->
+                (FilePath -> IO bs) ->
+                m (Either e (bs, Size))
+downloadToBS httpContext RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
     withTempFile tmpRoot tmpFileName $ \name fd -> 
-        streamHttpToFileWithActions uri cantDownload DoNothing maxSize fd >>= \case        
+        streamHttpToFileWithActions httpContext uri cantDownload DoNothing maxSize fd >>= \case        
             Left e  -> pure $ Left e
             Right (_, !size) -> do
                     hClose fd                    
@@ -85,19 +95,20 @@ downloadToBS RrdpConf {..} uri@(URI u) cantDownload mmap = liftIO $ do
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
 downloadHashedLazyBS :: (MonadIO m) => 
+                        HttpContext ->
                         RrdpConf ->
                         URI -> 
                         Hash -> 
                         (SomeException -> e) ->
                         (Hash -> Either e (LBS.ByteString, Size)) ->
                         m (Either e (LBS.ByteString, Size))
-downloadHashedLazyBS RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
+downloadHashedLazyBS httpContext RrdpConf {..} uri@(URI u) hash cantDownload hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
     withTempFile tmpRoot tmpFileName $ \name fd -> 
-        streamHttpToFileWithActions uri cantDownload DoHashing maxSize fd >>= \case        
+        streamHttpToFileWithActions httpContext uri cantDownload DoHashing maxSize fd >>= \case        
             Left e -> pure $ Left e
             Right (actualHash, !size)
                 | actualHash /= hash -> 
@@ -117,22 +128,23 @@ data OversizedDownloadStream = OversizedDownloadStream Size
 instance Exception OversizedDownloadStream
 
 
+
 -- | Download HTTP stream into a file while 
 -- (if needed) calculating its hash at the same time
 -- and calculating the s
 streamHttpToFileWithActions :: MonadIO m =>
+                            HttpContext ->
                             URI -> 
                             (SomeException -> err) -> 
                             ActionWhileDownloading -> 
                             Size -> 
                             Handle -> 
                             m (Either err (Hash, Size))
-streamHttpToFileWithActions (URI uri) errorMapping whileDownloading maxSize destinationHandle = 
+streamHttpToFileWithActions (HttpContext tlsManager) (URI uri) errorMapping whileDownloading maxSize destinationHandle = 
     liftIO $ first errorMapping <$> try go    
     where
         go = do
             req  <- parseRequest $ Text.unpack uri
-            tls  <- newManager tlsManagerSettings 
 
             hash <- newIORef S256.init
             size <- newIORef (0 :: Size)
@@ -151,7 +163,7 @@ streamHttpToFileWithActions (URI uri) errorMapping whileDownloading maxSize dest
                         else writeIORef size newSize
                     pure chunk                    
 
-            withHTTP req tls $ \resp -> 
+            withHTTP req tlsManager $ \resp -> 
                 Q.hPut destinationHandle $ 
                     Q.chunkMapM perChunkAction $ responseBody resp
 
@@ -165,8 +177,9 @@ fetchRpkiObject :: MonadIO m =>
                     AppContext s ->
                     URI ->             
                     ValidatorT vc m RpkiObject
-fetchRpkiObject appContext uri = do 
+fetchRpkiObject appContext uri = withHttp $ \httpContext -> do
     (content, _) <- fromEitherM $ downloadToStrictBS 
+                        httpContext
                         (appContext ^. typed @Config . typed @RrdpConf)
                         uri 
                         (RrdpE . CantDownloadFile . U.fmtEx)
