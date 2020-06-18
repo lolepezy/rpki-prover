@@ -15,6 +15,7 @@ import qualified Data.Set                   as Set
 import           Data.X509
 
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Parse.Internal.Common
 import qualified RPKI.Util                  as U
 
@@ -61,8 +62,8 @@ parseCrl bs = do
             let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
 
             let mkSignCRL crlNumber' = SignCRL 
-                        thisUpdate 
-                        nextUpdate
+                        (Instant thisUpdate)
+                        (Instant <$> nextUpdate)
                         (SignatureAlgorithmIdentifier signatureId) 
                         signatureVal encoded crlNumber' revokedSerials
             pure (extensions, mkSignCRL)            

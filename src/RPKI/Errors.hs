@@ -23,11 +23,10 @@ import qualified Data.Set                    as Set
 
 import           Data.Generics.Product.Typed
 
-import           Data.Hourglass              (DateTime)
-
 import           GHC.Generics
 
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Resources.Types
 
 
@@ -57,8 +56,8 @@ data ValidationError = InvalidCert Text |
                         NoCRLExists AKI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |
-                        NextUpdateTimeIsInThePast DateTime |
-                        ThisUpdateTimeIsInTheFuture DateTime |
+                        NextUpdateTimeIsInThePast Instant |
+                        ThisUpdateTimeIsInTheFuture Instant |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |

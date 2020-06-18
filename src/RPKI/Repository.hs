@@ -23,9 +23,8 @@ import           Data.Maybe         (isJust)
 import           Data.Set           (Set)
 import qualified Data.Set           as Set
 
-import           Data.Hourglass     (DateTime)
-
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 
@@ -41,7 +40,7 @@ class Fetchable a where
     getURI       :: a -> URI
     getFetchType :: a -> RepositoryFetchType
 
-data RepositoryStatus = New | FailedAt DateTime | FetchedAt DateTime
+data RepositoryStatus = New | FailedAt Instant | FetchedAt Instant
     deriving (Show, Eq, Generic, Serialise)
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: URI } 

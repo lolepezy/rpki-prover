@@ -33,6 +33,7 @@ import           HaskellWorks.Data.Network.Ip.Ipv6    as V6
 import           HaskellWorks.Data.Network.Ip.Range
 
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
@@ -151,6 +152,10 @@ instance Arbitrary SKI where
 
 instance Arbitrary KI where
     arbitrary = KI <$> arbitrary  
+
+instance Arbitrary Instant where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Manifest where
     arbitrary = genericArbitrary

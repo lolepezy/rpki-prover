@@ -43,6 +43,8 @@ import qualified RPKI.Util                        as U
 import           Data.IORef.Lifted
 
 import qualified Streaming.Prelude as S
+import Data.Kind (Type)
+import Control.Monad.Identity (Identity)
 
 
 
@@ -65,7 +67,7 @@ downloadAndUpdateRRDP
         httpContext
         repo@(RrdpRepository repoUri _ _)      
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
-        handleDeltaBS =                       -- ^ function to handle all deltas bytecontents
+        handleDeltaBS =                        -- ^ function to handle all deltas bytecontents
     do
     (notificationXml, _) <- fromEitherM $ downloadToLazyBS httpContext
                                 rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
@@ -74,77 +76,78 @@ downloadAndUpdateRRDP
 
     case nextStep of
         NothingToDo                         -> pure (repo, mempty)
-        UseSnapshot snapshotInfo            -> useSnapshot snapshotInfo notification
+        UseSnapshot snapshotInfo            -> useSnapshot snapshotInfo notification            
         UseDeltas sortedDeltas snapshotInfo -> 
                 useDeltas sortedDeltas notification
                     `catchError` 
-                \e -> do                    
-                    logErrorM logger [i|Failed to apply deltas for #{unURI repoUri}: #{e}, will fall back to snapshot.|]
+                \e -> do         
+                    -- NOTE At tyhe moment we ignore the fact that some objects are wrongfully added
+                    logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
                     appWarn e
-                    useSnapshot snapshotInfo notification
-    where
+                    useSnapshot snapshotInfo notification            
+    where        
         hoistHere = vHoist . fromEither . first RrdpE
                 
         rrdpConf = appContext ^. typed @Config . typed
         logger   = appContext ^. typed @AppLogger
         ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck
 
-        -- Config {..} = config
+        useSnapshot (SnapshotInfo uri hash) notification = do       
+            logDebugM logger [i|#{uri}: downloading snapshot.|]
+            (r, elapsed) <- timedMS downloadAndSave
+            logDebugM logger [i|#{uri}: downloaded and saved snapshot, took #{elapsed}ms.|]                        
+            pure r
+            where                     
+                downloadAndSave = do
+                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
+                                        (RrdpE . CantDownloadSnapshot . show)                 
+                                        (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
+                    validations <- handleSnapshotBS rawContent            
+                    pure (repo { rrdpMeta = rrdpMeta' }, validations)       
 
-        useSnapshot (SnapshotInfo uri hash) notification = do 
-            logDebugM logger [i|Downloading snapshot: #{unURI uri} |]        
-            (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
-                                (RrdpE . CantDownloadSnapshot . show)                 
-                                (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
-            -- snapshot    <- hoistHere $ parseSnapshot rawContent
-            validations <- handleSnapshotBS rawContent            
-            pure (repo { rrdpMeta = rrdpMeta' }, validations)       
-            where     
                 rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
 
         useDeltas sortedDeltas notification = do
-            -- TODO Do not thrash the same server with too big amount of parallel 
-            -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much.         
-            localRepoBottleneck <- liftIO $ newBottleneckIO 4
-            -- validations         <- parallelTasks 
-            --                             (localRepoBottleneck <> ioBottleneck) 
-            --                             sortedDeltas downloadDelta            
-            validations <- parallelPipeline
-                                (localRepoBottleneck <> ioBottleneck)
-                                (S.each sortedDeltas)
-                                downloadDelta
-                                (\rawContent validations -> do 
-                                    vs <- handleDeltaBS rawContent
-                                    pure $ validations <> vs)
-                                (mempty :: Validations)
-
-            -- validations         <- forM sortedDeltas downloadDelta
-
-            logDebugM logger [i|All delta validations = #{validations} |]        
-            -- deltaBSs            <- forM sortedDeltas downloadDelta
-
-            -- validations <- handleDeltasBS deltaBSs
-            pure (repo { rrdpMeta = rrdpMeta' }, validations)
-            -- pure (repo { rrdpMeta = rrdpMeta' }, mempty)
+            let repoURI = repo ^. typed @URI
+            logDebugM logger [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
+            (r, elapsed) <- timedMS downloadAndSave
+            logDebugM logger [i|#{repoURI}: downloaded and saved deltas, took #{elapsed}ms.|]                        
+            pure r
             where
+                downloadAndSave = do
+                    -- TODO Do not thrash the same server with too big amount of parallel 
+                    -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much.         
+                    localRepoBottleneck <- liftIO $ newBottleneckIO 8            
+                    validations <- foldPipeline
+                                        (localRepoBottleneck <> ioBottleneck)
+                                        (S.each sortedDeltas)
+                                        downloadDelta
+                                        (\bs validations -> (validations <>) <$> handleDeltaBS bs)
+                                        (mempty :: Validations)
+
+                    pure (repo { rrdpMeta = rrdpMeta' }, validations)                    
+
                 downloadDelta (DeltaInfo uri hash serial) = do
-                    logDebugM logger [i|Downloading delta #{unURI uri}.|]
                     (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
                                             (RrdpE . CantDownloadDelta . show)
                                             (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                     pure rawContent
 
-                newSerial = List.maximum $ map (^. typed @Serial) sortedDeltas
-                rrdpMeta' = Just (notification ^. typed @SessionId, newSerial)
+                serials = map (^. typed @Serial) sortedDeltas
+                maxSerial = List.maximum serials
+                minSerial = List.minimum serials
+                rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)
 
 
-data Step = UseSnapshot SnapshotInfo
-        | UseDeltas { 
-            sortedDeltas :: [DeltaInfo], 
-            snapshotInfo :: SnapshotInfo 
-            }
-        | NothingToDo
-    deriving (Show, Eq, Ord, Generic)
+data Step
+  = UseSnapshot SnapshotInfo
+  | UseDeltas
+      { sortedDeltas :: [DeltaInfo]
+      , snapshotInfo :: SnapshotInfo
+      }
+  | NothingToDo
+  deriving (Show, Eq, Ord, Generic)
+
 
 
 -- | Decides what to do next based on current state of the repository
@@ -188,58 +191,54 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s ->
                                 RrdpRepository ->
                                 ValidatorT vc IO (RrdpRepository, Validations)
-updateObjectForRrdpRepository appContext@AppContext{..} repository@RrdpRepository { uri = uri' } = do
-    withHttp $ \httpContext -> do
-        added   <- newIORef (0 :: Int)
-        removed <- newIORef (0 :: Int)        
-        (repo, elapsed) <- timedMS $ 
-                downloadAndUpdateRRDP 
-                    appContext 
-                    httpContext
-                    repository 
-                    (saveSnapshot appContext) 
-                    (saveDelta appContext)
-        -- logDebugM logger [i|Saved snapshot for the repository: #{repository}, took #{elapsed}ms |]
-        a <- readIORef added        
-        r <- readIORef removed
-        pure repo            
+updateObjectForRrdpRepository appContext@AppContext{..} repository =
+    withHttp $ \httpContext -> do        
+        stats <- liftIO newRrdpStat
+        (r, v) <- downloadAndUpdateRRDP 
+                appContext 
+                httpContext
+                repository 
+                (saveSnapshot appContext stats)  
+                (saveDelta appContext stats)          
+        RrdpStat {..} <- liftIO $ completeRrdpStat stats
+        logDebugM logger [i|Downloaded #{unURI $ repository ^. typed}, added #{added} objects, removed #{removed}.|]
+        pure (r, v)
 
 
 {- Snapshot case, done in parallel by two thread
-    - one thread to parse XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
-    - one thread to save objects, read asyncs, waits for them and save the results into the DB.
+    - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
+    - another thread read parsing asyncs, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
                 AppContext s -> 
+                RrdpStatWork ->
                 LBS.ByteString -> 
                 ValidatorT vc IO Validations
-saveSnapshot appContext snapshotContent = do           
-    ((Snapshot _ _ _ snapshotItems), elapsed) <- timedMS $ vHoist $ 
+saveSnapshot appContext rrdpStats snapshotContent = do           
+    (Snapshot _ _ _ snapshotItems) <- vHoist $ 
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
-    logDebugM logger [i|Parsed, took #{elapsed}ms |]        
 
     fromTry 
         (StorageE . StorageError . U.fmtEx)                
-        (txStreamFold 
+        (txFoldPipeline 
             cpuParallelism
-            (S.mapM storableToChan $ S.each snapshotItems)
+            (S.mapM newStorable $ S.each snapshotItems)
             (rwTx objectStore)
-            chanToStorage   
-            (mempty :: Validations))                        
-        
+            saveStorable   
+            (mempty :: Validations))        
     where
-        storableToChan (SnapshotPublish uri encodedb64) = do
+        newStorable (SnapshotPublish uri encodedb64) = do
             task <- (parseAndProcess uri encodedb64) `pureTask` bottleneck
             pure (uri, task)
                                 
-        chanToStorage tx (uri, a) validations = 
+        saveStorable tx (uri, a) validations = 
             waitTask a >>= \case                        
                 SError e   -> do
                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
                     pure $ validations <> mError (vContext uri) e
                 SObject so -> do 
                     Stores.putObject tx objectStore so
-                    -- increment added
+                    addedOne rrdpStats
                     pure validations
 
         logger         = appContext ^. typed @AppLogger           
@@ -254,30 +253,29 @@ saveSnapshot appContext snapshotContent = do
 -}
 saveDelta :: Storage s => 
             AppContext s -> 
+            RrdpStatWork ->
             LBS.ByteString -> 
             ValidatorT conf IO Validations
-saveDelta appContext deltaContent = do        
+saveDelta appContext rrdpStats deltaContent = do        
     delta <- vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
 
     let deltaItemS = S.each $ delta ^. typed @[DeltaItem]
-    (r, elapsed) <- timedMS $ fromTry (StorageE . StorageError . U.fmtEx) 
-                        (txStreamFold 
-                            cpuParallelism
-                            (S.mapM storableToChan deltaItemS)
-                            (rwTx objectStore) 
-                            chanToStorage 
-                            (mempty :: Validations))
-    -- logDebugM logger [i|Saving deltas for the repository: #{repository}, took #{elapsed}ms.|]                            
-    pure r                 
+    fromTry (StorageE . StorageError . U.fmtEx) 
+        (txFoldPipeline 
+            cpuParallelism
+            (S.mapM newStorable deltaItemS)
+            (rwTx objectStore) 
+            saveStorable 
+            (mempty :: Validations))    
     where        
-        storableToChan (DP (DeltaPublish uri hash encodedb64)) = do 
+        newStorable (DP (DeltaPublish uri hash encodedb64)) = do 
             task <- (parseAndProcess uri encodedb64) `pureTask` bottleneck
             pure $ maybe (Add uri task) (Replace uri task) hash
 
-        storableToChan (DW (DeltaWithdraw _ hash)) = 
+        newStorable (DW (DeltaWithdraw _ hash)) = 
             pure $ Delete hash
 
-        chanToStorage tx op validations =
+        saveStorable tx op validations =
             case op of
                 Delete hash                -> do
                     Stores.deleteObject tx objectStore hash
@@ -293,8 +291,8 @@ saveDelta appContext deltaContent = do
                 SObject so@(StorableObject ro _) -> do
                     alreadyThere <- Stores.hashExists tx objectStore (getHash ro)
                     unless alreadyThere $ do                                    
-                        Stores.putObject tx objectStore so
-                        -- increment added
+                        Stores.putObject tx objectStore so                        
+                        addedOne rrdpStats
                     pure validations
 
         replaceObject tx uri a oldHash validations = 
@@ -307,20 +305,20 @@ saveDelta appContext deltaContent = do
                     if oldOneIsAlreadyThere 
                         then do 
                             Stores.deleteObject tx objectStore oldHash
-                            -- increment removed
+                            removedOne rrdpStats
                             let newHash = getHash ro
                             newOneIsAlreadyThere <- Stores.hashExists tx objectStore newHash
                             if newOneIsAlreadyThere
                                 then do
-                                    -- logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
+                                    logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
                                     pure $ validations <> mWarning (vContext uri) 
                                         (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
                                 else do                                             
                                     Stores.putObject tx objectStore so
-                                    -- increment added
+                                    addedOne rrdpStats
                                     pure validations                                            
                         else do 
-                            -- logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
+                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
                             pure $ validations <> mWarning (vContext uri) 
                                 (VWarning $ RrdpE $ NoObjectToReplace uri oldHash) 
 
@@ -345,6 +343,29 @@ data DeltaOp m a = Delete !Hash
                 | Add !URI !(Task m a) 
                 | Replace !URI !(Task m a) !Hash
 
+
+data RrdpStat = RrdpStat {
+    added :: Int,
+    removed ::  Int
+}
+
+data RrdpStatWork = RrdpStatWork {
+    added :: IORef Int,
+    removed :: IORef Int
+}
+
+completeRrdpStat :: RrdpStatWork -> IO RrdpStat
+completeRrdpStat RrdpStatWork {..} = 
+    RrdpStat <$> readIORef added <*> readIORef removed
+
+newRrdpStat :: IO RrdpStatWork
+newRrdpStat = RrdpStatWork <$> newIORef 0 <*> newIORef 0
+
+addedOne :: RrdpStatWork -> IO ()
+addedOne RrdpStatWork {..} = increment added
+
+removedOne :: RrdpStatWork -> IO ()
+removedOne RrdpStatWork {..} = increment removed
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())

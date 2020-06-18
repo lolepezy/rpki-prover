@@ -12,6 +12,7 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
 
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.SignedObject
 import           RPKI.Util (mkHash)
@@ -33,7 +34,8 @@ parseMft bs = do
                             hashAlg' <- getOID oid2Hash "Wrong hash algorithm OID"
                             entries <- getEntries fileHashAlg
                             -- TODO translate to UTC
-                            pure $ Manifest (fromInteger manifestNumber) hashAlg' thisUpdateTime' nextUpdateTime' entries
+                            pure $ Manifest (fromInteger manifestNumber) hashAlg' 
+                                (Instant thisUpdateTime') (Instant nextUpdateTime') entries
 
                     -- TODO Check version?
                     (IntVal version,
@@ -45,7 +47,8 @@ parseMft bs = do
                             hashAlg'        <- getOID oid2Hash "Wrong hash algorithm OID"
                             entries         <- getEntries fileHashAlg
                             -- TODO translate to UTC
-                            pure $ Manifest (fromInteger manifestNumber) hashAlg' thisUpdateTime' nextUpdateTime' entries
+                            pure $ Manifest (fromInteger manifestNumber) hashAlg' 
+                                (Instant thisUpdateTime') (Instant nextUpdateTime') entries
 
                     s -> throwParseError $ "Unexpected ROA content: " ++ show s
 

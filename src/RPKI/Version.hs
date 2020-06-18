@@ -39,14 +39,14 @@ data VersionState = NewVersion | FinishedVersion
 -- 
 createDynamicState :: IO DynamicState
 createDynamicState = do
-    Now now <- thisMoment
+    Now (Instant now) <- thisMoment
     let NanoSeconds nano = timeGetNanoSeconds now
     DynamicState <$> atomically (newTVar $ WorldVersion nano)
 
 -- 
 updateWorldVerion :: DynamicState -> IO WorldVersion
 updateWorldVerion DynamicState {..} = do
-    Now now <- thisMoment
+    Now (Instant now) <- thisMoment
     let NanoSeconds nano = timeGetNanoSeconds now
     let wolrdVersion = WorldVersion nano
     atomically $ writeTVar world wolrdVersion

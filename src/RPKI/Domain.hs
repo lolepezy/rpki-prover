@@ -33,8 +33,7 @@ import           Data.Set             (Set)
 
 import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
-import           RPKI.Serialise.Orphans
-
+import           RPKI.Time
 
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
@@ -55,10 +54,13 @@ forRFC (WithStrict_ (WithRFC a))       f _ = f a
 forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
 -- TODO Use library type?
-newtype Hash = Hash BSS.ShortByteString deriving stock (Show, Eq, Ord, Generic)
+newtype Hash = Hash BSS.ShortByteString 
+    deriving stock (Eq, Ord, Generic)
 
-newtype URI  = URI { unURI :: Text.Text } deriving stock (Show, Eq, Ord, Generic)
-newtype KI   = KI  BSS.ShortByteString deriving stock (Show, Eq, Ord, Generic)
+newtype URI  = URI { unURI :: Text.Text } 
+    deriving stock (Eq, Ord, Generic)
+
+newtype KI   = KI  BSS.ShortByteString deriving stock (Eq, Ord, Generic)
 newtype SKI  = SKI KI deriving stock (Show, Eq, Ord, Generic)
 newtype AKI  = AKI KI deriving stock (Show, Eq, Ord, Generic)
 
@@ -67,6 +69,19 @@ newtype Serial = Serial Integer deriving stock (Show, Eq, Ord, Generic)
 newtype Version = Version Integer deriving stock (Show, Eq, Ord, Generic)
 
 type Locations = NonEmpty URI
+
+instance Show URI where
+    show (URI u) = show u
+
+instance Show Hash where
+    show (Hash b) = hexShow b
+
+instance Show KI where
+    show (KI b) = hexShow b
+
+
+hexShow :: BSS.ShortByteString -> String
+hexShow = show . hex . BSS.fromShort
 
 -- | Domain objects
 
@@ -199,14 +214,14 @@ data PrefixWithLength = PrefixWithLength !IpPrefix !Int16
 data Manifest = Manifest {
         mftNumber   :: Int, 
         fileHashAlg :: X509.HashALG, 
-        thisTime    :: DateTime, 
-        nextTime    :: DateTime, 
+        thisTime    :: Instant, 
+        nextTime    :: Instant, 
         mftEntries  :: [(Text, Hash)]
     } deriving stock (Show, Eq, Generic)
 
 data SignCRL = SignCRL {
-        thisUpdateTime     :: DateTime,
-        nextUpdateTime     :: Maybe DateTime,
+        thisUpdateTime     :: Instant,
+        nextUpdateTime     :: Maybe Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BS.ByteString,
@@ -424,10 +439,10 @@ reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
 reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
 
 emptyIpResources :: IpResources
-emptyIpResources = IpResources $ RS.emptyIpSet 
+emptyIpResources = IpResources RS.emptyIpSet 
 
 emptyAsResources :: AsResources
-emptyAsResources = AsResources $ RS.emptyRS
+emptyAsResources = AsResources RS.emptyRS
 
 getMftNumber :: MftObject -> Int
 getMftNumber mft = mftNumber $ getCMSContent $ extract mft

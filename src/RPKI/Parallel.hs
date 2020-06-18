@@ -30,16 +30,19 @@ import qualified Streaming.Prelude as S
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
+-- 
+-- TODO Refactor it so that is shared code with "txFoldPipeline"
 
---  
-parallelPipeline :: (MonadBaseControl IO m, MonadIO m) =>
+-- Consume a stream, map each element and put asyncs in the queue.
+-- Read the queue and consume asyncs on the other end.
+foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
             Bottleneck ->
             Stream (Of s) m () ->
             (s -> m p) ->          -- ^ producer
             (p -> r -> m r) ->     -- ^ consumer, called for every item of the traversed argument
             r ->                   -- ^ fold initial value
             m r
-parallelPipeline bottleneck stream mapStream consume accum0 =
+foldPipeline bottleneck stream mapStream consume accum0 =
     snd <$> bracketChanClosable
                 (chanSize bottleneck)
                 writeAll 
@@ -67,14 +70,14 @@ parallelPipeline bottleneck stream mapStream consume accum0 =
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
 --  
-txStreamFold :: (MonadBaseControl IO m, MonadIO m) =>
+txFoldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
             Natural ->
             Stream (Of q) m () ->
             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
             (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
             r ->                        -- ^ fold initial value
             m r
-txStreamFold poolSize stream withTx consume accum0 =
+txFoldPipeline poolSize stream withTx consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne poolSize)
                 writeAll 
@@ -92,74 +95,6 @@ txStreamFold poolSize stream withTx consume accum0 =
                     case a of
                         Nothing -> pure accum
                         Just a' -> consume tx a' accum >>= go tx
-   
--- | Utility function for a specific case of producer-consumer pair 
--- where consumer works within a transaction (represented as withTx function)
---  
-txConsumeFoldChunked :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
-            Natural ->            
-            t a ->                      -- ^ traversed collection
-            (a -> m q) ->               -- ^ producer, called for every item of the traversed argument
-            ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
-            Natural -> 
-            (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
-            r ->                        -- ^ fold initial value
-            m r
-txConsumeFoldChunked parallelismDegree as produce withTx chunkSize consume accum0 =
-    snd <$> bracketChanClosable 
-                (atLeastOne parallelismDegree)
-                writeAll 
-                readAll 
-                (const $ pure ())
-    where
-        writeAll queue = forM_ as $
-            liftIO . atomically . writeCQueue queue <=< produce
-
-        readAll queue = 
-            go Nothing chunkSize accum0
-            where
-                go maybeTx leftToRead accum = do 
-                    n <- liftIO $ atomically $ readCQueue queue                            
-                    case n of
-                        Nothing      -> pure accum
-                        Just nextOne ->
-                            case maybeTx of
-                                Nothing -> do 
-                                    accum' <- do 
-                                        -- Now n1 <- thisMoment
-                                        -- traceM $ show n1 <> ": starting transaction"
-                                        withTx $ \tx -> do 
-                                            -- Now n2 <- thisMoment
-                                            -- traceM $ show n2 <> ": actually started transaction"
-                                            work tx nextOne
-                                    go Nothing chunkSize accum' 
-                                Just tx -> work tx nextOne
-                    where                    
-                        work tx element = do 
-                            accum' <- consume tx element accum
-                            case leftToRead of
-                                0 -> pure accum'
-                                _ -> go (Just tx) (leftToRead - 1) accum'
-
-
-bracketChan :: (MonadBaseControl IO m, MonadIO m) =>
-                Natural ->
-                (Q.TBQueue t -> m b) ->
-                (Q.TBQueue t -> m c) ->
-                (t -> m w) ->
-                m (b, c)
-bracketChan size produce consume kill = do
-    queue <- liftIO $ atomically $ Q.newTBQueue size
-    concurrently (produce queue) (consume queue)
-        `finally`
-        killAll queue
-    where
-        killAll queue = do
-            a <- liftIO $ atomically $ Q.tryReadTBQueue queue
-            case a of   
-                Nothing -> pure ()
-                Just as -> kill as >> killAll queue
-
 
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 Natural ->
@@ -285,7 +220,7 @@ strictTask io bottleneck = newTask io bottleneck Submitter
 pureTask :: (MonadBaseControl IO m, MonadIO m) => a -> Bottleneck -> m (Task m a)                       
 pureTask io = strictTask (pure $! io)
 
--- Common case
+-- General case
 newTask :: (MonadBaseControl IO m, MonadIO m) => 
         m a -> Bottleneck -> BottleneckFullExecutor -> m (Task m a)
 newTask io (Bottleneck bottlenecks) execution = 

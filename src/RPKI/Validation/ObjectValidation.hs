@@ -10,7 +10,6 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as LBS
-import           Data.Hourglass                     (DateTime, timeDiff)
 
 import qualified Data.Set                           as Set
 
@@ -19,7 +18,6 @@ import           Data.X509.Validation               hiding (InvalidSignature)
 import           GHC.Generics
 
 import           RPKI.AppMonad
-import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
@@ -111,8 +109,8 @@ validateResourceCert (Now now) cert parentCert vcrl = do
     let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
     signatureCheck $ validateCertSignature cert parentCert
     when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
-    when (now < before) $ vPureError CertificateIsInTheFuture
-    when (now > after) $ vPureError CertificateIsExpired
+    when (now < Instant before) $ vPureError CertificateIsInTheFuture
+    when (now > Instant after) $ vPureError CertificateIsExpired
     unless (correctSkiAki cert parentCert)
         $ vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
     void $ validateResourceCertExtensions cert
@@ -206,7 +204,7 @@ validateCms now cms parentCert crl extraValidation = do
   Validated <$> extraValidation cms
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
-validateNextUpdate :: Now -> Maybe DateTime -> PureValidator conf DateTime
+validateNextUpdate :: Now -> Maybe Instant -> PureValidator conf Instant
 validateNextUpdate (Now now) nextUpdateTime =
   case nextUpdateTime of
     Nothing -> vPureError NextUpdateTimeNotSet
@@ -215,8 +213,8 @@ validateNextUpdate (Now now) nextUpdateTime =
       | otherwise -> pure nextUpdate
 
 -- | Validate the thisUpdateTeim for objects that have it (MFT, CRLs)
-validateThisUpdate :: Now -> DateTime -> PureValidator conf DateTime
-validateThisUpdate (Now now) thisUpdateTime     
+validateThisUpdate :: Now -> Instant -> PureValidator conf Instant
+validateThisUpdate (Now now) thisUpdateTime
       | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime
       | otherwise             = pure thisUpdateTime
 
