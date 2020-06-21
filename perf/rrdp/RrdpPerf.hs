@@ -44,10 +44,10 @@ import           System.IO.Temp                   (withSystemTempFile)
 
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -139,12 +139,12 @@ createAppContext logger = do
     fromTry (InitE . InitError . fmtEx) $ 
         listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
 
-    dynamicState <- liftIO createDynamicState
+    versions <- liftIO createDynamicState
 
     -- TODO Make it configurable
     let parallelism = Parallelism getParallelism 64
 
-    appThreads <- liftIO $ do 
+    appBottlenecks <- liftIO $ do 
         cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism
         ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism
         pure $ AppBottleneck cpuBottleneck ioBottleneck
@@ -167,9 +167,9 @@ createAppContext logger = do
                 rsyncRepositoryRefreshInterval = 10 * 60
             }
         },
-        dynamicState = dynamicState,
+        versions = versions,
         database = database,
-        appThreads = appThreads
+        appBottlenecks = appBottlenecks
     }
 
 createLogger :: IO AppLogger

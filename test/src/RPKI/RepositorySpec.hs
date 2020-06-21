@@ -65,7 +65,7 @@ prop_rsync_map_is_a_semigroup =
 
 -- prop_updates_repository_tree_returns_correct_status :: QC.Property
 -- prop_updates_repository_tree_returns_correct_status = monadicIO $ do
---     Now now <- run thisMoment
+--     Now now <- run thisInstant
 --     pickedUpUris <- pick $ QC.sublistOf repositoriesURIs
 
 --     let leftOutURIs = Set.toList $ (Set.fromList repositoriesURIs) `Set.difference` (Set.fromList pickedUpUris)

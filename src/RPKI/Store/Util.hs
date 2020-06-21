@@ -19,9 +19,10 @@ import           RPKI.Store.Sequence
 createObjectStore :: LmdbEnv -> IO (RpkiObjectStore LmdbStorage)
 createObjectStore e =
     RpkiObjectStore <$>
-        (SMap lmdb <$> create e) <*>
+        (SMap lmdb <$> create e) <*>        
         (SMultiMap lmdb <$> createMulti e) <*>
-        (SMultiMap lmdb <$> createMulti e)
+        (SMultiMap lmdb <$> createMulti e) <*>
+        (SMap lmdb <$> create e)
     where 
         lmdb = LmdbStorage e        
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -12,7 +13,7 @@ import           GHC.Generics
 
 import           Data.Int
 
-import           Data.Hourglass         (timeGetNanoSeconds)
+import           Data.Hourglass         (timeGetElapsedP, timeGetNanoSeconds)
 import           Time.Types
 
 import           RPKI.Logging
@@ -25,7 +26,7 @@ newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
-newtype DynamicState = DynamicState {
+newtype Versions = Versions {
     world :: TVar WorldVersion
 } deriving stock (Generic)
 
@@ -37,20 +38,19 @@ data VersionState = NewVersion | FinishedVersion
 
 
 -- 
-createDynamicState :: IO DynamicState
+createDynamicState :: IO Versions
 createDynamicState = do
-    Now (Instant now) <- thisMoment
+    Now (Instant now) <- thisInstant
     let NanoSeconds nano = timeGetNanoSeconds now
-    DynamicState <$> atomically (newTVar $ WorldVersion nano)
+    Versions <$> atomically (newTVar $ WorldVersion nano)
 
 -- 
-updateWorldVerion :: DynamicState -> IO WorldVersion
-updateWorldVerion DynamicState {..} = do
-    Now (Instant now) <- thisMoment
-    let NanoSeconds nano = timeGetNanoSeconds now
-    let wolrdVersion = WorldVersion nano
+updateWorldVerion :: Versions -> IO WorldVersion
+updateWorldVerion Versions {..} = do
+    Now now <- thisInstant    
+    let wolrdVersion = WorldVersion $ toNanoseconds now
     atomically $ writeTVar world wolrdVersion
     pure wolrdVersion
 
-getWorldVerion :: DynamicState -> IO WorldVersion
-getWorldVerion DynamicState {..} = readTVarIO world    
+getWorldVerion :: Versions -> IO WorldVersion
+getWorldVerion Versions {..} = readTVarIO world    

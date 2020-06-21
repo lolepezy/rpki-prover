@@ -1,3 +1,4 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -8,6 +9,9 @@ module RPKI.Store.Database where
 
 import           Codec.Serialise
 import           Control.Monad.IO.Class
+
+import           Control.Lens
+import           Data.Generics.Product.Typed
 
 import           Data.Int
 
@@ -25,19 +29,73 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
+import           RPKI.Parallel
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
 
+import Control.Monad (forM_, when, void)
+import Control.Concurrent.STM (atomically)
 
 
+
+data ROMeta = ROMeta {
+        validatedBy :: WorldVersion
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (Serialise)
+
+-- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
-    objects  :: SMap "objects" s Hash SValue,
-    byAKI    :: SMultiMap "byAKI" s AKI Hash,
-    mftByAKI :: SMultiMap "mftByAKI" s AKI (Hash, Int)
-}
+    objects     :: SMap "objects" s Hash SValue,
+    byAKI       :: SMultiMap "byAKI" s AKI Hash,
+    mftByAKI    :: SMultiMap "mftByAKI" s AKI (Hash, Int),
+    objectMetas :: SMap "object-meta" s Hash ROMeta
+} deriving stock (Generic)
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
+
+
+-- | TA Store 
+newtype TAStore s = TAStore (SMap "trust-anchors" s TaName STA)
+
+instance Storage s => WithStorage s (TAStore s) where
+    storage (TAStore s) = storage s
+
+
+newtype ArtificialKey = ArtificialKey Int64
+    deriving (Show, Eq, Generic, Serialise)
+
+-- | Validation result store
+data VResultStore s = VResultStore {
+    keys    :: Sequence s,
+    results :: SMap "validation-results" s ArtificialKey VResult,
+    whToKey :: SMultiMap "wh-to-key" s WorldVersion ArtificialKey
+}
+
+instance Storage s => WithStorage s (VResultStore s) where
+    storage (VResultStore s _ _) = storage s
+
+
+-- | VRP store
+newtype VRPStore s = VRPStore {
+    vrps :: SMultiMap "vrps" s WorldVersion Roa
+}
+
+instance Storage s => WithStorage s (VRPStore s) where
+    storage (VRPStore s) = storage s
+
+
+-- Version store
+newtype VersionStore s = VersionStore {
+    vrps :: SMap "versions" s WorldVersion VersionState
+}
+
+instance Storage s => WithStorage s (VersionStore s) where
+    storage (VersionStore s) = storage s
+
+
+
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
@@ -60,20 +118,21 @@ hashExists tx store h = liftIO $ M.exists tx (objects store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
-deleteObject tx store h = liftIO $ do
+deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
     ro' <- getByHash tx store h
-    ifJust ro' $ \ro -> do 
-        M.delete tx (objects store) h
+    ifJust ro' $ \ro -> do         
+        M.delete tx objects h
         ifJust (getAKI ro) $ \aki' -> do 
-            MM.delete tx (byAKI store) aki' h
+            MM.delete tx byAKI aki' h
             case ro of
-                MftRO mft -> MM.delete tx (mftByAKI store) aki' (h, getMftNumber mft)
+                MftRO mft -> MM.delete tx mftByAKI aki' (h, getMftNumber mft)
                 _         -> pure ()      
+        M.delete tx objectMetas h
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
-findLatestMftByAKI tx store aki' = liftIO $ 
-    MM.foldS tx (mftByAKI store) aki' f Nothing >>= \case
+findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $ 
+    MM.foldS tx mftByAKI aki' f Nothing >>= \case
         Nothing        -> pure Nothing
         Just (hash, _) -> do 
             o <- getByHash tx store hash
@@ -98,17 +157,21 @@ findMftsByAKI tx store aki' = liftIO $
                 accumulate (Just (MftRO mft)) = mft : mfts
                 accumulate _                  = mfts            
 
+
+markValidated :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
+markValidated tx RpkiObjectStore {..} hash wv = liftIO $ do
+    meta <- M.get tx objectMetas hash 
+    -- TODO If ROMeta stores more stuff, logic must be different
+    let meta' = maybe (ROMeta wv) (& typed @WorldVersion .~ wv) meta
+    M.put tx objectMetas hash meta'
+
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
 getAll tx store = map (fromSValue . snd) <$> liftIO (M.all tx (objects store))
 
 
--- | TA Store 
-newtype TAStore s = TAStore (SMap "trust-anchors" s TaName STA)
-
-instance Storage s => WithStorage s (TAStore s) where
-    storage (TAStore s) = storage s
-
+-- TA store functions
 
 putTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> STA -> m ()
 putTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
@@ -119,19 +182,6 @@ getTA tx (TAStore s) name = liftIO $ M.get tx s name
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a
 
-
-newtype ArtificialKey = ArtificialKey Int64
-    deriving (Show, Eq, Generic, Serialise)
-
--- | Validation result store
-data VResultStore s = VResultStore {
-    keys    :: Sequence s,
-    results :: SMap "validation-results" s ArtificialKey VResult,
-    whToKey :: SMultiMap "wh-to-key" s WorldVersion ArtificialKey
-}
-
-instance Storage s => WithStorage s (VResultStore s) where
-    storage (VResultStore s _ _) = storage s
 
 putVResult :: (MonadIO m, Storage s) => 
             Tx s 'RW -> VResultStore s -> WorldVersion -> VResult -> m ()
@@ -148,13 +198,6 @@ allVResults tx VResultStore {..} wv = liftIO $ MM.foldS tx whToKey wv f []
             maybe vrs (: vrs) <$> M.get tx results artificialKey            
 
 
--- | VRP store
-newtype VRPStore s = VRPStore {
-    vrps :: SMultiMap "vrps" s WorldVersion Roa
-}
-
-instance Storage s => WithStorage s (VRPStore s) where
-    storage (VRPStore s) = storage s
 
 putVRP :: (MonadIO m, Storage s) => 
         Tx s 'RW -> VRPStore s -> WorldVersion -> Roa -> m ()
@@ -165,15 +208,6 @@ allVRPs :: (MonadIO m, Storage s) =>
 allVRPs tx (VRPStore s) wv = liftIO $ MM.allForKey tx s wv
 
 
--- Version store
-newtype VersionStore s = VersionStore {
-    vrps :: SMap "versions" s WorldVersion VersionState
-}
-
-instance Storage s => WithStorage s (VersionStore s) where
-    storage (VersionStore s) = storage s
-
-
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> VersionStore s -> WorldVersion -> VersionState -> m ()
 putVersion tx (VersionStore s) wv vrp = liftIO $ M.put tx s wv vrp
@@ -181,6 +215,28 @@ putVersion tx (VersionStore s) wv vrp = liftIO $ M.put tx s wv vrp
 allVersions :: (MonadIO m, Storage s) => 
             Tx s mode -> VersionStore s -> m [(WorldVersion, VersionState)]
 allVersions tx (VersionStore s) = liftIO $ M.all tx s
+
+
+-- More complicated operations
+
+cleanObjectCache :: (MonadIO m, Storage s) => 
+                    RpkiObjectStore s -> (WorldVersion -> Bool) -> m ()
+cleanObjectCache objectStore@RpkiObjectStore {..} tooOld =
+    void $ liftIO $ bracketChanClosable 
+                        100_000
+                        readOldObjects
+                        deleteObjects
+                        (const $ pure ())
+    where
+        readOldObjects queue = do
+            roTx objectStore $ \tx -> do
+                M.traverse tx objectMetas $ \hash ROMeta {..} -> 
+                    when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
+                        
+        deleteObjects queue = do
+            readQueueChunked queue 50_000 $ \quuElems -> do
+                rwTx objectStore $ \tx -> forM_ quuElems $ deleteObject tx objectStore
+
 
 
 -- All of the stores of the application in one place

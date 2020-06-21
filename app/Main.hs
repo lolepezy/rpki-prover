@@ -1,13 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
 
 module Main where
+    
 import           Colog
 
 import           Control.Monad
 import           Control.Monad.IO.Class
+
+import           Control.Lens                     ((^.))
+import           Data.Generics.Labels
+import           Data.Generics.Product.Fields
+import           Data.Generics.Product.Typed
+
 
 import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
@@ -31,10 +39,11 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Http.Server
 import           RPKI.Logging
 import           RPKI.Parallel
+import           RPKI.Store.Database
 import           RPKI.Store.Base.LMDB             hiding (getEnv)
 import           RPKI.Store.Util
 import           RPKI.TAL
@@ -42,6 +51,7 @@ import           RPKI.Time
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
+import Data.Hourglass (Seconds)
 
 type AppEnv = AppContext LmdbStorage
 
@@ -56,14 +66,15 @@ main = do
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
         Right appContext' ->
-            void $ concurrently
-                (runHttpApi appContext')
-                (runValidatorApp appContext')
+            runValidatorApp appContext'
+            -- void $ concurrently
+            --     (runHttpApi appContext')
+            --     (runValidatorApp appContext')
 
 
 runValidatorApp :: AppEnv -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
-    worldVersion <- updateWorldVerion dynamicState
+    worldVersion <- updateWorldVerion versions
     (result, elapsed) <- timedMS $ bootstapAllTAs appContext
     completeWorldVersion appContext worldVersion
     logDebug_ logger [i|Validated all TAs, took #{elapsed}ms.|]
@@ -72,6 +83,8 @@ runValidatorApp appContext@AppContext {..} = do
 bootstapAllTAs :: AppEnv -> IO [(Either AppError (), Validations)]
 bootstapAllTAs appContext@AppContext {..} = do
     talFileNames <- listTALFiles $ talDirectory config
+    -- ttt <- listTALFiles $ talDirectory config
+    -- let talFileNames = List.filter ("ripe" `List.isInfixOf`) ttt
     asyncs <- forM talFileNames $ \talFileName -> 
         async $ do
             (talContent, vs) <- runValidatorT (vContext $ URI $ convert talFileName) $ do
@@ -92,8 +105,24 @@ runHttpApi :: AppEnv -> IO ()
 runHttpApi appContext = Warp.run 9999 $ httpApi appContext
 
 
+runGC :: AppEnv -> IO ()
+runGC appContext = do
+    Now now <- thisInstant
+    let objectStore = appContext ^. field @"database" . #objectStore
+    let cacheLifeTime = appContext ^. typed @Config . #cacheLifeTime
+    cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
+            let validatedAt = fromNanoseconds nanos
+            in closeEnoughMoments validatedAt now cacheLifeTime
+    
+
+periodically :: Seconds -> IO () -> IO ()
+periodically interval action = do
+    
+    pure ()
+
+
 createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
-createAppContext logger = do
+createAppContext logger = do    
 
     -- TODO Make it configurable?
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
@@ -111,12 +140,12 @@ createAppContext logger = do
     fromTry (InitE . InitError . fmtEx) $ 
         listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
 
-    dynamicState <- liftIO createDynamicState
+    versions <- liftIO createDynamicState
 
     -- TODO Make it configurable
     let parallelism = Parallelism getParallelism 64
 
-    appThreads <- liftIO $ do 
+    appBottlenecks <- liftIO $ do 
         cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism
         ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism
         pure $ AppBottleneck cpuBottleneck ioBottleneck
@@ -137,11 +166,16 @@ createAppContext logger = do
             validationConfig = ValidationConfig {
                 rrdpRepositoryRefreshInterval  = 2 * 60,
                 rsyncRepositoryRefreshInterval = 10 * 60
-            }
+            },
+            -- run cache GC every 30 minutes
+            cacheCleanupInterval = 30 * 60,
+
+            -- allow objects to stay in cache for one day
+            cacheLifeTime = let oneDay = 24 * 60 * 60 in oneDay
         },
-        dynamicState = dynamicState,
+        versions = versions,
         database = database,
-        appThreads = appThreads
+        appBottlenecks = appBottlenecks
     }
 
 createLogger :: IO AppLogger

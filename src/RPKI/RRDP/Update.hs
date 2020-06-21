@@ -26,7 +26,7 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -219,11 +219,12 @@ saveSnapshot appContext rrdpStats snapshotContent = do
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
     fromTry 
-        (StorageE . StorageError . U.fmtEx)                
-        (txFoldPipeline 
+        (StorageE . StorageError . U.fmtEx)    
+        (txFoldPipelineChunked 
             cpuParallelism
             (S.mapM newStorable $ S.each snapshotItems)
             (rwTx objectStore)
+            10000            
             saveStorable   
             (mempty :: Validations))        
     where
@@ -318,7 +319,7 @@ saveDelta appContext rrdpStats deltaContent = do
                                     addedOne rrdpStats
                                     pure validations                                            
                         else do 
-                            logWarn_ logger [i|No object with hash #{oldHash} nothing to replace|]
+                            logWarn_ logger [i|No object #{uri} with hash #{oldHash} to replace.|]
                             pure $ validations <> mWarning (vContext uri) 
                                 (VWarning $ RrdpE $ NoObjectToReplace uri oldHash) 
 

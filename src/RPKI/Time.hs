@@ -6,8 +6,7 @@ module RPKI.Time where
 
 import Data.Int
 import           Control.Monad.IO.Class (MonadIO, liftIO)
-import           Data.Hourglass         (DateTime, ISO8601_DateAndTime (..), NanoSeconds (..), Seconds (..), timeDiff,
-                                         timeDiffP, timePrint)
+import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
 
 import           RPKI.Serialise.Orphans
@@ -27,15 +26,15 @@ instance Show Instant where
 newtype Now = Now Instant
     deriving stock (Show, Eq, Ord)
 
-thisMoment :: MonadIO m => m Now
-thisMoment = Now . Instant <$> liftIO dateCurrent
+thisInstant :: MonadIO m => m Now
+thisInstant = Now . Instant <$> liftIO dateCurrent
 
 
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
-    Now (Instant begin) <- thisMoment
+    Now (Instant begin) <- thisInstant
     z <- action
-    Now (Instant end) <- thisMoment
+    Now (Instant end) <- thisInstant
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
     pure (z, s * 1000_000_000 + ns)
 
@@ -44,6 +43,22 @@ timedMS action = do
     (z, ns) <- timed action   
     pure (z, fromIntegral (ns `div` 1000_000))
 
+nanosPerSecond :: Num p => p
+nanosPerSecond = 1000_000_000
+
+toNanoseconds :: Instant -> Int64
+toNanoseconds (Instant i) = 
+    seconds + nanosPerSecond * nanos
+    where 
+        ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP i
+
+fromNanoseconds :: Int64 -> Instant
+fromNanoseconds totalNanos =    
+    Instant $ timeConvert elapsed
+    where 
+        elapsed = ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos)
+        (seconds, nanos) = totalNanos `divMod` nanosPerSecond        
+
 closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
-closeEnoughMoments (Instant firstMoment) (Instant secondMoment) interval = 
-    timeDiff secondMoment firstMoment < interval
+closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds = 
+    timeDiff secondMoment firstMoment < intervalSeconds

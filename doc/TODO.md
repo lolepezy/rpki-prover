@@ -27,29 +27,31 @@
 + Fix txConsumeFold for forM :: ExceptT a ... -> 
 + Delta processing can result in much bigger heap than snaphiost processing? fix it if that's the case.
 + add 'bootlneck' implementation as 'minimum of two bottlnecks at any moment'
-
++ Refactor the parallel two-thread stuff to use streaming
++ Relationship between ExceptT, forM and channles -- it's all can be done better only with exceptions.
++ RRDP transaction must roll back in case of an error
 
 ---------------------------------  In progress ----------------------------------------
 
-- RRDP transaction must roll back in case of an error
-- Have full path from the top repoistory to all the delegates ones in the VContext.
 
-- Relationship between ExceptT, forM and channles -- it's all can be done better only with exceptions.
-
+- Clean up objects that are not touched by validations or not touched by repository downloads
 
 --------------------------------------- TODOs -----------------------------------------
 
+- Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
+- Have full path from the top repoistory to all the delegates ones in the VContext.
+- Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - it looks like validCount number is flaky and changes depending on (check it)
 - Add periodic re-validation
-- Clean up objects that are not touched by validations or not touched by repository downloads
 - Clean up old VRPs 
-- related objects to the repositories they are downloaded from
+- relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 - Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Read config and CLI options
+- Detect loops in the repository structure and AKI/SKI references.
 - Reuse work, use a global pool of asyncs and attach multiple waiters to them.
-- Refactor the parallel two-thread stuff to use streaming
 
+- Set timeouts on repository downloads and interrupt downloads that are too long.
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
   choices when to download one of another.
 
@@ -63,7 +65,6 @@
 
 - Keep in LMDB only the necessary part of an object after checking it's signature.
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)
-
 
 
 - use co-log-concurrent

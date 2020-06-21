@@ -28,7 +28,7 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -136,7 +136,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
     where
         kill = cancelTask . snd
 
-        threads = cpuBottleneck appThreads
+        threads = cpuBottleneck appBottlenecks
 
         traverseFS queue = 
             first (RsyncE . FileReadError . U.fmtEx) <$> 

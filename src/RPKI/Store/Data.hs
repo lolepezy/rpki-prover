@@ -32,9 +32,6 @@ data STA = STA {
 } deriving (Show, Eq, Generic, Serialise)
 
 
-data SRepository = SRepository !Repository !RepositoryStatus
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
 instance WithKey VResult VContext where
     key = path
 

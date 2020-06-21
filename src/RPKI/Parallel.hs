@@ -96,6 +96,51 @@ txFoldPipeline poolSize stream withTx consume accum0 =
                         Nothing -> pure accum
                         Just a' -> consume tx a' accum >>= go tx
 
+
+-- | Utility function for a specific case of producer-consumer pair 
+-- where consumer works within a transaction (represented as withTx function)
+--  
+txFoldPipelineChunked :: (MonadBaseControl IO m, MonadIO m) =>
+            Natural ->
+            Stream (Of q) m () ->
+            ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
+            Natural -> 
+            (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
+            r ->                        -- ^ fold initial value
+            m r
+txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
+    snd <$> bracketChanClosable
+                (atLeastOne poolSize)
+                writeAll 
+                readAll 
+                (\_ -> pure ())
+    where
+        writeAll queue = S.mapM_ toQueue stream
+            where 
+                toQueue = liftIO . atomically . writeCQueue queue
+
+        readAll queue = 
+            go Nothing chunkSize accum0
+            where
+                go maybeTx leftToRead accum = do 
+                    n <- liftIO $ atomically $ readCQueue queue                            
+                    case n of
+                        Nothing      -> pure accum
+                        Just nextOne ->
+                            case maybeTx of
+                                Nothing -> do 
+                                    accum' <- withTx $ \tx -> work tx nextOne
+                                    go Nothing chunkSize accum' 
+                                Just tx -> work tx nextOne
+                    where                    
+                        work tx element = do 
+                            accum' <- consume tx element accum
+                            case leftToRead of
+                                0 -> pure accum'
+                                _ -> go (Just tx) (leftToRead - 1) accum'
+
+
+
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 Natural ->
                 (ClosableQueue t -> m b) ->
@@ -137,16 +182,10 @@ writeCQueue (ClosableQueue q s) qe =
 -- | Read elements from the queue in chunks and apply the function to 
 -- each chunk
 readQueueChunked :: ClosableQueue a -> Natural -> ([a] -> IO ()) -> IO ()
-readQueueChunked (ClosableQueue q queueState) chunkSize f = go
+readQueueChunked cq chunkSize f = go
     where 
         go = do 
-            chunk' <- atomically $ do 
-                chunk <- readChunk chunkSize q
-                case chunk of 
-                    [] -> readTVar queueState >>= \case 
-                            QClosed -> pure []
-                            QWorks  -> retry
-                    _ -> pure chunk
+            chunk' <- atomically $ readChunk chunkSize cq                
             case chunk' of 
                 [] -> pure ()
                 chu -> f chu >> go              
@@ -155,13 +194,16 @@ closeQueue :: ClosableQueue a -> STM ()
 closeQueue (ClosableQueue _ s) = writeTVar s QClosed
 
 
-readChunk :: Natural -> TBQueue a -> STM [a]
+readChunk :: Natural -> ClosableQueue a -> STM [a]
 readChunk 0 _          = pure []
-readChunk leftToRead q = do 
+readChunk leftToRead cq@(ClosableQueue q queueState) = do 
     z <- Q.tryReadTBQueue q
     case z of 
-        Just z' -> (z' : ) <$> readChunk (leftToRead - 1) q
-        Nothing -> pure []  
+        Just z' -> (z' : ) <$> readChunk (leftToRead - 1) cq
+        Nothing -> 
+            readTVar queueState >>= \case 
+                QClosed -> pure []
+                QWorks  -> retry
 
 
 readCQueue :: ClosableQueue a -> STM (Maybe a)

@@ -21,11 +21,13 @@ data Parallelism = Parallelism {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data Config = Config {
-    talDirectory     :: FilePath,
-    parallelism      :: Parallelism,
-    rsyncConf        :: RsyncConf,
-    rrdpConf         :: RrdpConf,
-    validationConfig :: ValidationConfig
+    talDirectory         :: FilePath,
+    parallelism          :: Parallelism,
+    rsyncConf            :: RsyncConf,
+    rrdpConf             :: RrdpConf,
+    validationConfig     :: ValidationConfig,
+    cacheCleanupInterval :: Seconds,
+    cacheLifeTime        :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 newtype RsyncConf = RsyncConf {

@@ -267,15 +267,16 @@ mergeRsyncRepo (RsyncRepository (RsyncPublicationPoint u) status) pps =
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository { uri = u } pps = 
-    let rrdpLens = typed @RrdpMap . coerced
-    in 
-        case Map.lookup u (pps ^. rrdpLens) of
-            Nothing                             -> pps & rrdpLens %~ (Map.insert u r)
-            Just existing@RrdpRepository { .. } -> pps & rrdpLens %~ inserted
-                where 
-                    inserted m = if r == existing -- most often case
-                                    then m 
-                                    else Map.insert u existing m
+    case Map.lookup u (pps ^. rrdpLens) of
+        Nothing                             -> pps & rrdpLens %~ (Map.insert u r)
+        Just existing@RrdpRepository { .. } -> pps & rrdpLens %~ inserted
+            where 
+                inserted m = if r == existing -- most often case
+                                then m 
+                                else Map.insert u existing m
+    where 
+        rrdpLens = typed @RrdpMap . coerced    
+
 
 -- | Merge rsync repositories into the hierarchy based on their URIs
 -- e.g.

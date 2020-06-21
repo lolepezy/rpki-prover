@@ -15,6 +15,7 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 
 import           Control.Lens
+import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 -- import           Data.Generics.Product.Fields
 
@@ -34,7 +35,7 @@ import qualified Data.Text                        as Text
 
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
@@ -91,7 +92,7 @@ data TopDownContext s = TopDownContext {
     now                         :: Now,    
     objectStats                 :: TVar Stats,
     worldVersion                :: WorldVersion
-}
+} deriving stock (Generic)
 
 createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
@@ -99,9 +100,9 @@ createVerifiedResources (getRC -> ResourceCertificate certificate) =
 
 makeTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -> Now -> CerObject -> m (TopDownContext s)
 makeTopDownContext AppContext {..} taName publicationPoints now certificate = liftIO $ do             
-    worldVersion <- getWorldVerion dynamicState
+    worldVersion <- getWorldVerion versions
     atomically $ TopDownContext (Just $ createVerifiedResources certificate) <$> 
-        newCQueue 100000 <*>
+        newCQueue 20000 <*>
         newTVar publicationPoints <*>
         newTVar Map.empty <*>
         newTVar Set.empty <*>
@@ -129,8 +130,8 @@ bootstrapTA appContext@AppContext {..} tal = do
             UpdatedTACert newCert repos -> fetchAndValidate newCert repos        
     where
         fetchAndValidate taCert repos = do            
-
-            now <- thisMoment
+  
+            now <- thisInstant
 
             storedPubPoints <- roAppTxEx database storageError $ \tx -> 
                             getTaPublicationPoints tx (repositoryStore database) taName'
@@ -145,11 +146,7 @@ bootstrapTA appContext@AppContext {..} tal = do
                             `shrinkTo` 
                         Set.fromList (map getURI $ NonEmpty.toList repos)
 
-            -- logDebugM logger [i| TA: #{taName'}, 
-            --     storedPubPoints = #{storedPubPoints}, 
-            --     reposToFetch = #{reposToFetch} |]                               
-
-            fetchStatuses <- parallelTasks (ioBottleneck appThreads) reposToFetch $ \repo -> do 
+            fetchStatuses <- parallelTasks (ioBottleneck appBottlenecks) reposToFetch $ \repo -> do 
                 logDebugM logger [i|Bootstrap, fetching #{repo} |]
                 fetchRepository appContext repo
 
@@ -234,7 +231,8 @@ data FetchResult =
 fetchRepository :: (MonadIO m, Storage s) => 
                 AppContext s -> Repository -> m FetchResult
 fetchRepository appContext@AppContext { database = DB {..}, ..} repo = liftIO $ do
-    Now now <- thisMoment
+    logDebugM logger [i|Fetching #{getURI repo} |]
+    Now now <- thisInstant
     ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ getURI repo) $ 
         case repo of
             RsyncR r -> 
@@ -325,18 +323,18 @@ validateCAWithQueue
                     filter (\(pp, status) -> needsFetching pp status (config ^. typed) now) $ 
                     toRepoStatusPairs ppsToFetch
 
-            -- for all new repositories, drill down recursively
+            -- For all discovered repositories that need fetching (new or failed 
+            -- or fetched long ago), drill down recursively.
             void $ parallelTasks 
                 -- we don't want to consume both too much IO parallelism and CPU parallelism
-                (ioBottleneck appThreads <> cpuBottleneck appThreads) 
+                (ioBottleneck appBottlenecks) 
                 newRepositories $ \repo -> do
                     validations <- fetchAndValidateWaitingList rootToPps repo
                     queueVResult appContext topDownContext validations
 
         -- Fetch the PP and validate all the certificates from the waiting 
         -- list of this PP.
-        fetchAndValidateWaitingList rootToPps repo = do
-            logDebugM logger [i|Fetching #{repo} |]
+        fetchAndValidateWaitingList rootToPps repo = do            
             result <- fetchRepository appContext repo                                
             let statusUpdate = case result of
                     FetchFailure r s _ -> (r, s)
@@ -355,7 +353,7 @@ validateCAWithQueue
                             Set.map (\pp -> getURI pp `Map.lookup` waitingListPerPP) fetchedPPs
 
                     void $ parallelTasks 
-                            (cpuBottleneck appThreads) 
+                            (cpuBottleneck appBottlenecks) 
                             (Set.toList waitingHashesForThesePPs) $ \hash -> do                    
                                 o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                                 case o of 
@@ -385,7 +383,7 @@ validateTree :: Storage s =>
                 CerObject ->                
                 ValidatorT VContext IO PublicationPoints
 validateTree appContext@AppContext {..} topDownContext certificate = do          
-    globalPPs <- liftIO $ readTVarIO $ publicationPoints topDownContext
+    globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
     let validationConfig = appContext ^. typed @Config . typed
 
@@ -417,19 +415,21 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             modifyTVar (ppWaitingList topDownContext) $ \m -> 
                 Map.unionWith (<>) m (Map.singleton (getURI pp) (Set.singleton $ getHash cert))
         
+        validateThisCertAndGoDown :: ValidatorT VContext IO PublicationPoints
         validateThisCertAndGoDown = do
             vContext' :: VContext <- asks getVC
             let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
 
             -- this for the certificate
             oneMoreValid topDownContext
+            queueValidateMark appContext topDownContext (getHash certificate)
 
             mft <- findMft childrenAki locations
             -- this for the manifest
-            oneMoreValid topDownContext                                
+            oneMoreValid topDownContext
+            queueValidateMark appContext topDownContext (getHash mft)
 
             forChild (NonEmpty.head $ getLocations mft) $ do
-                -- logDebugM logger [i|mft=#{getLocations mft}|]
 
                 (_, crlHash) <- case findCrlOnMft mft of 
                     []    -> vError $ NoCRLOnMFT childrenAki locations
@@ -450,7 +450,8 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                                 pure crl'                                        
 
                         -- this for the CRL
-                        oneMoreValid topDownContext                        
+                        oneMoreValid topDownContext          
+                        queueValidateMark appContext topDownContext (getHash crl)              
                             
                         -- TODO Check locations and give warnings if it's wrong
                         let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
@@ -458,11 +459,16 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
 
                         -- Be very strict about the manifest entries, if at least one of them 
                         -- is broken, the whole manifest is considered broken.
-                        childrenResults <- parallelTasks (cpuBottleneck appThreads) childrenHashes $ \h -> do
+                        childrenResults <- parallelTasks (cpuBottleneck appBottlenecks) childrenHashes $ \h -> do
                             ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
                             case ro of 
                                 Nothing  -> vError $ ManifestEntryDontExist h
-                                Just ro' -> liftIO $ validateChild vContext' validCrl ro'
+                                Just ro' -> liftIO $ do 
+                                    -- mark as validated all the children of the manifest regardless of
+                                    -- errors on the manifest, to avoid partial deletion of MFT children 
+                                    -- by GC.
+                                    queueValidateMark appContext topDownContext h
+                                    validateChild vContext' validCrl ro'
 
                         pure $ mconcat childrenResults
 
@@ -519,6 +525,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                 childLocation = NonEmpty.head $ getLocations ro
 
                 withEmptyPPs f = f >> pure emptyPublicationPoints
+        
 
 
 needsFetching :: Fetchable r => r -> RepositoryStatus -> ValidationConfig -> Now -> Bool
@@ -535,16 +542,24 @@ needsFetching r status ValidationConfig {..} (Now now) =
                 interval Rsync = rsyncRepositoryRefreshInterval
 
 
-queueVRP :: Storage s => AppContext s -> TopDownContext s -> [Roa] -> IO ()
+queueVRP :: (MonadIO m, Storage s) =>
+            AppContext s -> TopDownContext s -> [Roa] -> m ()
 queueVRP AppContext { database = DB {..} } TopDownContext {..} roas = 
-    for_ roas $ \vrp -> 
+    liftIO $ for_ roas $ \vrp -> 
         atomically $ writeCQueue databaseQueue $ \tx -> 
             putVRP tx vrpStore worldVersion vrp 
 
 
+queueValidateMark :: (MonadIO m, Storage s) => 
+                    AppContext s -> TopDownContext s -> Hash -> m ()
+queueValidateMark AppContext { database = DB {..} } TopDownContext {..} hash = 
+        liftIO $ atomically $ writeCQueue databaseQueue $ \tx -> 
+            markValidated tx objectStore hash worldVersion 
+
 -- | Put validation result into a queue for writing
-queueVResult :: Storage s => AppContext s -> TopDownContext s -> Validations -> IO ()
-queueVResult AppContext { database = DB {..} } TopDownContext {..} validations = do
+queueVResult :: (MonadIO m, Storage s) => 
+                AppContext s -> TopDownContext s -> Validations -> m ()
+queueVResult AppContext { database = DB {..} } TopDownContext {..} validations = liftIO $ do
     case validations of
         Validations validationsMap
             | emptyValidations validations -> pure ()
@@ -561,9 +576,12 @@ executeQueuedTxs :: Storage s =>
             AppContext s -> TopDownContext s -> IO ()
 executeQueuedTxs AppContext {..} TopDownContext {..} = do
     -- read element in chunks to make transactions not too frequent
-    readQueueChunked databaseQueue 1000 $ \quuElems ->
-        rwTx database $ \tx -> 
-            for_ quuElems $ \f -> f tx                
+    readQueueChunked databaseQueue 10000 $ \quuElems -> do
+        ((r, elapsedtx), elapsed) <- timedMS $ rwTx database $ \tx -> 
+                                    timedMS $ for_ quuElems $ \f -> f tx                
+        
+        logDebugM logger [i|Executed queue chunk of #{length quuElems}, took #{elapsed}ms, tx tool #{elapsedtx}.|]
+        pure r
 
 
 
@@ -641,4 +659,3 @@ appTxEx ws err f txF = do
     -- TODO Make it less ugly and complicated
     t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
     validatorT $ pure $ either ((, mempty) . Left . err) id t
-

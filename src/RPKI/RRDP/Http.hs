@@ -20,7 +20,7 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Execution
+import           RPKI.AppContext
 import           RPKI.Parse.Parse
 import qualified RPKI.Util                      as U
 
