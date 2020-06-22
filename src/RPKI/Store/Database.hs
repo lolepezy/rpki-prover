@@ -1,4 +1,3 @@
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -30,6 +29,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
+
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
 
@@ -219,8 +219,12 @@ allVersions tx (VersionStore s) = liftIO $ M.all tx s
 
 -- More complicated operations
 
+-- Delete all the objects from the objectStore if they were 
+-- validated longer than certain time ago.
 cleanObjectCache :: (MonadIO m, Storage s) => 
-                    RpkiObjectStore s -> (WorldVersion -> Bool) -> m ()
+                    RpkiObjectStore s -> 
+                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
+                    m ()
 cleanObjectCache objectStore@RpkiObjectStore {..} tooOld =
     void $ liftIO $ bracketChanClosable 
                         100_000
@@ -233,6 +237,7 @@ cleanObjectCache objectStore@RpkiObjectStore {..} tooOld =
                 M.traverse tx objectMetas $ \hash ROMeta {..} -> 
                     when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
                         
+        -- Don't lock the DB for potentially too long, use big but finite chunks
         deleteObjects queue = do
             readQueueChunked queue 50_000 $ \quuElems -> do
                 rwTx objectStore $ \tx -> forM_ quuElems $ deleteObject tx objectStore

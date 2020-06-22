@@ -82,6 +82,7 @@ runValidatorApp appContext@AppContext {..} = do
 
 bootstapAllTAs :: AppEnv -> IO [(Either AppError (), Validations)]
 bootstapAllTAs appContext@AppContext {..} = do
+    worldVersion <- updateWorldVerion versions
     talFileNames <- listTALFiles $ talDirectory config
     -- ttt <- listTALFiles $ talDirectory config
     -- let talFileNames = List.filter ("ripe" `List.isInfixOf`) ttt
@@ -95,7 +96,7 @@ bootstapAllTAs appContext@AppContext {..} = do
                     logError_ logger [i|Error reading TAL #{talFileName}, e = #{e}.|]
                     pure (Left e, vs)
                 Right talContent' -> 
-                    bootstrapTA appContext talContent'
+                    bootstrapTA appContext talContent' worldVersion
 
     forM asyncs wait
 
@@ -108,7 +109,7 @@ runHttpApi appContext = Warp.run 9999 $ httpApi appContext
 runGC :: AppEnv -> IO ()
 runGC appContext = do
     Now now <- thisInstant
-    let objectStore = appContext ^. field @"database" . #objectStore
+    let objectStore = appContext ^. #database . #objectStore
     let cacheLifeTime = appContext ^. typed @Config . #cacheLifeTime
     cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
             let validatedAt = fromNanoseconds nanos

@@ -57,15 +57,6 @@ import           RPKI.Version
 import           RPKI.Validation.ObjectValidation
 
 
-data TACertValidationResult = 
-        SameTACert !CerObject !(NonEmpty Repository) |
-        UpdatedTACert !CerObject !(NonEmpty Repository)
-    deriving stock (Show, Eq, Generic)
-
-storageError :: SomeException -> AppError
-storageError = StorageE . StorageError . fmtEx
-
-
 data Stats = Stats {
     validCount :: Int
 }
@@ -98,9 +89,15 @@ createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
     VerifiedRS $ toPrefixesAndAsns $ withRFC certificate resources
 
-makeTopDownContext :: MonadIO m => AppContext s -> TaName -> PublicationPoints -> Now -> CerObject -> m (TopDownContext s)
-makeTopDownContext AppContext {..} taName publicationPoints now certificate = liftIO $ do             
-    worldVersion <- getWorldVerion versions
+makeTopDownContext :: MonadIO m => 
+                    AppContext s -> 
+                    WorldVersion -> 
+                    TaName -> 
+                    PublicationPoints -> 
+                    Now -> 
+                    CerObject -> 
+                    m (TopDownContext s)
+makeTopDownContext AppContext {..} worldVersion taName publicationPoints now certificate = liftIO $ do                 
     atomically $ TopDownContext (Just $ createVerifiedResources certificate) <$> 
         newCQueue 20000 <*>
         newTVar publicationPoints <*>
@@ -120,107 +117,131 @@ oneMoreValid TopDownContext {..} = liftIO $ atomically $
 -- | * download and parse TA certificate
 -- | * fetch the repositories
 bootstrapTA :: Storage s => 
-            AppContext s -> TAL -> IO (Either AppError (), Validations)
-bootstrapTA appContext@AppContext {..} tal = do    
+            AppContext s -> TAL -> WorldVersion -> IO (Either AppError (), Validations)
+bootstrapTA appContext@AppContext {..} tal worldVersion = do    
     runValidatorT taContext $ do         
-        (nextStep, elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal 
+        ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal 
         logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]
-        case nextStep of
-            SameTACert taCert repos     -> fetchAndValidate taCert repos
-            UpdatedTACert newCert repos -> fetchAndValidate newCert repos        
-    where
-        fetchAndValidate taCert repos = do            
-  
-            now <- thisInstant
-
-            storedPubPoints <- roAppTxEx database storageError $ \tx -> 
-                            getTaPublicationPoints tx (repositoryStore database) taName'
-
-            let reposToFetch = map fst $ 
-                    -- filter the ones that are either new or need refetching
-                    filter (\(pp, status) -> needsFetching pp status (config ^. typed) now) $ 
-                    toRepoStatusPairs $ 
-                        -- merge repos that we want with the ones that are stored                     
-                        mergeRepos repos storedPubPoints
-                        -- we only care about URLs from 'repos', so shrink the PPs                        
-                            `shrinkTo` 
-                        Set.fromList (map getURI $ NonEmpty.toList repos)
-
-            fetchStatuses <- parallelTasks (ioBottleneck appBottlenecks) reposToFetch $ \repo -> do 
-                logDebugM logger [i|Bootstrap, fetching #{repo} |]
-                fetchRepository appContext repo
-
-            case partitionFailedSuccess fetchStatuses of 
-                ([], _) -> do
-                    let flattenedStatuses = flip map fetchStatuses $ \case 
-                            FetchFailure r s _ -> (r, s)
-                            FetchSuccess r s _ -> (r, s)            
-
-                    -- use publication points taken from the DB and updated with the 
-                    -- the fetchStatuses of the fetch that we just performed
-                    let fetchUpdatedPPs = updateStatuses storedPubPoints flattenedStatuses
-
-                    -- logDebugM logger [i| TA: #{taName'}, fetchUpdatedPPs = #{fetchUpdatedPPs}|]       
-
-                    topDownContext <- makeTopDownContext appContext taName' fetchUpdatedPPs now taCert
-                    -- this is for TA cert
-                    oneMoreValid topDownContext
-
-                    fromTry (UnspecifiedE . fmtEx) $
-                        validateCA appContext taCertURI topDownContext taCert                    
-
-                    -- get publication points from the topDownContext and save it to the database
-                    pubPointAfterTopDown <- liftIO $ readTVarIO $ publicationPoints topDownContext
-
-                    let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
-
-                    Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
-                    logDebugM logger [i| TA: #{taName'} validCount = #{validCount} |]                                    
-
-                    rwAppTxEx database storageError $ \tx -> 
-                        applyChangeSet tx (repositoryStore database) changeSet' taName'
-
-                (broken, _) -> do
-                    let brokenUrls = map (getURI . (^. _1)) broken
-                    logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download|]
-            
-        taCertURI = vContext $ NonEmpty.head $ certLocations tal
-        taName' = getTaName tal
+        fetchAndValidate appContext (getTaName tal) taCert repos worldVersion
+    where                            
         taContext = vContext $ getTaURI tal
 
 
--- | Valiidate TA starting from the TAL.
+-- | Validate TA given that the TA certificate is downloaded and up-to-date
+validateTA :: Storage s => 
+            AppContext s -> TaName -> WorldVersion -> IO (Either AppError (), Validations)
+validateTA appContext@AppContext {..} taName@(TaName taNameText) worldVersion = do    
+    runValidatorT taContext $ do
+        let taStore = database ^. #taStore
+        rwAppTxEx taStore storageError $ \tx -> do
+            r <- getTA tx taStore taName
+            case r of 
+                Nothing  -> appError $ ValidationE $ InvalidCert $ "Not TA cert for " <> taNameText
+                Just STA { taCert, initialRepositories } -> 
+                    fetchAndValidate appContext taName taCert initialRepositories worldVersion
+    where                            
+        taContext = vContext $ URI taNameText
+
+
+fetchAndValidate :: (WithVContext env, Storage s) =>
+                    AppContext s -> 
+                    TaName -> 
+                    CerObject -> 
+                    NonEmpty Repository -> 
+                    WorldVersion -> 
+                    ValidatorT env IO ()
+fetchAndValidate appContext@AppContext {..} taName' taCert repos worldVersion = do  
+    now <- thisInstant
+
+    let taCertURI = vContext $ NonEmpty.head $ getLocations taCert
+
+    storedPubPoints <- roAppTxEx database storageError $ \tx -> 
+                    getTaPublicationPoints tx (repositoryStore database) taName'
+
+    let reposToFetch = map fst $ 
+            -- filter the ones that are either new or need refetching
+            filter (\(pp, status) -> needsFetching pp status (config ^. typed) now) $ 
+            toRepoStatusPairs $ 
+                -- merge repos that we want with the ones that are stored                     
+                mergeRepos repos storedPubPoints
+                -- we only care about URLs from 'repos', so shrink the PPs                        
+                    `shrinkTo` 
+                Set.fromList (map getURI $ NonEmpty.toList repos)
+
+    fetchStatuses <- parallelTasks (ioBottleneck appBottlenecks) reposToFetch $ \repo -> do 
+        logDebugM logger [i|Bootstrap, fetching #{repo} |]
+        fetchRepository appContext repo
+
+    case partitionFailedSuccess fetchStatuses of 
+        ([], _) -> do
+            let flattenedStatuses = flip map fetchStatuses $ \case 
+                    FetchFailure r s _ -> (r, s)
+                    FetchSuccess r s _ -> (r, s)            
+
+            -- use publication points taken from the DB and updated with the 
+            -- the fetchStatuses of the fetch that we just performed
+            let fetchUpdatedPPs = updateStatuses storedPubPoints flattenedStatuses
+
+            -- logDebugM logger [i| TA: #{taName'}, fetchUpdatedPPs = #{fetchUpdatedPPs}|]       
+
+            topDownContext <- makeTopDownContext appContext worldVersion taName' fetchUpdatedPPs now taCert 
+            -- this is for TA cert
+            oneMoreValid topDownContext
+
+            fromTry (UnspecifiedE . fmtEx) $
+                validateCA appContext taCertURI topDownContext taCert                    
+
+            -- get publication points from the topDownContext and save it to the database
+            pubPointAfterTopDown <- liftIO $ readTVarIO $ publicationPoints topDownContext
+
+            let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
+
+            Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
+            logDebugM logger [i| TA: #{taName'} validCount = #{validCount} |]                                    
+
+            rwAppTxEx database storageError $ \tx -> 
+                applyChangeSet tx (repositoryStore database) changeSet' taName'
+
+        (broken, _) -> do
+            let brokenUrls = map (getURI . (^. _1)) broken
+            logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download|]
+
+     
+
+data TACertStatus = Existing | Updated
+
+-- | Fetch and validated TA certificate starting from the TAL.
 validateTACertificateFromTAL :: (WithVContext vc, Storage s) => 
-                                AppContext s -> TAL -> ValidatorT vc IO TACertValidationResult
-validateTACertificateFromTAL appContext@AppContext { database = DB {..}, ..} tal = do    
+                                AppContext s -> 
+                                TAL -> 
+                                ValidatorT vc IO (CerObject, NonEmpty Repository, TACertStatus)
+validateTACertificateFromTAL appContext@AppContext {..} tal = do        
     (uri', ro) <- fetchTACertificate appContext tal
     newCert    <- vHoist $ validateTACert tal uri' ro      
-    rwAppTxEx taStore storageError
-        $ \tx -> do
-            r <- getTA tx taStore taName'
-            case r of
-                Nothing ->
-                    -- it's a new TA, store it and trigger all the other actions                    
+    rwAppTxEx taStore storageError $ \tx -> do
+        r <- getTA tx taStore taName'
+        case r of
+            Nothing ->
+                -- it's a new TA, store it and trigger all the other actions                    
+                storeTaCert tx newCert
+
+            Just STA { taCert, initialRepositories } 
+                | getSerial taCert /= getSerial newCert -> do            
+                    logInfoM logger [i| Updating TA certificate for #{taName'} |]                            
                     storeTaCert tx newCert
-
-                Just STA { taCert, initialRepositories } ->
-                    if getSerial taCert /= getSerial newCert
-                        then do            
-                            logInfoM logger [i| Updating TA certificate for #{taName'} |]                            
-                            storeTaCert tx newCert
-                        else 
-                            pure $ SameTACert taCert initialRepositories
-
+                | otherwise -> 
+                    pure (taCert, initialRepositories, Existing)
     where        
         storeTaCert tx newCert = 
             case createRepositoriesFromTAL tal newCert of
                 Left e      -> appError $ ValidationE e
                 Right repos -> do 
                     putTA tx taStore (STA tal newCert repos)
-                    pure $ UpdatedTACert newCert repos
+                    pure (newCert, repos, Updated)
 
-        taName' = getTaName tal        
-     
+        taName' = getTaName tal  
+        taStore = database ^. #taStore    
+
 
 data FetchResult = 
     FetchSuccess !Repository !RepositoryStatus !Validations | 
@@ -527,7 +548,6 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                 withEmptyPPs f = f >> pure emptyPublicationPoints
         
 
-
 needsFetching :: Fetchable r => r -> RepositoryStatus -> ValidationConfig -> Now -> Bool
 needsFetching r status ValidationConfig {..} (Now now) = 
     case status of
@@ -559,7 +579,7 @@ queueValidateMark AppContext { database = DB {..} } TopDownContext {..} hash =
 -- | Put validation result into a queue for writing
 queueVResult :: (MonadIO m, Storage s) => 
                 AppContext s -> TopDownContext s -> Validations -> m ()
-queueVResult AppContext { database = DB {..} } TopDownContext {..} validations = liftIO $ do
+queueVResult AppContext { database = DB {..} } TopDownContext {..} validations = liftIO $ 
     case validations of
         Validations validationsMap
             | emptyValidations validations -> pure ()
@@ -570,20 +590,28 @@ queueVResult AppContext { database = DB {..} } TopDownContext {..} validations =
                             in atomically $ writeCQueue databaseQueue $ 
                                     \tx -> putVResult tx resultStore worldVersion vResult
 
+-- Write validation result synchrtonously
+writeVResult :: (MonadIO m, Storage s) => 
+                AppContext s -> Validations -> WorldVersion -> m ()
+writeVResult AppContext { database = DB {..} } validations worldVersion = liftIO $ do
+    case validations of
+        Validations validationsMap
+            | emptyValidations validations -> pure ()
+            | otherwise -> do
+                rwTx resultStore $ \tx -> 
+                    void $ flip Map.traverseWithKey validationsMap $ 
+                        \vc' problems -> do
+                            let vResult = VResult (Set.toList problems) vc'   
+                            putVResult tx resultStore worldVersion vResult                
 
 -- Execute writing transactions from the queue
 executeQueuedTxs :: Storage s => 
             AppContext s -> TopDownContext s -> IO ()
 executeQueuedTxs AppContext {..} TopDownContext {..} = do
     -- read element in chunks to make transactions not too frequent
-    readQueueChunked databaseQueue 10000 $ \quuElems -> do
-        ((r, elapsedtx), elapsed) <- timedMS $ rwTx database $ \tx -> 
-                                    timedMS $ for_ quuElems $ \f -> f tx                
-        
-        logDebugM logger [i|Executed queue chunk of #{length quuElems}, took #{elapsed}ms, tx tool #{elapsedtx}.|]
-        pure r
-
-
+    readQueueChunked databaseQueue 10_000 $ \quuElems -> do
+        rwTx database $ \tx -> 
+            for_ quuElems $ \f -> f tx
 
 completeWorldVersion :: Storage s => 
                         AppContext s -> WorldVersion -> IO ()
@@ -659,3 +687,7 @@ appTxEx ws err f txF = do
     -- TODO Make it less ugly and complicated
     t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
     validatorT $ pure $ either ((, mempty) . Left . err) id t
+
+
+storageError :: SomeException -> AppError
+storageError = StorageE . StorageError . fmtEx

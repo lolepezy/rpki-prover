@@ -1,4 +1,3 @@
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -34,7 +33,6 @@ newtype Versions = Versions {
 data VersionState = NewVersion | FinishedVersion
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
-
 
 
 -- 

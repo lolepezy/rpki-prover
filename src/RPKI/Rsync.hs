@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE BangPatterns       #-}
 
 module RPKI.Rsync where

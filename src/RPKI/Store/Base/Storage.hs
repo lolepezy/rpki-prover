@@ -14,7 +14,7 @@ class WithTx s where
     readOnlyTx :: s -> (Tx s 'RO -> IO a) -> IO a
     readWriteTx :: s -> (Tx s 'RW -> IO a) -> IO a
 
-class WithTx s => Storage s where        
+class WithTx s => Storage s where
     type SMapImpl s :: Symbol -> Type
     type SMultiMapImpl s :: Symbol -> Type
     get :: Tx s m -> SMapImpl s name -> SKey -> IO (Maybe SValue)    

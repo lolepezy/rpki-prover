@@ -2,7 +2,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE QuasiQuotes        #-}
 
 import Colog hiding (extract)

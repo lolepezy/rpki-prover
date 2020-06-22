@@ -38,6 +38,7 @@
 
 --------------------------------------- TODOs -----------------------------------------
 
+- Save validation results from the top-level functions such as bootstrapTA and validateTA
 - Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 - Have full path from the top repoistory to all the delegates ones in the VContext.
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."

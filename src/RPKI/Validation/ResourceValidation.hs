@@ -1,5 +1,3 @@
-{-# LANGUAGE NumericUnderscores #-}
-
 module RPKI.Validation.ResourceValidation where
 
 import           RPKI.AppMonad

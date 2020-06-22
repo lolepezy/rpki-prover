@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DerivingStrategies #-}
 
 module RPKI.Time where

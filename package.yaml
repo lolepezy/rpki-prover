@@ -11,8 +11,8 @@ extra-source-files:
 - ChangeLog.md
 
 # Metadata used when publishing your package
-# synopsis:            Short description of your package
-# category:            Web
+# synopsis:            RPKI relying party software
+# category:            Network
 
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
@@ -23,7 +23,7 @@ default-extensions: ViewPatterns, LambdaCase, ScopedTypeVariables,
                     ConstraintKinds, DataKinds, 
                     DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
                     DuplicateRecordFields, FlexibleContexts, GADTs, 
-                    KindSignatures, MultiWayIf, NoMonomorphismRestriction, 
+                    KindSignatures, MultiWayIf, NoMonomorphismRestriction, NumericUnderscores,
                     PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
                     StandaloneDeriving, TupleSections, TypeApplications, TypeFamilies, 
                     TypeOperators
