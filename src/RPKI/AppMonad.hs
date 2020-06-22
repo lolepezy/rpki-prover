@@ -71,17 +71,17 @@ pureWarning w = do
     lift $ modify' (mWarning vc w <>)
 
 vPureError :: ValidationError -> PureValidator env r
-vPureError e = do
-    vc <- asks getVC 
-    let ve = ValidationE e
-    lift $ modify' (mError vc ve <>)
-    pureError ve
+vPureError e = pureError $ ValidationE e    
 
 pureError :: AppError -> PureValidator env r
-pureError = lift . throwE
+pureError e = do
+    vc <- asks getVC     
+    lift $ do 
+        modify' (mError vc e <>)
+        throwE e
 
 pureErrorIfNot :: Bool -> ValidationError -> PureValidator env ()
-pureErrorIfNot b e = if b then pure () else lift $ throwE $ ValidationE e
+pureErrorIfNot b e = if b then pure () else vPureError e
 
 fromEither :: Either AppError r -> PureValidator env r
 fromEither (Left e) = pureError e
