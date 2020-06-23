@@ -80,7 +80,7 @@ runValidatorApp appContext@AppContext {..} = do
     logDebug_ logger [i|Validated all TAs, took #{elapsed}ms.|]
 
 
-bootstapAllTAs :: AppEnv -> IO [(Either AppError (), Validations)]
+bootstapAllTAs :: AppEnv -> IO [()]
 bootstapAllTAs appContext@AppContext {..} = do
     worldVersion <- updateWorldVerion versions
     talFileNames <- listTALFiles $ talDirectory config
@@ -88,13 +88,15 @@ bootstapAllTAs appContext@AppContext {..} = do
     -- let talFileNames = List.filter ("ripe" `List.isInfixOf`) ttt
     asyncs <- forM talFileNames $ \talFileName -> 
         async $ do
-            (talContent, vs) <- runValidatorT (vContext $ URI $ convert talFileName) $ do
-                                    t <- fromTry (RsyncE . FileReadError . fmtEx) $ BS.readFile talFileName
-                                    vHoist $ fromEither $ first TAL_E $ parseTAL $ convert t    
+            let validationContext = vContext $ URI $ convert talFileName
+            (talContent, validations) <- runValidatorT validationContext $ do
+                                            t <- fromTry (RsyncE . FileReadError . fmtEx) $ 
+                                                BS.readFile talFileName
+                                            vHoist $ fromEither $ first TAL_E $ parseTAL $ convert t    
+            writeVResult appContext validations worldVersion
             case talContent of 
                 Left e -> do
                     logError_ logger [i|Error reading TAL #{talFileName}, e = #{e}.|]
-                    pure (Left e, vs)
                 Right talContent' -> 
                     bootstrapTA appContext talContent' worldVersion
 
@@ -106,8 +108,8 @@ runHttpApi :: AppEnv -> IO ()
 runHttpApi appContext = Warp.run 9999 $ httpApi appContext
 
 
-runGC :: AppEnv -> IO ()
-runGC appContext = do
+runCacheGC :: AppEnv -> IO ()
+runCacheGC appContext = do
     Now now <- thisInstant
     let objectStore = appContext ^. #database . #objectStore
     let cacheLifeTime = appContext ^. typed @Config . #cacheLifeTime

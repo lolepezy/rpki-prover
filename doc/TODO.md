@@ -30,6 +30,7 @@
 + Refactor the parallel two-thread stuff to use streaming
 + Relationship between ExceptT, forM and channles -- it's all can be done better only with exceptions.
 + RRDP transaction must roll back in case of an error
++ Save validation results from the top-level functions such as bootstrapTA and validateTA
 
 ---------------------------------  In progress ----------------------------------------
 
@@ -38,7 +39,7 @@
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Save validation results from the top-level functions such as bootstrapTA and validateTA
+- Cleanup VRPs and validation results as well based on their world version.
 - Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 - Have full path from the top repoistory to all the delegates ones in the VContext.
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
@@ -55,6 +56,7 @@
 - Set timeouts on repository downloads and interrupt downloads that are too long.
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
   choices when to download one of another.
+- Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
 

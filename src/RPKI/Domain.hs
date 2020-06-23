@@ -79,7 +79,6 @@ instance Show Hash where
 instance Show KI where
     show (KI b) = hexShow b
 
-
 hexShow :: BSS.ShortByteString -> String
 hexShow = show . hex . BSS.fromShort
 
@@ -410,9 +409,6 @@ getSerial :: WithResourceCertificate a => a -> Serial
 getSerial (getRC -> ResourceCertificate rc) = 
     Serial $ X509.certSerial $ cwsX509certificate $ withRFC rc certX509 
 
-hexHash :: Hash -> String
-hexHash (Hash bs) = show $ hex $ BSS.fromShort bs
-
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
 
@@ -431,12 +427,11 @@ getCertWithSignature (getRC -> ResourceCertificate rc) = withRFC rc certX509
 getEECert :: SignedObject a -> CertificateWithSignature
 getEECert (extract . scCertificate . soContent -> ResourceCertificate rc) = withRFC rc certX509     
 
-
 strictCert :: ResourceCert 'Strict_ -> ResourceCertificate
 strictCert = ResourceCertificate . WithStrict_ . WithRFC
 
-reconcideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
-reconcideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
+reconsideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
+reconsideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
 
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 
