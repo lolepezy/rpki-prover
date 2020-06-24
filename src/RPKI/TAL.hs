@@ -9,7 +9,6 @@ import           Control.Monad
 import           Codec.Serialise
 
 import qualified Data.List          as List
-import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text          as Text
 
@@ -18,7 +17,8 @@ import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Errors
 
-import           RPKI.Util        (isHttpsURI, convert)
+import           RPKI.Util          (convert, isHttpsURI)
+
 
 
 -- | Represents Trust Anchor Locator as described here

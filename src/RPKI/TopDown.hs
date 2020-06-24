@@ -470,8 +470,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                     Nothing          -> vError $ NoCRLExists childrenAki locations    
                     Just (CrlRO crl) -> do      
 
-                        validCrl <- forChild (NonEmpty.head $ getLocations crl) $ do    
-                            -- logDebugM logger [i|crl=#{getLocations crl}|]
+                        validCrl <- forChild (NonEmpty.head $ getLocations crl) $ do
                             vHoist $ do          
                                 crl' <- validateCrl (now topDownContext) crl certificate
                                 void $ validateMft (now topDownContext) mft certificate crl'
@@ -487,16 +486,18 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
 
                         -- Be very strict about the manifest entries, if at least one of them 
                         -- is broken, the whole manifest is considered broken.
-                        childrenResults <- parallelTasks (cpuBottleneck appBottlenecks) childrenHashes $ \h -> do
-                            ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
-                            case ro of 
-                                Nothing  -> vError $ ManifestEntryDontExist h
-                                Just ro' -> liftIO $ do 
-                                    -- mark as validated all the children of the manifest regardless of
-                                    -- errors on the manifest, to avoid partial deletion of MFT children 
-                                    -- by GC.
-                                    queueValidateMark appContext topDownContext h
-                                    validateChild vContext' validCrl ro'
+                        childrenResults <- parallelTasks 
+                                (cpuBottleneck appBottlenecks) 
+                                childrenHashes $ \h -> do
+                                    ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
+                                    case ro of 
+                                        Nothing  -> vError $ ManifestEntryDontExist h
+                                        Just ro' -> liftIO $ do 
+                                            -- mark as validated all the children of the manifest regardless of
+                                            -- errors on the manifest, to avoid partial deletion of MFT children 
+                                            -- by GC.
+                                            queueValidateMark appContext topDownContext h
+                                            validateChild vContext' validCrl ro'
 
                         pure $ mconcat childrenResults
 

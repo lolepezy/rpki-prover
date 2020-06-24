@@ -167,6 +167,9 @@ data QState = QWorks | QClosed
 -- Simplest closeable queue  
 data ClosableQueue a = ClosableQueue !(TBQueue a) !(TVar QState)    
 
+newCQueueIO :: Natural -> IO (ClosableQueue a)
+newCQueueIO = atomically . newCQueue
+
 newCQueue :: Natural -> STM (ClosableQueue a)
 newCQueue n = do 
     q <- newTBQueue n

@@ -9,7 +9,7 @@ validateChildParentResources :: ValidationRFC ->
                                 AllResources -> 
                                 AllResources -> 
                                 Maybe (VerifiedRS PrefixesAndAsns) -> 
-                                PureValidator conf (VerifiedRS PrefixesAndAsns)
+                                PureValidatorT conf (VerifiedRS PrefixesAndAsns)
 validateChildParentResources validationRFC childResources parentResources verifiedResources =                                 
   case validationRFC of 
     Strict_       -> verify strict
@@ -25,7 +25,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
             RSet (IntervalSet a) -> 
             RSet (IntervalSet a) -> 
             (VerifiedRS PrefixesAndAsns -> IntervalSet a) -> 
-            PureValidator conf (IS.ResourceCheckResult a)
+            PureValidatorT conf (IS.ResourceCheckResult a)
     check c p verifiedSub = 
       case verifiedResources of 
         Nothing -> 

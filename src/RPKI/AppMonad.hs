@@ -20,10 +20,10 @@ import RPKI.Domain
 type ValidatorT env m r = WithVContext env => 
         ReaderT env (ExceptT AppError (StateT Validations m)) r
 
-type PureValidator env r = WithVContext env =>
+type PureValidatorT env r = WithVContext env =>
         ReaderT env (ExceptT AppError (State Validations)) r
 
-vHoist :: Monad m => PureValidator env r -> ValidatorT env m r
+vHoist :: Monad m => PureValidatorT env r -> ValidatorT env m r
 vHoist = hoist $ hoist $ hoist generalize
 
 fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT env m r
@@ -49,7 +49,7 @@ toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
 runPureValidator :: WithVContext env =>
-                env -> PureValidator env r -> (Either AppError r, Validations)
+                env -> PureValidatorT env r -> (Either AppError r, Validations)
 runPureValidator env v = (runState $ runExceptT $ runReaderT v env) mempty
 
 runValidatorT :: WithVContext env =>
@@ -65,29 +65,29 @@ vError = vHoist . vPureError
 appError :: Monad m => AppError -> ValidatorT env m r
 appError = vHoist . pureError
 
-pureWarning :: WithVContext env => VWarning -> PureValidator env ()
+pureWarning :: WithVContext env => VWarning -> PureValidatorT env ()
 pureWarning w = do 
     vc <- asks getVC 
     lift $ modify' (mWarning vc w <>)
 
-vPureError :: ValidationError -> PureValidator env r
+vPureError :: ValidationError -> PureValidatorT env r
 vPureError e = pureError $ ValidationE e    
 
-pureError :: AppError -> PureValidator env r
+pureError :: AppError -> PureValidatorT env r
 pureError e = do
     vc <- asks getVC     
     lift $ do 
         modify' (mError vc e <>)
         throwE e
 
-pureErrorIfNot :: Bool -> ValidationError -> PureValidator env ()
+pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT env ()
 pureErrorIfNot b e = if b then pure () else vPureError e
 
-fromEither :: Either AppError r -> PureValidator env r
+fromEither :: Either AppError r -> PureValidatorT env r
 fromEither (Left e) = pureError e
 fromEither (Right r) = pure r
 
-vFromEither :: Either ValidationError r -> PureValidator env r
+vFromEither :: Either ValidationError r -> PureValidatorT env r
 vFromEither e = fromEither $ first ValidationE e
 
 valid :: Applicative m =>

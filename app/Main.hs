@@ -51,7 +51,6 @@ import           RPKI.Time
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
-import Data.Hourglass (Seconds)
 
 type AppEnv = AppContext LmdbStorage
 
@@ -97,7 +96,7 @@ bootstapAllTAs appContext@AppContext {..} = do
             case talContent of 
                 Left e -> do
                     logError_ logger [i|Error reading TAL #{talFileName}, e = #{e}.|]
-                Right talContent' -> 
+                Right talContent' -> do
                     bootstrapTA appContext talContent' worldVersion
 
     forM asyncs wait
@@ -117,12 +116,6 @@ runCacheGC appContext = do
             let validatedAt = fromNanoseconds nanos
             in closeEnoughMoments validatedAt now cacheLifeTime
     
-
-periodically :: Seconds -> IO () -> IO ()
-periodically interval action = do
-    
-    pure ()
-
 
 createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
 createAppContext logger = do    
