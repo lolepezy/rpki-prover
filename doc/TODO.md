@@ -40,6 +40,7 @@
 --------------------------------------- TODOs -----------------------------------------
 
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
+- Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository.
 - Cleanup VRPs and validation results as well based on their world version.
 - Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 - Have full path from the top repoistory to all the delegates ones in the VContext.
