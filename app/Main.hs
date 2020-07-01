@@ -160,8 +160,14 @@ createAppContext logger = do
                 maxSize = Size 1024 * 1024 * 1024
             },
             validationConfig = ValidationConfig {
+                -- generate new world version and revalidate every 13 minutes
+                revalidationInterval = 13 * 60,
+
+                -- RRDP repositories can be updated every 2 minutes
                 rrdpRepositoryRefreshInterval  = 2 * 60,
-                rsyncRepositoryRefreshInterval = 10 * 60
+
+                -- rsync repositories can be updated every 11 minutes
+                rsyncRepositoryRefreshInterval = 11 * 60
             },
             -- run cache GC every 30 minutes
             cacheCleanupInterval = 30 * 60,

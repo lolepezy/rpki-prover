@@ -46,10 +46,10 @@ nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
 
 toNanoseconds :: Instant -> Int64
-toNanoseconds (Instant i) = 
-    seconds + nanosPerSecond * nanos
+toNanoseconds (Instant instant) = 
+    nanosPerSecond * seconds + nanos
     where 
-        ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP i
+        ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP instant
 
 fromNanoseconds :: Int64 -> Instant
 fromNanoseconds totalNanos =    

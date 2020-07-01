@@ -5,8 +5,9 @@
 
 module RPKI.Workflow where
 
-import           Control.Concurrent
+import           Control.Concurrent.Lifted
 import           Control.Concurrent.STM
+import           Control.Concurrent.Async.Lifted
 import           Control.Monad
 
 import           Control.Lens                     ((^.))
@@ -42,22 +43,53 @@ data FlowTask
   | GC WorldVersion
   | UpdateWorldVersion
 
+
 scheduleAll :: Storage s => 
             AppContext s -> [TAL] -> IO ()
 scheduleAll appContext@AppContext {..} tals = do 
-    globalQueue <- newCQueueIO 2
+    globalQueue <- newCQueueIO 3
 
-    forM_ tals $ \tal -> do
-        let taName_ = getTaName tal
-        taQueue <- newCQueueIO 2
-        -- emit taQueue 
-        pure ()
+    talQueues <- forM tals $ \tal -> (tal, ) <$> newCQueueIO 3
 
     -- schedule cache cleanup
     let cacheCleanupInterval = appContext ^. typed @Config . #cacheCleanupInterval
-    periodically cacheCleanupInterval $ do
-        version <- getWorldVerion versions
-        atomically $ writeCQueue globalQueue $ GC version
+    let revalidationInterval = appContext ^. typed @Config . typed @ValidationConfig . #revalidationInterval
+
+    -- periodically update world version and re-validate all TAs
+    let generateNewWorldVersion = Concurrently $ periodically revalidationInterval $ do 
+            newWorldVersion <- updateWorldVerion versions
+            atomically $ forM_ talQueues $ \(_, queue) -> do
+                writeCQueue queue $ ValidateTA newWorldVersion
+
+    -- revalidate TA certificates
+    let revalidateTACert = Concurrently $ periodically revalidationInterval $ do
+            version <- getWorldVerion versions
+            atomically $ forM_ talQueues $ \(tal, queue) -> do
+                writeCQueue queue $ ValidateTACert tal version
+
+    -- remove old objects from the cache
+    let cacheGC = Concurrently $ periodically cacheCleanupInterval $ do
+            version <- getWorldVerion versions
+            atomically $ writeCQueue globalQueue $ GC version
+
+
+    let perTAExecutors = Concurrently $ 
+            (flip mapConcurrently) talQueues $ \(tal, queue) -> 
+                forever $ do 
+                    task <- atomically $ readCQueue queue 
+                    case task of 
+                        Nothing -> pure ()
+                        Just t -> do 
+                            nextTask <- executeTask appContext t (getTaName tal)
+                            case nextTask of 
+                                Nothing -> pure ()        
+                                Just next -> atomically $ writeCQueue queue next
+
+    void $ runConcurrently $ (,,,)
+            <$> generateNewWorldVersion
+            <*> revalidateTACert
+            <*> cacheGC
+            <*> perTAExecutors
 
 
 executeTask :: Storage s => 
@@ -96,7 +128,7 @@ periodically (Seconds interval) action =
         Now end <- thisInstant
         let executionTimeNs = toNanoseconds end - toNanoseconds start
         when (executionTimeNs < nanosPerSecond * interval) $ do        
-            let timeToWaitMs = fromIntegral $ (nanosPerSecond * interval - executionTimeNs) `div` 1000
-            threadDelay timeToWaitMs
+            let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
+            threadDelay $ (fromIntegral timeToWaitNs) `div` 1000 
         
 

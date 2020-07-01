@@ -44,6 +44,7 @@ data RrdpConf = RrdpConf {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data ValidationConfig = ValidationConfig {
+    revalidationInterval :: Seconds,
     rrdpRepositoryRefreshInterval :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
