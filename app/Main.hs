@@ -23,7 +23,9 @@ import           Control.Concurrent.Lifted
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
+import           Data.Maybe
 import           Data.Text                        (Text)
+
 
 import           Data.String.Interpolate.IsString
 
@@ -43,16 +45,13 @@ import           RPKI.AppContext
 import           RPKI.Http.Server
 import           RPKI.Logging
 import           RPKI.Parallel
-import           RPKI.Store.Database
-import           RPKI.Store.Base.LMDB             hiding (getEnv)
 import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
-
-type AppEnv = AppContext LmdbStorage
+import           RPKI.Workflow
 
 
 main :: IO ()
@@ -65,21 +64,23 @@ main = do
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
         Right appContext' ->
-            runValidatorApp appContext'
-            -- void $ concurrently
-            --     (runHttpApi appContext')
-            --     (runValidatorApp appContext')
+            -- runValidatorApp appContext'
+            void $ concurrently
+                (runHttpApi appContext')
+                (runValidatorApp appContext')
 
 
 runValidatorApp :: AppEnv -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
     worldVersion <- updateWorldVerion versions
-    (result, elapsed) <- timedMS $ bootstapAllTAs appContext
+    (tals, elapsed) <- timedMS $ bootstapAllTAs appContext
     completeWorldVersion appContext worldVersion
     logDebug_ logger [i|Validated all TAs, took #{elapsed}ms.|]
+    runWorkflow appContext tals
+    logDebug_ logger [i|Started periodical re-validation workflow.|]
 
 
-bootstapAllTAs :: AppEnv -> IO [()]
+bootstapAllTAs :: AppEnv -> IO [TAL]
 bootstapAllTAs appContext@AppContext {..} = do
     worldVersion <- updateWorldVerion versions
     talFileNames <- listTALFiles $ talDirectory config
@@ -96,25 +97,17 @@ bootstapAllTAs appContext@AppContext {..} = do
             case talContent of 
                 Left e -> do
                     logError_ logger [i|Error reading TAL #{talFileName}, e = #{e}.|]
+                    pure Nothing
                 Right talContent' -> do
                     bootstrapTA appContext talContent' worldVersion
+                    pure $ Just talContent'
 
-    forM asyncs wait
+    catMaybes <$> forM asyncs wait
 
 
 
 runHttpApi :: AppEnv -> IO ()
 runHttpApi appContext = Warp.run 9999 $ httpApi appContext
-
-
-runCacheGC :: AppEnv -> IO ()
-runCacheGC appContext = do
-    Now now <- thisInstant
-    let objectStore = appContext ^. #database . #objectStore
-    let cacheLifeTime = appContext ^. typed @Config . #cacheLifeTime
-    cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
-            let validatedAt = fromNanoseconds nanos
-            in closeEnoughMoments validatedAt now cacheLifeTime
     
 
 createAppContext :: AppLogger -> ValidatorT vc IO AppEnv

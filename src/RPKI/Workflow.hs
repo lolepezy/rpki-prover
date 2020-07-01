@@ -36,47 +36,62 @@ import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
 
+import           RPKI.Store.Base.LMDB
+
+
+type AppEnv = AppContext LmdbStorage
 
 data FlowTask
   = ValidateTA WorldVersion
   | ValidateTACert TAL WorldVersion
-  | GC WorldVersion
-  | UpdateWorldVersion
+  deriving stock (Show, Eq, Ord, Generic)
 
 
-scheduleAll :: Storage s => 
+runWorkflow :: Storage s => 
             AppContext s -> [TAL] -> IO ()
-scheduleAll appContext@AppContext {..} tals = do 
-    globalQueue <- newCQueueIO 3
+runWorkflow appContext@AppContext {..} tals = do 
 
+    -- Use a command queue for every TA to avoid concurrent operations for one TA
+    -- but allow everything running in parallel for different TAs
     talQueues <- forM tals $ \tal -> (tal, ) <$> newCQueueIO 3
 
     -- schedule cache cleanup
-    let cacheCleanupInterval = appContext ^. typed @Config . #cacheCleanupInterval
-    let revalidationInterval = appContext ^. typed @Config . typed @ValidationConfig . #revalidationInterval
+    let config = appContext ^. typed @Config
+    let cacheCleanupInterval = config ^. #cacheCleanupInterval
+    let cacheLifeTime        = config ^. #cacheLifeTime
+    let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
+    let objectStore          = appContext ^. #database . #objectStore                
 
     -- periodically update world version and re-validate all TAs
     let generateNewWorldVersion = Concurrently $ periodically revalidationInterval $ do 
+            oldWorldVersion <- getWorldVerion versions
             newWorldVersion <- updateWorldVerion versions
+            logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
             atomically $ forM_ talQueues $ \(_, queue) -> do
                 writeCQueue queue $ ValidateTA newWorldVersion
 
     -- revalidate TA certificates
     let revalidateTACert = Concurrently $ periodically revalidationInterval $ do
-            version <- getWorldVerion versions
+            worldVersion <- getWorldVerion versions
+            logDebug_ logger [i|Revalidate TA cert: #{worldVersion}.|]
             atomically $ forM_ talQueues $ \(tal, queue) -> do
-                writeCQueue queue $ ValidateTACert tal version
+                writeCQueue queue $ ValidateTACert tal worldVersion
 
     -- remove old objects from the cache
-    let cacheGC = Concurrently $ periodically cacheCleanupInterval $ do
-            version <- getWorldVerion versions
-            atomically $ writeCQueue globalQueue $ GC version
+    let cacheGC = Concurrently $ periodically cacheCleanupInterval $ do            
+            Now now <- thisInstant                
+            logDebug_ logger [i|Starting cache GC.|]
+            cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
+                    let validatedAt = fromNanoseconds nanos
+                    in closeEnoughMoments validatedAt now cacheLifeTime
 
 
     let perTAExecutors = Concurrently $ 
-            (flip mapConcurrently) talQueues $ \(tal, queue) -> 
+            (flip mapConcurrently) talQueues $ \(tal, queue) -> do
+                logDebug_ logger [i|Starting executor for TA #{getTaName tal}|]
                 forever $ do 
                     task <- atomically $ readCQueue queue 
+                    logDebug_ logger [i|TA: #{getTaName tal}, next task is #{task}|]
                     case task of 
                         Nothing -> pure ()
                         Just t -> do 
@@ -129,6 +144,4 @@ periodically (Seconds interval) action =
         let executionTimeNs = toNanoseconds end - toNanoseconds start
         when (executionTimeNs < nanosPerSecond * interval) $ do        
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
-            threadDelay $ (fromIntegral timeToWaitNs) `div` 1000 
-        
-
+            threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
