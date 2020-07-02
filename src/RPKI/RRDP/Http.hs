@@ -106,8 +106,8 @@ downloadHashedLazyBS httpContext RrdpConf {..} uri@(URI u) hash cantDownload has
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
-    let tmpFileName = U.convert $ U.normalizeUri u
-    withTempFile tmpRoot tmpFileName $ \name fd -> 
+    let tmpFileName = U.convert $ U.normalizeUri u    
+    withTempFile tmpRoot tmpFileName $ \name fd -> do
         streamHttpToFileWithActions httpContext uri cantDownload DoHashing maxSize fd >>= \case        
             Left e -> pure $ Left e
             Right (actualHash, !size)
@@ -117,7 +117,6 @@ downloadHashedLazyBS httpContext RrdpConf {..} uri@(URI u) hash cantDownload has
                     hClose fd
                     content <- MmapLazy.unsafeMMapFile name
                     pure $! Right (content, size)
-                    -- pure $! Right (LBS.empty, size)
 
 
 data ActionWhileDownloading = DoNothing | DoHashing

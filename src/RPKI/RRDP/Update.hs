@@ -207,7 +207,7 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository =
 
 {- Snapshot case, done in parallel by two thread
     - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
-    - another thread read parsing asyncs, waits for them and saves the results into the DB.
+    - another thread read parsing tasks, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
                 AppContext s -> 
@@ -218,6 +218,8 @@ saveSnapshot appContext rrdpStats snapshotContent = do
     (Snapshot _ _ _ snapshotItems) <- vHoist $ 
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
+    -- split into writing transactions of 10000 elements to make them always finite 
+    -- and independent from the size of the snapshot.
     fromTry 
         (StorageE . StorageError . U.fmtEx)    
         (txFoldPipelineChunked 

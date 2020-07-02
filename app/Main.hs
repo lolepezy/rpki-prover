@@ -19,6 +19,7 @@ import           Data.Generics.Product.Typed
 
 import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
+import           Control.Exception.Lifted
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
@@ -63,8 +64,7 @@ main = do
     case appContext of
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
-        Right appContext' ->
-            -- runValidatorApp appContext'
+        Right appContext' -> 
             void $ concurrently
                 (runHttpApi appContext')
                 (runValidatorApp appContext')
@@ -73,37 +73,24 @@ main = do
 runValidatorApp :: AppEnv -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
     worldVersion <- updateWorldVerion versions
-    (tals, elapsed) <- timedMS $ bootstapAllTAs appContext
-    completeWorldVersion appContext worldVersion
-    logDebug_ logger [i|Validated all TAs, took #{elapsed}ms.|]
-    runWorkflow appContext tals
-    logDebug_ logger [i|Started periodical re-validation workflow.|]
-
-
-bootstapAllTAs :: AppEnv -> IO [TAL]
-bootstapAllTAs appContext@AppContext {..} = do
-    worldVersion <- updateWorldVerion versions
     talFileNames <- listTALFiles $ talDirectory config
-    -- ttt <- listTALFiles $ talDirectory config
-    -- let talFileNames = List.filter ("ripe" `List.isInfixOf`) ttt
-    asyncs <- forM talFileNames $ \talFileName -> 
-        async $ do
-            let validationContext = vContext $ URI $ convert talFileName
-            (talContent, validations) <- runValidatorT validationContext $ do
-                                            t <- fromTry (RsyncE . FileReadError . fmtEx) $ 
-                                                BS.readFile talFileName
-                                            vHoist $ fromEither $ first TAL_E $ parseTAL $ convert t    
-            writeVResult appContext validations worldVersion
-            case talContent of 
-                Left e -> do
-                    logError_ logger [i|Error reading TAL #{talFileName}, e = #{e}.|]
-                    pure Nothing
-                Right talContent' -> do
-                    bootstrapTA appContext talContent' worldVersion
-                    pure $ Just talContent'
+    let validationContext = vContext $ URI "validation-root"
+    (tals, validations) <- runValidatorT validationContext $ 
+        forM talFileNames $ \talFileName -> 
+            forChild (URI $ convert talFileName) $ parseTALFromFile talFileName
 
-    catMaybes <$> forM asyncs wait
-
+    writeVResult appContext validations worldVersion        
+    case tals of 
+        Left e -> do
+            logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    
+            throwIO $ AppException e        
+        Right tals' ->
+            -- this is where it blocks and loops in never-ending re-validation
+            runWorkflow appContext tals'
+    where
+        parseTALFromFile talFileName = do
+            talContent <- fromTry (RsyncE . FileReadError . fmtEx) $ BS.readFile talFileName
+            vHoist $ fromEither $ first TAL_E $ parseTAL $ convert talContent
 
 
 runHttpApi :: AppEnv -> IO ()
@@ -132,7 +119,7 @@ createAppContext logger = do
     versions <- liftIO createDynamicState
 
     -- TODO Make it configurable
-    let parallelism = Parallelism getParallelism 64
+    let parallelism = Parallelism (2 * getParallelism) 64
 
     appBottlenecks <- liftIO $ do 
         cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism

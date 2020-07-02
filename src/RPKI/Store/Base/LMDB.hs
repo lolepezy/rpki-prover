@@ -10,6 +10,7 @@ module RPKI.Store.Base.LMDB where
 
 import Control.Monad (forever)
 import Control.Concurrent.STM
+import Control.Concurrent
 import Control.Exception
 
 import qualified Data.ByteString as BS
@@ -57,20 +58,24 @@ toROTx :: Lmdb.Transaction (m :: Lmdb.Mode) -> Lmdb.Transaction 'Lmdb.ReadOnly
 toROTx = coerce
 
 class WithLmdb lmdb where
-    getEnv :: lmdb -> Env
+    getEnv :: lmdb -> LmdbEnv
 
 newtype LmdbStorage = LmdbStorage { unEnv :: LmdbEnv }
 
 instance WithLmdb LmdbStorage where
-    getEnv = nativeEnv . unEnv
+    getEnv = unEnv
 
 
 instance WithTx LmdbStorage where    
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
 
-    -- TODO Limit the amount of simultaneous transactions to 126
-    readOnlyTx lmdb f = withROTransaction (getEnv lmdb) (f . LmdbTx)
-    readWriteTx lmdb f = withTransaction (getEnv lmdb) (f . LmdbTx)
+    readOnlyTx lmdb f = 
+        withSemaphore (txSem env) $ 
+            withROTransaction (nativeEnv env) (f . LmdbTx)
+        where
+            env = getEnv lmdb
+
+    readWriteTx lmdb f = withTransaction (nativeEnv $ getEnv lmdb) (f . LmdbTx)
 
 -- | Basic storage implemented using LMDB
 instance Storage LmdbStorage where    
@@ -170,4 +175,4 @@ withSemaphore (Semaphore maxCounter current) f =
             if c >= maxCounter 
                 then retry
                 else writeTVar current (c + 1)
-        decrement _ = atomically $ modifyTVar current $ \c -> c - 1
+        decrement _ = atomically $ modifyTVar' current $ \c -> c - 1

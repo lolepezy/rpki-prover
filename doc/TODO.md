@@ -34,8 +34,9 @@
 
 ---------------------------------  In progress ----------------------------------------
 
-
+- Only complateWorldVersion when _all_ TAs have completed it
 - Clean up objects that are not touched by validations or not touched by repository downloads
+
 
 --------------------------------------- TODOs -----------------------------------------
 

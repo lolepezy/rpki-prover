@@ -49,48 +49,67 @@ data FlowTask
 
 runWorkflow :: Storage s => 
             AppContext s -> [TAL] -> IO ()
-runWorkflow appContext@AppContext {..} tals = do 
-
-    -- Use a command queue for every TA to avoid concurrent operations for one TA
-    -- but allow everything running in parallel for different TAs
+runWorkflow appContext@AppContext {..} tals = do
+    -- Use a command queue for every TA to avoid concurrent operations for one TA but 
+    -- allow everything running in parallel for different TAs, so create a queue per TA.
     talQueues <- forM tals $ \tal -> (tal, ) <$> newCQueueIO 3
+    
+    worldVersion <- getWorldVerion versions
 
-    -- schedule cache cleanup
-    let config = appContext ^. typed @Config
-    let cacheCleanupInterval = config ^. #cacheCleanupInterval
-    let cacheLifeTime        = config ^. #cacheLifeTime
-    let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-    let objectStore          = appContext ^. #database . #objectStore                
+    -- start from re-validating the TA certificates
+    validateTaCertTask talQueues worldVersion
 
-    -- periodically update world version and re-validate all TAs
-    let generateNewWorldVersion = Concurrently $ periodically revalidationInterval $ do 
-            oldWorldVersion <- getWorldVerion versions
-            newWorldVersion <- updateWorldVerion versions
-            logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
-            atomically $ forM_ talQueues $ \(_, queue) -> do
-                writeCQueue queue $ ValidateTA newWorldVersion
+    -- do the TA validation right after that
+    validateTaTask talQueues worldVersion
 
-    -- revalidate TA certificates
-    let revalidateTACert = Concurrently $ periodically revalidationInterval $ do
-            worldVersion <- getWorldVerion versions
-            logDebug_ logger [i|Revalidate TA cert: #{worldVersion}.|]
-            atomically $ forM_ talQueues $ \(tal, queue) -> do
-                writeCQueue queue $ ValidateTACert tal worldVersion
+    mapConcurrently_ id $ [
+                    generateNewWorldVersion talQueues, 
+                    revalidateTACert talQueues, 
+                    cacheGC
+                ] 
+                <> 
+                map perTAExecutor talQueues
+    where  
 
-    -- remove old objects from the cache
-    let cacheGC = Concurrently $ periodically cacheCleanupInterval $ do            
-            Now now <- thisInstant                
-            logDebug_ logger [i|Starting cache GC.|]
-            cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
-                    let validatedAt = fromNanoseconds nanos
-                    in closeEnoughMoments validatedAt now cacheLifeTime
+        config = appContext ^. typed @Config
+        cacheCleanupInterval = config ^. #cacheCleanupInterval
+        cacheLifeTime        = config ^. #cacheLifeTime
+        revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
+        objectStore          = appContext ^. #database . #objectStore                
 
+        validateTaCertTask talQueues worldVersion =  
+            forM_ talQueues $ \(tal, taQueue) -> do
+                atomically $ writeCQueue taQueue $ ValidateTACert tal worldVersion
 
-    let perTAExecutors = Concurrently $ 
-            (flip mapConcurrently) talQueues $ \(tal, queue) -> do
+        validateTaTask talQueues worldVersion =  
+            forM_ talQueues $ \(_, taQueue) ->
+                atomically $ writeCQueue taQueue $ ValidateTA worldVersion
+
+        -- periodically update world version and re-validate all TAs
+        generateNewWorldVersion talQueues = periodically revalidationInterval $ do 
+                oldWorldVersion <- getWorldVerion versions
+                newWorldVersion <- updateWorldVerion versions
+                logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
+                validateTaTask talQueues newWorldVersion
+
+        -- revalidate TA certificates
+        revalidateTACert talQueues = periodically revalidationInterval $ do
+                worldVersion <- getWorldVerion versions                
+                logDebug_ logger [i|Revalidate TA cert: #{worldVersion}.|]                
+                validateTaCertTask talQueues worldVersion                
+
+        -- remove old objects from the cache
+        cacheGC = periodically cacheCleanupInterval $ do            
+                Now now <- thisInstant                
+                logDebug_ logger [i|Starting cache GC.|]
+                cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
+                        let validatedAt = fromNanoseconds nanos
+                        in closeEnoughMoments validatedAt now cacheLifeTime
+
+        perTAExecutor (tal, taQueue) = do
                 logDebug_ logger [i|Starting executor for TA #{getTaName tal}|]
                 forever $ do 
-                    task <- atomically $ readCQueue queue 
+                    task <- atomically $ readCQueue taQueue 
                     logDebug_ logger [i|TA: #{getTaName tal}, next task is #{task}|]
                     case task of 
                         Nothing -> pure ()
@@ -98,15 +117,11 @@ runWorkflow appContext@AppContext {..} tals = do
                             nextTask <- executeTask appContext t (getTaName tal)
                             case nextTask of 
                                 Nothing -> pure ()        
-                                Just next -> atomically $ writeCQueue queue next
-
-    void $ runConcurrently $ (,,,)
-            <$> generateNewWorldVersion
-            <*> revalidateTACert
-            <*> cacheGC
-            <*> perTAExecutors
+                                Just next -> atomically $ writeCQueue taQueue next
 
 
+-- Executes the flow task and returns a next command that 
+-- needs to be executed after (or submitted to the queue).
 executeTask :: Storage s => 
                 AppContext s -> FlowTask -> TaName -> IO (Maybe FlowTask)
 executeTask appContext@AppContext {..} task taName'@(TaName taNameText) =
@@ -127,12 +142,8 @@ executeTask appContext@AppContext {..} task taName'@(TaName taNameText) =
                     pure Nothing
         ValidateTA worldVersion -> do
             void $ validateTA appContext taName' worldVersion
-            pure Nothing
-        
-
--- submitTask :: FlowTask -> TaskProcessor -> IO ()
--- submitTask task (TaskProcessor queue) = 
---     atomically $ writeCQueue queue task
+            completeWorldVersion appContext worldVersion
+            pure Nothing    
 
 
 periodically :: Seconds -> IO () -> IO ()

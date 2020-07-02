@@ -131,12 +131,11 @@ validateTA :: Storage s =>
 validateTA appContext@AppContext {..} taName@(TaName taNameText) worldVersion = do    
     (_, validations) <- runValidatorT taContext $ do
         let taStore = database ^. #taStore
-        rwAppTxEx taStore storageError $ \tx -> do
-            r <- getTA tx taStore taName
-            case r of 
-                Nothing  -> appError $ ValidationE $ InvalidCert $ "Not TA cert for " <> taNameText
-                Just STA { taCert, initialRepositories } -> 
-                    validateFromTACert appContext taName taCert initialRepositories worldVersion
+        r <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName
+        case r of 
+            Nothing  -> appError $ ValidationE $ InvalidCert $ "Not TA cert for " <> taNameText
+            Just STA { taCert, initialRepositories } -> 
+                validateFromTACert appContext taName taCert initialRepositories worldVersion
 
     writeVResult appContext validations worldVersion
     where                            
@@ -250,7 +249,7 @@ data FetchResult =
     FetchFailure !Repository !RepositoryStatus !Validations
     deriving stock (Show, Eq, Generic)
 
--- | Download repository
+-- | Download repository, either rsync or RRDP.
 fetchRepository :: (MonadIO m, Storage s) => 
                 AppContext s -> Now -> Repository -> m FetchResult
 fetchRepository appContext@AppContext { database = DB {..}, ..} (Now now) repo = liftIO $ do
