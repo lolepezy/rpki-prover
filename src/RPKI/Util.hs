@@ -35,8 +35,18 @@ class ConvertibleAsSomethigString s1 s2 where
 instance SC.ConvertibleStrings s1 s2 => ConvertibleAsSomethigString s1 s2 where
     convert = SC.cs
 
-instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString URI s  where
+instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString URI s where
     convert (URI u) = convert u
+
+instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RsyncURL s where
+    convert (RsyncURL u) = convert u
+
+instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RrdpURL s where
+    convert (RrdpURL u) = convert u
+
+instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RpkiURL s where
+    convert (RsyncU u) = convert u
+    convert (RrdpU u) = convert u
 
 normalizeUri :: Text.Text -> Text.Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')

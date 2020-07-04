@@ -318,7 +318,7 @@ instance Arbitrary RsyncRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RepositoryStatus where
+instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

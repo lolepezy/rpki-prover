@@ -38,12 +38,14 @@ import           RPKI.Time
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
 data WithRFC_ s r = WithStrict_       !s 
                   | WithReconsidered_ !r
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
 withRFC (WithStrict_ (WithRFC a)) f = f a
@@ -53,25 +55,61 @@ forRFC :: AnRFC r -> (r 'Strict_ -> a) -> (r 'Reconsidered_ -> a) -> a
 forRFC (WithStrict_ (WithRFC a))       f _ = f a
 forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
--- TODO Use library type?
 newtype Hash = Hash BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 newtype URI  = URI { unURI :: Text.Text } 
     deriving stock (Eq, Ord, Generic)
+    deriving anyclass Serialise
 
-newtype KI   = KI  BSS.ShortByteString deriving stock (Eq, Ord, Generic)
-newtype SKI  = SKI KI deriving stock (Show, Eq, Ord, Generic)
-newtype AKI  = AKI KI deriving stock (Show, Eq, Ord, Generic)
+newtype RsyncURL  = RsyncURL URI
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass Serialise
 
-newtype SessionId = SessionId BSS.ShortByteString deriving stock (Show, Eq, Ord, Generic)
-newtype Serial = Serial Integer deriving stock (Show, Eq, Ord, Generic)
-newtype Version = Version Integer deriving stock (Show, Eq, Ord, Generic)
+newtype RrdpURL  = RrdpURL URI
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
+    deriving  (Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+
+newtype KI   = KI  BSS.ShortByteString 
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype SKI  = SKI KI 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype AKI  = AKI KI   
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype SessionId = SessionId BSS.ShortByteString 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype Serial = Serial Integer 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype Version = Version Integer 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 type Locations = NonEmpty URI
 
 instance Show URI where
     show (URI u) = show u
+
+instance Show RsyncURL where
+    show (RsyncURL u) = show u
+
+instance Show RrdpURL where
+    show (RrdpURL u) = show u
 
 instance Show Hash where
     show (Hash b) = hexShow b
@@ -86,6 +124,7 @@ hexShow = show . hex . BSS.fromShort
 
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 class WithAKI a where
     getAKI :: a -> Maybe AKI
@@ -106,9 +145,11 @@ data IdentityMeta = IdentityMeta
                         !Hash 
         {-# UNPACK #-} !Locations
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data With meta content = With !meta !content 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 class Contains_ a b where
     extract :: a -> b
@@ -137,6 +178,7 @@ data RpkiObject = CerRO !CerObject
                 | GbrRO !GbrObject
                 | CrlRO !CrlObject
     deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 
 instance WithHash (With IdentityMeta a) where
@@ -199,16 +241,21 @@ instance WithLocations RpkiObject where
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
         certX509  :: CertificateWithSignature, 
         resources :: AllResources
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 data Roa = Roa !ASN !IpPrefix !Int16
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data PrefixWithLength = PrefixWithLength !IpPrefix !Int16
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data Manifest = Manifest {
         mftNumber   :: Int, 
@@ -216,7 +263,9 @@ data Manifest = Manifest {
         thisTime    :: Instant, 
         nextTime    :: Instant, 
         mftEntries  :: [(Text, Hash)]
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
@@ -226,10 +275,14 @@ data SignCRL = SignCRL {
         encodedValue       :: BS.ByteString,
         crlNumber          :: Integer,
         revokenSerials     :: Set Serial
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 -- TODO Define it
-data Gbr = Gbr deriving stock (Show, Eq, Ord, Generic)
+data Gbr = Gbr 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 
 
@@ -239,7 +292,9 @@ data Gbr = Gbr deriving stock (Show, Eq, Ord, Generic)
 data SignedObject a = SignedObject {
         soContentType :: ContentType, 
         soContent     :: SignedData a
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 
 data CertificateWithSignature = CertificateWithSignature {
@@ -247,7 +302,9 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
         cwsSignature :: SignatureValue,
         cwsEncoded :: BS.ByteString
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 {- 
     SignedData ::= SEQUENCE {
@@ -268,7 +325,9 @@ data SignedData a = SignedData {
         scEncapContentInfo :: EncapsulatedContentInfo a, 
         scCertificate      :: EECerObject, 
         scSignerInfos      :: SignerInfos
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 {- 
     EncapsulatedContentInfo ::= SEQUENCE {
@@ -278,7 +337,9 @@ data SignedData a = SignedData {
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
         eContentType :: ContentType, 
         cContent     :: a    
-    } deriving stock (Show, Eq, Ord, Generic)
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 {-
     SignerInfo ::= SEQUENCE {
@@ -297,33 +358,44 @@ data SignerInfos = SignerInfos {
         signedAttrs        :: SignedAttributes, 
         signatureAlgorithm :: SignatureAlgorithmIdentifier, 
         signature          :: SignatureValue
-    } deriving stock (Show, Eq, Generic)
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text.Text 
-    deriving stock (Eq, Ord, Show)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass Serialise
 
 newtype SignerIdentifier = SignerIdentifier BS.ByteString 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 newtype SignatureValue = SignatureValue BS.ByteString 
     deriving stock (Show, Eq, Ord, Generic)  
+    deriving anyclass Serialise
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] BS.ByteString
     deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest BS.ByteString
@@ -331,7 +403,7 @@ data Attribute = ContentTypeAttr ContentType
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
     deriving stock (Show, Eq, Generic)
-
+    deriving anyclass Serialise
 
 
 -- Subject Public Key Info
@@ -349,7 +421,6 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 
-
 newtype TaName = TaName Text.Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -362,46 +433,7 @@ data TA = TA {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
-        
-
--- serialisation
-instance Serialise Hash
-instance Serialise IdentityMeta
-instance (Serialise a, Serialise b) => Serialise (With a b)
-instance Serialise URI
-instance Serialise AKI
-instance Serialise SKI
-instance Serialise KI
-instance Serialise Serial
-instance Serialise Manifest
-instance Serialise Roa
-instance Serialise Gbr
-instance Serialise a => Serialise (CMS a)
-instance Serialise SignCRL
-instance Serialise ResourceCertificate
-instance Serialise RpkiObject
-instance (Serialise s, Serialise r) => Serialise (WithRFC_ s r)
-instance Serialise (WithRFC 'Strict_ ResourceCert)
-instance Serialise (ResourceCert 'Strict_)
-instance Serialise (ResourceCert 'Reconsidered_)
-instance Serialise (WithRFC 'Reconsidered_ ResourceCert)
-
-
-instance Serialise ContentType
-instance Serialise a => Serialise (EncapsulatedContentInfo a)
-instance Serialise a => Serialise (SignedObject a)
-instance Serialise a => Serialise (SignedData a)
-instance Serialise CMSVersion
-instance Serialise DigestAlgorithmIdentifiers
-instance Serialise SignatureAlgorithmIdentifier
-instance Serialise SignatureValue
-instance Serialise SignerIdentifier
-instance Serialise SignedAttributes
-instance Serialise Attribute
-instance Serialise CertificateWithSignature
-instance Serialise SignerInfos
-instance Serialise SessionId
-
+  
 
 -- Small utility functions that don't have anywhere else to go
 

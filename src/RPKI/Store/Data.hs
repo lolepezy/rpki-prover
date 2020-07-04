@@ -15,9 +15,6 @@ import           RPKI.Repository
 import           RPKI.TAL
 
 
-class WithKey a k where
-    key :: a -> k
-
 -- TODO Add versioning here
 data VResult = VResult {
     problem :: ![VProblem],
@@ -25,15 +22,9 @@ data VResult = VResult {
 } deriving (Show, Eq, Ord, Generic, Serialise)
 
 
-data STA = STA {
+data StorableTA = StorableTA {
     tal                 :: !TAL,
     taCert              :: !CerObject,
+    -- fetchStatus         :: FetchStatus,
     initialRepositories :: NonEmpty Repository
 } deriving (Show, Eq, Generic, Serialise)
-
-
-instance WithKey VResult VContext where
-    key = path
-
-instance WithKey STA Locations where
-    key = certLocations . tal

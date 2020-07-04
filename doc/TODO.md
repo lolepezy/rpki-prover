@@ -35,6 +35,7 @@
 ---------------------------------  In progress ----------------------------------------
 
 - Only complateWorldVersion when _all_ TAs have completed it
+- Do not make TA cert update a separate stage
 - Clean up objects that are not touched by validations or not touched by repository downloads
 
 

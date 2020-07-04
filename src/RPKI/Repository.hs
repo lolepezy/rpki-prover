@@ -40,7 +40,7 @@ class Fetchable a where
     getURI       :: a -> URI
     getFetchType :: a -> RepositoryFetchType
 
-data RepositoryStatus = New | FailedAt Instant | FetchedAt Instant
+data FetchStatus = New | FailedAt Instant | FetchedAt Instant
     deriving (Show, Eq, Generic, Serialise)
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: URI } 
@@ -50,7 +50,7 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: URI }
 data RrdpRepository = RrdpRepository {
         uri      :: !URI,
         rrdpMeta :: !(Maybe (SessionId, Serial)),
-        status   :: !RepositoryStatus
+        status   :: !FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -67,7 +67,7 @@ data Repository = RrdpR !RrdpRepository |
 
 data RsyncRepository = RsyncRepository {
         repos  :: !RsyncPublicationPoint,
-        status :: !RepositoryStatus
+        status :: !FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -77,7 +77,7 @@ data PublicationPoints = PublicationPoints {
     rsyncs :: RsyncMap
 } deriving stock (Show, Eq, Ord, Generic)   
 
-data RsyncParent = ParentURI !URI | Root !RepositoryStatus
+data RsyncParent = ParentURI !URI | Root !FetchStatus
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -104,6 +104,12 @@ instance Fetchable Repository where
     getFetchType (RrdpR _)  = RRDP
     getFetchType (RsyncR _) = Rsync
 
+-- instance Fetchable URI where
+--     getURI = id    
+--     getFetchType uri 
+--         | 
+--     getFetchType (RsyncR _) = Rsync
+
 instance Semigroup PublicationPoints where
     PublicationPoints rrdps1 rsyncs1 <> PublicationPoints rrdps2 rsyncs2 = 
         PublicationPoints (rrdps1 <> rrdps2) (rsyncs1 <> rsyncs2)
@@ -119,7 +125,7 @@ instance Semigroup RrdpRepository where
                     else (s2, m2)
 
 -- always use the latest one
-instance Ord RepositoryStatus where
+instance Ord FetchStatus where
     compare s1 s2 = compare (timeAndStatus s1) (timeAndStatus s2)
         where 
             -- tuple with 0 and 1 is to take into account a weird 
@@ -128,7 +134,7 @@ instance Ord RepositoryStatus where
             timeAndStatus (FailedAt t)  = (Just t, 0)
             timeAndStatus (FetchedAt t) = (Just t, 1)            
 
-instance Semigroup RepositoryStatus where
+instance Semigroup FetchStatus where
     (<>) = max        
 
 instance Semigroup RsyncMap where
@@ -153,11 +159,11 @@ toRepository :: PublicationPoint -> Repository
 toRepository (RrdpPP r) = RrdpR r
 toRepository (RsyncPP r) = RsyncR $ RsyncRepository r New
   
-repositoryStatus :: Repository -> RepositoryStatus 
-repositoryStatus (RsyncR RsyncRepository {..}) = status
-repositoryStatus (RrdpR RrdpRepository {..})   = status
+fetchStatus :: Repository -> FetchStatus 
+fetchStatus (RsyncR RsyncRepository {..}) = status
+fetchStatus (RrdpR RrdpRepository {..})   = status
 
-toRepoStatusPairs :: PublicationPoints -> [(Repository, RepositoryStatus)]
+toRepoStatusPairs :: PublicationPoints -> [(Repository, FetchStatus)]
 toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) = 
     rrdpList <> rsyncList
     where 
@@ -176,7 +182,7 @@ allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) =
     Map.keysSet rrdps <> Map.keysSet rsyncs
 
 
-findPublicationPointStatus :: URI -> PublicationPoints -> Maybe RepositoryStatus
+findPublicationPointStatus :: URI -> PublicationPoints -> Maybe FetchStatus
 findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap) =     
     case Map.lookup u rrdps of 
         Just RrdpRepository {..} -> Just status
@@ -376,7 +382,7 @@ changeSet
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList
 
 
-updateStatuses :: Foldable t => PublicationPoints -> t (Repository, RepositoryStatus) -> PublicationPoints
+updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus) -> PublicationPoints
 updateStatuses 
     (PublicationPoints rrdps rsyncs) newStatuses = 
         PublicationPoints 

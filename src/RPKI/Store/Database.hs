@@ -57,7 +57,7 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 
 -- | TA Store 
-newtype TAStore s = TAStore (SMap "trust-anchors" s TaName STA)
+newtype TAStore s = TAStore (SMap "trust-anchors" s TaName StorableTA)
 
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
@@ -173,10 +173,10 @@ getAll tx store = map (fromSValue . snd) <$> liftIO (M.all tx (objects store))
 
 -- TA store functions
 
-putTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> STA -> m ()
+putTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> StorableTA -> m ()
 putTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 
-getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe STA)
+getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe StorableTA)
 getTA tx (TAStore s) name = liftIO $ M.get tx s name
 
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
