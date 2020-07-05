@@ -70,7 +70,7 @@ downloadAndUpdateRRDP
         handleDeltaBS =                        -- ^ function to handle all deltas bytecontents
     do
     (notificationXml, _) <- fromEitherM $ downloadToLazyBS httpContext
-                                rrdpConf repoUri (RrdpE . CantDownloadNotification . show)    
+                                rrdpConf (getURL repoUri) (RrdpE . CantDownloadNotification . show)    
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- hoistHere $ rrdpNextStep repo notification
 
@@ -108,7 +108,7 @@ downloadAndUpdateRRDP
                 rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
 
         useDeltas sortedDeltas notification = do
-            let repoURI = repo ^. typed @URI
+            let repoURI = getURL $ repo ^. #uri
             logDebugM logger [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
             (r, elapsed) <- timedMS downloadAndSave
             logDebugM logger [i|#{repoURI}: downloaded and saved deltas, took #{elapsed}ms.|]                        
@@ -201,7 +201,8 @@ updateObjectForRrdpRepository appContext@AppContext{..} repository =
                 (saveSnapshot appContext stats)  
                 (saveDelta appContext stats)          
         RrdpStat {..} <- liftIO $ completeRrdpStat stats
-        logDebugM logger [i|Downloaded #{unURI $ repository ^. typed}, added #{added} objects, removed #{removed}.|]
+        let repoURI = getURL $ repository ^. #uri
+        logDebugM logger [i|Downloaded #{repoURI}, added #{added} objects, removed #{removed}.|]
         pure (r, v)
 
 
@@ -231,14 +232,18 @@ saveSnapshot appContext rrdpStats snapshotContent = do
             (mempty :: Validations))        
     where
         newStorable (SnapshotPublish uri encodedb64) = do
-            task <- (parseAndProcess uri encodedb64) `pureTask` bottleneck
+            task <- readBlob `pureTask` bottleneck
             pure (uri, task)
+            where 
+                readBlob = case U.parseRpkiURL $ unURI uri of
+                    Left e        -> SError $ RrdpE $ BadURL $ U.convert e
+                    Right rpkiURL -> parseAndProcess rpkiURL encodedb64
                                 
         saveStorable tx (uri, a) validations = 
             waitTask a >>= \case                        
                 SError e   -> do
                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    pure $ validations <> mError (vContext uri) e
+                    pure $ validations <> mError (vContext $ unURI uri) e
                 SObject so -> do 
                     Stores.putObject tx objectStore so
                     addedOne rrdpStats
@@ -272,8 +277,12 @@ saveDelta appContext rrdpStats deltaContent = do
             (mempty :: Validations))    
     where        
         newStorable (DP (DeltaPublish uri hash encodedb64)) = do 
-            task <- (parseAndProcess uri encodedb64) `pureTask` bottleneck
+            task <- readBlob `pureTask` bottleneck
             pure $ maybe (Add uri task) (Replace uri task) hash
+            where 
+                readBlob = case U.parseRpkiURL $ unURI uri of
+                    Left e        -> SError $ RrdpE $ BadURL $ U.convert e
+                    Right rpkiURL -> parseAndProcess rpkiURL encodedb64
 
         newStorable (DW (DeltaWithdraw _ hash)) = 
             pure $ Delete hash
@@ -290,7 +299,7 @@ saveDelta appContext rrdpStats deltaContent = do
             waitTask a >>= \case
                 SError e -> do
                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    pure $ validations <> mError (vContext uri) e
+                    pure $ validations <> mError (vContext $ unURI uri) e
                 SObject so@(StorableObject ro _) -> do
                     alreadyThere <- Stores.hashExists tx objectStore (getHash ro)
                     unless alreadyThere $ do                                    
@@ -302,7 +311,7 @@ saveDelta appContext rrdpStats deltaContent = do
             waitTask a >>= \case
                 SError e -> do
                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    pure $ validations <> mError (vContext uri) e
+                    pure $ validations <> mError (vContext $ unURI uri) e
                 SObject so@(StorableObject ro _) -> do        
                     oldOneIsAlreadyThere <- Stores.hashExists tx objectStore oldHash                           
                     if oldOneIsAlreadyThere 
@@ -314,7 +323,7 @@ saveDelta appContext rrdpStats deltaContent = do
                             if newOneIsAlreadyThere
                                 then do
                                     logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
-                                    pure $ validations <> mWarning (vContext uri) 
+                                    pure $ validations <> mWarning (vContext $ unURI uri) 
                                         (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
                                 else do                                             
                                     Stores.putObject tx objectStore so
@@ -322,7 +331,7 @@ saveDelta appContext rrdpStats deltaContent = do
                                     pure validations                                            
                         else do 
                             logWarn_ logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                            pure $ validations <> mWarning (vContext uri) 
+                            pure $ validations <> mWarning (vContext $ unURI uri) 
                                 (VWarning $ RrdpE $ NoObjectToReplace uri oldHash) 
 
         logger         = appContext ^. typed @AppLogger           
@@ -331,15 +340,15 @@ saveDelta appContext rrdpStats deltaContent = do
         objectStore    = appContext ^. #database . #objectStore
 
 
-parseAndProcess :: URI -> EncodedBase64 -> StorableUnit RpkiObject AppError
-parseAndProcess (URI u) b64 =     
+parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject AppError
+parseAndProcess u b64 =     
     case parsed of
         Left e   -> SError e
         Right ro -> SObject $! toStorableObject ro                    
     where
         parsed = do
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-            first ParseE $ readObject (Text.unpack u) b    
+            first ParseE $ readObject u b    
 
 
 data DeltaOp m a = Delete !Hash 

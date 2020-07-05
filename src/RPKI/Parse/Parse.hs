@@ -23,6 +23,7 @@ import qualified Data.ByteString as BS
 import qualified Data.List as List
 import qualified Data.Text as Text
 
+-- | 
 supportedExtension :: String -> Bool
 supportedExtension filename = 
     let ext = List.drop (List.length filename - 4) filename
@@ -30,16 +31,16 @@ supportedExtension filename =
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
-readObject :: String -> BS.ByteString -> ParseResult RpkiObject
-readObject name content = do    
-    let ext = List.drop (List.length name - 3) name
-    let u = URI $ Text.pack name
+readObject :: RpkiURL -> BS.ByteString -> ParseResult RpkiObject
+readObject objectURL content = do    
+    let URI u = getURL objectURL
+    let ext = Text.unpack $ Text.drop (Text.length u - 3) u
     case ext of
-        "cer" -> parse_ u parseResourceCertificate CerRO content            
-        "mft" -> parse_ u parseMft MftRO content
-        "roa" -> parse_ u parseRoa RoaRO content            
-        "crl" -> parse_ u parseCrl CrlRO content            
-        _     -> Left $ fmtErr $ "Unknown object type: " <> show name
+        "cer" -> parse_ objectURL parseResourceCertificate CerRO content            
+        "mft" -> parse_ objectURL parseMft MftRO content
+        "roa" -> parse_ objectURL parseRoa RoaRO content            
+        "crl" -> parse_ objectURL parseCrl CrlRO content            
+        _     -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
             parse_ u parse constructor bs = do
                 f <- parse bs

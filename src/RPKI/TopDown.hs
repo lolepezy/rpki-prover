@@ -71,8 +71,8 @@ data TopDownContext s = TopDownContext {
     -- validation results (and potentially anything else) to the database.
     databaseQueue               :: ClosableQueue (Tx s 'RW -> IO ()),
     publicationPoints           :: TVar PublicationPoints,
-    ppWaitingList               :: TVar (Map URI (Set Hash)),
-    takenCareOf                 :: TVar (Set URI),
+    ppWaitingList               :: TVar (Map RpkiURL (Set Hash)),
+    takenCareOf                 :: TVar (Set RpkiURL),
     taName                      :: TaName, 
     now                         :: Now,    
     objectStats                 :: TVar Stats,
@@ -119,7 +119,7 @@ bootstrapTA appContext@AppContext {..} tal worldVersion = do
         validateFromTACert appContext (getTaName tal) taCert repos worldVersion
     writeVResult appContext validations worldVersion
     where                            
-        taContext = vContext $ getTaURI tal
+        taContext = vContext $ toText $ getTaURI tal
 
 
 -- | Validate TA given that the TA certificate is downloaded and up-to-date.
@@ -139,7 +139,7 @@ validateTA appContext@AppContext {..} taName@(TaName taNameText) worldVersion = 
 
     writeVResult appContext validations worldVersion
     where                            
-        taContext = vContext $ URI taNameText
+        taContext = vContext taNameText
 
 
 -- | Do the actual validation starting from the TA certificate
@@ -155,7 +155,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
     -- this will be used as the "now" in all subsequent time and period validations 
     now <- thisInstant
 
-    let taCertURI = vContext $ NonEmpty.head $ getLocations taCert
+    let taCertURI = vContext $ toText $ NonEmpty.head $ getLocations taCert
 
     storedPubPoints <- roAppTxEx database storageError $ \tx -> 
                     getTaPublicationPoints tx (repositoryStore database) taName'
@@ -168,7 +168,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
                 mergeRepos repos storedPubPoints
                 -- we only care about URLs from 'repos', so shrink the PPs                        
                     `shrinkTo` 
-                Set.fromList (map getURI $ NonEmpty.toList repos)
+                Set.fromList (map getRpkiURL $ NonEmpty.toList repos)
 
     fetchStatuses <- parallelTasks 
                         (ioBottleneck appBottlenecks) 
@@ -204,7 +204,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
                 applyChangeSet tx (repositoryStore database) changeSet' taName'
 
         (broken, _) -> do
-            let brokenUrls = map (getURI . (^. _1)) broken
+            let brokenUrls = map (getRpkiURL . (^. _1)) broken
             logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download.|]
 
      
@@ -269,8 +269,9 @@ data FetchResult =
 fetchRepository :: (MonadIO m, Storage s) => 
                 AppContext s -> Now -> Repository -> m FetchResult
 fetchRepository appContext@AppContext { database = DB {..}, ..} (Now now) repo = liftIO $ do
-    logDebugM logger [i|Fetching #{getURI repo} |]    
-    ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ getURI repo) $ 
+    logDebugM logger [i|Fetching #{getRpkiURL repo} |]    
+    let repoURL = getRpkiURL repo
+    ((r, v), elapsed) <- timedMS $ runValidatorT (vContext $ toText repoURL) $ 
         case repo of
             RsyncR r -> 
                 first RsyncR <$> updateObjectForRsyncRepository appContext r 
@@ -278,11 +279,11 @@ fetchRepository appContext@AppContext { database = DB {..}, ..} (Now now) repo =
                 first RrdpR <$> updateObjectForRrdpRepository appContext r
     case r of
         Left e -> do                        
-            logErrorM logger [i|Fetching repository #{getURI repo} failed: #{e} |]
-            let repoContext' = vContext $ getURI repo
-            pure $ FetchFailure repo (FailedAt now) (mError repoContext' e <> v)
+            logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
+            let repoContext = vContext $ toText repoURL
+            pure $ FetchFailure repo (FailedAt now) (mError repoContext e <> v)
         Right (resultRepo, vs) -> do
-            logDebugM logger [i|Fetched repository #{getURI repo}, took #{elapsed}ms.|]
+            logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
             pure $ FetchSuccess resultRepo (FetchedAt now) (vs <> v)
 
 
@@ -391,7 +392,7 @@ validateCAWithQueue
                     waitingListPerPP <- readTVarIO ppWaitingList
 
                     let waitingHashesForThesePPs = fromMaybe Set.empty $ fold $ 
-                            Set.map (\pp -> getURI pp `Map.lookup` waitingListPerPP) fetchedPPs
+                            Set.map (\pp -> getRpkiURL pp `Map.lookup` waitingListPerPP) fetchedPPs
 
                     void $ parallelTasks 
                             (cpuBottleneck appBottlenecks) 
@@ -399,7 +400,7 @@ validateCAWithQueue
                                 o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                                 case o of 
                                     Just (CerRO waitingCertificate) -> do
-                                        let certVContext = vContext $ NonEmpty.head $ getLocations waitingCertificate
+                                        let certVContext = vContext $ toText $ NonEmpty.head $ getLocations waitingCertificate
                                         let childTopDownContext = topDownContext { 
                                                 -- we should start from the resource set of this certificate
                                                 -- as it is already has been verified
@@ -456,7 +457,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
         addToWaitingListOf :: CerObject -> PublicationPoint -> ValidatorT vc IO ()
         addToWaitingListOf cert pp = liftIO $ atomically $           
             modifyTVar (ppWaitingList topDownContext) $ \m -> 
-                Map.unionWith (<>) m (Map.singleton (getURI pp) (Set.singleton $ getHash cert))
+                Map.unionWith (<>) m (Map.singleton (getRpkiURL pp) (Set.singleton $ getHash cert))
         
         validateThisCertAndGoDown :: ValidatorT VContext IO PublicationPoints
         validateThisCertAndGoDown = do
@@ -472,7 +473,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             incValidObject topDownContext
             queueValidateMark appContext topDownContext (getHash mft)
 
-            forChild (NonEmpty.head $ getLocations mft) $ do
+            forChild (toText $ NonEmpty.head $ getLocations mft) $ do
 
                 (_, crlHash) <- case findCrlOnMft mft of 
                     []    -> vError $ NoCRLOnMFT childrenAki locations
@@ -485,7 +486,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                     Nothing          -> vError $ NoCRLExists childrenAki locations    
                     Just (CrlRO crl) -> do      
 
-                        validCrl <- forChild (NonEmpty.head $ getLocations crl) $ do
+                        validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ do
                             vHoist $ do          
                                 crl' <- validateCrl (now topDownContext) crl certificate
                                 void $ validateMft (now topDownContext) mft certificate crl'
@@ -565,13 +566,11 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                 -- TODO Anything else?
                 _ -> withEmptyPPs $ pure ()
             where
-                childContext = childVContext parentContext childLocation 
-                childLocation = NonEmpty.head $ getLocations ro
-
+                childContext = childVContext parentContext $ toText $ NonEmpty.head $ getLocations ro
                 withEmptyPPs f = f >> pure emptyPublicationPoints
         
 
-needsFetching :: Fetchable r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
+needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
 needsFetching r status ValidationConfig {..} (Now now) = 
     case status of
         New            -> True
@@ -579,10 +578,10 @@ needsFetching r status ValidationConfig {..} (Now now) =
         FailedAt time  -> tooLongAgo time
     where
         tooLongAgo momendTnThePast = 
-            not $ closeEnoughMoments momendTnThePast now (interval $ getFetchType r)
-            where
-                interval RRDP  = rrdpRepositoryRefreshInterval
-                interval Rsync = rsyncRepositoryRefreshInterval
+            not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
+            where 
+                interval (RrdpU _)  = rrdpRepositoryRefreshInterval
+                interval (RsyncU _) = rsyncRepositoryRefreshInterval
 
 
 queueVRP :: (MonadIO m, Storage s) =>
@@ -644,7 +643,7 @@ completeWorldVersion AppContext { database = DB {..} } worldVersion =
 
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: WithVContext vc => 
-                    AppContext s -> TAL -> ValidatorT vc IO (URI, RpkiObject)
+                    AppContext s -> TAL -> ValidatorT vc IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 
     go $ NonEmpty.toList $ certLocations tal
     where
@@ -652,18 +651,17 @@ fetchTACertificate appContext@AppContext {..} tal =
         go (u : uris) = fetchTaCert `catchError` goToNext 
             where 
                 goToNext e = do            
-                    let message = [i|Failed to fetch #{u}: #{e}|]
+                    let message = [i|Failed to fetch #{getURL u}: #{e}|]
                     logErrorM logger message
                     validatorWarning $ VWarning e
                     go uris
 
                 fetchTaCert = do                     
-                    logInfoM logger [i|Fetching TA certiicate from #{u}..|]
-                    (u,) <$> fetcher appContext u
-                    where
-                        fetcher = if isRsyncURI u 
-                                    then rsyncRpkiObject 
-                                    else fetchRpkiObject
+                    logInfoM logger [i|Fetching TA certiicate from #{getURL u}..|]
+                    ro <- case u of 
+                        RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
+                        RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
+                    pure (u, ro)
 
 
 

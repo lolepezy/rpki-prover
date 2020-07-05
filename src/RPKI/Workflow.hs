@@ -127,7 +127,7 @@ executeTask :: Storage s =>
 executeTask appContext@AppContext {..} task taName'@(TaName taNameText) =
     case task of 
         ValidateTACert tal worldVersion -> do
-            let context = vContext $ URI taNameText
+            let context = vContext taNameText
             (r, validations) <- runValidatorT context $ validateTACertificateFromTAL appContext tal 
             writeVResult appContext validations worldVersion
             case r of

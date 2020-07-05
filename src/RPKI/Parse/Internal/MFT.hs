@@ -18,7 +18,7 @@ import           RPKI.Parse.Internal.SignedObject
 import           RPKI.Util (mkHash)
 
 
-parseMft :: BS.ByteString -> ParseResult (URI -> MftObject)
+parseMft :: BS.ByteString -> ParseResult (RpkiURL -> MftObject)
 parseMft bs = do
     asns         <- first (fmtErr . show) $ decodeASN1' BER bs
     signedMft    <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns

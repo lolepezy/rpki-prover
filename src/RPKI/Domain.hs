@@ -72,11 +72,32 @@ newtype RrdpURL  = RrdpURL URI
     deriving anyclass Serialise
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving  (Eq, Ord, Generic)
+    deriving  (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
+class WithURL a where
+    getURL :: a -> URI
 
-newtype KI   = KI  BSS.ShortByteString 
+class WithRpkiURL a where
+    getRpkiURL :: a -> RpkiURL
+
+instance WithURL URI where
+    getURL = id
+
+instance WithURL RsyncURL where
+    getURL (RsyncURL u) = u
+
+instance WithURL RrdpURL where
+    getURL (RrdpURL u) = u
+
+instance WithURL RpkiURL where
+    getURL (RsyncU u) = getURL u
+    getURL (RrdpU u) = getURL u    
+
+toText :: RpkiURL -> Text
+toText = unURI . getURL 
+
+newtype KI = KI  BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -100,7 +121,7 @@ newtype Version = Version Integer
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-type Locations = NonEmpty URI
+type Locations = NonEmpty RpkiURL
 
 instance Show URI where
     show (URI u) = show u
@@ -480,11 +501,11 @@ withContent (With a b) f = With a (f a b)
 withMeta :: With a b -> (a -> b -> c) -> With c b
 withMeta (With a b) f = With (f a b) b
 
-makeCrl :: URI -> AKI -> Hash -> SignCRL -> CrlObject
-makeCrl u a h sc = With (IdentityMeta h (u :| [])) $ With a sc
+newCrl :: RpkiURL -> AKI -> Hash -> SignCRL -> CrlObject
+newCrl u a h sc = With (IdentityMeta h (u :| [])) $ With a sc
 
-makeCert :: URI -> Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
-makeCert u a s h rc = With (IdentityMeta h (u :| [])) $ With a $ With s rc
+newCert :: RpkiURL -> Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
+newCert u a s h rc = With (IdentityMeta h (u :| [])) $ With a $ With s rc
 
-makeEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
-makeEECert a s rc = With a $ With s rc
+newEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
+newEECert a s rc = With a $ With s rc

@@ -4,16 +4,16 @@
 
 module RPKI.AppMonad where
 
-import Control.Monad.Except
-import Control.Monad.Trans.Except
-import Control.Monad.State.Strict
-import Control.Monad.Reader
-import Control.Exception
-import Control.Monad.Morph
+import           Control.Exception
+import           Control.Monad.Except
+import           Control.Monad.Morph
+import           Control.Monad.Reader
+import           Control.Monad.State.Strict
+import           Control.Monad.Trans.Except
 
-import Data.Bifunctor
-import RPKI.Errors
-import RPKI.Domain
+import           Data.Bifunctor
+import           Data.Text                  (Text)
+import           RPKI.Errors
 
 
 -- Application monad stack
@@ -104,5 +104,5 @@ appWarn = validatorWarning . VWarning
 
 
 forChild :: (Monad m, WithVContext env) => 
-            URI -> ValidatorT env m r -> ValidatorT env m r
-forChild u = local $ childVC u
+            Text -> ValidatorT env m r -> ValidatorT env m r
+forChild = local . childVC

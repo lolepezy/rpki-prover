@@ -25,9 +25,9 @@ import           RPKI.Store.Base.Storage
 
 
 data RepositoryStore s = RepositoryStore {
-    rrdpS  :: SMap "rrdp-repositories" s URI RrdpRepository,
-    rsyncS :: SMap "rsync-repositories" s URI RsyncParent,
-    perTA  :: SMultiMap "repositories-per-ta" s TaName (URI, RepositoryFetchType)
+    rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+    rsyncS :: SMap "rsync-repositories" s RsyncURL RsyncParent,
+    perTA  :: SMultiMap "repositories-per-ta" s TaName RpkiURL
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
@@ -43,16 +43,16 @@ putRepositories tx RepositoryStore {..}
                 taName' = liftIO $ do    
     forM_ (Map.toList rsyncs') $ \(u, p) -> do
             M.put tx rsyncS u p    
-            MM.put tx perTA taName' (u, Rsync)
+            MM.put tx perTA taName' $ RsyncU u
     forM_ (Map.toList rrdps') $ \(u, p) -> do
             M.put tx rrdpS u p    
-            MM.put tx perTA taName' (u, RRDP)
+            MM.put tx perTA taName' $ RrdpU u
 
     
 applyChangeSet :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> 
                 RepositoryStore s -> 
-                ([Change RrdpRepository], [Change (URI, RsyncParent)]) -> 
+                ([Change RrdpRepository], [Change (RsyncURL, RsyncParent)]) -> 
                 TaName -> 
                 m ()
 applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' = 
@@ -62,19 +62,19 @@ applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' =
 
         forM_ rrdpRemoves $ \RrdpRepository{..} -> do 
                 M.delete tx rrdpS uri 
-                MM.delete tx perTA taName' (uri, RRDP)
+                MM.delete tx perTA taName' (RrdpU uri)
         forM_ rrdpPuts $ \r@RrdpRepository{..} -> do 
                 M.put tx rrdpS uri r
-                MM.put tx perTA taName' (uri, RRDP)        
+                MM.put tx perTA taName' (RrdpU uri)        
 
         let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
 
         forM_ rsyncRemoves $ \(uri', _) -> do
                 M.delete tx rsyncS uri'
-                MM.delete tx perTA taName' (uri', Rsync)                            
+                MM.delete tx perTA taName' (RsyncU uri')                            
         forM_ rsyncPuts $ \(uri', p) -> do
                 M.put tx rsyncS uri' p
-                MM.put tx perTA taName' (uri', Rsync)
+                MM.put tx perTA taName' (RsyncU uri')
     where
         separate = foldr f ([], [])
             where 
@@ -92,11 +92,11 @@ getTaPublicationPoints tx s taName' = liftIO $ do
     where
         mergeAllRepos result@(rrdps, rsyncs) _ index = 
             case index of 
-                (uri', RRDP) -> 
+                RrdpU uri' -> 
                     M.get tx (rrdpS s) uri' >>= \case
                         Just r  -> pure ((uri', r) : rrdps, rsyncs)
                         Nothing -> pure result                
-                (uri', Rsync) -> 
+                RsyncU uri' -> 
                     M.get tx (rsyncS s) uri' >>= \case
                         Just r  -> pure (rrdps, (uri', r) : rsyncs)
                         Nothing -> pure result

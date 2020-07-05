@@ -3,52 +3,53 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE OverloadedLabels           #-}
 
 module RPKI.Repository where
 
 import           Codec.Serialise
-import           GHC.Generics
 import           Control.Lens
-import           Data.Generics.Product.Typed
+import           GHC.Generics
+
+import           Data.Bifunctor
+import           Data.Generics.Labels
 import           Data.Generics.Product.Fields
+import           Data.Generics.Product.Typed
 
-import           Data.X509          (Certificate)
+import           Data.X509                    (Certificate)
 
-import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.List.NonEmpty           (NonEmpty (..))
 
-import qualified Data.List          as List
-import           Data.Map.Strict    (Map)
-import qualified Data.Map.Strict    as Map
-import           Data.Maybe         (isJust)
-import           Data.Set           (Set)
-import qualified Data.Set           as Set
+import qualified Data.List                    as List
+import           Data.Map.Strict              (Map)
+import qualified Data.Map.Strict              as Map
+import           Data.Maybe                   (isJust)
+import           Data.Set                     (Set)
+import qualified Data.Set                     as Set
 
 import           RPKI.Domain
-import           RPKI.Time
 import           RPKI.Errors
 import           RPKI.Parse.Parse
+import           RPKI.Time
 
 import           RPKI.TAL
 import           RPKI.Util
+
 
 
 data RepositoryFetchType = RRDP | Rsync
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass Serialise
 
-class Fetchable a where
-    getURI       :: a -> URI
-    getFetchType :: a -> RepositoryFetchType
-
 data FetchStatus = New | FailedAt Instant | FetchedAt Instant
     deriving (Show, Eq, Generic, Serialise)
 
-newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: URI } 
+newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass Serialise
 
 data RrdpRepository = RrdpRepository {
-        uri      :: !URI,
+        uri      :: !RrdpURL,
         rrdpMeta :: !(Maybe (SessionId, Serial)),
         status   :: !FetchStatus
     } 
@@ -77,38 +78,27 @@ data PublicationPoints = PublicationPoints {
     rsyncs :: RsyncMap
 } deriving stock (Show, Eq, Ord, Generic)   
 
-data RsyncParent = ParentURI !URI | Root !FetchStatus
+data RsyncParent = ParentURI !RsyncURL | Root !FetchStatus
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncMap = RsyncMap (Map URI RsyncParent)
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-    deriving newtype (Monoid)
-
-newtype RrdpMap = RrdpMap (Map URI RrdpRepository)
+newtype RsyncMap = RsyncMap (Map RsyncURL RsyncParent)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid)
 
+newtype RrdpMap = RrdpMap (Map RrdpURL RrdpRepository)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype (Monoid)
 
-instance Fetchable PublicationPoint where
-    getURI (RrdpPP (RrdpRepository {..})) = uri
-    getURI (RsyncPP (RsyncPublicationPoint uri)) = uri
-    getFetchType (RrdpPP _)  = RRDP
-    getFetchType (RsyncPP _) = Rsync
+instance WithRpkiURL PublicationPoint where
+    getRpkiURL (RrdpPP (RrdpRepository {..})) = RrdpU uri
+    getRpkiURL (RsyncPP (RsyncPublicationPoint uri)) = RsyncU uri    
 
-instance Fetchable Repository where
-    getURI (RrdpR (RrdpRepository {..})) = uri
-    getURI (RsyncR (RsyncRepository RsyncPublicationPoint {..} _)) = uri
-    getFetchType (RrdpR _)  = RRDP
-    getFetchType (RsyncR _) = Rsync
-
--- instance Fetchable URI where
---     getURI = id    
---     getFetchType uri 
---         | 
---     getFetchType (RsyncR _) = Rsync
+instance WithRpkiURL Repository where
+    getRpkiURL (RrdpR (RrdpRepository {..})) = RrdpU uri
+    getRpkiURL (RsyncR (RsyncRepository RsyncPublicationPoint {..} _)) = RsyncU uri
 
 instance Semigroup PublicationPoints where
     PublicationPoints rrdps1 rsyncs1 <> PublicationPoints rrdps2 rsyncs2 = 
@@ -147,11 +137,13 @@ instance Monoid PublicationPoints where
     mempty = emptyPublicationPoints
 
 
-rsyncR, rrdpR :: URI -> Repository
+rsyncR :: RsyncURL -> Repository
+rrdpR  :: RrdpURL  -> Repository
 rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) New
 rrdpR u = RrdpR $ RrdpRepository u Nothing New 
 
-rsyncPP, rrdpPP :: URI -> PublicationPoint
+rsyncPP :: RsyncURL -> PublicationPoint
+rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
 rrdpPP u = RrdpPP $ RrdpRepository u Nothing New 
 
@@ -172,23 +164,26 @@ toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) =
                       (u, Root status) <- Map.toList rsyncMap ]
 
 
-hasURI :: URI -> PublicationPoints -> Bool
+hasURI :: RpkiURL -> PublicationPoints -> Bool
 hasURI u (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) = 
-    isJust (Map.lookup u rrdps) || isJust (Map.lookup u rsyncMap)
+    case u of
+        RrdpU  rrdpUrl  -> isJust $ Map.lookup rrdpUrl rrdps
+        RsyncU rsyncUrl -> isJust $ Map.lookup rsyncUrl rsyncMap    
 
 
-allURIs :: PublicationPoints -> Set URI
+allURIs :: PublicationPoints -> Set RpkiURL
 allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) = 
-    Map.keysSet rrdps <> Map.keysSet rsyncs
+    Map.foldMapWithKey (\u _ -> Set.singleton $ RrdpU u) rrdps <> 
+    Map.foldMapWithKey (\u _ -> Set.singleton $ RsyncU u) rsyncs
 
 
-findPublicationPointStatus :: URI -> PublicationPoints -> Maybe FetchStatus
+findPublicationPointStatus :: RpkiURL -> PublicationPoints -> Maybe FetchStatus
 findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap) =     
-    case Map.lookup u rrdps of 
-        Just RrdpRepository {..} -> Just status
-        Nothing                  -> snd <$> findRsyncStatus rsyncMap
+    case u of
+        RrdpU rrdpUrl   -> (^. #status) <$> Map.lookup rrdpUrl rrdps
+        RsyncU rsyncUrl -> snd <$> findRsyncStatus rsyncMap rsyncUrl           
     where        
-        findRsyncStatus (RsyncMap m) = go u
+        findRsyncStatus (RsyncMap m) rsyncUrl = go rsyncUrl
             where
                 go u' =
                     Map.lookup u' m >>= \case            
@@ -234,6 +229,7 @@ mergeRsyncs (RsyncMap m1) (RsyncMap m2) =
                             -- really weird case, we don't know what to do here,
                             -- but practically just overwrite the PP with a repository
                             Map.insert u (Root status) m
+
                 (potentialParents, _, potentialChildren) -> 
                     replaceTheirParents $ Map.insert u parentUriOrStatus m
                     where 
@@ -324,8 +320,8 @@ createRepositoriesFromTAL tal (cwsX509certificate . getCertWithSignature -> cert
     case tal of 
         PropertiesTAL {..} -> do 
             (certUri, publicationPoint) <- publicationPointsFromCert cert
-            uniquePrefetchRepos   <- mapM 
-                (fmap snd . fromURI) $ filter (/= certUri) prefetchUris
+            let uniquePrefetchRepos = map 
+                    (snd . fromURI) $ filter (/= certUri) prefetchUris
 
             let prefetchReposToUse = 
                     case [ r | r@(RrdpR _) <- uniquePrefetchRepos ] of
@@ -337,25 +333,25 @@ createRepositoriesFromTAL tal (cwsX509certificate . getCertWithSignature -> cert
         RFC_TAL {..} -> 
             (\(_, r) -> toRepository r :| []) <$> publicationPointsFromCert cert            
     where        
-        fromURI u = case () of 
-            _   | isRrdpURI u  -> Right (u, rrdpR u)            
-                | isRsyncURI u -> Right (u, rsyncR u)
-                | otherwise    -> Left $ UnknownUriType u
+        fromURI r = 
+            case r of
+                RrdpU u  -> (r, rrdpR u)
+                RsyncU u -> (r, rsyncR u)    
         
 
 -- | Create repository from the publication points of the certificate.
-publicationPointsFromCert :: Certificate -> Either ValidationError (URI, PublicationPoint)
+publicationPointsFromCert :: Certificate -> Either ValidationError (RpkiURL, PublicationPoint)
 publicationPointsFromCert cert = 
     case (getRrdpNotifyUri cert, getRepositoryUri cert) of
         (Just rrdpNotifyUri, _) 
-            | isRrdpURI rrdpNotifyUri -> Right (rrdpNotifyUri, rrdpPP rrdpNotifyUri)
+            | isRrdpURI rrdpNotifyUri -> let rr = RrdpURL rrdpNotifyUri in Right (RrdpU rr, rrdpPP rr)
             | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
         (Nothing, Just repositoryUri) 
-            | isRsyncURI repositoryUri -> Right (repositoryUri, rsyncPP repositoryUri)
+            | isRsyncURI repositoryUri -> let rr = RsyncURL repositoryUri in Right (RsyncU rr, rsyncPP rr)
             | otherwise                -> Left $ UnknownUriType repositoryUri
         (Nothing, Nothing)             -> Left CertificateDoesn'tHaveSIA 
 
-publicationPointsFromCertObject :: CerObject -> Either ValidationError (URI, PublicationPoint)
+publicationPointsFromCertObject :: CerObject -> Either ValidationError (RpkiURL, PublicationPoint)
 publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
 
@@ -364,7 +360,7 @@ data Change a = Put a | Remove a
 
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> 
-            ([Change RrdpRepository], [Change (URI, RsyncParent)])
+            ([Change RrdpRepository], [Change (RsyncURL, RsyncParent)])
 changeSet 
     (PublicationPoints (RrdpMap rrdpOld) (RsyncMap rsyncOld)) 
     (PublicationPoints (RrdpMap rrdpNew) (RsyncMap rsyncNew)) = 
@@ -399,16 +395,22 @@ updateStatuses
 
 -- Limit PublicationPoints only to the set of URIs in the set that comes the first argument.
 -- For rsync, also add all the parent URLs.
-shrinkTo :: PublicationPoints -> Set URI -> PublicationPoints
+shrinkTo :: PublicationPoints -> Set RpkiURL -> PublicationPoints
 shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) uris = 
     PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs')
     where
-        rrdps'  = Map.filterWithKey (\u _ -> u `Set.member` uris) rrdps
+        rrdps'  = Map.filterWithKey (\u _ -> u `Set.member` rrdpURLs) rrdps
         rsyncs' = Map.foldrWithKey addWithParents Map.empty rsyncs
 
+        (rrdpURLs, rsyncURLs) = first Set.fromList $ 
+                                    second Set.fromList $ 
+                                        Set.foldr partitionURLs ([], []) uris
+        partitionURLs (RrdpU r) (rr, rs)  = (r : rr, rs)
+        partitionURLs (RsyncU r) (rr, rs) = (rr, r : rs)
+
         addWithParents u parent m 
-            | u `Set.member` uris = go u parent
-            | otherwise           = m 
+            | u `Set.member` rsyncURLs = go u parent
+            | otherwise                = m 
             where 
                 go u' r@(Root _)       = Map.insert u' r m
                 go u' p@(ParentURI pu) = Map.insert u' p m <> Map.fromList (gatherPathToRoot pu)

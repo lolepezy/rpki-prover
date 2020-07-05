@@ -174,13 +174,13 @@ streamHttpToFileWithActions (HttpContext tlsManager) (URI uri) errorMapping whil
 -- | Fetch arbitrary file using the streaming implementation
 fetchRpkiObject :: MonadIO m => 
                     AppContext s ->
-                    URI ->             
+                    RrdpURL ->             
                     ValidatorT vc m RpkiObject
 fetchRpkiObject appContext uri = withHttp $ \httpContext -> do
     (content, _) <- fromEitherM $ downloadToStrictBS 
                         httpContext
                         (appContext ^. typed @Config . typed @RrdpConf)
-                        uri 
+                        (getURL uri) 
                         (RrdpE . CantDownloadFile . U.fmtEx)
-    fromEitherM $ pure $ first ParseE $ readObject (U.convert uri) content
+    fromEitherM $ pure $ first ParseE $ readObject (RrdpU uri) content
     

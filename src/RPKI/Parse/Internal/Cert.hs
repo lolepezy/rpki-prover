@@ -31,12 +31,12 @@ import           RPKI.Parse.Internal.Common
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
 parseResourceCertificate :: BS.ByteString ->
-                            ParseResult (URI -> CerObject)
+                            ParseResult (RpkiURL -> CerObject)
 parseResourceCertificate bs = do
     certificate <- mapParseErr $ decodeSignedObject bs  
     let signedCertificate = unifyCert certificate
     (rc, ski_, aki_) <- toResourceCert signedCertificate    
-    pure $ \location -> makeCert location aki_ ski_ (U.sha256s bs) rc
+    pure $ \location -> newCert location aki_ ski_ (U.sha256s bs) rc
 
 
 toResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, SKI, Maybe AKI)

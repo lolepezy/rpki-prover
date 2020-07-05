@@ -53,7 +53,7 @@ import           System.IO.Posix.MMap             (unsafeMMapFile)
 
 -- | Download one file using rsync
 rsyncRpkiObject :: AppContext s -> 
-                    URI -> 
+                    RsyncURL -> 
                     ValidatorT vc IO RpkiObject
 rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
@@ -71,7 +71,7 @@ rsyncRpkiObject AppContext{..} uri = do
             fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
             void $ vHoist $ validateSizeM fileSize
             bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
-            fromEitherM $ pure $ first ParseE $ readObject (U.convert uri) bs
+            fromEitherM $ pure $ first ParseE $ readObject (RsyncU uri) bs
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
@@ -117,7 +117,7 @@ updateObjectForRsyncRepository
 -- | Is not supposed to throw exceptions, only report errors through Either.
 loadRsyncRepository :: Storage s => 
                         AppContext s ->
-                        URI -> 
+                        RsyncURL -> 
                         FilePath -> 
                         RpkiObjectStore s -> 
                         IO (Either AppError (Validations, Integer))
@@ -150,22 +150,24 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     True  -> readFiles queue path
                     False -> 
                         when (supportedExtension path) $ do         
-                            task <- (readAndParseObject path) `strictTask` threads                                          
                             let uri = pathToUri repositoryUrl rootPath path
+                            task <- (readAndParseObject path (RsyncU uri)) `strictTask` threads                                                                      
                             atomically $ writeCQueue queue (uri, task)
             where
-                readAndParseObject filePath = do                                         
+                readAndParseObject filePath uri = do                                         
                     (_, content)  <- getSizeAndContent filePath                
                     case content of 
                         Left e   -> pure $! SError e
                         Right bs ->                            
-                            case first ParseE $ readObject filePath bs of
+                            case first ParseE $ readObject uri bs of
                                 Left e   -> pure $! SError e
+                                -- All these bangs here make sense because
+                                -- 
                                 -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
                                 -- force computation of the serialised object and gain some parallelism
                                 -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
                                 -- a slow CPU-intensive transaction (verify that it's the case)
-                                Right ro -> pure $! SObject $! toStorableObject ro
+                                Right ro -> pure $! SObject $ toStorableObject ro
         
         saveObjects counter queue = 
             first (StorageE . StorageError . U.fmtEx) <$> 
@@ -174,15 +176,17 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 go tx validations = 
                     atomically (readCQueue queue) >>= \case 
                         Nothing       -> pure validations
-                        Just (uri, a) -> try (waitTask a) >>= process tx uri validations >>= go tx
+                        Just (uri, a) -> try (waitTask a) >>= 
+                                            process tx uri validations >>= 
+                                            go tx
 
-                process tx uri validations = \case
+                process tx (RsyncURL uri) validations = \case
                     Left (e :: SomeException) -> do
                         logError_ logger [i|An error reading and parsing the object: #{e}|]
-                        pure $ validations <> mError (vContext uri) (UnspecifiedE $ U.fmtEx e)
+                        pure $ validations <> mError (vContext $ unURI uri) (UnspecifiedE $ U.fmtEx e)
                     Right (SError e) -> do
                         logError_ logger [i|An error parsing or serialising the object: #{e}|]
-                        pure $ validations <> mError (vContext uri) e
+                        pure $ validations <> mError (vContext $ unURI uri) e
                     Right (SObject so@(StorableObject ro _)) -> do                        
                         alreadyThere <- hashExists tx objectStore (getHash ro)
                         if alreadyThere 
@@ -197,8 +201,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
-rsyncProcess :: URI -> FilePath -> RsyncMode -> ProcessConfig () () ()
-rsyncProcess (URI uri) destination rsyncMode = 
+rsyncProcess :: RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
+rsyncProcess (RsyncURL (URI uri)) destination rsyncMode = 
     proc "rsync" $ 
         [ "--timeout=300",  "--update",  "--times" ] <> 
         extraOptions <> 
@@ -209,8 +213,12 @@ rsyncProcess (URI uri) destination rsyncMode =
             RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]        
 
 -- TODO Make it generate shorter filenames
-rsyncDestination :: FilePath -> URI -> FilePath
-rsyncDestination root (URI u) = root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" u)
+rsyncDestination :: FilePath -> RsyncURL -> FilePath
+rsyncDestination root u = let
+    RsyncURL (URI urlText) = u
+    in 
+        root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" urlText)
+    
 
 fileContent :: FilePath -> IO BS.ByteString 
 fileContent path = do
@@ -238,8 +246,8 @@ getFileSize path = withFile path ReadMode hFileSize
 -- | Slightly heuristical 
 -- TODO Make it more effectient and simpler, introduce NormalisedURI and NormalisedPath 
 -- and don't check it here.
-pathToUri :: URI -> FilePath -> FilePath -> URI
-pathToUri (URI rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
+pathToUri :: RsyncURL -> FilePath -> FilePath -> RsyncURL
+pathToUri (RsyncURL (URI rsyncBaseUri)) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
     let 
         rsyncRoot' = if Text.isSuffixOf "/" rsyncRoot 
             then rsyncRoot
@@ -249,6 +257,6 @@ pathToUri (URI rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) =
             then rsyncBaseUri
             else rsyncBaseUri <> "/"
         in 
-            URI $ Text.replace rsyncRoot' rsyncBaseUri' filePath    
+            RsyncURL $ URI $ Text.replace rsyncRoot' rsyncBaseUri' filePath    
 
     

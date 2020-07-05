@@ -87,6 +87,7 @@ data RrdpError = BrokenXml Text |
                 NoPublishURI |
                 BadBase64 Text BS.ByteString |
                 BadPublish BS.ByteString |
+                BadURL BS.ByteString |
                 NoHashInWithdraw |
                 ContentInWithdraw BS.ByteString |
                 LocalSerialBiggerThanRemote Serial Serial |
@@ -105,7 +106,7 @@ data RrdpError = BrokenXml Text |
 data RsyncError = RsyncProcessError Int LBS.ByteString |
                     FileReadError Text |
                     RsyncRunningError Text |
-                    RsyncDirError Text
+                    RsyncDirError Text                    
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -124,7 +125,7 @@ newtype InitError = InitError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
-newtype VContext = VContext (NonEmpty URI) 
+newtype VContext = VContext (NonEmpty Text) 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -143,10 +144,10 @@ newtype VWarning = VWarning AppError
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-vContext :: URI -> VContext
+vContext :: Text -> VContext
 vContext u = VContext $ u :| []
 
-childVContext :: VContext -> URI -> VContext
+childVContext :: VContext -> Text -> VContext
 childVContext (VContext us) u = VContext $ u <| us
 
 data VProblem = VErr AppError | VWarn VWarning
@@ -172,7 +173,7 @@ emptyValidations (Validations m) = List.all Set.null $ Map.elems m
 
 class WithVContext v where
     getVC :: v -> VContext
-    childVC :: URI -> v -> v
+    childVC :: Text -> v -> v
 
 instance {-# OVERLAPPING #-} WithVContext VContext where
     getVC = id

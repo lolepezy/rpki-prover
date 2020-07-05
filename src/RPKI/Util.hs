@@ -74,5 +74,16 @@ isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u
 isHttpURI (URI u) = "http://" `Text.isPrefixOf` u
 isRrdpURI u = isHttpURI u || isHttpsURI u
 
-isParentOf :: URI -> URI -> Bool
-isParentOf (URI p) (URI c) = p `Text.isPrefixOf` c
+isParentOf :: WithURL u => u -> u -> Bool
+isParentOf p c = pt `Text.isPrefixOf` ct
+    where
+        URI pt = getURL p
+        URI ct = getURL c
+
+parseRpkiURL :: Text -> Either Text RpkiURL
+parseRpkiURL t
+    | isRrdpURI u  = Right $ RrdpU $ RrdpURL u
+    | isRsyncURI u = Right $ RsyncU $ RsyncURL u
+    | otherwise    = Left $ "Suspicious URL: " <> t
+    where
+        u = URI t

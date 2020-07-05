@@ -60,7 +60,7 @@ main = do
     -- load config file and apply command line options    
     logger <- createLogger
 
-    (appContext, validations) <- runValidatorT (vContext $ URI "configuration") $ createAppContext logger
+    (appContext, validations) <- runValidatorT (vContext "configuration") $ createAppContext logger
     case appContext of
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
@@ -74,10 +74,10 @@ runValidatorApp :: AppEnv -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
     worldVersion <- updateWorldVerion versions
     talFileNames <- listTALFiles $ talDirectory config
-    let validationContext = vContext $ URI "validation-root"
+    let validationContext = vContext "validation-root"
     (tals, validations) <- runValidatorT validationContext $ 
         forM talFileNames $ \talFileName -> 
-            forChild (URI $ convert talFileName) $ parseTALFromFile talFileName
+            forChild (convert talFileName) $ parseTALFromFile talFileName
 
     writeVResult appContext validations worldVersion        
     case tals of 

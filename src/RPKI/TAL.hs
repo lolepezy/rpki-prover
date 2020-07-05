@@ -1,23 +1,28 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.TAL where
+
+import Data.Bifunctor (first, second)
 
 import           Control.Monad
 
 import           Codec.Serialise
 
-import qualified Data.List          as List
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Text          as Text
+import qualified Data.List                        as List
+import qualified Data.List.NonEmpty               as NonEmpty
+import           Data.String.Interpolate.IsString
+import qualified Data.Text                        as Text
 
 import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Errors
 
-import           RPKI.Util          (convert, isHttpsURI)
+import           RPKI.Util                        
 
 
 
@@ -30,11 +35,13 @@ data TAL = PropertiesTAL {
     caName              :: Maybe Text.Text,
     certificateLocation :: Locations,
     publicKeyInfo       :: EncodedBase64,
-    prefetchUris        :: [URI]
+    prefetchUris        :: [RpkiURL]
 } | RFC_TAL {
     certificateLocations :: Locations,
     publicKeyInfo        :: EncodedBase64
-} deriving (Show, Eq, Ord, Generic, Serialise)
+} 
+    deriving stock (Show, Eq, Ord, Generic) 
+    deriving anyclass (Serialise)
 
 certLocations :: TAL -> Locations
 certLocations PropertiesTAL {..} = certificateLocation
@@ -45,9 +52,11 @@ getTaName tal = case tal of
     PropertiesTAL {..} -> maybe (uri2TaName $ NonEmpty.head certificateLocation) TaName caName
     RFC_TAL {..}       -> uri2TaName $ NonEmpty.head certificateLocations
     where 
-        uri2TaName (URI t) = TaName t
+        uri2TaName u = 
+            let URI t = getURL u
+            in TaName t
 
-getTaURI :: TAL -> URI
+getTaURI :: TAL -> RpkiURL
 getTaURI PropertiesTAL {..} = NonEmpty.head certificateLocation
 getTaURI RFC_TAL {..}       = NonEmpty.head certificateLocations
 
@@ -59,9 +68,12 @@ parseTAL bs =
         (Left _,  Right t) -> Right t
         (Left (TALError e1), Left (TALError e2)) -> Left $ TALError $ e1 <> " | " <> e2    
     where
-        makeLocations = NonEmpty.sortWith urlOrder
+        newLocations = NonEmpty.sortWith urlOrder
             where
-                urlOrder u = if isHttpsURI u then (0 :: Int, u) else (1, u)
+                urlOrder u = 
+                    case u of
+                        RrdpU _ -> (0 :: Int, u)
+                        _       -> (1, u)
 
         parseAsProperties = 
             case Text.lines bs of 
@@ -70,8 +82,8 @@ parseTAL bs =
                     -- map each line to a (property name, property value) pair
                     properties <- forM (nonComments lns) $ \line ->
                         case Text.splitOn "=" line of
-                        [name, value] -> Right (Text.strip name, Text.strip value)
-                        _             -> Left $ TALError $ convert $ "Line " <> line <> " doesn't contain '=' sign."
+                            [name, value] -> Right (Text.strip name, Text.strip value)
+                            _             -> Left $ TALError [i|Line #{line} doesn't contain '=' sign. |]
                 
                     PropertiesTAL <$> 
                         getCaName properties <*>
@@ -84,34 +96,40 @@ parseTAL bs =
 
                 getCaName ps              = Right $ lookup "ca.name" ps                
                 getPublicKeyInfo       ps = EncodedBase64 . convert <$> getMandatory "public.key.info" ps
-                getPrefetchUris ps        = Right $
+                getPrefetchUris ps        = first TALError $ 
                     case lookup "prefetch.uris" ps of
-                        Nothing          -> []
-                        Just prefetchStr -> List.map URI $ Text.splitOn "," prefetchStr 
+                        Nothing          -> Right []
+                        Just prefetchStr -> mapM parseRpkiURL $ Text.splitOn "," prefetchStr 
 
                 getCertificateLocation ps = 
                     case lookup propertyName ps of
-                        Nothing   -> Left  $ TALError $ "'" <> propertyName <> "' is not defined."
+                        Nothing   -> Left  $ TALError [i|'#{propertyName}' is not defined.|]
                         Just uris -> 
                             case NonEmpty.nonEmpty (Text.splitOn "," uris) of
-                                Nothing    -> Left $ TALError $ "Empty list of TA certificate URIs in " <> propertyName
-                                Just uris' -> Right $ makeLocations $ NonEmpty.map URI uris'
+                                Nothing    -> Left $ TALError [i|Empty list of TA certificate URLs in #{propertyName}|]
+                                Just uris' -> first TALError $ second newLocations $ mapM parseRpkiURL uris'
+                                    -- 
                     where
-                        propertyName = "certificate.location"
+                        propertyName = "certificate.location" :: Text.Text
 
                 getMandatory name ps =
                     case lookup name ps of
-                        Nothing -> Left $ TALError $ convert $ "'" <> name <> "' is not defined."
+                        Nothing -> Left $ TALError [i|'#{name}' is not defined.|]
                         Just cl -> Right cl
 
         parseRFC =      
             case List.span looksLikeUri $ Text.lines bs of        
-                (_, []) -> Left $ TALError "Empty public key info"
+                (_, [])        -> Left $ TALError "Empty public key info"
                 (uris, base64) ->
                     case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
-                        Just uris' -> Right $ RFC_TAL {
-                                certificateLocations = makeLocations $ NonEmpty.map (URI . Text.strip) uris',
+                        Just uris' -> do 
+                            locations <- first TALError $ 
+                                            second newLocations $ 
+                                            mapM parseRpkiURL $ 
+                                            NonEmpty.map Text.strip uris'
+                            pure $ RFC_TAL {
+                                certificateLocations = locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
                                     Text.concat $ filter (not . Text.null) $ map Text.strip base64
                             }

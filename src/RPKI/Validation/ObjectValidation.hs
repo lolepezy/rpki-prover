@@ -67,7 +67,7 @@ validateResourceCertExtensions cert =
               _ -> vPureError $ CertWrongPolicyExtension bs
 
 -- |
-validateTACert :: TAL -> URI -> RpkiObject -> PureValidatorT conf CerObject
+validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT conf CerObject
 validateTACert tal u (CerRO taCert) = do
   let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
   pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki
@@ -75,7 +75,7 @@ validateTACert tal u (CerRO taCert) = do
     Nothing -> continue
     Just (AKI ki)
       | SKI ki == getSKI taCert -> continue
-      | otherwise -> vPureError $ TACertAKIIsNotEmpty u
+      | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
   where
     continue = do
       -- It's self-signed, so use itself as a parent to check the signature
