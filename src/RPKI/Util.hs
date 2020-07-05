@@ -19,6 +19,9 @@ import qualified Data.Text               as Text
 import           Data.Word
 import           RPKI.Domain
 
+import           Control.Monad.IO.Class
+import           Data.IORef.Lifted
+
 
 sha256 :: LBS.ByteString -> Hash
 sha256 = Hash . BSS.toShort . S256.hashlazy
@@ -87,3 +90,6 @@ parseRpkiURL t
     | otherwise    = Left $ "Suspicious URL: " <> t
     where
         u = URI t
+
+increment :: (MonadIO m, Num a) => IORef a -> m ()
+increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        

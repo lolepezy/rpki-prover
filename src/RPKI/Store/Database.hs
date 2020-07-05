@@ -8,33 +8,36 @@ module RPKI.Store.Database where
 
 import           Codec.Serialise
 import           Control.Monad.IO.Class
+import           Data.IORef.Lifted
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import           Data.Int
+import           Data.List                   (length)
 
 import           GHC.Generics
 
 import           RPKI.Domain
-import           RPKI.Store.Base.Map      (SMap (..))
-import           RPKI.Store.Base.MultiMap (SMultiMap (..))
+import           RPKI.Store.Base.Map         (SMap (..))
+import           RPKI.Store.Base.MultiMap    (SMultiMap (..))
 import           RPKI.TAL
 import           RPKI.Version
 
-import qualified RPKI.Store.Base.Map      as M
-import qualified RPKI.Store.Base.MultiMap as MM
+import qualified RPKI.Store.Base.Map         as M
+import qualified RPKI.Store.Base.MultiMap    as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
+import           RPKI.Util (increment)
 
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
 
-import Control.Monad (forM_, when, void)
-import Control.Concurrent.STM (atomically)
+import           Control.Concurrent.STM      (atomically)
+import           Control.Monad               (forM_, void, when)
 
 
 
@@ -224,24 +227,33 @@ allVersions tx (VersionStore s) = liftIO $ M.all tx s
 cleanObjectCache :: (MonadIO m, Storage s) => 
                     RpkiObjectStore s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
-                    m ()
-cleanObjectCache objectStore@RpkiObjectStore {..} tooOld =
-    void $ liftIO $ bracketChanClosable 
-                        100_000
-                        readOldObjects
-                        deleteObjects
-                        (const $ pure ())
-    where
-        readOldObjects queue = do
+                    m (Int, Int)
+cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
+    kept    <- newIORef (0 :: Int)
+    deleted <- newIORef (0 :: Int)
+    
+    let readOldObjects queue = do
             roTx objectStore $ \tx -> do
-                M.traverse tx objectMetas $ \hash ROMeta {..} -> 
+                M.traverse tx objectMetas $ \hash ROMeta {..} -> do
+                    if tooOld validatedBy
+                        then increment deleted >> atomically (writeCQueue queue hash)
+                        else increment kept
                     when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
-                        
-        -- Don't lock the DB for potentially too long, use big but finite chunks
-        deleteObjects queue = do
-            readQueueChunked queue 50_000 $ \quuElems -> do
-                rwTx objectStore $ \tx -> forM_ quuElems $ deleteObject tx objectStore
 
+        -- Don't lock the DB for potentially too long, use big but finite chunks
+    let deleteObjects queue = do
+            readQueueChunked queue 50_000 $ \quuElems -> do
+                rwTx objectStore $ \tx -> do 
+                    putStrLn $ "quuElems size = " <> show (length quuElems)
+                    forM_ quuElems $ deleteObject tx objectStore
+
+    void $ bracketChanClosable 
+            100_000
+            readOldObjects
+            deleteObjects
+            (const $ pure ())    
+    
+    (,) <$> readIORef deleted <*> readIORef kept
 
 
 -- All of the stores of the application in one place

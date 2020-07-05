@@ -41,7 +41,7 @@ import           RPKI.Store.Base.LMDB
 
 type AppEnv = AppContext LmdbStorage
 
-data FlowTask = 
+data WorkflowTask = 
     ValidateTAs WorldVersion | 
     CacheGC WorldVersion |
     CleanOldVersions
@@ -55,10 +55,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- cache GC should not run at the same time as the validation (not for consistency reasons,
     -- but we want to avoid locking the DB for long).    
     globalQueue <- newCQueueIO 10
-
-    worldVersion <- getWorldVerion versions
-    validateTaTask globalQueue worldVersion
-
+    
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion, 
@@ -83,9 +80,12 @@ runWorkflow appContext@AppContext {..} tals = do
             validateTaTask globalQueue newWorldVersion
 
         -- remove old objects from the cache
-        cacheGC globalQueue = periodically cacheCleanupInterval $ do
-            worldVersion <- getWorldVerion versions
-            atomically $ writeCQueue globalQueue $ CacheGC worldVersion
+        cacheGC globalQueue = do 
+            -- wait before the actualy validation starts
+            threadDelay 10_000_000
+            periodically cacheCleanupInterval $ do
+                worldVersion <- getWorldVerion versions
+                atomically $ writeCQueue globalQueue $ CacheGC worldVersion
 
         taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
@@ -103,14 +103,14 @@ runWorkflow appContext@AppContext {..} tals = do
                         completeWorldVersion appContext worldVersion
                         logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|]
                         where 
-                            processTAL tal = void $ validateTA appContext tal worldVersion
+                            processTAL tal = validateTA appContext tal worldVersion                                
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion                        
-                        (_, elapsed) <- timedMS $ cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
+                        ((deleted, kept), elapsed) <- timedMS $ cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
                                 let validatedAt = fromNanoseconds nanos
-                                in closeEnoughMoments validatedAt now cacheLifeTime
-                        logInfo_ logger [i|Done with cache GC, took #{elapsed}ms|]
+                                in not $ closeEnoughMoments validatedAt now cacheLifeTime
+                        logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
                             
                                                                 
 

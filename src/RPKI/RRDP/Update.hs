@@ -374,10 +374,7 @@ newRrdpStat :: IO RrdpStatWork
 newRrdpStat = RrdpStatWork <$> newIORef 0 <*> newIORef 0
 
 addedOne :: RrdpStatWork -> IO ()
-addedOne RrdpStatWork {..} = increment added
+addedOne RrdpStatWork {..} = U.increment added
 
 removedOne :: RrdpStatWork -> IO ()
-removedOne RrdpStatWork {..} = increment removed
-
-increment :: (MonadIO m, Num a) => IORef a -> m ()
-increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())
+removedOne RrdpStatWork {..} = U.increment removed

@@ -134,7 +134,7 @@ validateTA appContext@AppContext {..} tal worldVersion = do
         logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]
         validateFromTACert appContext (getTaName tal) taCert repos worldVersion
 
-    writeVResult appContext validations worldVersion
+    writeVResult appContext validations worldVersion    
     where                            
         taContext = vContext taNameText
         TaName taNameText = getTaName tal
@@ -195,7 +195,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
             pubPointAfterTopDown <- liftIO $ readTVarIO $ publicationPoints topDownContext            
 
             Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
-            logDebugM logger [i|#{taName'} validCount = #{validCount} |]                                    
+            logDebugM logger [i|#{taName'} validCount = #{validCount} |]
 
             let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
             rwAppTxEx database storageError $ \tx -> 
@@ -216,7 +216,6 @@ validateTACertificateFromTAL :: (WithVContext vc, Storage s) =>
                                 WorldVersion ->
                                 ValidatorT vc IO (CerObject, NonEmpty Repository, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
-
     let now = Now $ versionToMoment worldVersion
     let validationConfig = config ^. typed @ValidationConfig
 
@@ -228,35 +227,18 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 fetchValidateAndStore now
             | otherwise -> 
                 pure (taCert, initialRepositories, Existing)
-
-
-    -- (uri', ro) <- fetchTACertificate appContext tal
-    -- newCert    <- vHoist $ validateTACert tal uri' ro      
-    -- rwAppTxEx taStore storageError $ \tx -> do
-    --     r <- getTA tx taStore taName'
-    --     case r of
-    --         Nothing ->
-    --             -- it's a new TA, store it and trigger all the other actions                    
-    --             storeTaCert tx newCert
-
-    --         Just StorableTA { taCert, initialRepositories } 
-    --             | getSerial taCert /= getSerial newCert -> do            
-    --                 logInfoM logger [i|Updating TA certificate for #{taName'} |]                            
-    --                 storeTaCert tx newCert
-    --             | otherwise -> 
-    --                 pure (taCert, initialRepositories, Existing)
     where       
         fetchValidateAndStore now = do 
             (uri', ro) <- fetchTACertificate appContext tal
-            newCert    <- vHoist $ validateTACert tal uri' ro
-            rwAppTxEx taStore storageError $ \tx -> storeTaCert tx newCert now           
+            newCert'   <- vHoist $ validateTACert tal uri' ro
+            rwAppTxEx taStore storageError $ \tx -> storeTaCert tx newCert' now           
 
-        storeTaCert tx newCert (Now moment) = 
-            case createRepositoriesFromTAL tal newCert of
+        storeTaCert tx cert (Now moment) = 
+            case createRepositoriesFromTAL tal cert of
                 Left e      -> appError $ ValidationE e
                 Right repos -> do 
-                    putTA tx taStore (StorableTA tal newCert (FetchedAt moment) repos)
-                    pure (newCert, repos, Updated)
+                    putTA tx taStore (StorableTA tal cert (FetchedAt moment) repos)
+                    pure (cert, repos, Updated)
 
         taName' = getTaName tal  
         taStore = database ^. #taStore    
@@ -340,7 +322,7 @@ validateCAWithQueue
         
         AlreadyCreatedQ -> treeDescend
         
-    logDebugM logger [i|Validated #{certificateURL}, took #{elapsed}ms.|]
+    logDebugM logger [i|Validated #{getURL certificateURL}, took #{elapsed}ms.|]
 
     where
         -- From the set of discovered PPs figure out which ones must be fetched, 
@@ -439,13 +421,13 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             let asIfItIsMerged = discoveredPP `mergePP` globalPPs
 
             let stopDescend = do 
-                    -- remember to come back to this certificate when the PP ios fetched
+                    -- remember to come back to this certificate when the PP is fetched
                     certificate `addToWaitingListOf` discoveredPP
                     pure asIfItIsMerged
 
             case findPublicationPointStatus url asIfItIsMerged of 
                 -- this publication point hasn't been seen at all, so stop here
-                Nothing     -> stopDescend
+                Nothing -> stopDescend
                 
                 -- If it's been fetched too long ago, stop here and add the certificate 
                 -- to the waiting list of this PP
@@ -471,6 +453,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             queueValidateMark appContext topDownContext (getHash certificate)
 
             mft <- findMft childrenAki locations
+
             -- this for the manifest
             incValidObject topDownContext
             queueValidateMark appContext topDownContext (getHash mft)
