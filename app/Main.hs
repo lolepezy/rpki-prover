@@ -149,11 +149,11 @@ createAppContext logger = do
                 -- rsync repositories can be updated every 11 minutes
                 rsyncRepositoryRefreshInterval = 11 * 60
             },
-            -- run cache GC every 30 minutes
-            cacheCleanupInterval = 30 * 60,
+            cacheCleanupInterval = let halfAnHour = 30 * 60 in halfAnHour,
 
-            -- allow objects to stay in cache for one day
-            cacheLifeTime = let oneDay = 24 * 60 * 60 in oneDay
+            cacheLifeTime = let threeDays = 3 * 24 * 60 * 60 in threeDays,
+
+            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
         },
         versions = versions,
         database = database,

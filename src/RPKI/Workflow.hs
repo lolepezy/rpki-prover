@@ -44,7 +44,7 @@ type AppEnv = AppContext LmdbStorage
 data WorkflowTask = 
     ValidateTAs WorldVersion | 
     CacheGC WorldVersion |
-    CleanOldVersions
+    CleanOldVersions WorldVersion
   deriving stock (Show, Eq, Ord, Generic)
 
 
@@ -55,16 +55,16 @@ runWorkflow appContext@AppContext {..} tals = do
     -- cache GC should not run at the same time as the validation (not for consistency reasons,
     -- but we want to avoid locking the DB for long).    
     globalQueue <- newCQueueIO 10
-    
+
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion, 
             cacheGC            
         ]
-     
     where  
         config = appContext ^. typed @Config
         cacheCleanupInterval = config ^. #cacheCleanupInterval
+        oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
         revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
         objectStore          = appContext ^. #database . #objectStore               
@@ -81,7 +81,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- remove old objects from the cache
         cacheGC globalQueue = do 
-            -- wait before the actualy validation starts
+            -- wait a little so that GC doesn't start before the actual validation
             threadDelay 10_000_000
             periodically cacheCleanupInterval $ do
                 worldVersion <- getWorldVerion versions
@@ -94,9 +94,6 @@ runWorkflow appContext@AppContext {..} tals = do
                 case task of 
                     Nothing -> pure ()
 
-                    Just CleanOldVersions -> do
-                        logWarn_ logger [i|Cleanup for old versions is not implemented yet.|]
-
                     Just (ValidateTAs worldVersion) -> do
                         logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
                         (_, elapsed) <- timedMS $ mapConcurrently_ processTAL tals
@@ -106,11 +103,20 @@ runWorkflow appContext@AppContext {..} tals = do
                             processTAL tal = validateTA appContext tal worldVersion                                
 
                     Just (CacheGC worldVersion) -> do
-                        let now = versionToMoment worldVersion                        
-                        ((deleted, kept), elapsed) <- timedMS $ cleanObjectCache objectStore $ \(WorldVersion nanos) -> 
-                                let validatedAt = fromNanoseconds nanos
-                                in not $ closeEnoughMoments validatedAt now cacheLifeTime
+                        let now = versionToMoment worldVersion
+                        ((deleted, kept), elapsed) <- timedMS $ 
+                                cleanObjectCache objectStore $ versionIsOld now cacheLifeTime
                         logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
+
+                    Just (CleanOldVersions worldVersion) -> do
+                        let now = versionToMoment worldVersion
+                        (deleted, elapsed) <- timedMS $ 
+                            deleteOldVersions database $ versionIsOld now oldVersionsLifetime
+                        logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|]
+    
+        versionIsOld now period (WorldVersion nanos) =
+            let validatedAt = fromNanoseconds nanos
+            in not $ closeEnoughMoments validatedAt now period
                             
                                                                 
 

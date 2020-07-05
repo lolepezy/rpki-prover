@@ -38,6 +38,7 @@ import           RPKI.Store.Repository
 
 import           Control.Concurrent.STM      (atomically)
 import           Control.Monad               (forM_, void, when)
+import qualified Data.List as List
 
 
 
@@ -200,6 +201,13 @@ allVResults tx VResultStore {..} wv = liftIO $ MM.foldS tx whToKey wv f []
         f vrs _ artificialKey = 
             maybe vrs (: vrs) <$> M.get tx results artificialKey            
 
+deleteVResults :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> VResultStore s -> WorldVersion -> m ()
+deleteVResults tx VResultStore {..} wv = liftIO $ do 
+    MM.foldS tx whToKey wv f ()
+    MM.deleteAll tx whToKey wv
+    where
+        f _ _ artificialKey = M.delete tx results artificialKey    
 
 
 putVRP :: (MonadIO m, Storage s) => 
@@ -210,14 +218,22 @@ allVRPs :: (MonadIO m, Storage s) =>
             Tx s mode -> VRPStore s -> WorldVersion -> m [Roa]
 allVRPs tx (VRPStore s) wv = liftIO $ MM.allForKey tx s wv
 
+deleteVRPs :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> VRPStore s -> WorldVersion -> m ()
+deleteVRPs tx (VRPStore s) wv = liftIO $ MM.deleteAll tx s wv
+
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> VersionStore s -> WorldVersion -> VersionState -> m ()
-putVersion tx (VersionStore s) wv vrp = liftIO $ M.put tx s wv vrp
+putVersion tx (VersionStore s) wv versionState = liftIO $ M.put tx s wv versionState
 
 allVersions :: (MonadIO m, Storage s) => 
             Tx s mode -> VersionStore s -> m [(WorldVersion, VersionState)]
 allVersions tx (VersionStore s) = liftIO $ M.all tx s
+
+deleteVersion :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> VersionStore s -> WorldVersion -> m ()
+deleteVersion tx (VersionStore s) wv = liftIO $ M.delete tx s wv
 
 
 -- More complicated operations
@@ -240,11 +256,10 @@ cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
                         else increment kept
                     when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
 
-        -- Don't lock the DB for potentially too long, use big but finite chunks
+    -- Don't lock the DB for potentially too long, use big but finite chunks
     let deleteObjects queue = do
             readQueueChunked queue 50_000 $ \quuElems -> do
-                rwTx objectStore $ \tx -> do 
-                    putStrLn $ "quuElems size = " <> show (length quuElems)
+                rwTx objectStore $ \tx ->
                     forM_ quuElems $ deleteObject tx objectStore
 
     void $ bracketChanClosable 
@@ -254,6 +269,38 @@ cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
             (const $ pure ())    
     
     (,) <$> readIORef deleted <*> readIORef kept
+
+
+-- Clean up older versions and delete everything associated with the version, i,e.
+-- VRPs and validation results.
+deleteOldVersions :: (MonadIO m, Storage s) => 
+                    DB s -> 
+                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
+                    m Int
+deleteOldVersions DB {..} tooOld = liftIO $ do
+    versions <- roTx versionStore $ \tx -> allVersions tx versionStore
+
+    let toDelete = 
+            case [ version | (version, FinishedVersion) <- versions ] of
+                []       -> 
+                    case versions of 
+                        []  -> []
+                        [_] -> [] -- don't delete the last one
+                        _ -> filter (tooOld . fst) versions            
+
+                finished -> 
+                    -- delete all too old except for the last finished one    
+                    let lastFinished = List.maximum finished 
+                    in filter (( /= lastFinished) . fst) $ filter (tooOld . fst) versions
+    
+    rwTx versionStore $ \tx -> 
+        forM_ toDelete $ \(worldVersion, _) -> do
+            deleteVResults tx resultStore worldVersion
+            deleteVRPs tx vrpStore worldVersion
+            deleteVersion tx versionStore worldVersion
+    
+    pure $ List.length toDelete
+
 
 
 -- All of the stores of the application in one place

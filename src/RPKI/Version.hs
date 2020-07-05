@@ -29,11 +29,9 @@ newtype Versions = Versions {
     world :: TVar WorldVersion
 } deriving stock (Generic)
 
-
 data VersionState = NewVersion | FinishedVersion
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
-
 
 -- 
 createDynamicState :: IO Versions

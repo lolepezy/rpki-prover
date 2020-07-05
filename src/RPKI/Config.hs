@@ -27,7 +27,8 @@ data Config = Config {
     rrdpConf             :: RrdpConf,
     validationConfig     :: ValidationConfig,
     cacheCleanupInterval :: Seconds,
-    cacheLifeTime        :: Seconds
+    cacheLifeTime        :: Seconds,
+    oldVersionsLifetime  :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 newtype RsyncConf = RsyncConf {

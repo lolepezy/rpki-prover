@@ -31,21 +31,22 @@
 + Relationship between ExceptT, forM and channles -- it's all can be done better only with exceptions.
 + RRDP transaction must roll back in case of an error
 + Save validation results from the top-level functions such as bootstrapTA and validateTA
++ Only complateWorldVersion when _all_ TAs have completed it
++ Do not make TA cert update a separate stage
++ Clean up objects that are not touched by validations or not touched by repository downloads
 
 ---------------------------------  In progress ----------------------------------------
 
-- Only complateWorldVersion when _all_ TAs have completed it
-- Do not make TA cert update a separate stage
-- Clean up objects that are not touched by validations or not touched by repository downloads
-
+- Cleanup VRPs and validation results as well based on their world version.
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
-- Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository.
-- Cleanup VRPs and validation results as well based on their world version.
-- Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 - Have full path from the top repoistory to all the delegates ones in the VContext.
+- Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository.
+- Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
+
+- Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
+
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - it looks like validCount number is flaky and changes depending on (check it)
 - Add periodic re-validation
