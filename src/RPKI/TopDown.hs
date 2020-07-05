@@ -114,7 +114,7 @@ bootstrapTA :: Storage s =>
             AppContext s -> TAL -> WorldVersion -> IO ()
 bootstrapTA appContext@AppContext {..} tal worldVersion = do    
     (_, validations) <- runValidatorT taContext $ do         
-        ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal 
+        ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
         logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]
         validateFromTACert appContext (getTaName tal) taCert repos worldVersion
     writeVResult appContext validations worldVersion
@@ -123,23 +123,21 @@ bootstrapTA appContext@AppContext {..} tal worldVersion = do
 
 
 -- | Validate TA given that the TA certificate is downloaded and up-to-date.
--- This is the main entry point for the top-down validation when it's known that
+--  is the main entry point for the top-down validation when it's known that
 -- TA certificate is up-to-date and valid.
 --
 validateTA :: Storage s => 
-            AppContext s -> TaName -> WorldVersion -> IO ()
-validateTA appContext@AppContext {..} taName@(TaName taNameText) worldVersion = do    
+            AppContext s -> TAL -> WorldVersion -> IO ()
+validateTA appContext@AppContext {..} tal worldVersion = do    
     (_, validations) <- runValidatorT taContext $ do
-        let taStore = database ^. #taStore
-        r <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName
-        case r of 
-            Nothing  -> appError $ ValidationE $ InvalidCert $ "Not TA cert for " <> taNameText
-            Just StorableTA { taCert, initialRepositories } -> 
-                validateFromTACert appContext taName taCert initialRepositories worldVersion
+        ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
+        logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]
+        validateFromTACert appContext (getTaName tal) taCert repos worldVersion
 
     writeVResult appContext validations worldVersion
     where                            
         taContext = vContext taNameText
+        TaName taNameText = getTaName tal
 
 
 -- | Do the actual validation starting from the TA certificate
@@ -153,7 +151,7 @@ validateFromTACert :: (WithVContext env, Storage s) =>
                     ValidatorT env IO ()
 validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion = do  
     -- this will be used as the "now" in all subsequent time and period validations 
-    now <- thisInstant
+    let now = Now $ versionToMoment worldVersion
 
     let taCertURI = vContext $ toText $ NonEmpty.head $ getLocations taCert
 
@@ -215,45 +213,49 @@ data TACertStatus = Existing | Updated
 validateTACertificateFromTAL :: (WithVContext vc, Storage s) => 
                                 AppContext s -> 
                                 TAL -> 
+                                WorldVersion ->
                                 ValidatorT vc IO (CerObject, NonEmpty Repository, TACertStatus)
-validateTACertificateFromTAL appContext@AppContext {..} tal = do        
+validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
-    -- r <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName'
-    -- case r of
-    --     Nothing -> fetchValidateAndStore
-    --     Just ta -> do
-    --         case ta ^. #fetchStatus of
-    --             New -> fetchValidateAndStore
-    --             FetchedAt 
+    let now = Now $ versionToMoment worldVersion
+    let validationConfig = config ^. typed @ValidationConfig
+
+    r <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName'
+    case r of
+        Nothing -> fetchValidateAndStore now
+        Just StorableTA { taCert, initialRepositories, fetchStatus }
+            | needsFetching (getTaURI tal) fetchStatus validationConfig now ->
+                fetchValidateAndStore now
+            | otherwise -> 
+                pure (taCert, initialRepositories, Existing)
 
 
-    (uri', ro) <- fetchTACertificate appContext tal
-    newCert    <- vHoist $ validateTACert tal uri' ro      
-    rwAppTxEx taStore storageError $ \tx -> do
-        r <- getTA tx taStore taName'
-        case r of
-            Nothing ->
-                -- it's a new TA, store it and trigger all the other actions                    
-                storeTaCert tx newCert
+    -- (uri', ro) <- fetchTACertificate appContext tal
+    -- newCert    <- vHoist $ validateTACert tal uri' ro      
+    -- rwAppTxEx taStore storageError $ \tx -> do
+    --     r <- getTA tx taStore taName'
+    --     case r of
+    --         Nothing ->
+    --             -- it's a new TA, store it and trigger all the other actions                    
+    --             storeTaCert tx newCert
 
-            Just StorableTA { taCert, initialRepositories } 
-                | getSerial taCert /= getSerial newCert -> do            
-                    logInfoM logger [i|Updating TA certificate for #{taName'} |]                            
-                    storeTaCert tx newCert
-                | otherwise -> 
-                    pure (taCert, initialRepositories, Existing)
+    --         Just StorableTA { taCert, initialRepositories } 
+    --             | getSerial taCert /= getSerial newCert -> do            
+    --                 logInfoM logger [i|Updating TA certificate for #{taName'} |]                            
+    --                 storeTaCert tx newCert
+    --             | otherwise -> 
+    --                 pure (taCert, initialRepositories, Existing)
     where       
-        fetchValidateAndStore = do 
+        fetchValidateAndStore now = do 
             (uri', ro) <- fetchTACertificate appContext tal
             newCert    <- vHoist $ validateTACert tal uri' ro
-            rwAppTxEx taStore storageError $ \tx -> storeTaCert tx newCert            
+            rwAppTxEx taStore storageError $ \tx -> storeTaCert tx newCert now           
 
-
-        storeTaCert tx newCert = 
+        storeTaCert tx newCert (Now moment) = 
             case createRepositoriesFromTAL tal newCert of
                 Left e      -> appError $ ValidationE e
                 Right repos -> do 
-                    putTA tx taStore (StorableTA tal newCert repos)
+                    putTA tx taStore (StorableTA tal newCert (FetchedAt moment) repos)
                     pure (newCert, repos, Updated)
 
         taName' = getTaName tal  

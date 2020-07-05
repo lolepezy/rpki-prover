@@ -2,15 +2,11 @@
 
 module RPKI.RepositorySpec where
 
-import           Data.List             as List
-import qualified Data.Map.Strict       as Map
-import qualified Data.Set              as Set
 import           Test.Tasty
 import           Test.QuickCheck.Monadic
 import qualified Test.Tasty.QuickCheck as QC
 
 import           RPKI.Domain
-import           RPKI.Validation.ObjectValidation
 import           RPKI.Repository
 
 
@@ -25,7 +21,7 @@ repositoryGroup = testGroup "PublicationPoints" [
     ]
 
 repositoriesURIs :: [RsyncPublicationPoint]
-repositoriesURIs = map (\s -> RsyncPublicationPoint (URI $ "rsync://host1.com/" <> s)) [
+repositoriesURIs = map (\s -> RsyncPublicationPoint (RsyncURL $ URI $ "rsync://host1.com/" <> s)) [
         "a",
         "a/b",
         "a/c",
@@ -62,23 +58,3 @@ prop_rsync_map_is_a_semigroup =
                     rm3 = fromRsyncPPs rs3
                     in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3    
 
-
--- prop_updates_repository_tree_returns_correct_status :: QC.Property
--- prop_updates_repository_tree_returns_correct_status = monadicIO $ do
---     Now now <- run thisInstant
---     pickedUpUris <- pick $ QC.sublistOf repositoriesURIs
-
---     let leftOutURIs = Set.toList $ (Set.fromList repositoriesURIs) `Set.difference` (Set.fromList pickedUpUris)
---     let rsyncMap = foldr 
---             (\(RsyncPublicationPoint u) rm -> 
---                 fst $ updateRepositoryStatus u rm (FailedAt now)) 
---             (fromRsyncPPs pickedUpUris)
---             pickedUpUris
-
---     let allPickedAreMergedAsAlreadtyExisting = all ( == FailedAt now) $ 
---             map (\(RsyncPublicationPoint u) -> u `mergeRsyncPP` rsyncMap) pickedUpUris
-
---     let allLeftOutAreMergedAsNew = all ( == New) $ 
---             map (\(RsyncPublicationPoint u) -> snd $ u `mergeRsyncPP` rsyncMap) leftOutURIs
-    
---     assert $ allLeftOutAreMergedAsNew && allPickedAreMergedAsAlreadtyExisting

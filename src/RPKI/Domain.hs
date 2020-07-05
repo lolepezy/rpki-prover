@@ -94,10 +94,13 @@ instance WithURL RpkiURL where
     getURL (RsyncU u) = getURL u
     getURL (RrdpU u) = getURL u    
 
+instance WithRpkiURL RpkiURL where
+    getRpkiURL = id
+
 toText :: RpkiURL -> Text
 toText = unURI . getURL 
 
-newtype KI = KI  BSS.ShortByteString 
+newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 

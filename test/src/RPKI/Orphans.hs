@@ -66,6 +66,18 @@ instance Arbitrary URI where
         pure $ convert $ "rsync://" <> name <> ext
     shrink = genericShrink
 
+instance Arbitrary RrdpURL where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RsyncURL where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RpkiURL where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary Hash where
     arbitrary = mkHash . BS.pack <$> replicateM 32 arbitrary
 
@@ -212,6 +224,7 @@ instance Arbitrary (ResourceCert 'Strict_) where
 instance Arbitrary (ResourceCert 'Reconsidered_) where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
 instance Arbitrary (WithRFC 'Reconsidered_ ResourceCert) where
     arbitrary = genericArbitrary
     shrink = genericShrink

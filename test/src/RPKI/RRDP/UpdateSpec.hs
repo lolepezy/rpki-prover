@@ -22,7 +22,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 
     HU.testCase "Should generate update snapshot action" $ do
         let repo = RrdpRepository 
-                        (URI "http://rrdp.ripe.net/notification.xml")
+                        (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (SessionId "whatever", Serial 50))
                         New
         let nextStep = rrdpNextStep repo (makeNotification (SessionId "something else") (Serial 120))
@@ -33,7 +33,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let sessionId = SessionId "something"
         let serial = Serial 13
         let repo = RrdpRepository 
-                        (URI "http://rrdp.ripe.net/notification.xml")
+                        (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
                         New
         let nextStep = rrdpNextStep repo $ makeNotification sessionId serial
@@ -45,7 +45,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let nextSerial' = nextSerial serial
         let delta = makeDelta nextSerial'
         let repo = RrdpRepository 
-                        (URI "http://rrdp.ripe.net/notification.xml")
+                        (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
                         New
         let nextStep = rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
@@ -58,7 +58,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let sessionId = SessionId "something"
         let serial = Serial 13
         let repo = RrdpRepository 
-                    (URI "http://rrdp.ripe.net/notification.xml")
+                    (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
                     New
         let nextStep = rrdpNextStep repo $ (makeNotification sessionId (Serial 15)) {       
@@ -71,7 +71,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let sessionId = SessionId "something"
         let serial = Serial 13
         let repo = RrdpRepository 
-                    (URI "http://rrdp.ripe.net/notification.xml")
+                    (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
                     New
         let nextStep = rrdpNextStep repo $ (makeNotification sessionId (Serial 20)) {       

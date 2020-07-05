@@ -25,6 +25,6 @@ data VResult = VResult {
 data StorableTA = StorableTA {
     tal                 :: !TAL,
     taCert              :: !CerObject,
-    -- fetchStatus         :: FetchStatus,
+    fetchStatus         :: FetchStatus,
     initialRepositories :: NonEmpty Repository
 } deriving (Show, Eq, Generic, Serialise)

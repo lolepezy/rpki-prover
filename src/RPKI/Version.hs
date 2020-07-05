@@ -52,3 +52,6 @@ updateWorldVerion Versions {..} = do
 
 getWorldVerion :: Versions -> IO WorldVersion
 getWorldVerion Versions {..} = readTVarIO world    
+
+versionToMoment :: WorldVersion -> Instant
+versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
