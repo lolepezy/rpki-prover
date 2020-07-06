@@ -59,7 +59,8 @@ runWorkflow appContext@AppContext {..} tals = do
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion, 
-            cacheGC            
+            cacheGC,
+            cleanOldVersions            
         ]
     where  
         config = appContext ^. typed @Config
@@ -86,6 +87,13 @@ runWorkflow appContext@AppContext {..} tals = do
             periodically cacheCleanupInterval $ do
                 worldVersion <- getWorldVerion versions
                 atomically $ writeCQueue globalQueue $ CacheGC worldVersion
+
+        cleanOldVersions globalQueue = do 
+            -- wait a little so that GC doesn't start before the actual validation
+            threadDelay 30_000_000
+            periodically cacheCleanupInterval $ do
+                worldVersion <- getWorldVerion versions
+                atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion
 
         taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
