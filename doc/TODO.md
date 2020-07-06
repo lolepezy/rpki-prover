@@ -34,33 +34,32 @@
 + Only complateWorldVersion when _all_ TAs have completed it
 + Do not make TA cert update a separate stage
 + Clean up objects that are not touched by validations or not touched by repository downloads
++ Cleanup VRPs and validation results as well based on their world version.
++ Add periodic re-validation
++ Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects, but will not lock the whole DB for seconds.
 
 ---------------------------------  In progress ----------------------------------------
 
-- Cleanup VRPs and validation results as well based on their world version.
+- Have full path from the top repoistory to all the delegates ones in the VContext.
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Have full path from the top repoistory to all the delegates ones in the VContext.
 - Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository.
+- Detect loops in the repository structure and AKI/SKI references.
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - it looks like validCount number is flaky and changes depending on (check it)
-- Add periodic re-validation
-- Clean up old VRPs 
-- relate objects to the repositories they are downloaded from and clean up them before saving snapshots
+- Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 - Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Read config and CLI options
-- Detect loops in the repository structure and AKI/SKI references.
-- Reuse work, use a global pool of asyncs and attach multiple waiters to them.
 
 - Set timeouts on repository downloads and interrupt downloads that are too long.
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
-  choices when to download one of another.
+  choices when to download one or another.
 - Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
@@ -68,7 +67,6 @@
 - SLURM (store a json file? it's not very effient in acse of AS0 in SLURM, so think about something 
   more scalable, binary serialisation, etc.)
 
-- Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects, but will not lock the whole DB for seconds.
 - Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.
 
 - Keep in LMDB only the necessary part of an object after checking it's signature.
