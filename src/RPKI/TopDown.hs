@@ -1,10 +1,12 @@
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+
 
 module RPKI.TopDown where
 

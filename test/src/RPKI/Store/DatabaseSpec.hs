@@ -2,13 +2,12 @@
 {-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE NumericUnderscores        #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE TypeApplications          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Store.DatabaseSpec where
 

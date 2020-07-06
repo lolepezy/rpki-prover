@@ -21,6 +21,9 @@ null (IntervalSet s) = V.null s
 fromList :: WithSetOps a => [a] -> IntervalSet a
 fromList = IntervalSet . V.fromList . normalise
 
+toList :: IntervalSet a -> [a]
+toList (IntervalSet s) = V.toList s
+
 findIntersections :: Interval a => a -> IntervalSet a -> [a]
 findIntersections a as = concatMap fst $ findFullIntersections a as
 

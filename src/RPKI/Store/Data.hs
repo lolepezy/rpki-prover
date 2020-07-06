@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Store.Data where
 
@@ -17,14 +18,14 @@ import           RPKI.TAL
 
 -- TODO Add versioning here
 data VResult = VResult {
-    problem :: ![VProblem],
-    path    :: !VContext
+    problem :: [VProblem],
+    path    :: VContext
 } deriving (Show, Eq, Ord, Generic, Serialise)
 
 
 data StorableTA = StorableTA {
-    tal                 :: !TAL,
-    taCert              :: !CerObject,
+    tal                 :: TAL,
+    taCert              :: CerObject,
     fetchStatus         :: FetchStatus,
     initialRepositories :: NonEmpty Repository
 } deriving (Show, Eq, Generic, Serialise)

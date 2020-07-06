@@ -46,7 +46,7 @@ newtype ASN = ASN Word32
     deriving anyclass (NFData, Serialise)  
     deriving newtype Enum
 
-data AsResource =  AS !ASN
+data AsResource = AS !ASN
                 | ASRange !ASN !ASN
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
