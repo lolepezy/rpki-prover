@@ -10,7 +10,6 @@ module RPKI.Errors where
 import           Control.Exception.Lifted
 
 import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as LBS
 import           Data.Text                   (Text)
 
 import           Codec.Serialise
@@ -67,13 +66,13 @@ data ValidationError = InvalidCert Text |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         UnknownUriType URI | 
-                        CertificateDoesn'tHaveSIA | 
+                        CertificateDoesntHaveSIA | 
                         PublicationPointIsNotAvailable URI
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
 data RrdpError = BrokenXml Text | 
-                BrokenSerial BS.ByteString |
+                BrokenSerial Text |
                 NoSessionId |
                 NoSerial | 
                 NoSnapshotHash | 
@@ -81,15 +80,15 @@ data RrdpError = BrokenXml Text |
                 NoDeltaSerial | 
                 NoDeltaURI | 
                 NoDeltaHash |
-                BadHash BS.ByteString |
+                BadHash Text |
                 NoVersion | 
-                BadVersion BS.ByteString | 
+                BadVersion Text | 
                 NoPublishURI |
-                BadBase64 Text BS.ByteString |
-                BadPublish BS.ByteString |
-                BadURL BS.ByteString |
+                BadBase64 Text Text |
+                BadPublish Text |
+                BadURL Text |
                 NoHashInWithdraw |
-                ContentInWithdraw BS.ByteString |
+                ContentInWithdraw Text |
                 LocalSerialBiggerThanRemote Serial Serial |
                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
                 CantDownloadFile Text |
@@ -103,7 +102,7 @@ data RrdpError = BrokenXml Text |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data RsyncError = RsyncProcessError Int LBS.ByteString |
+data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |
                     RsyncDirError Text                    

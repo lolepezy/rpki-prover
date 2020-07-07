@@ -56,9 +56,9 @@ getTaName tal = case tal of
             let URI t = getURL u
             in TaName t
 
-getTaURI :: TAL -> RpkiURL
-getTaURI PropertiesTAL {..} = NonEmpty.head certificateLocation
-getTaURI RFC_TAL {..}       = NonEmpty.head certificateLocations
+getTaCertURL :: TAL -> RpkiURL
+getTaCertURL PropertiesTAL {..} = NonEmpty.head certificateLocation
+getTaCertURL RFC_TAL {..}       = NonEmpty.head certificateLocations
 
 -- | Parse TAL object from raw text
 parseTAL :: Text.Text -> Either TALError TAL

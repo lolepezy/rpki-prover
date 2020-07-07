@@ -89,7 +89,7 @@ runValidatorApp appContext@AppContext {..} = do
             runWorkflow appContext tals'
     where
         parseTALFromFile talFileName = do
-            talContent <- fromTry (RsyncE . FileReadError . fmtEx) $ BS.readFile talFileName
+            talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
             vHoist $ fromEither $ first TAL_E $ parseTAL $ convert talContent
 
 

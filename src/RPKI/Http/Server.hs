@@ -4,20 +4,9 @@
 module RPKI.Http.Server where
 
 import           Control.Monad.IO.Class
-
-import           Data.List               (maximumBy)
-import           Data.Proxy
-
-import           Data.Aeson
 import           Servant
-import           Servant.API
-import           Servant.API.Generic
-import           Servant.CSV.Cassava
-import           Servant.Server.Generic
 
 import qualified Data.List.NonEmpty      as NonEmpty
-
-import qualified Servant.Types.SourceT   as S
 
 import           RPKI.AppContext
 import           RPKI.Domain
@@ -28,8 +17,9 @@ import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Version
 
+
 validatorServer :: forall s . Storage s => AppContext s -> Server API
-validatorServer appContext@AppContext { database = DB {..}} = 
+validatorServer AppContext { database = DB {..}} = 
     liftIO getVRPs
     :<|> liftIO getVRPs
     :<|> liftIO getVResults

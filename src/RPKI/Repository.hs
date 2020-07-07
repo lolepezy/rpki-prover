@@ -349,7 +349,7 @@ publicationPointsFromCert cert =
         (Nothing, Just repositoryUri) 
             | isRsyncURI repositoryUri -> let rr = RsyncURL repositoryUri in Right (RsyncU rr, rsyncPP rr)
             | otherwise                -> Left $ UnknownUriType repositoryUri
-        (Nothing, Nothing)             -> Left CertificateDoesn'tHaveSIA 
+        (Nothing, Nothing)             -> Left CertificateDoesntHaveSIA 
 
 publicationPointsFromCertObject :: CerObject -> Either ValidationError (RpkiURL, PublicationPoint)
 publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature

@@ -114,7 +114,7 @@ parseDelta xml = makeDelta =<< folded
         foldItems d@(Just _, DW (DeltaWithdraw _ _) : _) (X.CharacterData cd) = 
             if BS.all isSpace_ cd 
                 then let !z = Right d in z
-                else Left $ ContentInWithdraw cd
+                else Left $ ContentInWithdraw $ convert cd
         foldItems x  _                                          = Right x
 
 
@@ -126,7 +126,7 @@ parseSerial :: Monad m =>
             (Serial -> ExceptT RrdpError m v) ->
             ExceptT RrdpError m v
 parseSerial v f =  case parseInteger v of
-    Nothing -> throwE $ BrokenSerial v
+    Nothing -> throwE $ BrokenSerial $ convert v
     Just s  -> f $ Serial s
 
 
@@ -144,7 +144,7 @@ parseSnapshotInfo as = do
     u <- toEither NoSnapshotURI $ List.lookup "uri" as
     h <- toEither NoSnapshotHash $ List.lookup "hash" as        
     case makeHash h of
-        Nothing -> Left $ BadHash h
+        Nothing -> Left $ BadHash $ convert h
         Just h' -> pure $ SnapshotInfo (URI $ convert u) h'
 
 parseDeltaInfo :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaInfo
@@ -154,7 +154,7 @@ parseDeltaInfo as = do
     s <- toEither NoSerial $ List.lookup "serial" as
     s' <- toEither NoSerial $ parseInteger s  
     case makeHash h of
-        Nothing -> Left $ BadHash h
+        Nothing -> Left $ BadHash $ convert h
         Just h' -> pure $ DeltaInfo (URI $ convert u) h' (Serial s')
 
 parseDeltaPublish :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaPublish
@@ -163,7 +163,7 @@ parseDeltaPublish as = do
     case List.lookup "hash" as of 
         Nothing -> Right $ DeltaPublish (URI $ convert u) Nothing (EncodedBase64 "")
         Just h -> case makeHash h of
-            Nothing -> Left $ BadHash h
+            Nothing -> Left $ BadHash $ convert h
             Just h' -> Right $ DeltaPublish (URI $ convert u) (Just h') (EncodedBase64 "")
 
 parseDeltaWithdraw :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaWithdraw
@@ -171,7 +171,7 @@ parseDeltaWithdraw as = do
     u <- toEither NoPublishURI $ List.lookup "uri" as
     h <- toEither NoHashInWithdraw $ List.lookup "hash" as  
     case makeHash h of
-        Nothing -> Left $ BadHash h    
+        Nothing -> Left $ BadHash $ convert h    
         Just h' -> pure $ DeltaWithdraw (URI $ convert u) h'
 
 -- Some auxiliary things
@@ -191,7 +191,7 @@ toBytes (HexString bs) = bs
 
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
 decodeBase64 (EncodedBase64 bs) context = case B64.decodeBase64 bs of
-    Left e -> Left $ BadBase64 (e <> " for " <> Text.pack (show context)) bs
+    Left e  -> Left $ BadBase64 (e <> " for " <> Text.pack (show context)) $ convert bs
     Right b -> Right $ DecodedBase64 b
 
 toEither :: e -> Maybe v -> Either e v

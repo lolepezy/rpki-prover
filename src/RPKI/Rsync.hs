@@ -66,7 +66,7 @@ rsyncRpkiObject AppContext{..} uri = do
                                         with code #{errorCode}, 
                                         stderr = #{err}, 
                                         stdout = #{out}|]        
-            throwError $ RsyncE $ RsyncProcessError errorCode err  
+            appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err  
         ExitSuccess -> do
             fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
             void $ vHoist $ validateSizeM fileSize
@@ -108,7 +108,7 @@ updateObjectForRsyncRepository
                                         with code #{errorCode}, 
                                         stderr = #{err}, 
                                         stdout = #{out}|]
-            throwError $ RsyncE $ RsyncProcessError errorCode err 
+            appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err 
 
 
 -- | Recursively traverse given directory and save all the parseable 
