@@ -28,35 +28,31 @@ import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Version
 
-validatorServer :: Storage s => AppContext s -> Server API
+validatorServer :: forall s . Storage s => AppContext s -> Server API
 validatorServer appContext@AppContext { database = DB {..}} = 
     liftIO getVRPs
     :<|> liftIO getVRPs
     :<|> liftIO getVResults
     where
         getVRPs = 
-            getForTheLastVersion appContext $ \tx lastVersion -> 
+            getForTheLastVersion $ \tx lastVersion -> 
                 map (\(Roa a p len) -> VRP a p len) 
                     <$> allVRPs tx vrpStore lastVersion            
 
         getVResults = 
-            getForTheLastVersion appContext $ \tx lastVersion ->             
+            getForTheLastVersion $ \tx lastVersion ->             
                 map toVR <$> allVResults tx resultStore lastVersion  
 
         toVR VResult { path = VContext p, .. } = 
             ValidationResult problem (NonEmpty.toList p)
 
-
-getForTheLastVersion :: Storage s => 
-                        AppContext s -> 
-                        (Tx s 'RO -> WorldVersion -> IO [a]) -> 
-                        IO [a]
-getForTheLastVersion AppContext { database = DB {..}} f = 
-    roTx versionStore $ \tx -> do 
-        versions <- allVersions tx versionStore
-        case versions of
-            [] -> pure []
-            vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]                        
+        getForTheLastVersion :: (Tx s 'RO -> WorldVersion -> IO [a]) -> IO [a]
+        getForTheLastVersion f = 
+            roTx versionStore $ \tx -> do 
+                versions <- allVersions tx versionStore
+                case versions of
+                    [] -> pure []
+                    vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]                        
 
 
 httpApi :: Storage s => AppContext s -> Application
