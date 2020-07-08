@@ -18,7 +18,6 @@ import           Data.Bifunctor                   (first)
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
-import qualified Data.Text                        as Text
 
 import           GHC.Generics
 
@@ -43,8 +42,6 @@ import qualified RPKI.Util                        as U
 import           Data.IORef.Lifted
 
 import qualified Streaming.Prelude as S
-import Data.Kind (Type)
-import Control.Monad.Identity (Identity)
 
 
 
@@ -289,8 +286,9 @@ saveDelta appContext rrdpStats deltaContent = do
 
         saveStorable tx op validations =
             case op of
-                Delete hash                -> do
-                    Stores.deleteObject tx objectStore hash
+                Delete _                  -> do
+                    -- Ignore withdraws and just use the time-based garbage collection
+                    -- Stores.deleteObject tx objectStore hash
                     pure validations
                 Add uri async'             -> addObject tx uri async' validations
                 Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
@@ -316,8 +314,10 @@ saveDelta appContext rrdpStats deltaContent = do
                     oldOneIsAlreadyThere <- Stores.hashExists tx objectStore oldHash                           
                     if oldOneIsAlreadyThere 
                         then do 
-                            Stores.deleteObject tx objectStore oldHash
+                            -- Ignore withdraws and just use the time-based garbage collection
+                            -- Stores.deleteObject tx objectStore oldHash
                             removedOne rrdpStats
+
                             let newHash = getHash ro
                             newOneIsAlreadyThere <- Stores.hashExists tx objectStore newHash
                             if newOneIsAlreadyThere
@@ -350,19 +350,17 @@ parseAndProcess u b64 =
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
             first ParseE $ readObject u b    
 
-
 data DeltaOp m a = Delete !Hash 
                 | Add !URI !(Task m a) 
                 | Replace !URI !(Task m a) !Hash
 
-
 data RrdpStat = RrdpStat {
-    added :: Int,
-    removed ::  Int
+    added   :: !Int,
+    removed :: !Int
 }
 
 data RrdpStatWork = RrdpStatWork {
-    added :: IORef Int,
+    added   :: IORef Int,
     removed :: IORef Int
 }
 

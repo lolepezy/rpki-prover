@@ -78,7 +78,8 @@ data TopDownContext s = TopDownContext {
     taName                      :: TaName, 
     now                         :: Now,    
     objectStats                 :: TVar Stats,
-    worldVersion                :: WorldVersion
+    worldVersion                :: WorldVersion,
+    visitedHashes               :: TVar (Set Hash)
 } deriving stock (Generic)
 
 newTopDownContext :: MonadIO m => 
@@ -98,7 +99,8 @@ newTopDownContext AppContext {..} worldVersion taName publicationPoints now cert
         pure taName <*> 
         pure now <*>        
         newTVar (Stats 0) <*>
-        pure worldVersion
+        pure worldVersion <*>
+        newTVar Set.empty
 
 createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
@@ -440,29 +442,29 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
         validateThisCertAndGoDown :: ValidatorT VContext IO PublicationPoints
         validateThisCertAndGoDown = do
             vContext' :: VContext <- asks getVC
-            let (childrenAki, locations) = (toAKI $ getSKI certificate, getLocations certificate)        
+            let (childrenAki, certLocations) = (toAKI $ getSKI certificate, getLocations certificate)        
 
             -- this for the certificate
             incValidObject topDownContext
-            queueValidateMark appContext topDownContext (getHash certificate)
+            visitObject appContext topDownContext (getHash certificate)
 
-            mft <- findMft childrenAki locations
+            mft <- findMft childrenAki certLocations
 
             -- this for the manifest
             incValidObject topDownContext
-            queueValidateMark appContext topDownContext (getHash mft)
+            visitObject appContext topDownContext (getHash mft)
 
             forChild (toText $ NonEmpty.head $ getLocations mft) $ do
 
                 (_, crlHash) <- case findCrlOnMft mft of 
-                    []    -> vError $ NoCRLOnMFT childrenAki locations
+                    []    -> vError $ NoCRLOnMFT childrenAki certLocations
                     [crl] -> pure crl
-                    crls  -> vError $ MoreThanOneCRLOnMFT childrenAki locations crls
+                    crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
 
                 let objectStore' = objectStore database
                 crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
                 case crlObject of 
-                    Nothing          -> vError $ NoCRLExists childrenAki locations    
+                    Nothing          -> vError $ NoCRLExists childrenAki certLocations    
                     Just (CrlRO crl) -> do      
 
                         validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ do
@@ -473,30 +475,43 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
 
                         -- this for the CRL
                         incValidObject topDownContext          
-                        queueValidateMark appContext topDownContext (getHash crl)              
+                        visitObject appContext topDownContext (getHash crl)              
                             
                         -- TODO Check locations and give warnings if it's wrong
-                        let childrenHashes = filter ( /= getHash crl) $ -- filter out CRL itself
-                                                map snd $ mftEntries $ getCMSContent $ extract mft
+                        let childrenHashes = filter ((/= getHash crl) . snd) $ -- filter out CRL itself
+                                                mftEntries $ getCMSContent $ extract mft
+
+                        vhs <- liftIO $ readTVarIO $ visitedHashes topDownContext
 
                         -- Be very strict about the manifest entries, if at least one of them 
                         -- is broken, the whole manifest is considered broken.
                         childrenResults <- parallelTasks 
-                                (cpuBottleneck appBottlenecks) 
-                                childrenHashes $ \h -> do
-                                    ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
-                                    case ro of 
-                                        Nothing  -> vError $ ManifestEntryDontExist h
-                                        Just ro' -> liftIO $ do 
-                                            -- mark as validated all the children of the manifest regardless of
-                                            -- errors on the manifest, to avoid partial deletion of MFT children 
-                                            -- by GC.
-                                            queueValidateMark appContext topDownContext h
-                                            validateChild vContext' validCrl ro'
+                            (cpuBottleneck appBottlenecks) 
+                            childrenHashes $ \(filename, h) -> do
+                                ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' h
+                                case ro of 
+                                    Nothing  -> vError $ ManifestEntryDontExist h
+                                    Just ro'
+                                        | Set.member h vhs ->
+                                            -- we have already visited this object before, so 
+                                            -- there're some circular references in the objects
+                                            vError $ CircularReference h (getLocations ro')
+                                        | otherwise -> do
+                                            let objectLocations = getLocations ro'
+                                            let z = NonEmpty.filter ((filename `Text.isSuffixOf`) . toText) objectLocations
+                                            case z of 
+                                                [] -> vWarn $ ManifestLocationMismatch filename objectLocations
+                                                _  -> pure ()
+                                            liftIO $ do                                                        
+                                                -- mark as validated all the children of the manifest regardless of
+                                                -- errors on the manifest, to avoid partial deletion of MFT children 
+                                                -- by GC.
+                                                visitObject appContext topDownContext h
+                                                validateChild vContext' validCrl ro'
 
                         pure $ mconcat childrenResults
 
-                    Just _  -> vError $ CRLHashPointsToAnotherObject crlHash locations   
+                    Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations   
     
         findMft childrenAki locations = do
             mft' <- liftIO $ roTx (objectStore database) $ \tx -> 
@@ -571,11 +586,13 @@ queueVRP AppContext { database = DB {..} } TopDownContext {..} roas =
             putVRP tx vrpStore worldVersion vrp 
 
 
-queueValidateMark :: (MonadIO m, Storage s) => 
+visitObject :: (MonadIO m, Storage s) => 
                     AppContext s -> TopDownContext s -> Hash -> m ()
-queueValidateMark AppContext { database = DB {..} } TopDownContext {..} hash = 
-        liftIO $ atomically $ writeCQueue databaseQueue $ \tx -> 
-            markValidated tx objectStore hash worldVersion 
+visitObject AppContext { database = DB {..} } TopDownContext {..} hash =
+        liftIO $ atomically $ do 
+            modifyTVar' visitedHashes $ Set.insert hash
+            writeCQueue databaseQueue $ \tx -> 
+                markValidated tx objectStore hash worldVersion 
 
 -- | Put validation result into a queue for writing
 queueVResult :: (MonadIO m, Storage s) => 
@@ -653,7 +670,6 @@ rwAppTx :: (Storage s, WithStorage s ws) =>
             ws -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
 rwAppTx s f = appTx s f rwTx
 
-
 appTx :: (Storage s, WithStorage s ws) => 
         ws -> (Tx s mode -> ValidatorT env IO a) -> 
         (ws -> (Tx s mode -> IO (Either AppError a, Validations))
@@ -662,7 +678,6 @@ appTx :: (Storage s, WithStorage s ws) =>
 appTx s f txF = do
     env <- ask
     validatorT $ txF s $ runValidatorT env . f
-
 
 roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> 

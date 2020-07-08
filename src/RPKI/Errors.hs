@@ -67,7 +67,9 @@ data ValidationError = InvalidCert Text |
                         InheritWithoutParentResources |
                         UnknownUriType URI | 
                         CertificateDoesntHaveSIA | 
-                        PublicationPointIsNotAvailable URI
+                        PublicationPointIsNotAvailable URI |
+                        CircularReference Hash Locations |
+                        ManifestLocationMismatch Text Locations
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
