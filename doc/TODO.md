@@ -37,18 +37,19 @@
 + Cleanup VRPs and validation results as well based on their world version.
 + Add periodic re-validation
 + Do not save objects as one big transaction, it's not going to be a problem to save smaller chunks of objects, but will not lock the whole DB for seconds.
++ Have full path from the top repoistory to all the delegates ones in the VContext.
++ Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository (or ignore withdraws entirely, as for rsync) -- ignore 'withdraw' completely
++ Detect loops in the repository structure and AKI/SKI references.
 
 ---------------------------------  In progress ----------------------------------------
 
-- Have full path from the top repoistory to all the delegates ones in the VContext.
+- Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository.
-- Detect loops in the repository structure and AKI/SKI references.
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
-- Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
+
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - it looks like validCount number is flaky and changes depending on (check it)
@@ -56,6 +57,8 @@
 - Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Read config and CLI options
+
+- Implement RTR server
 
 - Set timeouts on repository downloads and interrupt downloads that are too long.
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
