@@ -100,7 +100,8 @@ data RrdpError = BrokenXml Text |
                 SnapshotHashMismatch Hash Hash |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
-                ObjectExistsWhenReplacing URI Hash
+                ObjectExistsWhenReplacing URI Hash |
+                UnsupportedObjectType
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

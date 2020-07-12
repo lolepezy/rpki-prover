@@ -78,7 +78,7 @@ downloadAndUpdateRRDP
                 useDeltas sortedDeltas notification
                     `catchError` 
                 \e -> do         
-                    -- NOTE At tyhe moment we ignore the fact that some objects are wrongfully added
+                    -- NOTE At the moment we ignore the fact that some objects are wrongfully added
                     logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
                     appWarn e
                     useSnapshot snapshotInfo notification            
@@ -91,16 +91,17 @@ downloadAndUpdateRRDP
 
         useSnapshot (SnapshotInfo uri hash) notification = do       
             logDebugM logger [i|#{uri}: downloading snapshot.|]
-            (r, elapsed) <- timedMS downloadAndSave
-            logDebugM logger [i|#{uri}: downloaded and saved snapshot, took #{elapsed}ms.|]                        
-            pure r
+            (r, v, downloadedIn, savedIn) <- downloadAndSave
+            logDebugM logger [i|#{uri}: downloaded in #{downloadedIn} and saved snapshot in #{savedIn}.|]                        
+            pure (r, v)
             where                     
                 downloadAndSave = do
-                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
-                                        (RrdpE . CantDownloadSnapshot . show)                 
-                                        (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
-                    validations <- handleSnapshotBS rawContent            
-                    pure (repo { rrdpMeta = rrdpMeta' }, validations)       
+                    ((rawContent, _), downloadedIn) <- timedMS $ 
+                            fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
+                                    (RrdpE . CantDownloadSnapshot . show)                 
+                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
+                    (validations, savedIn) <- timedMS $ handleSnapshotBS rawContent            
+                    pure (repo { rrdpMeta = rrdpMeta' }, validations, downloadedIn, savedIn)   
 
                 rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
 
@@ -228,15 +229,22 @@ saveSnapshot appContext rrdpStats snapshotContent = do
             saveStorable   
             (mempty :: Validations))        
     where
-        newStorable (SnapshotPublish uri encodedb64) = do
-            task <- readBlob `pureTask` bottleneck
-            pure (uri, task)
+        newStorable (SnapshotPublish uri encodedb64) =             
+            if supportedExtension $ U.convert uri 
+                then do 
+                    task <- readBlob `pureTask` bottleneck
+                    pure $ Right (uri, task)
+                else 
+                    pure $ Left (UnsupportedObjectType, uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
                     Left e        -> SError $ RrdpE $ BadURL $ U.convert e
                     Right rpkiURL -> parseAndProcess rpkiURL encodedb64
                                 
-        saveStorable tx (uri, a) validations = 
+        saveStorable _ (Left (e, uri)) validations = 
+            pure $ validations <> mWarning (vContext $ unURI uri) (VWarning $ RrdpE e)
+
+        saveStorable tx (Right (uri, a)) validations = 
             waitTask a >>= \case                        
                 SError e   -> do
                     logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
@@ -266,25 +274,33 @@ saveDelta appContext rrdpStats deltaContent = do
 
     let deltaItemS = S.each $ delta ^. typed @[DeltaItem]
     fromTry (StorageE . StorageError . U.fmtEx) 
-        (txFoldPipeline 
+        (txFoldPipelineChunked 
             cpuParallelism
             (S.mapM newStorable deltaItemS)
             (rwTx objectStore) 
+            10_000
             saveStorable 
-            (mempty :: Validations))    
+            (mempty :: Validations))         
     where        
-        newStorable (DP (DeltaPublish uri hash encodedb64)) = do 
-            task <- readBlob `pureTask` bottleneck
-            pure $ maybe (Add uri task) (Replace uri task) hash
+        newStorable (DP (DeltaPublish uri hash encodedb64)) =
+            if supportedExtension $ U.convert uri 
+                then do 
+                    task <- readBlob `pureTask` bottleneck
+                    pure $ Right $ maybe (Add uri task) (Replace uri task) hash
+                else 
+                    pure $ Left (UnsupportedObjectType, uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
                     Left e        -> SError $ RrdpE $ BadURL $ U.convert e
                     Right rpkiURL -> parseAndProcess rpkiURL encodedb64
 
         newStorable (DW (DeltaWithdraw _ hash)) = 
-            pure $ Delete hash
+            pure $ Right $ Delete hash
 
-        saveStorable tx op validations =
+        saveStorable _ (Left (e, uri)) validations = 
+            pure $ validations <> mWarning (vContext $ unURI uri) (VWarning $ RrdpE e)
+
+        saveStorable tx (Right op) validations =
             case op of
                 Delete _                  -> do
                     -- Ignore withdraws and just use the time-based garbage collection
