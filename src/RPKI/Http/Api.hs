@@ -32,16 +32,21 @@ import           Servant.CSV.Cassava
 
 import           RPKI.Domain as Domain
 import           RPKI.Errors
-import           RPKI.Store.Data
 import           RPKI.Resources.Types
 import           RPKI.Resources.IntervalSet
 import           RPKI.Util (convert)
 import           RPKI.Time
 
 
+data CSVOptions = CSVOptions
+
+instance EncodeOpts CSVOptions where
+    encodeOpts _ = Csv.defaultEncodeOptions { Csv.encUseCrLf = False } 
+
+type CSVType = CSV' 'HasHeader CSVOptions
 
 type API =     
-           "vrps.csv"  :> Get '[CSV] [VRP]
+           "vrps.csv"  :> Get '[CSVType] [VRP]
       :<|> "vrps.json" :> Get '[JSON] [VRP]
       :<|>  "validation-results" :> Get '[JSON] [ValidationResult]
 
