@@ -159,7 +159,7 @@ data VProblem = VErr AppError | VWarn VWarning
 newtype Validations = Validations (Map VContext (Set VProblem))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype (Monoid)
+    deriving newtype Monoid
 
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2

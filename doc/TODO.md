@@ -40,19 +40,21 @@
 + Have full path from the top repoistory to all the delegates ones in the VContext.
 + Do no allow to withdraw objects with "<withdraw .. />" if they belong to another repository (or ignore withdraws entirely, as for rsync) -- ignore 'withdraw' completely
 + Detect loops in the repository structure and AKI/SKI references.
++ Fix encoding in CSV
++ Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
++ it looks like validCount number is flaky and changes depending on (check it)
 
 ---------------------------------  In progress ----------------------------------------
 
-- Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
+- Fix lost VRPs
 
 --------------------------------------- TODOs -----------------------------------------
 
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
-
+- Fix 'ctrl+c', it should stop the applications
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
-- it looks like validCount number is flaky and changes depending on (check it)
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 - Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
