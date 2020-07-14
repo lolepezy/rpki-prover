@@ -5,7 +5,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE NumericUnderscores        #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
 
 module RPKI.ResourcesSpec where
 
@@ -34,13 +34,13 @@ prefixPropertyGroup :: TestTree
 prefixPropertyGroup = testGroup "Prefix properties tests"
     [
         QC.testProperty "Normalise V4" $
-            \(ips :: [Ipv4Prefix]) -> normalise ips == (normalise $ normalise ips),
+            \(ips :: [Ipv4Prefix]) -> normalise ips == normalise (normalise ips),
         QC.testProperty "Normalise V6" $
-            \(ips :: [Ipv6Prefix]) -> normalise ips == (normalise $ normalise ips),
+            \(ips :: [Ipv6Prefix]) -> normalise ips == normalise (normalise ips),
         QC.testProperty "toRange and toPrefix V4" $
-            \(ip :: Ipv4Prefix) -> (normalise $ toPrefixes $ toRange ip) == [ip],
+            \(ip :: Ipv4Prefix) -> normalise (toPrefixes $ toRange ip) == [ip],
         QC.testProperty "toRange and toPrefix V6" $
-            \(ip :: Ipv6Prefix) -> (normalise $ toPrefixes $ toRange ip) == [ip],
+            \(ip :: Ipv6Prefix) -> normalise (toPrefixes $ toRange ip) == [ip],
         QC.testProperty "Every AS interval intersects with every of its element" $
             \(asns :: [AsResource]) -> 
                 QC.forAll (sublistOf asns) $ \sub ->

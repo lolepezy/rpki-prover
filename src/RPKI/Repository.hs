@@ -41,8 +41,14 @@ data RepositoryFetchType = RRDP | Rsync
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass Serialise
 
-data FetchStatus = New | FailedAt Instant | FetchedAt Instant
-    deriving (Show, Eq, Generic, Serialise)
+data FetchStatus
+  = Pending
+  | FetchedAt Instant
+  | FailedAt {
+      failed :: Instant,
+      lastSucceded :: Maybe Instant
+  }
+  deriving (Show, Eq, Generic, Serialise)
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
@@ -117,15 +123,15 @@ instance Semigroup RrdpRepository where
 -- always use the latest one
 instance Ord FetchStatus where
     compare s1 s2 = compare (timeAndStatus s1) (timeAndStatus s2)
-        where 
-            -- tuple with 0 and 1 is to take into account a weird 
-            -- case of compare (FailedAt t1) (FetchedAt t2) with t1 == t2.
-            timeAndStatus New           = (Nothing, 0 :: Int)
-            timeAndStatus (FailedAt t)  = (Just t, 0)
-            timeAndStatus (FetchedAt t) = (Just t, 1)            
+        where             
+            timeAndStatus Pending       = (Nothing,     0 :: Int, Nothing)
+            timeAndStatus FailedAt {..} = (Just failed, 0,        lastSucceded)
+            timeAndStatus (FetchedAt t) = (Just t,      1,        Nothing) 
 
 instance Semigroup FetchStatus where
-    (<>) = max        
+    s1 <> s2 = case (s1, s2) of 
+        (FailedAt f1 ls1, FailedAt f2 ls2) -> FailedAt (max f1 f2) (max ls1 ls2)
+        _                                  -> max s1 s2
 
 instance Semigroup RsyncMap where
     rs1 <> rs2 = rs1 `mergeRsyncs` rs2
@@ -139,17 +145,17 @@ instance Monoid PublicationPoints where
 
 rsyncR :: RsyncURL -> Repository
 rrdpR  :: RrdpURL  -> Repository
-rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) New
-rrdpR u = RrdpR $ RrdpRepository u Nothing New 
+rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) Pending
+rrdpR u = RrdpR $ RrdpRepository u Nothing Pending 
 
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
-rrdpPP u = RrdpPP $ RrdpRepository u Nothing New 
+rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending 
 
 toRepository :: PublicationPoint -> Repository
 toRepository (RrdpPP r) = RrdpR r
-toRepository (RsyncPP r) = RsyncR $ RsyncRepository r New
+toRepository (RsyncPP r) = RsyncR $ RsyncRepository r Pending
   
 fetchStatus :: Repository -> FetchStatus 
 fetchStatus (RsyncR RsyncRepository {..}) = status
@@ -261,7 +267,7 @@ mergeRsyncs (RsyncMap m1) (RsyncMap m2) =
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed %~ (RsyncMap (Map.singleton u (Root New)) <>)
+    pps & typed %~ (RsyncMap (Map.singleton u (Root Pending)) <>)
 
 mergeRsyncRepo :: RsyncRepository -> PublicationPoints -> PublicationPoints
 mergeRsyncRepo (RsyncRepository (RsyncPublicationPoint u) status) pps = 

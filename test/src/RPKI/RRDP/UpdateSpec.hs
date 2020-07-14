@@ -24,7 +24,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository 
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (SessionId "whatever", Serial 50))
-                        New
+                        Pending
         let nextStep = rrdpNextStep repo (makeNotification (SessionId "something else") (Serial 120))
         HU.assertEqual "It's a bummer" nextStep
                 (Right $ UseSnapshot $ SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")),
@@ -35,7 +35,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository 
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
-                        New
+                        Pending
         let nextStep = rrdpNextStep repo $ makeNotification sessionId serial
         HU.assertEqual "It's a bummer" nextStep (Right NothingToDo),
 
@@ -47,7 +47,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository 
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
-                        New
+                        Pending
         let nextStep = rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
             deltas = [delta]
            }
@@ -60,7 +60,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository 
                     (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
-                    New
+                    Pending
         let nextStep = rrdpNextStep repo $ (makeNotification sessionId (Serial 15)) {       
               deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (Serial 15)]
             }
@@ -73,7 +73,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository 
                     (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
-                    New
+                    Pending
         let nextStep = rrdpNextStep repo $ (makeNotification sessionId (Serial 20)) {       
                 deltas = [
                 makeDelta $ Serial 20,

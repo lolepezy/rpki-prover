@@ -47,7 +47,9 @@ data RrdpConf = RrdpConf {
 data ValidationConfig = ValidationConfig {
     revalidationInterval :: Seconds,
     rrdpRepositoryRefreshInterval :: Seconds,
-    rsyncRepositoryRefreshInterval :: Seconds
+    rsyncRepositoryRefreshInterval :: Seconds,
+    -- allow repositories to be down for a while before completely ignoring their objects
+    repositoryGracePeriod :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 getParallelism :: Natural 

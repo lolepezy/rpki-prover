@@ -213,8 +213,8 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
     case partitionFailedSuccess fetchStatuses of 
         ([], _) -> do
             let flattenedStatuses = flip map fetchStatuses $ \case 
-                    FetchFailure r s _ -> (r, s)
-                    FetchSuccess r s _ -> (r, s)            
+                    FetchFailure r s _ -> (r, FailedAt s Nothing)
+                    FetchSuccess r s _ -> (r, FetchedAt s)
 
             -- use publication points taken from the DB and updated with the 
             -- the fetchStatuses of the fetches that we just performed
@@ -245,8 +245,8 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
      
 
 data FetchResult = 
-    FetchSuccess !Repository !FetchStatus !Validations | 
-    FetchFailure !Repository !FetchStatus !Validations
+    FetchSuccess !Repository !Instant !Validations | 
+    FetchFailure !Repository !Instant !Validations
     deriving stock (Show, Eq, Generic)
 
 -- | Download repository, either rsync or RRDP.
@@ -261,21 +261,21 @@ fetchRepository
     let repoURL = getRpkiURL repo
     let vContext' = childVC (toText repoURL) parentContext
     ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
-        case repo of
-            RsyncR r -> 
-                first RsyncR <$> updateObjectForRsyncRepository appContext r 
-            RrdpR r -> 
-                first RrdpR <$> updateObjectForRrdpRepository appContext r
+            case repo of
+                RsyncR r -> 
+                    first RsyncR <$> updateObjectForRsyncRepository appContext r 
+                RrdpR r -> 
+                    first RrdpR <$> updateObjectForRrdpRepository appContext r
     case r of
         Left e -> do                        
             logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
-            pure $ FetchFailure repo (FailedAt now) (mError vContext' e <> v)
+            pure $ FetchFailure repo now (mError vContext' e <> v)
         Right (resultRepo, vs) -> do
             logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-            pure $ FetchSuccess resultRepo (FetchedAt now) (vs <> v)
+            pure $ FetchSuccess resultRepo now (vs <> v)
 
 
-type RepoTriple = (Repository, FetchStatus, Validations)
+type RepoTriple = (Repository, Instant, Validations)
 
 partitionFailedSuccess :: [FetchResult] -> ([RepoTriple], [RepoTriple])
 partitionFailedSuccess = go
@@ -372,17 +372,21 @@ validateCAWithQueue
             let vContext' = case waitingHashesForThesePPs of
                                 []              -> vc
                                 (_, vc', _) : _ -> vc'
+
             result <- fetchRepository appContext vContext' now repo                                
             let statusUpdate = case result of
-                    FetchFailure r s _ -> (r, s)
-                    FetchSuccess r s _ -> (r, s)                
+                    FetchFailure r t _ -> (r, FailedAt t Nothing)
+                    FetchSuccess r t _ -> (r, FetchedAt t)  
 
             atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
                 updateStatuses pubPoints [statusUpdate]
 
             case result of
-                FetchFailure _ _ validations -> pure validations 
-                FetchSuccess _ _ validations -> do                                        
+                FetchFailure _ t validations -> do 
+                    let repositoryGracePeriod = appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod
+
+                    pure validations 
+                FetchSuccess _ t validations -> do                                        
                     validateWaitingList waitingHashesForThesePPs                    
                     pure validations
 
@@ -431,7 +435,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                     -- remember to come back to this certificate when the PP is fetched
                     -- logDebugM logger [i|to waiting list: #{getRpkiURL discoveredPP} + #{getHash certificate}.|]
                     vContext' :: VContext <- asks getVC                    
-                    pure (asIfItIsMerged `shrinkTo` (Set.singleton url), 
+                    pure (asIfItIsMerged `shrinkTo` Set.singleton url, 
                             toWaitingList
                                 (getRpkiURL discoveredPP) 
                                 (getHash certificate) 
@@ -583,9 +587,9 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
 needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
 needsFetching r status ValidationConfig {..} (Now now) = 
     case status of
-        New            -> True
-        FetchedAt time -> tooLongAgo time
-        FailedAt time  -> tooLongAgo time
+        Pending         -> True
+        FetchedAt time  -> tooLongAgo time
+        FailedAt time _ -> tooLongAgo time
     where
         tooLongAgo momendTnThePast = 
             not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)

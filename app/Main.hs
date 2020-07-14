@@ -147,7 +147,10 @@ createAppContext logger = do
                 rrdpRepositoryRefreshInterval  = 2 * 60,
 
                 -- rsync repositories can be updated every 11 minutes
-                rsyncRepositoryRefreshInterval = 11 * 60
+                rsyncRepositoryRefreshInterval = 11 * 60,
+
+                -- allow repositories to be down for 30 minutes before ignoring their objects
+                repositoryGracePeriod = 30 * 60
             },
             cacheCleanupInterval = let halfAnHour = 30 * 60 in halfAnHour,
 
