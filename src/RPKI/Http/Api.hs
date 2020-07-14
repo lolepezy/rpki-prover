@@ -103,7 +103,9 @@ instance ToJSON RsyncError
 instance ToJSON RrdpError
 instance ToJSON TALError
 instance ToJSON PrefixesAndAsns
-instance ToJSON Instant
+
+instance ToJSON Instant where
+    toJSON = toJSON . show
 
 instance ToJSON RpkiURL where
     toJSON = toJSON . getURL
