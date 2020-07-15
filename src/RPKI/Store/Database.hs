@@ -302,6 +302,68 @@ deleteOldVersions DB {..} tooOld = liftIO $ do
     pure $ List.length toDelete
 
 
+data RpkiObjectStats = RpkiObjectStats {
+    objectsStats    :: !SStats,
+    byAKIStats      :: !SStats,
+    mftByAKIStats   :: !SStats,
+    objectMetaStats :: !SStats
+} deriving stock (Show, Eq, Generic)
+
+data VResultStats = VResultStats {
+    resultsStats :: !SStats,
+    whToKeyStats :: !SStats    
+} deriving stock (Show, Eq, Generic)
+
+data RepositoryStats = RepositoryStats {
+    rrdpStats  :: !SStats,
+    rsyncStats :: !SStats,
+    perTAStats :: !SStats    
+} deriving stock (Show, Eq, Generic)
+
+data DBStats = DBStats {
+    taStats         :: !SStats,
+    repositoryStats :: !RepositoryStats,
+    rpkiObjectStats :: !RpkiObjectStats,    
+    vResultStats    :: !VResultStats,    
+    vrpStats        :: !SStats,    
+    versionStats    :: !SStats
+} deriving stock (Show, Eq, Generic)
+
+
+-- Compute database stats
+stats :: (MonadIO m, Storage s) => 
+        DB s -> m DBStats
+stats db@DB {..} = liftIO $ roTx db $ \tx ->    
+    DBStats <$>
+        (let TAStore sm = taStore in M.stats tx sm) <*>
+        repositoryStats tx <*>
+        rpkiObjectStats tx <*>
+        vResultStats tx <*>
+        (let VRPStore sm = vrpStore in MM.stats tx sm) <*>
+        (let VersionStore sm = versionStore in M.stats tx sm)
+    where
+        rpkiObjectStats tx = 
+            let RpkiObjectStore {..} = objectStore
+            in RpkiObjectStats <$>
+                M.stats tx objects <*>
+                MM.stats tx byAKI <*>
+                MM.stats tx mftByAKI <*>
+                M.stats tx objectMetas
+
+        repositoryStats tx = 
+            let RepositoryStore {..} = repositoryStore
+            in RepositoryStats <$>
+                M.stats tx rrdpS <*>
+                M.stats tx rsyncS <*>
+                MM.stats tx perTA
+
+        vResultStats tx = 
+            let VResultStore {..} = resultStore
+            in VResultStats <$>
+                M.stats tx results <*>
+                MM.stats tx whToKey
+        
+
 
 -- All of the stores of the application in one place
 data DB s = DB {

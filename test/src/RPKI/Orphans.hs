@@ -336,6 +336,18 @@ instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RsyncMap where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RsyncParent where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary PublicationPoints where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RrdpMap where
     arbitrary = do 
         rrdps :: [RrdpRepository] <- arbitrary

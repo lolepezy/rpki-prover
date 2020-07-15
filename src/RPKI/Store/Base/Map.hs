@@ -5,12 +5,16 @@
 
 module RPKI.Store.Base.Map where
 
-import Codec.Serialise
-import GHC.TypeLits
+import           Codec.Serialise
 
-import RPKI.Store.Base.Storage as S
-import RPKI.Store.Base.Storable
-import Data.Maybe (isJust)
+import qualified Data.ByteString          as BS
+
+import           GHC.TypeLits
+
+import           Data.Maybe               (isJust)
+import           RPKI.Store.Base.Storable
+import           RPKI.Store.Base.Storage  as S
+
 
 data SMap (name :: Symbol) s k v where
     SMap :: Storage s => s -> SMapImpl s name -> SMap name s k v
@@ -54,3 +58,9 @@ all :: (Serialise k, Serialise v) =>
 all tx (SMap _ s) = reverse <$> S.foldS tx s f []
     where
         f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
+
+stats :: (Serialise k, Serialise v) =>
+        Tx s m -> SMap name s k v -> IO SStats
+stats tx (SMap _ s) = S.foldS tx s f (SStats 0 0 0)
+    where
+        f stat skey svalue = pure $! incrementStats stat skey svalue

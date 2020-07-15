@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
@@ -52,3 +53,18 @@ fromStorable (Storable b) = deserialise $ LBS.fromStrict b
 fromSValue :: Serialise t => SValue -> t
 fromSValue (SValue b) = fromStorable b
 
+
+data SStats = SStats {
+    statSize       :: !Int,
+    statKeyBytes   :: !Int,
+    statValueBytes :: !Int
+} deriving stock (Show, Eq, Generic)
+
+
+incrementStats :: SStats -> SKey -> SValue -> SStats
+incrementStats stat (SKey (Storable k)) (SValue (Storable v)) = 
+    SStats { 
+        statSize = statSize stat + 1, 
+        statKeyBytes = statKeyBytes stat + BS.length k,
+        statValueBytes = statValueBytes stat + BS.length v
+    }  

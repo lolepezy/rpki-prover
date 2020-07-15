@@ -43,10 +43,11 @@
 + Fix encoding in CSV
 + Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 + it looks like validCount number is flaky and changes depending on (check it)
++ Fix lost VRPs
++ Database stats
 
 ---------------------------------  In progress ----------------------------------------
 
-- Fix lost VRPs
 
 --------------------------------------- TODOs -----------------------------------------
 

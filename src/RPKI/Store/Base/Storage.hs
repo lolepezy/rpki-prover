@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -6,6 +7,7 @@ module RPKI.Store.Base.Storage where
 import Data.Kind
 import GHC.TypeLits
 import RPKI.Store.Base.Storable
+import GHC.Generics (Generic)
 
 data TxMode = RO | RW
 
@@ -40,4 +42,3 @@ roTx s = readOnlyTx (storage s)
 
 rwTx :: WithStorage s ws => ws -> (Tx s 'RW -> IO a) -> IO a
 rwTx s = readWriteTx (storage s)
-

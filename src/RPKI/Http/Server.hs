@@ -19,10 +19,11 @@ import           RPKI.Version
 
 
 validatorServer :: forall s . Storage s => AppContext s -> Server API
-validatorServer AppContext { database = DB {..}} = 
+validatorServer AppContext {..} = 
     liftIO getVRPs
     :<|> liftIO getVRPs
     :<|> liftIO getVResults
+    :<|> getStats
     where
         getVRPs = 
             getForTheLastVersion $ \tx lastVersion -> 
@@ -39,10 +40,14 @@ validatorServer AppContext { database = DB {..}} =
         getForTheLastVersion :: (Tx s 'RO -> WorldVersion -> IO [a]) -> IO [a]
         getForTheLastVersion f = 
             roTx versionStore $ \tx -> do 
-                versions <- allVersions tx versionStore
-                case versions of
+                versions' <- allVersions tx versionStore
+                case versions' of
                     [] -> pure []
-                    vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]                        
+                    vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]      
+
+        getStats = stats database
+
+        DB {..} = database
 
 
 httpApi :: Storage s => AppContext s -> Application

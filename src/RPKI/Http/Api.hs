@@ -1,11 +1,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE TypeOperators              #-}
-{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE TypeOperators         #-}
+
 
 module RPKI.Http.Api where
 
@@ -13,7 +12,6 @@ import           Data.Int
 import           Data.Proxy
 import           Data.Text            (Text)
 import qualified Data.ByteString.Short   as BSS
-import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 
@@ -23,11 +21,8 @@ import Data.Aeson as Json
 import Data.Csv  (ToRecord, ToField(..), DefaultOrdered, ToNamedRecord)
 import qualified Data.Csv as Csv
 
-import Data.Hourglass.Types.Orphans
-
 import           Data.Hex
 import           Servant.API
-import           Servant.API.Generic
 import           Servant.CSV.Cassava
 
 import           RPKI.Domain as Domain
@@ -36,6 +31,8 @@ import           RPKI.Resources.Types
 import           RPKI.Resources.IntervalSet
 import           RPKI.Util (convert)
 import           RPKI.Time
+import           RPKI.Store.Database
+import           RPKI.Store.Base.Storable
 
 
 data CSVOptions = CSVOptions
@@ -48,7 +45,8 @@ type CSVType = CSV' 'HasHeader CSVOptions
 type API =     
            "vrps.csv"  :> Get '[CSVType] [VRP]
       :<|> "vrps.json" :> Get '[JSON] [VRP]
-      :<|>  "validation-results" :> Get '[JSON] [ValidationResult]
+      :<|> "validation-results" :> Get '[JSON] [ValidationResult]
+      :<|> "lmdb-stats" :> Get '[JSON] DBStats
 
 
 api :: Proxy API
@@ -148,6 +146,13 @@ instance ToJSON Ipv6Prefix where
 
 instance ToJSON AsResource where
     toJSON = toJSON . show
+
+
+instance ToJSON SStats
+instance ToJSON RpkiObjectStats
+instance ToJSON VResultStats
+instance ToJSON RepositoryStats
+instance ToJSON DBStats
 
 
 shortBsJson :: BSS.ShortByteString -> Json.Value
