@@ -33,6 +33,7 @@ import           RPKI.Util (convert)
 import           RPKI.Time
 import           RPKI.Store.Database
 import           RPKI.Store.Base.Storable
+import Data.Text.Encoding (decodeUtf8)
 
 
 data CSVOptions = CSVOptions
@@ -133,7 +134,7 @@ instance ToJSON BS.ByteString where
     toJSON = toJSON . showHex
 
 instance ToJSON BSL.ByteString where
-    toJSON = toJSON . showHex
+    toJSON = toJSON . showHexL
 
 instance ToJSON a => ToJSON (IntervalSet a) where
     toJSON = toJSON . toList
@@ -158,5 +159,8 @@ instance ToJSON DBStats
 shortBsJson :: BSS.ShortByteString -> Json.Value
 shortBsJson = toJSON . showHex . BSS.fromShort
 
-showHex :: (Show a, Hex a) => a -> String
-showHex = show . hex
+showHex :: BS.ByteString -> Text
+showHex = decodeUtf8 . hex
+
+showHexL :: BSL.ByteString -> Text
+showHexL = decodeUtf8 . BSL.toStrict . hex

@@ -19,7 +19,7 @@ import           Control.Monad
 import           Control.Monad.Except
 
 import qualified Data.ByteString                  as BS
-import           Data.IORef
+import           Data.IORef.Lifted
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
@@ -48,6 +48,7 @@ import           System.IO
 import           System.Process.Typed
 
 import           System.IO.Posix.MMap             (unsafeMMapFile)
+import Control.Monad.Reader.Class (asks)
 
 
 
@@ -99,8 +100,7 @@ updateObjectForRsyncRepository
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
-            (validations, count) <- fromEitherM $ 
-                loadRsyncRepository appContext uri destination objectStore
+            (validations, count) <- loadRsyncRepository appContext uri destination objectStore
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
@@ -120,34 +120,41 @@ loadRsyncRepository :: Storage s =>
                         RsyncURL -> 
                         FilePath -> 
                         RpkiObjectStore s -> 
-                        IO (Either AppError (Validations, Integer))
-loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do        
-        counter <- newIORef 0
-        let cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
+                        ValidatorT vc IO (Validations, Integer)
+loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
+    parentContext <- asks getVC
 
-        (r1, r2) <- bracketChanClosable 
-                        cpuParallelism
-                        traverseFS
-                        (saveObjects counter)
-                        kill
-        c <- readIORef counter        
-        pure $ void r1 >> (, c) <$> r2            
+    counter <- newIORef (0 :: Integer)
+    let cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
+
+    r <- liftIO $ try $ 
+            bracketChanClosable 
+                cpuParallelism
+                traverseFS
+                (saveObjects counter parentContext)
+                kill
+
+    c <- readIORef counter
+    case r of 
+        Left (AppException e) -> appError e
+        Right (_, z)          -> pure (z, c)
+
     where
         kill = cancelTask . snd
 
         threads = cpuBottleneck appBottlenecks
 
         traverseFS queue = 
-            first (RsyncE . FileReadError . U.fmtEx) <$> 
-                try (readFiles queue rootPath)
+            mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
+                traverseDirectory queue rootPath
 
-        readFiles queue currentPath = do
+        traverseDirectory queue currentPath = do
             names <- getDirectoryContents currentPath
             let properNames = filter (`notElem` [".", ".."]) names
             forM_ properNames $ \name -> do
                 let path = currentPath </> name
                 doesDirectoryExist path >>= \case
-                    True  -> readFiles queue path
+                    True  -> traverseDirectory queue path
                     False -> 
                         when (supportedExtension path) $ do         
                             let uri = pathToUri repositoryUrl rootPath path
@@ -155,7 +162,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                             atomically $ writeCQueue queue (uri, task)
             where
                 readAndParseObject filePath uri = do                                         
-                    (_, content)  <- getSizeAndContent filePath                
+                    (_, content) <- getSizeAndContent filePath                
                     case content of 
                         Left e   -> pure $! SError e
                         Right bs ->                            
@@ -169,9 +176,9 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                                 -- a slow CPU-intensive transaction (verify that it's the case)
                                 Right ro -> pure $! SObject $ toStorableObject ro
         
-        saveObjects counter queue = 
-            first (StorageE . StorageError . U.fmtEx) <$> 
-                try (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
+        saveObjects counter parentContext queue = do            
+            mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
+                (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
             where            
                 go tx validations = 
                     atomically (readCQueue queue) >>= \case 
@@ -181,12 +188,12 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                                             go tx
 
                 process tx (RsyncURL uri) validations = \case
-                    Left (e :: SomeException) -> do
+                    Left (e :: SomeException) -> do                        
                         logError_ logger [i|An error reading and parsing the object: #{e}|]
-                        pure $ validations <> mError (vContext $ unURI uri) (UnspecifiedE $ U.fmtEx e)
+                        pure $ validations <> mError vc (UnspecifiedE $ U.fmtEx e)
                     Right (SError e) -> do
                         logError_ logger [i|An error parsing or serialising the object: #{e}|]
-                        pure $ validations <> mError (vContext $ unURI uri) e
+                        pure $ validations <> mError vc e
                     Right (SObject so@(StorableObject ro _)) -> do                        
                         alreadyThere <- hashExists tx objectStore (getHash ro)
                         if alreadyThere 
@@ -197,6 +204,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                                 putObject tx objectStore so
                                 atomicModifyIORef' counter $ \c -> (c + 1, ())                            
                         pure validations
+                    where
+                        vc = childVC (unURI uri) parentContext
                     
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
