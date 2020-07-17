@@ -51,6 +51,9 @@
 
 --------------------------------------- TODOs -----------------------------------------
 
+- Introduce artifical time-ordered keys for RpkiObjectStore, so that we avoid fragmentation. 
+  Having hashes as keys makes objects being added to and deleted from completely random places
+  of the map and introduces a lot of fragmentation.
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Fix 'ctrl+c', it should stop the applications
