@@ -45,24 +45,26 @@
 + it looks like validCount number is flaky and changes depending on (check it)
 + Fix lost VRPs
 + Database stats
++ Introduce artifical time-ordered keys for RpkiObjectStore, so that we avoid fragmentation. 
+  Having hashes as keys makes objects being added to and deleted from completely random places
+  of the map and introduces a lot of fragmentation.
 
 ---------------------------------  In progress ----------------------------------------
 
+- Read config and CLI options
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Introduce artifical time-ordered keys for RpkiObjectStore, so that we avoid fragmentation. 
-  Having hashes as keys makes objects being added to and deleted from completely random places
-  of the map and introduces a lot of fragmentation.
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Fix 'ctrl+c', it should stop the applications
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
-- Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
-- Read config and CLI options
+- ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
+
+
 
 - Implement RTR server
 
