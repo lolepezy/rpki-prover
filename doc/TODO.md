@@ -65,7 +65,8 @@
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 
-
+- Timeouts for repository fetching 
+- Exception processing for RRDP.Update as for Rsync
 - Implement RTR server
 
 - Set timeouts on repository downloads and interrupt downloads that are too long.
