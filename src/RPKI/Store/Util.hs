@@ -59,14 +59,14 @@ createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
 createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 
-mkLmdb :: FilePath -> Int -> IO LmdbEnv
-mkLmdb fileName maxReaders = 
+mkLmdb :: FilePath -> Int -> Int -> IO LmdbEnv
+mkLmdb fileName maxSizeMb maxReaders = 
     LmdbEnv <$> 
         initializeReadWriteEnvironment mapSize maxReaders maxDatabases fileName <*>
         createSemaphore maxReaders
     where
         -- TODO Make it configurable?
-        mapSize = 64*1024*1024*1024
+        mapSize = maxSizeMb * 1024 * 1024
         maxDatabases = 120
 
 closeLmdb :: Environment e -> IO ()

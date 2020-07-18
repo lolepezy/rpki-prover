@@ -329,7 +329,8 @@ data RpkiObjectStats = RpkiObjectStats {
     objectsStats    :: !SStats,
     byAKIStats      :: !SStats,
     mftByAKIStats   :: !SStats,
-    objectMetaStats :: !SStats
+    objectMetaStats :: !SStats,
+    hashToKeyStats  :: !SStats
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {
@@ -371,7 +372,8 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
                 M.stats tx objects <*>
                 MM.stats tx byAKI <*>
                 MM.stats tx mftByAKI <*>
-                M.stats tx objectMetas
+                M.stats tx objectMetas <*>
+                M.stats tx hashToKey
 
         repositoryStats tx = 
             let RepositoryStore {..} = repositoryStore

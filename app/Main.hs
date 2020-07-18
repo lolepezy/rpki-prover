@@ -109,7 +109,9 @@ createAppContext logger = do
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
     lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
 
-    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb 1000
+    let maxLmdbFileSizeMb = 2 * 1024
+    let maxReaderCount = 1024
+    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb maxLmdbFileSizeMb maxReaderCount
     database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
 
     -- clean up tmp directory if it's not empty
