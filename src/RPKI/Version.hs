@@ -1,10 +1,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards            #-}
 
 module RPKI.Version where
-
+    
 import           Control.Concurrent.STM
 
 import           Codec.Serialise
@@ -12,11 +11,11 @@ import           GHC.Generics
 
 import           Data.Int
 
-import           Data.Hourglass         (timeGetElapsedP, timeGetNanoSeconds)
+import           Data.Hourglass         (timeGetNanoSeconds)
 import           Time.Types
 
-import           RPKI.Logging
 import           RPKI.Time
+
 
 
 -- It's some sequence of versions that is equal to the current 
@@ -53,3 +52,8 @@ getWorldVerion Versions {..} = readTVarIO world
 
 versionToMoment :: WorldVersion -> Instant
 versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
+
+instantToVersion :: Instant -> WorldVersion
+instantToVersion (Instant t) = 
+    let NanoSeconds nano = timeGetNanoSeconds t
+    in WorldVersion nano

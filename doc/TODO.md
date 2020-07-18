@@ -75,7 +75,7 @@
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
 
-- SLURM (store a json file? it's not very effient in acse of AS0 in SLURM, so think about something 
+- SLURM (store a json file? it's not very effient in case of AS0 in SLURM, so think about something 
   more scalable, binary serialisation, etc.)
 
 - Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.
