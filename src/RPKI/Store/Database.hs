@@ -50,11 +50,14 @@ data ROMeta = ROMeta {
 
 -- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
-    objects     :: SMap "objects" s Hash SValue,
-    byAKI       :: SMultiMap "byAKI" s AKI Hash,
-    mftByAKI    :: SMultiMap "mftByAKI" s AKI (Hash, Int),
-    objectMetas :: SMap "object-meta" s Hash ROMeta
+    keys        :: Sequence s,
+    objects     :: SMap "objects" s ArtificialKey SValue,
+    hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
+    byAKI       :: SMultiMap "byAKI" s AKI ArtificialKey,
+    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, Int),
+    objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
+
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
@@ -100,46 +103,60 @@ instance Storage s => WithStorage s (VersionStore s) where
 
 
 
-
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
-getByHash tx store h = (fromSValue <$>) <$> liftIO (M.get tx (objects store) h)
+getByHash tx store h = (snd <$>) <$> getByHash_ tx store h    
+
+getByHash_ :: (MonadIO m, Storage s) => 
+              Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (ArtificialKey, RpkiObject))
+getByHash_ tx RpkiObjectStore {..} h = liftIO $ do
+    M.get tx hashToKey h >>= \case
+        Nothing -> pure Nothing 
+        Just k  -> 
+            M.get tx objects k >>= \case
+                Nothing -> pure Nothing 
+                Just sv -> pure $ Just (k, fromSValue sv)
+            
 
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> m ()
-putObject tx store (StorableObject ro sv) = liftIO $ do
+putObject tx RpkiObjectStore {..} (StorableObject ro sv) = liftIO $ do
     let h = getHash ro
-    M.put tx (objects store) h sv  
+    SequenceValue k <- nextValue tx keys
+    let key = ArtificialKey k
+    M.put tx hashToKey h key
+    M.put tx objects key sv  
     ifJust (getAKI ro) $ \aki' -> do 
-        MM.put tx (byAKI store) aki' h
+        MM.put tx byAKI aki' key
         case ro of
-            MftRO mft -> MM.put tx (mftByAKI store) aki' (h, getMftNumber mft)
+            MftRO mft -> MM.put tx mftByAKI aki' (key, getMftNumber mft)
             _         -> pure ()
 
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
-hashExists tx store h = liftIO $ M.exists tx (objects store) h
+hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
 deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
-    ro' <- getByHash tx store h
-    ifJust ro' $ \ro -> do         
-        M.delete tx objects h
+    p <- getByHash_ tx store h
+    ifJust p $ \(k, ro) -> do         
+        M.delete tx objects k
         ifJust (getAKI ro) $ \aki' -> do 
-            MM.delete tx byAKI aki' h
+            MM.delete tx byAKI aki' k
             case ro of
-                MftRO mft -> MM.delete tx mftByAKI aki' (h, getMftNumber mft)
+                MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftNumber mft)
                 _         -> pure ()      
-        M.delete tx objectMetas h
+        M.delete tx objectMetas k
+        M.delete tx hashToKey h
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
-findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $ 
+findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
     MM.foldS tx mftByAKI aki' f Nothing >>= \case
-        Nothing        -> pure Nothing
-        Just (hash, _) -> do 
-            o <- getByHash tx store hash
+        Nothing     -> pure Nothing
+        Just (k, _) -> do 
+            o <- (fromSValue <$>) <$> M.get tx objects k
             pure $ case o of 
                 Just (MftRO mft) -> Just mft
                 _                -> Nothing
@@ -153,10 +170,12 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
 
 findMftsByAKI :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
-findMftsByAKI tx store aki' = liftIO $ 
-    MM.foldS tx (mftByAKI store) aki' f []
+findMftsByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
+    MM.foldS tx mftByAKI aki' f []
     where
-        f mfts _ (h, _) = accumulate <$> getByHash tx store h
+        f mfts _ (k, _) = do 
+            o <- (fromSValue <$>) <$> M.get tx objects k
+            pure $ accumulate o            
             where 
                 accumulate (Just (MftRO mft)) = mft : mfts
                 accumulate _                  = mfts            
@@ -165,10 +184,12 @@ findMftsByAKI tx store aki' = liftIO $
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
 markValidated tx RpkiObjectStore {..} hash wv = liftIO $ do
-    meta <- M.get tx objectMetas hash 
-    -- TODO If ROMeta stores more stuff, logic must be different
-    let meta' = maybe (ROMeta wv) (& typed @WorldVersion .~ wv) meta
-    M.put tx objectMetas hash meta'
+    k <- M.get tx hashToKey hash
+    ifJust k $ \key -> do
+        meta <- M.get tx objectMetas key 
+        -- TODO If ROMeta stores more stuff, logic must be different
+        let meta' = maybe (ROMeta wv) (& typed @WorldVersion .~ wv) meta
+        M.put tx objectMetas key meta'
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
@@ -190,7 +211,7 @@ ifJust a f = maybe (pure ()) f a
 putVResult :: (MonadIO m, Storage s) => 
             Tx s 'RW -> VResultStore s -> WorldVersion -> VResult -> m ()
 putVResult tx VResultStore {..} wv vr = liftIO $ do 
-    SequenceValue k <- nextValue tx keys     
+    SequenceValue k <- nextValue tx keys
     MM.put tx whToKey wv (ArtificialKey k)
     M.put tx results (ArtificialKey k) vr
 
@@ -250,11 +271,13 @@ cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
     
     let readOldObjects queue = do
             roTx objectStore $ \tx -> do
-                M.traverse tx objectMetas $ \hash ROMeta {..} -> do
-                    if tooOld validatedBy
-                        then increment deleted >> atomically (writeCQueue queue hash)
-                        else increment kept
-                    when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
+                M.traverse tx hashToKey $ \hash key -> do
+                    r <- M.get tx objectMetas key
+                    ifJust r $ \ROMeta {..} -> do                        
+                        if tooOld validatedBy
+                            then increment deleted >> atomically (writeCQueue queue hash)
+                            else increment kept
+                        when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
 
     -- Don't lock the DB for potentially too long, use big but finite chunks
     let deleteObjects queue = do
