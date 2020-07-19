@@ -268,10 +268,10 @@ deleteVersion tx (VersionStore s) wv = liftIO $ M.delete tx s wv
 -- Delete all the objects from the objectStore if they were 
 -- validated longer than certain time ago.
 cleanObjectCache :: (MonadIO m, Storage s) => 
-                    RpkiObjectStore s -> 
+                    DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m (Int, Int)
-cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
+cleanObjectCache DB {..} tooOld = liftIO $ do
     kept    <- newIORef (0 :: Int)
     deleted <- newIORef (0 :: Int)
     
@@ -282,8 +282,8 @@ cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
 
     let readOldObjects queue =
             roTx objectStore $ \tx ->
-                M.traverse tx hashToKey $ \hash key -> do
-                    r <- M.get tx objectMetas key
+                M.traverse tx (hashToKey objectStore) $ \hash key -> do
+                    r <- M.get tx (objectMetas objectStore) key
                     ifJust r $ \ROMeta {..} -> 
                         case validatedBy of
                             Nothing           -> queueForDeltionOrKeep insertedBy queue hash

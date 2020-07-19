@@ -48,10 +48,10 @@
 + Introduce artifical time-ordered keys for RpkiObjectStore, so that we avoid fragmentation. 
   Having hashes as keys makes objects being added to and deleted from completely random places
   of the map and introduces a lot of fragmentation.
++ Exception processing for RRDP.Update as for Rsync
 
 ---------------------------------  In progress ----------------------------------------
 
-- Exception processing for RRDP.Update as for Rsync
 
 --------------------------------------- TODOs -----------------------------------------
 

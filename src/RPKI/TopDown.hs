@@ -134,7 +134,8 @@ validateTA appContext@AppContext {..} tal worldVersion = do
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
 
-    writeVResult appContext validations worldVersion    
+    mapException (AppException . storageError) <$> 
+        writeVResult appContext validations worldVersion    
     pure z
     where                            
         taContext = vContext taNameText

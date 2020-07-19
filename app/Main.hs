@@ -53,6 +53,7 @@ import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
 import           RPKI.Workflow
+import System.IO (BufferMode(..), stdout, hSetBuffering)
 
 
 main :: IO ()
@@ -166,6 +167,7 @@ createLogger :: IO AppLogger
 createLogger = do 
     -- TODO Use colog-concurrent instead of this
     lock <- newMVar True
+    hSetBuffering stdout LineBuffering
     pure $ AppLogger fullMessageAction lock
     where
         fullMessageAction = upgradeMessageAction defaultFieldMap $ 

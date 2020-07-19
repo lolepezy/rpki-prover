@@ -70,8 +70,7 @@ runWorkflow appContext@AppContext {..} tals = do
         cacheCleanupInterval = config ^. #cacheCleanupInterval
         oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
-        revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-        objectStore          = database ^. #objectStore               
+        revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval           
 
         validateTaTask globalQueue worldVersion = 
             atomically $ writeCQueue globalQueue $ ValidateTAs worldVersion             
@@ -107,24 +106,18 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     Just (ValidateTAs worldVersion) -> do
                         logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
-                        (z, elapsed) <- timedMS $ sequence <$> mapConcurrently processTAL tals
-                        case z of
-                            Left (StorageE storageBroken) ->
-                                die [i|Storage error #{storageBroken}, exiting.|]
-                            Left weird -> 
-                                die [i|Something weird happened #{weird}, exiting.|]                                
-
-                            Right _ -> pure ()
-
-                        completeWorldVersion appContext worldVersion
-                        logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|]
+                        executeOrDie
+                            (sequence <$> mapConcurrently processTAL tals)
+                            (\_ elapsed -> do
+                                completeWorldVersion appContext worldVersion
+                                logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|])
                         where 
                             processTAL tal = validateTA appContext tal worldVersion                                
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
                         executeOrDie 
-                            (cleanObjectCache objectStore $ versionIsOld now cacheLifeTime)
+                            (cleanObjectCache database $ versionIsOld now cacheLifeTime)
                             (\(deleted, kept) elapsed -> 
                                 logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
 
