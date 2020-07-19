@@ -31,8 +31,9 @@ data Config = Config {
     oldVersionsLifetime  :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
-newtype RsyncConf = RsyncConf {
-    rsyncRoot :: FilePath
+data RsyncConf = RsyncConf {
+    rsyncRoot :: FilePath,
+    rsyncTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 newtype Size = Size Int64
@@ -41,7 +42,8 @@ newtype Size = Size Int64
 
 data RrdpConf = RrdpConf {
     tmpRoot :: FilePath,
-    maxSize :: Size
+    maxSize :: Size,
+    rrdpTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 data ValidationConfig = ValidationConfig {

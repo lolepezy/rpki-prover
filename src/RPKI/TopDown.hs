@@ -58,6 +58,9 @@ import           RPKI.Util                        (fmtEx)
 import           RPKI.Version
 import           RPKI.Validation.ObjectValidation
 
+import Data.Hourglass
+import System.Timeout (timeout)
+
 
 data Stats = Stats {
     validCount :: Int
@@ -263,23 +266,41 @@ fetchRepository
     parentContext 
     (Now now) 
     repo = liftIO $ do
-    logDebugM logger [i|Fetching #{getRpkiURL repo} |]    
-    let repoURL = getRpkiURL repo
-    let vContext' = childVC (toText repoURL) parentContext
-    ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
-        case repo of
-            RsyncR r -> 
-                first RsyncR <$> updateObjectForRsyncRepository appContext r 
-            RrdpR r -> 
-                first RrdpR <$> updateObjectForRrdpRepository appContext r
-    case r of
-        Left e -> do                        
-            logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
-            pure $ FetchFailure repo (FailedAt now) (mError vContext' e <> v)
-        Right (resultRepo, vs) -> do
-            logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-            pure $ FetchSuccess resultRepo (FetchedAt now) (vs <> v)
 
+        let (Seconds duration, timeoutError) = case repoURL of
+                RrdpU _ -> (config ^. typed @RrdpConf . #rrdpTimeout, RrdpE RrdpDownloadTimeout)
+                RsyncU _ -> (config ^. typed @RsyncConf . #rsyncTimeout, RsyncE RsyncDownloadTimeout)
+        
+        r <- timeout (1000_000 * fromIntegral duration) fetchIt
+        case r of 
+            Nothing -> do 
+                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{duration}s.|]
+                pure $ FetchFailure repo (FailedAt now) (mError vContext' timeoutError)
+            Just z -> pure z        
+    where 
+        repoURL = getRpkiURL repo
+        vContext' = childVC (toText repoURL) parentContext
+
+        fetchIt = do
+            logDebugM logger [i|Fetching #{repoURL} |]
+            ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
+                case repo of
+                    RsyncR r -> 
+                        first RsyncR <$> updateObjectForRsyncRepository appContext r 
+                    RrdpR r -> 
+                        first RrdpR <$> updateObjectForRrdpRepository appContext r
+            case r of
+                Left e -> do                        
+                    logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
+                    pure $ FetchFailure repo (FailedAt now) (mError vContext' e <> v)
+                Right (resultRepo, vs) -> do
+                    logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
+                    pure $ FetchSuccess resultRepo (FetchedAt now) (vs <> v)
+
+
+fetchTimeout :: Config -> RpkiURL -> Seconds
+fetchTimeout config (RrdpU _)  = config ^. typed @RrdpConf . #rrdpTimeout
+fetchTimeout config (RsyncU _) = config ^. typed @RsyncConf . #rsyncTimeout
 
 type RepoTriple = (Repository, FetchStatus, Validations)
 

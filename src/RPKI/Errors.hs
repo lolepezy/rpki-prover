@@ -101,14 +101,16 @@ data RrdpError = BrokenXml Text |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType
+                UnsupportedObjectType | 
+                RrdpDownloadTimeout
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |
-                    RsyncDirError Text                    
+                    RsyncDirError Text |               
+                    RsyncDownloadTimeout
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

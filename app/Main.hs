@@ -135,12 +135,13 @@ createAppContext logger = do
         config = Config {
             talDirectory = tald,
             parallelism  = parallelism,
-            rsyncConf    = RsyncConf rsyncd,
+            rsyncConf    = RsyncConf rsyncd (5 * 60),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb
                 -- TODO Make it configurable
-                maxSize = Size 1024 * 1024 * 1024
+                maxSize = Size 1024 * 1024 * 1024,
+                rrdpTimeout = 3 * 60
             },
             validationConfig = ValidationConfig {
                 -- generate new world version and revalidate every 13 minutes
