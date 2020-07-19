@@ -295,12 +295,12 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
                 rwTx objectStore $ \tx ->
                     forM_ quuElems $ deleteObject tx objectStore
 
-    mapException (AppException . storageError) <$> 
-            bracketChanClosable 
-                100_000
-                readOldObjects
-                deleteObjects
-                (const $ pure ())    
+    void $ mapException (AppException . storageError) <$> 
+                bracketChanClosable 
+                    100_000
+                    readOldObjects
+                    deleteObjects
+                    (const $ pure ())    
     
     (,) <$> readIORef deleted <*> readIORef kept
 
