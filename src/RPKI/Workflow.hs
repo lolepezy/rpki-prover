@@ -38,6 +38,9 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 
+import System.Exit
+import Control.Exception.Lifted (try)
+
 
 type AppEnv = AppContext LmdbStorage
 
@@ -104,7 +107,15 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     Just (ValidateTAs worldVersion) -> do
                         logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
-                        (_, elapsed) <- timedMS $ mapConcurrently_ processTAL tals
+                        (z, elapsed) <- timedMS $ sequence <$> mapConcurrently processTAL tals
+                        case z of
+                            Left (StorageE storageBroken) ->
+                                die [i|Storage error #{storageBroken}, exiting.|]
+                            Left (UnspecifiedE weird)     -> 
+                                die [i|Something weird happened #{weird}, exiting.|]                                
+
+                            _ -> pure ()
+
                         completeWorldVersion appContext worldVersion
                         logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|]
                         where 
@@ -112,9 +123,13 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
-                        ((deleted, kept), elapsed) <- timedMS $ 
-                                cleanObjectCache objectStore $ versionIsOld now cacheLifeTime
-                        logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
+                        (r, elapsed) <- timedMS $ 
+                                try $ cleanObjectCache objectStore $ versionIsOld now cacheLifeTime
+                        case r of 
+                            Left (AppException (StorageE storageBroken))  -> 
+                                die [i|Storage error #{storageBroken}, exiting.|]
+                            Right (deleted, kept)  -> do                                
+                                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
 
                     Just (CleanOldVersions worldVersion) -> do
                         let now = versionToMoment worldVersion
@@ -139,4 +154,5 @@ periodically (Seconds interval) action =
         let executionTimeNs = toNanoseconds end - toNanoseconds start
         when (executionTimeNs < nanosPerSecond * interval) $ do        
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
-            threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
+            when (timeToWaitNs > 0) $ 
+                threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         

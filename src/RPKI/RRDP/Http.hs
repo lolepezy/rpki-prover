@@ -6,21 +6,22 @@
 module RPKI.RRDP.Http where
 
 import           Control.Lens                   ((^.))
+import           Control.Monad.Except
+import           Control.Monad.Trans.Control
+
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
-import           Control.Monad.Except
-
 import           Data.Bifunctor                 (first)
-import qualified Data.ByteString.Lazy           as LBS
 import qualified Data.ByteString                as BS
+import qualified Data.ByteString.Lazy           as LBS
 import qualified Data.Text                      as Text
 
+import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.AppContext
 import           RPKI.Parse.Parse
 import qualified RPKI.Util                      as U
 
@@ -30,13 +31,14 @@ import           Data.ByteString.Streaming.HTTP
 import qualified Crypto.Hash.SHA256             as S256
 
 import           System.IO                      (Handle, hClose)
-import qualified System.IO.Posix.MMap      as Mmap
-import qualified System.IO.Posix.MMap.Lazy as MmapLazy
+import qualified System.IO.Posix.MMap           as Mmap
+import qualified System.IO.Posix.MMap.Lazy      as MmapLazy
 import           System.IO.Temp                 (withTempFile)
 
 import           Control.Exception.Lifted
 import           Data.IORef.Lifted
-import GHC.Generics (Generic)
+import           GHC.Generics                   (Generic)
+
 
 
 newtype HttpContext =  HttpContext Manager
@@ -139,7 +141,13 @@ streamHttpToFileWithActions :: MonadIO m =>
                             Size -> 
                             Handle -> 
                             m (Either err (Hash, Size))
-streamHttpToFileWithActions (HttpContext tlsManager) (URI uri) errorMapping whileDownloading maxSize destinationHandle = 
+streamHttpToFileWithActions 
+                    (HttpContext tlsManager) 
+                    (URI uri) 
+                    errorMapping 
+                    whileDownloading 
+                    maxSize 
+                    destinationHandle = 
     liftIO $ first errorMapping <$> try go    
     where
         go = do

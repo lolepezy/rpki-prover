@@ -10,15 +10,17 @@ import           Codec.Serialise
 import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
 
-import           Control.Lens
-import           Data.Generics.Product.Typed
+import           Control.Concurrent.STM      (atomically)
+import           Control.Exception.Lifted    (mapException, SomeException)
+import           Control.Monad               (forM_, void)
+import qualified Data.List                   as List
 
 import           Data.Int
-import           Data.List                   (length)
 
 import           GHC.Generics
 
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.Store.Base.Map         (SMap (..))
 import           RPKI.Store.Base.MultiMap    (SMultiMap (..))
 import           RPKI.TAL
@@ -31,15 +33,10 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
-import           RPKI.Util (increment)
+import           RPKI.Util                   (increment, fmtEx)
 
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-
-import           Control.Concurrent.STM      (atomically)
-import           Control.Monad               (forM_, void)
-import qualified Data.List as List
-
 
 
 data ROMeta = ROMeta {
@@ -124,7 +121,7 @@ putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
     let h = getHash ro
     
     M.get tx hashToKey h >>= \case
-        -- checkk if this object is already there, don't insert it twice
+        -- check if this object is already there, don't insert it twice
         Just _  -> pure ()
         Nothing -> do 
             SequenceValue k <- nextValue tx keys
@@ -151,7 +148,7 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
         M.delete tx objects k
         M.delete tx objectMetas k
         M.delete tx hashToKey h
-        ifJust (getAKI ro) $ \aki' -> do 
+        ifJust (getAKI ro) $ \aki' ->
             case ro of
                 MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftNumber mft)
                 _         -> pure ()        
@@ -298,11 +295,12 @@ cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
                 rwTx objectStore $ \tx ->
                     forM_ quuElems $ deleteObject tx objectStore
 
-    void $ bracketChanClosable 
-            100_000
-            readOldObjects
-            deleteObjects
-            (const $ pure ())    
+    mapException (AppException . storageError) <$> 
+            bracketChanClosable 
+                100_000
+                readOldObjects
+                deleteObjects
+                (const $ pure ())    
     
     (,) <$> readIORef deleted <*> readIORef kept
 
@@ -313,9 +311,10 @@ deleteOldVersions :: (MonadIO m, Storage s) =>
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m Int
-deleteOldVersions DB {..} tooOld = liftIO $ do
-    versions <- roTx versionStore $ \tx -> allVersions tx versionStore
+deleteOldVersions DB {..} tooOld = 
+    mapException (AppException . storageError) <$> liftIO $ do
 
+    versions <- roTx versionStore $ \tx -> allVersions tx versionStore    
     let toDelete = 
             case [ version | (version, FinishedVersion) <- versions ] of
                 []       -> 
@@ -413,3 +412,7 @@ data DB s = DB {
 
 instance Storage s => WithStorage s (DB s) where
     storage DB {..} = storage taStore
+
+
+storageError :: SomeException -> AppError
+storageError = StorageE . StorageError . fmtEx    

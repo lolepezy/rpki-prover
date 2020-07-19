@@ -29,7 +29,7 @@ import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
-import           Data.Maybe                       (listToMaybe, fromMaybe)
+import           Data.Maybe                       (fromMaybe)
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
@@ -126,15 +126,16 @@ incValidObject TopDownContext {..} = liftIO $ atomically $
 -- TA certificate is up-to-date and valid.
 --
 validateTA :: Storage s => 
-            AppContext s -> TAL -> WorldVersion -> IO ()
+            AppContext s -> TAL -> WorldVersion -> IO (Either AppError ())
 validateTA appContext@AppContext {..} tal worldVersion = do    
-    (_, validations) <- runValidatorT taContext $
+    (z, validations) <- runValidatorT taContext $
             forChild (toText $ getTaCertURL tal) $ do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
 
     writeVResult appContext validations worldVersion    
+    pure z
     where                            
         taContext = vContext taNameText
         TaName taNameText = getTaName tal
@@ -143,6 +144,8 @@ validateTA appContext@AppContext {..} tal worldVersion = do
 data TACertStatus = Existing | Updated
 
 -- | Fetch and validated TA certificate starting from the TAL.
+-- | 
+-- | This function doesn't throw exceptions.
 validateTACertificateFromTAL :: (WithVContext vc, Storage s) => 
                                 AppContext s -> 
                                 TAL -> 
@@ -177,8 +180,9 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
         taStore = database ^. #taStore   
 
 
--- | Do the actual validation starting from the TA certificate
--- 
+-- | Do the actual validation starting from the TA certificate.
+-- | 
+-- | This function doesn't throw exceptions.
 validateFromTACert :: (WithVContext env, Storage s) =>
                     AppContext s -> 
                     TaName -> 
@@ -206,8 +210,8 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
                 Set.fromList (map getRpkiURL $ NonEmpty.toList repos)
 
     fetchStatuses <- parallelTasks 
-                        (ioBottleneck appBottlenecks) 
-                        reposToFetch $ 
+                        (ioBottleneck appBottlenecks)
+                        reposToFetch 
                         (fetchRepository appContext taCertURI now)
 
     case partitionFailedSuccess fetchStatuses of 
@@ -224,14 +228,15 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
             -- this is for TA cert
             incValidObject topDownContext
 
-            -- Do the tree descend, gather validation results and VRPs
+            -- Do the tree descend, gather validation results and VRPs            
             fromTry (UnspecifiedE . fmtEx) $
                 validateCA appContext taCertURI topDownContext taCert                    
 
             -- get publication points from the topDownContext and save it to the database
-            pubPointAfterTopDown <- liftIO $ readTVarIO $ publicationPoints topDownContext            
-
-            Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
+            (pubPointAfterTopDown, Stats {..}) <- liftIO $ atomically $ 
+                (,) <$> readTVar (publicationPoints topDownContext) <*>
+                        readTVar (objectStats topDownContext)
+            
             logDebugM logger [i|#{taName'} validCount = #{validCount} |]
 
             let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
@@ -735,8 +740,6 @@ appTxEx ws err f txF = do
     env <- ask
     -- TODO Make it less ugly and complicated
     t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
-    validatorT $ pure $ either ((, mempty) . Left . err) id t
-
-
-storageError :: SomeException -> AppError
-storageError = StorageE . StorageError . fmtEx
+    validatorT $ pure $ case t of 
+                            Left e  -> (Left (err e), mempty)
+                            Right r -> r            

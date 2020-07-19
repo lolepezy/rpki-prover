@@ -54,6 +54,8 @@ import Control.Monad.Reader.Class (asks)
 
 
 -- | Download one file using rsync
+-- | 
+-- | This function doesn't throw exceptions.
 rsyncRpkiObject :: AppContext s -> 
                     RsyncURL -> 
                     ValidatorT vc IO RpkiObject

@@ -51,10 +51,11 @@
 
 ---------------------------------  In progress ----------------------------------------
 
-- Read config and CLI options
+- Exception processing for RRDP.Update as for Rsync
 
 --------------------------------------- TODOs -----------------------------------------
 
+- Read config and CLI options
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Fix 'ctrl+c', it should stop the applications
@@ -66,7 +67,6 @@
 
 
 - Timeouts for repository fetching 
-- Exception processing for RRDP.Update as for Rsync
 - Implement RTR server
 
 - Set timeouts on repository downloads and interrupt downloads that are too long.

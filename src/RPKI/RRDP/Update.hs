@@ -219,7 +219,6 @@ saveSnapshot :: Storage s =>
 saveSnapshot appContext rrdpStats snapshotContent = do  
     parentContext <- asks getVC         
     worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
-
     doSaveObjects parentContext worldVersion 
     where
         doSaveObjects parentContext worldVersion = do
@@ -284,7 +283,6 @@ saveDelta :: Storage s =>
 saveDelta appContext rrdpStats deltaContent = do        
     parentContext <- asks getVC
     worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
-
     doSaveObjects parentContext worldVersion
     where
         doSaveObjects parentContext worldVersion = do
