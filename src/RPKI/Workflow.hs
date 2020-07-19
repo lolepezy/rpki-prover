@@ -56,7 +56,7 @@ runWorkflow :: Storage s =>
 runWorkflow appContext@AppContext {..} tals = do
     -- Use a command queue for every to avoid fully concurrent operations, i.e.
     -- cache GC should not run at the same time as the validation (not for consistency reasons,
-    -- but we want to avoid locking the DB for long).    
+    -- but we want to avoid locking the DB for long time).    
     globalQueue <- newCQueueIO 10
 
     mapConcurrently_ (\f -> f globalQueue) [ 
@@ -66,12 +66,11 @@ runWorkflow appContext@AppContext {..} tals = do
             cleanOldVersions            
         ]
     where  
-        config = appContext ^. typed @Config
         cacheCleanupInterval = config ^. #cacheCleanupInterval
         oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
         revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-        objectStore          = appContext ^. #database . #objectStore               
+        objectStore          = database ^. #objectStore               
 
         validateTaTask globalQueue worldVersion = 
             atomically $ writeCQueue globalQueue $ ValidateTAs worldVersion             
@@ -123,23 +122,28 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
-                        (r, elapsed) <- timedMS $ 
-                                try $ cleanObjectCache objectStore $ versionIsOld now cacheLifeTime
-                        case r of 
-                            Left (AppException (StorageE storageBroken))  -> 
-                                die [i|Storage error #{storageBroken}, exiting.|]
-                            Right (deleted, kept)  -> do                                
-                                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
+                        executeOrDie 
+                            (cleanObjectCache objectStore $ versionIsOld now cacheLifeTime)
+                            (\(deleted, kept) elapsed -> 
+                                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
 
                     Just (CleanOldVersions worldVersion) -> do
                         let now = versionToMoment worldVersion
-                        (deleted, elapsed) <- timedMS $ 
-                            deleteOldVersions database $ versionIsOld now oldVersionsLifetime
-                        logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|]
-    
+                        executeOrDie 
+                            (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
+                            (\deleted elapsed -> 
+                                logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
+
         versionIsOld now period (WorldVersion nanos) =
             let validatedAt = fromNanoseconds nanos
             in not $ closeEnoughMoments validatedAt now period
+
+        executeOrDie f onRight = do 
+            (r, elapsed) <- timedMS $ try f
+            case r of
+                Left (AppException (StorageE storageBroken))  -> 
+                    die [i|Storage error #{storageBroken}, exiting.|]
+                Right z -> onRight z elapsed
                             
                                                                 
 
