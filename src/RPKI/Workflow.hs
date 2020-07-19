@@ -40,6 +40,7 @@ import           RPKI.Store.Base.LMDB
 
 import System.Exit
 import Control.Exception.Lifted (try)
+import Data.Int (Int64)
 
 
 type AppEnv = AppContext LmdbStorage
@@ -110,10 +111,10 @@ runWorkflow appContext@AppContext {..} tals = do
                         case z of
                             Left (StorageE storageBroken) ->
                                 die [i|Storage error #{storageBroken}, exiting.|]
-                            Left (UnspecifiedE weird)     -> 
+                            Left weird -> 
                                 die [i|Something weird happened #{weird}, exiting.|]                                
 
-                            _ -> pure ()
+                            Right _ -> pure ()
 
                         completeWorldVersion appContext worldVersion
                         logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|]
@@ -138,11 +139,14 @@ runWorkflow appContext@AppContext {..} tals = do
             let validatedAt = fromNanoseconds nanos
             in not $ closeEnoughMoments validatedAt now period
 
+        executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = do 
             (r, elapsed) <- timedMS $ try f
             case r of
-                Left (AppException (StorageE storageBroken))  -> 
+                Left (AppException (StorageE storageBroken)) -> 
                     die [i|Storage error #{storageBroken}, exiting.|]
+                Left weird -> 
+                    logError_ logger [i|Something weird happened #{weird}, exiting.|]
                 Right z -> onRight z elapsed
                             
                                                                 
