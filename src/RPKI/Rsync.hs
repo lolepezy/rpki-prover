@@ -72,9 +72,9 @@ rsyncRpkiObject AppContext{..} uri = do
                                         stdout = #{out}|]        
             appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err  
         ExitSuccess -> do
-            fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
+            fileSize  <- fromTry (RsyncE . FileReadError . U.fmtIOEx) $ getFileSize destination
             void $ vHoist $ validateSizeM fileSize
-            bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
+            bs        <- fromTry (RsyncE . FileReadError . U.fmtIOEx) $ fileContent destination
             fromEitherM $ pure $ first ParseE $ readObject (RsyncU uri) bs
 
 
@@ -93,12 +93,12 @@ updateObjectForRsyncRepository
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncDirectory
 
-    void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+    void $ fromTry (RsyncE . FileReadError . U.fmtIOEx) $ 
         createDirectoryIfMissing True destination
         
     logInfoM logger [i|Going to run #{rsync}|]
     (exitCode, out, err) <- fromTry 
-        (RsyncE . RsyncRunningError . U.fmtEx) $ 
+        (RsyncE . RsyncRunningError . U.fmtIOEx) $ 
         readProcess rsync
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  

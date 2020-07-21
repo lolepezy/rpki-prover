@@ -589,7 +589,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                         Left _  -> pure ()
                         Right _ -> do                                
                             incValidObject topDownContext
-                            logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Roa])}|]
+                            -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Roa])}|]
                             queueVRP appContext topDownContext $ getCMSContent (extract roa :: CMS [Roa])
 
                 GbrRO gbr -> withEmptyPPs $ do

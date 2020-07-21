@@ -140,7 +140,7 @@ createAppContext logger = do
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb
                 -- TODO Make it configurable
-                maxSize = Size 1024 * 1024 * 1024,
+                maxSize = Size 2 * 1024 * 1024 * 1024,
                 rrdpTimeout = 3 * 60
             },
             validationConfig = ValidationConfig {
@@ -155,7 +155,8 @@ createAppContext logger = do
             },
             cacheCleanupInterval = let halfAnHour = 30 * 60 in halfAnHour,
 
-            cacheLifeTime = let threeDays = 3 * 24 * 60 * 60 in threeDays,
+            -- cacheLifeTime = let threeDays = 3 * 24 * 60 * 60 in threeDays,
+            cacheLifeTime = 24 * 60 * 60,
 
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
         },

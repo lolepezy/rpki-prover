@@ -65,6 +65,9 @@ isSpace_ = isSpace . chr . fromEnum
 fmtEx :: SomeException -> Text.Text
 fmtEx = Text.pack . show
 
+fmtIOEx :: IOException -> Text.Text
+fmtIOEx = Text.pack . show
+
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing

@@ -131,8 +131,8 @@ instance Exception OversizedDownloadStream
 
 
 -- | Download HTTP stream into a file while 
--- (if needed) calculating its hash at the same time
--- and calculating the s
+-- (if needed) calculating its hash at the same time (or anything 
+-- else, but so far we've only needed hash and size).
 streamHttpToFileWithActions :: MonadIO m =>
                             HttpContext ->
                             URI -> 

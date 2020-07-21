@@ -229,7 +229,7 @@ saveSnapshot appContext rrdpStats snapshotContent = do
             -- split into writing transactions of 10000 elements to make them always finite 
             -- and independent from the size of the snapshot.
             fromTry 
-                (StorageE . StorageError . U.fmtEx)    
+                (StorageE . StorageError . U.fmtIOEx)    
                 (txFoldPipelineChunked 
                     cpuParallelism
                     (S.mapM newStorable $ S.each snapshotItems)
@@ -290,7 +290,7 @@ saveDelta appContext rrdpStats deltaContent = do
 
             -- TODO check that the session_id and serial are the same as in the notification file
             let deltaItemS = S.each $ delta ^. typed @[DeltaItem]
-            fromTry (StorageE . StorageError . U.fmtEx) 
+            fromTry (StorageE . StorageError . U.fmtIOEx) 
                 (txFoldPipelineChunked 
                     cpuParallelism
                     (S.mapM newStorable deltaItemS)
