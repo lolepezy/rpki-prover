@@ -7,12 +7,9 @@
 
 module RPKI.RRDP.Update where
 
-import           Control.Exception.Lifted
 import           Control.Lens                     ((^.))
 import           Control.Monad.Except
 import           Control.Monad.Reader.Class
-import           Data.Generics.Labels
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
@@ -32,6 +29,7 @@ import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.RRDP.Http
+import           RPKI.RRDP.HttpContext
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
@@ -192,8 +190,7 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s ->
                                 RrdpRepository ->
                                 ValidatorT vc IO (RrdpRepository, Validations)
-updateObjectForRrdpRepository appContext@AppContext{..} repository =
-    withHttp $ \httpContext -> do        
+updateObjectForRrdpRepository appContext@AppContext {..} repository = do        
         stats <- liftIO newRrdpStat
         (r, v) <- downloadAndUpdateRRDP 
                 appContext 

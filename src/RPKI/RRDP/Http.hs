@@ -23,6 +23,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
+import           RPKI.RRDP.HttpContext
 import qualified RPKI.Util                      as U
 
 import qualified Data.ByteString.Streaming      as Q
@@ -40,14 +41,6 @@ import           Data.IORef.Lifted
 import           GHC.Generics                   (Generic)
 
 
-
-newtype HttpContext =  HttpContext Manager
-
-withHttp :: MonadIO m => (HttpContext -> m a) -> m a
-withHttp f = do
-    tlsManager <- liftIO $ newManager tlsManagerSettings
-    f $ HttpContext tlsManager
-    
 downloadToStrictBS :: MonadIO m => 
                     HttpContext ->
                     RrdpConf ->

@@ -49,16 +49,19 @@
   Having hashes as keys makes objects being added to and deleted from completely random places
   of the map and introduces a lot of fragmentation.
 + Exception processing for RRDP.Update as for Rsync
++ Timeouts for repository fetching 
++ Call newManager for HTTP only once, it's very expensive
 
 ---------------------------------  In progress ----------------------------------------
 
+- Read config and CLI options
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Read config and CLI options
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Fix 'ctrl+c', it should stop the applications
+
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
@@ -66,7 +69,6 @@
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 
-- Timeouts for repository fetching 
 - Implement RTR server
 
 - Set timeouts on repository downloads and interrupt downloads that are too long.

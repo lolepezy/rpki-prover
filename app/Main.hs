@@ -16,7 +16,6 @@ import           Data.Generics.Labels
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
-
 import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
 import           Control.Exception.Lifted
@@ -27,7 +26,6 @@ import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Text                        (Text)
 
-
 import           Data.String.Interpolate.IsString
 
 import qualified Network.Wai.Handler.Warp         as Warp
@@ -35,17 +33,19 @@ import qualified Network.Wai.Handler.Warp         as Warp
 import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory, removeFile)
 import           System.Environment
 import           System.FilePath                  ((</>))
+import           System.IO                        (BufferMode (..), hSetBuffering, stdout)
 
 import           Options.Generic
 
+import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.AppContext
 import           RPKI.Http.Server
 import           RPKI.Logging
 import           RPKI.Parallel
+import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.Time
@@ -53,7 +53,7 @@ import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
 import           RPKI.Workflow
-import System.IO (BufferMode(..), stdout, hSetBuffering)
+
 
 
 main :: IO ()
@@ -130,6 +130,8 @@ createAppContext logger = do
         pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     -- TODO read stuff from the config, CLI
+    httpContext <- liftIO newHttpContext
+
     pure $ AppContext {        
         logger = logger,
         config = Config {
@@ -162,7 +164,8 @@ createAppContext logger = do
         },
         versions = versions,
         database = database,
-        appBottlenecks = appBottlenecks
+        appBottlenecks = appBottlenecks,
+        httpContext = httpContext
     }
 
 createLogger :: IO AppLogger
