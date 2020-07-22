@@ -69,8 +69,8 @@ downloadAndUpdateRRDP
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle all deltas bytecontents
     do
-    (notificationXml, _) <- fromEitherM $ downloadToLazyBS httpContext
-                                rrdpConf (getURL repoUri) (RrdpE . CantDownloadNotification . show)    
+    (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtIOEx) $ 
+                                downloadToLazyBS httpContext rrdpConf (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- hoistHere $ rrdpNextStep repo notification
 
@@ -100,9 +100,9 @@ downloadAndUpdateRRDP
             where                     
                 downloadAndSave = do
                     ((rawContent, _), downloadedIn) <- timedMS $ 
-                            fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
-                                    (RrdpE . CantDownloadSnapshot . show)                 
-                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
+                            fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtIOEx) $ 
+                                    downloadHashedLazyBS httpContext rrdpConf uri hash                                    
+                                        (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
                     (validations, savedIn) <- timedMS $ handleSnapshotBS rawContent            
                     pure (repo { rrdpMeta = rrdpMeta' }, validations, downloadedIn, savedIn)   
 
@@ -129,9 +129,9 @@ downloadAndUpdateRRDP
                     pure (repo { rrdpMeta = rrdpMeta' }, validations)                    
 
                 downloadDelta (DeltaInfo uri hash serial) = do
-                    (rawContent, _) <- fromEitherM $ downloadHashedLazyBS httpContext rrdpConf uri hash
-                                            (RrdpE . CantDownloadDelta . show)
-                                            (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
+                    (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtIOEx) $ 
+                                            downloadHashedLazyBS httpContext rrdpConf uri hash
+                                                (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                     pure rawContent
 
                 serials = map (^. typed @Serial) sortedDeltas
