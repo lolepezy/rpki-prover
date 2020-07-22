@@ -686,7 +686,7 @@ executeQueuedTxs :: Storage s =>
             AppContext s -> TopDownContext s -> IO ()
 executeQueuedTxs AppContext {..} TopDownContext {..} = do
     -- read element in chunks to make transactions not too frequent
-    readQueueChunked databaseQueue 10_000 $ \quuElems -> do
+    readQueueChunked databaseQueue 2_000 $ \quuElems -> do
         rwTx database $ \tx -> 
             for_ quuElems $ \f -> f tx
 
