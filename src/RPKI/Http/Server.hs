@@ -1,5 +1,4 @@
 {-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Http.Server where
 

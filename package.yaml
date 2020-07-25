@@ -19,14 +19,13 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
-default-extensions: ViewPatterns, LambdaCase, 
-                    ConstraintKinds, DataKinds, 
+default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, DataKinds, 
                     DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
-                    DuplicateRecordFields, FlexibleContexts, GADTs, 
-                    KindSignatures, MultiWayIf, NoMonomorphismRestriction, NumericUnderscores,
-                    PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
-                    StandaloneDeriving, TupleSections, TypeApplications, TypeFamilies, 
-                    TypeOperators
+                    DuplicateRecordFields, FlexibleContexts, GADTs,
+                    KindSignatures, MultiParamTypeClasses, MultiWayIf, NoMonomorphismRestriction, 
+                    NumericUnderscores, PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
+                    StandaloneDeriving, ScopedTypeVariables, TupleSections, TypeApplications, 
+                    TypeFamilies, TypeOperators
 
 dependencies:
 - base >= 4.7 && < 5
@@ -73,6 +72,7 @@ dependencies:
 - optparse-generic
 - pipes
 - primitive
+- safe-exceptions
 - semigroups
 - serialise
 - servant
