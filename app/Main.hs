@@ -137,7 +137,7 @@ createAppContext logger = do
         config = Config {
             talDirectory = tald,
             parallelism  = parallelism,
-            rsyncConf    = RsyncConf rsyncd (5 * 60),
+            rsyncConf    = RsyncConf rsyncd (4 * 60),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb

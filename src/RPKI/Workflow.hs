@@ -5,9 +5,10 @@
 
 module RPKI.Workflow where
 
+import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
 import           Control.Concurrent.STM
-import           Control.Concurrent.Async.Lifted
+import           Control.Exception.Lifted
 import           Control.Monad
 
 import           Control.Lens                     ((^.))
@@ -15,8 +16,9 @@ import           Data.Generics.Labels
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
+import           Data.Int                         (Int64)
 
-import           Data.Hourglass                  
+import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
@@ -38,9 +40,8 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 
-import System.Exit
-import Control.Exception.Lifted (try)
-import Data.Int (Int64)
+import           System.Exit
+
 
 
 type AppEnv = AppContext LmdbStorage
@@ -133,14 +134,18 @@ runWorkflow appContext@AppContext {..} tals = do
             in not $ closeEnoughMoments validatedAt now period
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
-        executeOrDie f onRight = do 
-            (r, elapsed) <- timedMS $ try f
-            case r of
-                Left (AppException (StorageE storageBroken)) -> 
-                    die [i|Storage error #{storageBroken}, exiting.|]
-                Left weird -> 
-                    logError_ logger [i|Something weird happened #{weird}, exiting.|]
-                Right z -> onRight z elapsed
+        executeOrDie f onRight = 
+            exec `catches` [
+                    Handler $ \(AppException (StorageE storageBroken)) ->
+                        die [i|Storage error #{storageBroken}, exiting.|],
+                    Handler $ \(weird :: SomeException) ->
+                        logError_ logger [i|Something weird happened #{weird}, exiting.|]
+                ] 
+            where
+                exec = do 
+                    (r, elapsed) <- timedMS f
+                    onRight r elapsed
+                     
                             
                                                                 
 

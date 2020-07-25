@@ -72,7 +72,6 @@ dependencies:
 - optparse-generic
 - pipes
 - primitive
-- safe-exceptions
 - semigroups
 - serialise
 - servant

@@ -67,7 +67,7 @@ downloadAndUpdateRRDP
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle all deltas bytecontents
     do
-    (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtIOEx) $ 
+    (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
                                 downloadToLazyBS httpContext rrdpConf (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- hoistHere $ rrdpNextStep repo notification
@@ -98,7 +98,7 @@ downloadAndUpdateRRDP
             where                     
                 downloadAndSave = do
                     ((rawContent, _), downloadedIn) <- timedMS $ 
-                            fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtIOEx) $ 
+                            fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                     downloadHashedLazyBS httpContext rrdpConf uri hash                                    
                                         (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
                     (validations, savedIn) <- timedMS $ handleSnapshotBS rawContent            
@@ -127,7 +127,7 @@ downloadAndUpdateRRDP
                     pure (repo { rrdpMeta = rrdpMeta' }, validations)                    
 
                 downloadDelta (DeltaInfo uri hash serial) = do
-                    (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtIOEx) $ 
+                    (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                                             downloadHashedLazyBS httpContext rrdpConf uri hash
                                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                     pure rawContent
@@ -226,7 +226,7 @@ saveSnapshot appContext rrdpStats snapshotContent = do
             -- split into writing transactions of 10000 elements to make them always finite 
             -- and independent from the size of the snapshot.
             fromTry 
-                (StorageE . StorageError . U.fmtIOEx)    
+                (StorageE . StorageError . U.fmtEx)    
                 (txFoldPipelineChunked 
                     cpuParallelism
                     (S.mapM newStorable $ S.each snapshotItems)
@@ -287,7 +287,7 @@ saveDelta appContext rrdpStats deltaContent = do
 
             -- TODO check that the session_id and serial are the same as in the notification file
             let deltaItemS = S.each $ delta ^. typed @[DeltaItem]
-            fromTry (StorageE . StorageError . U.fmtIOEx) 
+            fromTry (StorageE . StorageError . U.fmtEx) 
                 (txFoldPipelineChunked 
                     cpuParallelism
                     (S.mapM newStorable deltaItemS)

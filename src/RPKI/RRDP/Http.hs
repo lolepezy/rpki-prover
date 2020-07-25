@@ -167,7 +167,7 @@ fetchRpkiObject :: AppContext s ->
                 RrdpURL ->             
                 ValidatorT vc IO RpkiObject
 fetchRpkiObject appContext uri = withHttp $ \httpContext -> do
-    (content, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtIOEx) $
+    (content, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                         downloadToStrictBS 
                             httpContext
                             (appContext ^. typed @Config . typed @RrdpConf)
