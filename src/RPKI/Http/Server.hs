@@ -23,6 +23,7 @@ validatorServer AppContext {..} =
     :<|> liftIO getVRPs
     :<|> liftIO getVResults
     :<|> getStats
+    :<|> getRpkiObject
     where
         getVRPs = 
             getForTheLastVersion $ \tx lastVersion -> 
@@ -45,6 +46,11 @@ validatorServer AppContext {..} =
                     vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]      
 
         getStats = stats database
+
+        getRpkiObject hash = 
+            liftIO $ roTx objectStore $ \tx -> 
+                (RObject <$>) <$> getByHash tx objectStore hash
+            
 
         DB {..} = database
 

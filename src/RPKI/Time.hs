@@ -8,7 +8,7 @@ import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
 
-import           RPKI.Serialise.Orphans
+import           RPKI.Orphans.Serialise
 
 import GHC.Generics (Generic)
 import Codec.Serialise (Serialise)
