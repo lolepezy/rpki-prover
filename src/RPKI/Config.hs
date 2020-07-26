@@ -59,3 +59,6 @@ data HttpApiConf = HttpApiConf {
 
 getParallelism :: Natural 
 getParallelism = fromMaybe 1 $ toNatural numCapabilities
+
+setParallelism :: Natural -> IO ()
+setParallelism = setNumCapabilities . fromIntegral

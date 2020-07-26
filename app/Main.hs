@@ -126,8 +126,13 @@ createAppContext CLIOptions{..} logger = do
 
     versions <- liftIO createDynamicState
 
-    -- TODO Make it configurable
-    let para = cpuCount `orDefault` (2 * getParallelism)
+    -- Create 2 times more threads than there're CPUs available.
+    -- In most cases it seems to be beneficial.
+    para <- case cpuCount of 
+                Nothing -> pure $ 2 * getParallelism
+                Just c  -> do 
+                    liftIO $ setParallelism c
+                    pure $ 2 * c    
     let parallelism' = Parallelism para 64
 
     appBottlenecks <- liftIO $ do 
@@ -138,29 +143,29 @@ createAppContext CLIOptions{..} logger = do
     -- TODO read stuff from the config, CLI
     httpContext <- liftIO newHttpContext
 
-    pure $ AppContext {        
+    let appContext = AppContext {        
         logger = logger,
         config = Config {
             talDirectory = tald,
             parallelism  = parallelism',
-            rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeoutSeconds `orDefault` (7 * 60)),
+            rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb
                 -- TODO Make it configurable
                 maxSize = Size (lmdbSize `orDefault` 2048) * 1024 * 1024,
-                rrdpTimeout = Seconds $ rsyncTimeoutSeconds `orDefault` (5 * 60)
+                rrdpTimeout = Seconds $ rsyncTimeout `orDefault` (5 * 60)
             },
             validationConfig = ValidationConfig {
-                revalidationInterval           = Seconds $ revalidationIntervalSeconds `orDefault` (13 * 60),
-                rrdpRepositoryRefreshInterval  = Seconds $ rrdpRepositoryRefreshIntervalSeconds `orDefault` 120,
-                rsyncRepositoryRefreshInterval = Seconds $ rrdpRepositoryRefreshIntervalSeconds `orDefault` (11 * 660)
+                revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
+                rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
+                rsyncRepositoryRefreshInterval = Seconds $ rrdpRefreshInterval `orDefault` (11 * 660)
             },
             httpApiConf = HttpApiConf {
                 port = httpApiPort `orDefault` 9999
             },
             cacheCleanupInterval = 30 * 60,
-            cacheLifeTime = Seconds $ 60 * 60 * (cacheLifeTimeHours `orDefault` 72),
+            cacheLifeTime = Seconds $ 60 * 60 * (cacheLifetimeHours `orDefault` 72),
 
             -- TODO Think about it, it should be in lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
@@ -170,6 +175,9 @@ createAppContext CLIOptions{..} logger = do
         appBottlenecks = appBottlenecks,
         httpContext = httpContext
     }    
+
+    logDebugM logger [i|Created application context: #{config appContext}|]
+    pure appContext
     where
         m `orDefault` d = fromMaybe d m
 
@@ -214,32 +222,34 @@ data CLIOptions wrapped = CLIOptions {
         "Root directory (default is ${HOME}/.rpki/).",
 
     cpuCount :: wrapped ::: Maybe Natural <?> 
-        "CPU number available for the program (default is all CPUs).",
+        "CPU number available to the program (default is all CPUs).",
 
     reset :: wrapped ::: Bool <?> 
         "Reset the disk cache of (i.e. remove ~/.rpki/cache/*.mdb files.",
 
-    revalidationIntervalSeconds :: wrapped ::: Maybe Int64 <?>          
-        ("Revalidation interval in seconds, i.e. how often to re-download repositories are" 
-        `AppendSymbol` "updated and certificate tree is revalidated. "
+    revalidationInterval :: wrapped ::: Maybe Int64 <?>          
+        ("Re-validation interval in seconds, i.e. how often to re-download repositories are " 
+        `AppendSymbol` "updated and certificate tree is re-validated. "
         `AppendSymbol` "Default is 13 minutes, i.e. 780 seconds."),
 
-    cacheLifeTimeHours :: wrapped ::: Maybe Int64 <?> 
+    cacheLifetimeHours :: wrapped ::: Maybe Int64 <?> 
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
-    rrdpRepositoryRefreshIntervalSeconds :: wrapped ::: Maybe Int64 <?>          
+    rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>          
         ("Period of time after which an RRDP repository must be updated," 
         `AppendSymbol` "in seconds (default is 120 seconds)"),
 
-    rsyncRepositoryRefreshIntervalSeconds :: wrapped ::: Maybe Int64 <?>         
+    rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>         
         ("Period of time after which an rsync repository must be updated, "
         `AppendSymbol`  "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
-    rrdpTimeoutSeconds :: wrapped ::: Maybe Int64 <?> 
-        "Maximal period of time after which RRDP repository is considered unavailable",
+    rrdpTimeout :: wrapped ::: Maybe Int64 <?> 
+        ("Timeout for RRDP repositories. If fetching of a repository does not "
+        `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
 
-    rsyncTimeoutSeconds :: wrapped ::: Maybe Int64 <?> 
-        "Maximal period of time after which rsync repository is considered unavailable",
+    rsyncTimeout :: wrapped ::: Maybe Int64 <?> 
+        ("Timeout for rsync repositories. If fetching of a repository does not "
+        `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
 
     httpApiPort :: wrapped ::: Maybe Int16 <?> 
         "Port to listen to for http API (default is 9999)",
@@ -250,5 +260,7 @@ data CLIOptions wrapped = CLIOptions {
 } deriving (Generic)
 
 
-instance ParseRecord (CLIOptions Wrapped)
+instance ParseRecord (CLIOptions Wrapped) where
+    parseRecord = parseRecordWithModifiers lispCaseModifiers
+
 deriving instance Show (CLIOptions Unwrapped)
