@@ -50,11 +50,14 @@
   of the map and introduces a lot of fragmentation.
 + Exception processing for RRDP.Update as for Rsync
 + Timeouts for repository fetching 
-+ Call newManager for HTTP only once, it's very expensive
++ Call newManager for HTTP only once, it's very expensive+
++ Read config and CLI options
++ Set timeouts on repository downloads and interrupt downloads that are too long.
++ Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
+
 
 ---------------------------------  In progress ----------------------------------------
 
-- Read config and CLI options
 
 --------------------------------------- TODOs -----------------------------------------
 
@@ -63,6 +66,7 @@
 - Implement 'reset'.
 - Fix 'ctrl+c', it should stop the applications
 
+- SLURM (store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.)
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
@@ -71,16 +75,13 @@
 
 
 - Implement RTR server
+- Implement "object browser"
+- Implement UI
 
-- Set timeouts on repository downloads and interrupt downloads that are too long.
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
   choices when to download one or another.
-- Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
-
-- SLURM (store a json file? it's not very effient in case of AS0 in SLURM, so think about something 
-  more scalable, binary serialisation, etc.)
 
 - Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.
 

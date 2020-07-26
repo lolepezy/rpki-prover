@@ -125,7 +125,8 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - -with-rtsopts=-N    
+    - -with-rtsopts=-N 
+    - -with-rtsopts=-A32m 
     # - -fPIC
     # cc-options: -static
     # ld-options: -static -pthread  
