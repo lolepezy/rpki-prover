@@ -60,6 +60,7 @@
 
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
+- Implement 'reset'.
 - Fix 'ctrl+c', it should stop the applications
 
 

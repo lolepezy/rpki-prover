@@ -3,9 +3,10 @@
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE FlexibleInstances  #-}
 
 module Main where
-    
 import           Colog
 
 import           Control.Monad
@@ -28,6 +29,8 @@ import           Data.Text                        (Text)
 
 import           Data.String.Interpolate.IsString
 
+import           GHC.TypeLits
+
 import qualified Network.Wai.Handler.Warp         as Warp
 
 import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory, removeFile)
@@ -40,7 +43,6 @@ import           Options.Generic
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Http.Server
 import           RPKI.Logging
@@ -48,11 +50,14 @@ import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Util
 import           RPKI.TAL
-import           RPKI.Time
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Version
 import           RPKI.Workflow
+
+import           Data.Hourglass
+import           Data.Int                         (Int16, Int64)
+import           Numeric.Natural                  (Natural)
 
 
 
@@ -61,7 +66,9 @@ main = do
     -- load config file and apply command line options    
     logger <- createLogger
 
-    (appContext, validations) <- runValidatorT (vContext "configuration") $ createAppContext logger
+    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relyiing party software"
+
+    (appContext, validations) <- runValidatorT (vContext "configuration") $ createAppContext cliOptions logger
     case appContext of
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
@@ -98,12 +105,10 @@ runHttpApi :: AppEnv -> IO ()
 runHttpApi appContext = Warp.run 9999 $ httpApi appContext
     
 
-createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
-createAppContext logger = do    
-
-    -- TODO Make it configurable?
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT vc IO AppEnv
+createAppContext CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let rootDir = home </> ".rpki"
+    let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
     
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
@@ -122,11 +127,12 @@ createAppContext logger = do
     versions <- liftIO createDynamicState
 
     -- TODO Make it configurable
-    let parallelism = Parallelism (2 * getParallelism) 64
+    let para = cpuCount `orDefault` (2 * getParallelism)
+    let parallelism' = Parallelism para 64
 
     appBottlenecks <- liftIO $ do 
-        cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism
-        ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism
+        cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism'
+        ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism'
         pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     -- TODO read stuff from the config, CLI
@@ -136,37 +142,37 @@ createAppContext logger = do
         logger = logger,
         config = Config {
             talDirectory = tald,
-            parallelism  = parallelism,
-            rsyncConf    = RsyncConf rsyncd (4 * 60),
+            parallelism  = parallelism',
+            rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeoutSeconds `orDefault` 240),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb
                 -- TODO Make it configurable
-                maxSize = Size 2 * 1024 * 1024 * 1024,
-                rrdpTimeout = 3 * 60
+                maxSize = Size (lmdbSize `orDefault` 2048) * 1024 * 1024,
+                rrdpTimeout = Seconds $ rsyncTimeoutSeconds `orDefault` (3 * 60)
             },
             validationConfig = ValidationConfig {
-                -- generate new world version and revalidate every 13 minutes
-                revalidationInterval = 13 * 60,
-
-                -- RRDP repositories can be updated every 2 minutes
-                rrdpRepositoryRefreshInterval  = 2 * 60,
-
-                -- rsync repositories can be updated every 11 minutes
-                rsyncRepositoryRefreshInterval = 11 * 60
+                revalidationInterval           = Seconds $ revalidationIntervalSeconds `orDefault` (13 * 60),
+                rrdpRepositoryRefreshInterval  = Seconds $ rrdpRepositoryRefreshIntervalSeconds `orDefault` 120,
+                rsyncRepositoryRefreshInterval = Seconds $ rrdpRepositoryRefreshIntervalSeconds `orDefault` (11 * 660)
             },
-            cacheCleanupInterval = let halfAnHour = 30 * 60 in halfAnHour,
+            httpApiConf = HttpApiConf {
+                port = httpApiPort `orDefault` 9999
+            },
+            cacheCleanupInterval = 30 * 60,
+            cacheLifeTime = Seconds $ 60 * 60 * (cacheLifeTimeHours `orDefault` 72),
 
-            -- cacheLifeTime = let threeDays = 3 * 24 * 60 * 60 in threeDays,
-            cacheLifeTime = 24 * 60 * 60,
-
+            -- TODO Think about it, it should be in lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
         },
         versions = versions,
         database = database,
         appBottlenecks = appBottlenecks,
         httpContext = httpContext
-    }
+    }    
+    where
+        m `orDefault` d = fromMaybe d m
+
 
 createLogger :: IO AppLogger
 createLogger = do 
@@ -202,8 +208,47 @@ checkSubDirectory root sub = do
         True ->  pure $ Right talDirectory
 
 
-data Options = Options {
-    rpkiRootDirectory :: FilePath,
-    reset :: Bool
-} deriving (Eq, Ord, Show, Generic)
+-- CLI Options-related machinery
+data CLIOptions wrapped = CLIOptions {
+    rpkiRootDirectory :: wrapped ::: Maybe FilePath <?> 
+        "Root directory (default is ${HOME}/.rpki/).",
 
+    cpuCount :: wrapped ::: Maybe Natural <?> 
+        "CPU number available for the program (default is all CPUs).",
+
+    reset :: wrapped ::: Bool <?> 
+        "Reset the disk cache of (i.e. remove ~/.rpki/cache/*.mdb files.",
+
+    revalidationIntervalSeconds :: wrapped ::: Maybe Int64 <?>          
+        ("Revalidation interval in seconds, i.e. how often to re-download repositories are" 
+        `AppendSymbol` "updated and certificate tree is revalidated. "
+        `AppendSymbol` "Default is 13 minutes, i.e. 780 seconds."),
+
+    cacheLifeTimeHours :: wrapped ::: Maybe Int64 <?> 
+        "Lifetime of objects in the local cache, in hours (default is 72 hours)",
+
+    rrdpRepositoryRefreshIntervalSeconds :: wrapped ::: Maybe Int64 <?>          
+        ("Period of time after which an RRDP repository must be updated," 
+        `AppendSymbol` "in seconds (default is 120 seconds)"),
+
+    rsyncRepositoryRefreshIntervalSeconds :: wrapped ::: Maybe Int64 <?>         
+        ("Period of time after which an rsync repository must be updated, "
+        `AppendSymbol`  "in seconds (default is 11 minutes, i.e. 660 seconds)"),
+
+    rrdpTimeoutSeconds :: wrapped ::: Maybe Int64 <?> 
+        "Maximal period of time after which RRDP repository is considered unavailable",
+
+    rsyncTimeoutSeconds :: wrapped ::: Maybe Int64 <?> 
+        "Maximal period of time after which rsync repository is considered unavailable",
+
+    httpApiPort :: wrapped ::: Maybe Int16 <?> 
+        "Port to listen to for http API (default is 9999)",
+
+    lmdbSize :: wrapped ::: Maybe Int64 <?> 
+        "Maximal LMDB cache size in MBs (default is 2048mb)"
+
+} deriving (Generic)
+
+
+instance ParseRecord (CLIOptions Wrapped)
+deriving instance Show (CLIOptions Unwrapped)

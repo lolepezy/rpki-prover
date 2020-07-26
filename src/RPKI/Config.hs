@@ -26,6 +26,7 @@ data Config = Config {
     rsyncConf            :: RsyncConf,
     rrdpConf             :: RrdpConf,
     validationConfig     :: ValidationConfig,
+    httpApiConf          :: HttpApiConf,
     cacheCleanupInterval :: Seconds,
     cacheLifeTime        :: Seconds,
     oldVersionsLifetime  :: Seconds
@@ -50,6 +51,10 @@ data ValidationConfig = ValidationConfig {
     revalidationInterval :: Seconds,
     rrdpRepositoryRefreshInterval :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds
+} deriving stock (Show, Eq, Ord, Generic)
+
+data HttpApiConf = HttpApiConf {
+    port :: Int16    
 } deriving stock (Show, Eq, Ord, Generic)
 
 getParallelism :: Natural 
