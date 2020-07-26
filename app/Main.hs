@@ -143,13 +143,13 @@ createAppContext CLIOptions{..} logger = do
         config = Config {
             talDirectory = tald,
             parallelism  = parallelism',
-            rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeoutSeconds `orDefault` 240),
+            rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeoutSeconds `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb
                 -- TODO Make it configurable
                 maxSize = Size (lmdbSize `orDefault` 2048) * 1024 * 1024,
-                rrdpTimeout = Seconds $ rsyncTimeoutSeconds `orDefault` (3 * 60)
+                rrdpTimeout = Seconds $ rsyncTimeoutSeconds `orDefault` (5 * 60)
             },
             validationConfig = ValidationConfig {
                 revalidationInterval           = Seconds $ revalidationIntervalSeconds `orDefault` (13 * 60),
