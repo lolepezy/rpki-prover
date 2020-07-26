@@ -129,6 +129,10 @@ instance ToJSON PrefixesAndAsns
 instance ToJSON Instant where
     toJSON = toJSON . show
 
+-- TODO Maybe it's not the best thing to do 
+instance ToJSON DateTime where
+    toJSON = toJSON . show . Instant
+
 instance ToJSON RpkiURL where
     toJSON = toJSON . getURL
 
@@ -226,7 +230,6 @@ instance ToJSON a => ToJSON (X509.Signed a)
     
 instance ToJSON SignatureALG
 
-instance ToJSON DateTime
 instance ToJSON Date
 instance ToJSON TimeOfDay
 instance ToJSON Month
@@ -263,13 +266,12 @@ instance ToJSON E448.PublicKey where
 
 instance ToJSON BitArray
 instance ToJSON ASN1CharacterString
-instance ToJSON ASN1StringEncoding
 instance ToJSON ASN1TimeType
+instance ToJSON ASN1StringEncoding
 instance ToJSON ASN1Class
 instance ToJSON ASN1ConstructionType
 instance ToJSON SerializedPoint
 instance ToJSON Crypto.PubKey.ECC.Types.CurveName
-
 
 -- Parsing
 instance FromHttpApiData Hash where    
