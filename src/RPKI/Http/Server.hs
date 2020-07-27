@@ -5,7 +5,6 @@ module RPKI.Http.Server where
 
 import           Control.Monad.IO.Class
 import           Servant
-import           Servant.Server
 import           FileEmbedLzma
 import           Servant.Server.StaticFiles
 
