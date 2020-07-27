@@ -255,7 +255,10 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 
-        "Maximal LMDB cache size in MBs (default is 2048mb)"
+        "Maximal LMDB cache size in MBs (default is 2048mb)",
+
+    withUI :: wrapped ::: Maybe Bool <?>  
+        "Start web-based UI"
 
 } deriving (Generic)
 

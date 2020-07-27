@@ -15,7 +15,6 @@ import qualified Data.ByteString.Short      as BSS
 import           Data.Int
 import           Data.Proxy
 import           Data.Text                  (Text)
-import qualified Data.Text                  as Text
 
 import           Data.ByteArray             (convert)
 import           Data.Text.Encoding         (decodeUtf8, encodeUtf8)
@@ -61,12 +60,13 @@ instance EncodeOpts CSVOptions where
 
 type CSVType = CSV' 'HasHeader CSVOptions
 
-type API =     
-           "vrps.csv"  :> Get '[CSVType] [VRP]
-      :<|> "vrps.json" :> Get '[JSON] [VRP]
-      :<|> "validation-results" :> Get '[JSON] [ValidationResult]
-      :<|> "lmdb-stats" :> Get '[JSON] DBStats
-      :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)
+type API = "api" :> (     
+                "vrps.csv"  :> Get '[CSVType] [VRP]
+            :<|> "vrps.json" :> Get '[JSON] [VRP]
+            :<|> "validation-results" :> Get '[JSON] [ValidationResult]
+            :<|> "lmdb-stats" :> Get '[JSON] DBStats
+            :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)
+        )
 
 
 api :: Proxy API

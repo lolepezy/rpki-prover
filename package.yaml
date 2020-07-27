@@ -51,6 +51,7 @@ dependencies:
 - dlist
 - exceptions
 - filepath
+- file-embed-lzma
 - generic-lens
 - hashable
 - hex
@@ -103,6 +104,7 @@ dependencies:
 - quickcheck-instances
 - vector
 - warp
+- wai-app-static
 
 
 ghc-options:

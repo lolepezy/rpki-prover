@@ -1,9 +1,13 @@
 {-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE TemplateHaskell     #-}
 
 module RPKI.Http.Server where
 
 import           Control.Monad.IO.Class
 import           Servant
+import           Servant.Server
+import           FileEmbedLzma
+import           Servant.Server.StaticFiles
 
 import qualified Data.List.NonEmpty      as NonEmpty
 
@@ -49,11 +53,15 @@ validatorServer AppContext {..} =
 
         getRpkiObject hash = 
             liftIO $ roTx objectStore $ \tx -> 
-                (RObject <$>) <$> getByHash tx objectStore hash
-            
+                (RObject <$>) <$> getByHash tx objectStore hash            
 
         DB {..} = database
 
 
+embeddedUI :: Server Raw
+embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
+
 httpApi :: Storage s => AppContext s -> Application
-httpApi = serve api . validatorServer
+httpApi appContext = serve 
+                        (Proxy :: Proxy (API :<|> Raw))
+                        (validatorServer appContext :<|> embeddedUI)
