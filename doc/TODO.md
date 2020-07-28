@@ -44,6 +44,18 @@
 + Filter object names in RRDP (to prevent error coming from TAL file in the RRDP snapshot of AfriNIC)
 + it looks like validCount number is flaky and changes depending on (check it)
 + Fix lost VRPs
++ Database stats
++ Introduce artifical time-ordered keys for RpkiObjectStore, so that we avoid fragmentation. 
+  Having hashes as keys makes objects being added to and deleted from completely random places
+  of the map and introduces a lot of fragmentation.
++ Exception processing for RRDP.Update as for Rsync
++ Timeouts for repository fetching 
++ Call newManager for HTTP only once, it's very expensive+
++ Read config and CLI options
++ Set timeouts on repository downloads and interrupt downloads that are too long.
++ Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
++ Implement "object browser"
+
 
 ---------------------------------  In progress ----------------------------------------
 
@@ -54,27 +66,23 @@
 
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
+- Implement 'reset'.
 - Fix 'ctrl+c', it should stop the applications
+
+- SLURM (store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.)
 
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
-- Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
-- Read config and CLI options
+- ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Implement RTR server
+- Implement UI
 
-- Set timeouts on repository downloads and interrupt downloads that are too long.
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
   choices when to download one or another.
-- Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
-
-- SLURM (store a json file? it's not very effient in acse of AS0 in SLURM, so think about something 
-  more scalable, binary serialisation, etc.)
-
-- Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.
 
 - Keep in LMDB only the necessary part of an object after checking it's signature.
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)

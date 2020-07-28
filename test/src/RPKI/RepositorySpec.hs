@@ -4,11 +4,11 @@
 module RPKI.RepositorySpec where
 
 import           Test.Tasty
-import           Test.QuickCheck.Monadic
 import qualified Test.Tasty.QuickCheck as QC
 
 import           RPKI.Domain
 import           RPKI.Repository
+import           RPKI.Orphans
 
 import           RPKI.Orphans
 
@@ -28,7 +28,6 @@ repositoryGroup = testGroup "PublicationPoints" [
         QC.testProperty "RsyncMap is a semigroup" $ is_a_semigroup @RsyncMap,
         QC.testProperty "RrdpMap is a semigroup" $ is_a_semigroup @RrdpMap            
     ]
-
 
 is_a_semigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 is_a_semigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3

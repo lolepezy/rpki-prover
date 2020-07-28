@@ -5,7 +5,6 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
 
 
 module RPKI.TopDown where
@@ -29,7 +28,7 @@ import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
-import           Data.Maybe                       (listToMaybe, fromMaybe)
+import           Data.Maybe                       (fromMaybe)
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
@@ -57,6 +56,9 @@ import           RPKI.Time
 import           RPKI.Util                        (fmtEx)
 import           RPKI.Version
 import           RPKI.Validation.ObjectValidation
+
+import Data.Hourglass
+import System.Timeout (timeout)
 
 
 data Stats = Stats {
@@ -126,15 +128,17 @@ incValidObject TopDownContext {..} = liftIO $ atomically $
 -- TA certificate is up-to-date and valid.
 --
 validateTA :: Storage s => 
-            AppContext s -> TAL -> WorldVersion -> IO ()
+            AppContext s -> TAL -> WorldVersion -> IO (Either AppError ())
 validateTA appContext@AppContext {..} tal worldVersion = do    
-    (_, validations) <- runValidatorT taContext $
+    (z, validations) <- runValidatorT taContext $
             forChild (toText $ getTaCertURL tal) $ do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
 
-    writeVResult appContext validations worldVersion    
+    mapException (AppException . storageError) <$> 
+        writeVResult appContext validations worldVersion    
+    pure z
     where                            
         taContext = vContext taNameText
         TaName taNameText = getTaName tal
@@ -143,6 +147,8 @@ validateTA appContext@AppContext {..} tal worldVersion = do
 data TACertStatus = Existing | Updated
 
 -- | Fetch and validated TA certificate starting from the TAL.
+-- | 
+-- | This function doesn't throw exceptions.
 validateTACertificateFromTAL :: (WithVContext vc, Storage s) => 
                                 AppContext s -> 
                                 TAL -> 
@@ -177,8 +183,9 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
         taStore = database ^. #taStore   
 
 
--- | Do the actual validation starting from the TA certificate
--- 
+-- | Do the actual validation starting from the TA certificate.
+-- | 
+-- | This function doesn't throw exceptions.
 validateFromTACert :: (WithVContext env, Storage s) =>
                     AppContext s -> 
                     TaName -> 
@@ -206,14 +213,14 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
                 Set.fromList (map getRpkiURL $ NonEmpty.toList repos)
 
     fetchStatuses <- parallelTasks 
-                        (ioBottleneck appBottlenecks) 
-                        reposToFetch $ 
+                        (ioBottleneck appBottlenecks)
+                        reposToFetch 
                         (fetchRepository appContext taCertURI now)
 
     case partitionFailedSuccess fetchStatuses of 
         ([], _) -> do
             let flattenedStatuses = flip map fetchStatuses $ \case 
-                    FetchFailure r s _ -> (r, FailedAt s Nothing)
+                    FetchFailure r s _ -> (r, FailedAt s)
                     FetchSuccess r s _ -> (r, FetchedAt s)
 
             -- use publication points taken from the DB and updated with the 
@@ -224,14 +231,15 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
             -- this is for TA cert
             incValidObject topDownContext
 
-            -- Do the tree descend, gather validation results and VRPs
+            -- Do the tree descend, gather validation results and VRPs            
             fromTry (UnspecifiedE . fmtEx) $
                 validateCA appContext taCertURI topDownContext taCert                    
 
             -- get publication points from the topDownContext and save it to the database
-            pubPointAfterTopDown <- liftIO $ readTVarIO $ publicationPoints topDownContext            
-
-            Stats {..} <- liftIO $ readTVarIO (objectStats topDownContext)
+            (pubPointAfterTopDown, Stats {..}) <- liftIO $ atomically $ 
+                (,) <$> readTVar (publicationPoints topDownContext) <*>
+                        readTVar (objectStats topDownContext)
+            
             logDebugM logger [i|#{taName'} validCount = #{validCount} |]
 
             let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
@@ -257,23 +265,40 @@ fetchRepository
     parentContext 
     (Now now) 
     repo = liftIO $ do
-    logDebugM logger [i|Fetching #{getRpkiURL repo} |]    
-    let repoURL = getRpkiURL repo
-    let vContext' = childVC (toText repoURL) parentContext
-    ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
-            case repo of
-                RsyncR r -> 
-                    first RsyncR <$> updateObjectForRsyncRepository appContext r 
-                RrdpR r -> 
-                    first RrdpR <$> updateObjectForRrdpRepository appContext r
-    case r of
-        Left e -> do                        
-            logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
-            pure $ FetchFailure repo now (mError vContext' e <> v)
-        Right (resultRepo, vs) -> do
-            logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-            pure $ FetchSuccess resultRepo now (vs <> v)
+        let (Seconds duration, timeoutError) = case repoURL of
+                RrdpU _ -> (config ^. typed @RrdpConf . #rrdpTimeout, RrdpE RrdpDownloadTimeout)
+                RsyncU _ -> (config ^. typed @RsyncConf . #rsyncTimeout, RsyncE RsyncDownloadTimeout)
+        
+        r <- timeout (1000_000 * fromIntegral duration) fetchIt
+        case r of 
+            Nothing -> do 
+                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{duration}s.|]
+                pure $ FetchFailure repo now (mError vContext' timeoutError)
+            Just z -> pure z        
+    where 
+        repoURL = getRpkiURL repo
+        vContext' = childVC (toText repoURL) parentContext
 
+        fetchIt = do
+            logDebugM logger [i|Fetching #{repoURL} |]
+            ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
+                case repo of
+                    RsyncR r -> 
+                        first RsyncR <$> updateObjectForRsyncRepository appContext r 
+                    RrdpR r -> 
+                        first RrdpR <$> updateObjectForRrdpRepository appContext r
+            case r of
+                Left e -> do                        
+                    logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
+                    pure $ FetchFailure repo now (mError vContext' e <> v)
+                Right (resultRepo, vs) -> do
+                    logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
+                    pure $ FetchSuccess resultRepo now (vs <> v)
+
+
+fetchTimeout :: Config -> RpkiURL -> Seconds
+fetchTimeout config (RrdpU _)  = config ^. typed @RrdpConf . #rrdpTimeout
+fetchTimeout config (RsyncU _) = config ^. typed @RsyncConf . #rsyncTimeout
 
 type RepoTriple = (Repository, Instant, Validations)
 
@@ -375,7 +400,7 @@ validateCAWithQueue
 
             result <- fetchRepository appContext vContext' now repo                                
             let statusUpdate = case result of
-                    FetchFailure r t _ -> (r, FailedAt t Nothing)
+                    FetchFailure r t _ -> (r, FailedAt t)
                     FetchSuccess r t _ -> (r, FetchedAt t)  
 
             atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
@@ -434,8 +459,8 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             let stopDescend = do 
                     -- remember to come back to this certificate when the PP is fetched
                     -- logDebugM logger [i|to waiting list: #{getRpkiURL discoveredPP} + #{getHash certificate}.|]
-                    vContext' :: VContext <- asks getVC                    
-                    pure (asIfItIsMerged `shrinkTo` Set.singleton url, 
+                    vContext' <- asks getVC                    
+                    pure (asIfItIsMerged `shrinkTo` (Set.singleton url), 
                             toWaitingList
                                 (getRpkiURL discoveredPP) 
                                 (getHash certificate) 
@@ -589,7 +614,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
     case status of
         Pending         -> True
         FetchedAt time  -> tooLongAgo time
-        FailedAt time _ -> tooLongAgo time
+        FailedAt time   -> tooLongAgo time
     where
         tooLongAgo momendTnThePast = 
             not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
@@ -663,7 +688,7 @@ executeQueuedTxs :: Storage s =>
             AppContext s -> TopDownContext s -> IO ()
 executeQueuedTxs AppContext {..} TopDownContext {..} = do
     -- read element in chunks to make transactions not too frequent
-    readQueueChunked databaseQueue 10_000 $ \quuElems -> do
+    readQueueChunked databaseQueue 2_000 $ \quuElems -> do
         rwTx database $ \tx -> 
             for_ quuElems $ \f -> f tx
 
@@ -739,8 +764,6 @@ appTxEx ws err f txF = do
     env <- ask
     -- TODO Make it less ugly and complicated
     t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
-    validatorT $ pure $ either ((, mempty) . Left . err) id t
-
-
-storageError :: SomeException -> AppError
-storageError = StorageE . StorageError . fmtEx
+    validatorT $ pure $ case t of 
+                            Left e  -> (Left (err e), mempty)
+                            Right r -> r            

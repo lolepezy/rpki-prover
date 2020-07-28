@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
-module RPKI.Serialise.Orphans where
+module RPKI.Orphans.Serialise where
 
 import qualified Data.ByteString as BS
 
@@ -12,7 +12,6 @@ import Data.ByteArray (convert)
 
 import Data.ASN1.Types
 
-import GHC.Generics
 import Data.X509 as X509
 
 import Data.Hourglass
@@ -20,12 +19,15 @@ import Data.ASN1.BitArray
 import Crypto.Error
 import Crypto.PubKey.RSA.Types (PublicKey(..))
 import Crypto.PubKey.DSA (PublicKey(..), Params(..))
+
 import qualified Crypto.PubKey.Curve25519 as C25519
 import qualified Crypto.PubKey.Ed25519 as E25519
 import qualified Crypto.PubKey.Curve448 as C448
 import qualified Crypto.PubKey.Ed448 as E448
 
 import Crypto.PubKey.ECC.Types
+
+import RPKI.Orphans.Generics
 
 instance Serialise X509.Certificate
 instance Serialise X509.CRL
@@ -34,16 +36,6 @@ instance Serialise a => Serialise (X509.SignedExact a)
 instance Serialise a => Serialise (X509.Signed a) 
     
 instance Serialise SignatureALG
-
-deriving instance Generic DateTime
-deriving instance Generic Date
-deriving instance Generic TimeOfDay
-deriving instance Generic TimezoneOffset
-deriving instance Generic Month
-deriving instance Generic Hours
-deriving instance Generic Minutes
-deriving instance Generic Seconds
-deriving instance Generic NanoSeconds
 
 instance Serialise DateTime
 instance Serialise Date
@@ -92,21 +84,6 @@ instance Serialise ASN1Class
 instance Serialise ASN1ConstructionType
 instance Serialise SerializedPoint
 instance Serialise Crypto.PubKey.ECC.Types.CurveName
-
-deriving instance Generic ASN1
-
-deriving instance Generic Crypto.PubKey.RSA.Types.PublicKey
-deriving instance Generic Crypto.PubKey.DSA.PublicKey
-deriving instance Generic Crypto.PubKey.DSA.Params
-
-deriving instance Generic ASN1CharacterString
-deriving instance Generic ASN1StringEncoding
-deriving instance Generic ASN1TimeType
-deriving instance Generic ASN1Class
-deriving instance Generic ASN1ConstructionType
-deriving instance Generic Crypto.PubKey.ECC.Types.CurveName
-
-deriving instance Generic BitArray
 
 decodePK :: (BS.ByteString -> CryptoFailable b) -> Decoder s b
 decodePK f = f <$> decodeBytes >>= \case 

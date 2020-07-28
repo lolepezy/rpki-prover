@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -6,10 +5,14 @@
 module RPKI.Store.Base.MultiMap where
 
 import Codec.Serialise
-import GHC.TypeLits
 
-import RPKI.Store.Base.Storable
-import RPKI.Store.Base.Storage as S
+import qualified Data.ByteString          as BS
+
+import           GHC.TypeLits
+
+import           RPKI.Store.Base.Storable
+import           RPKI.Store.Base.Storage  as S
+
 
 data SMultiMap (name :: Symbol) s k v where
     SMultiMap :: Storage s => s -> SMultiMapImpl s name -> SMultiMap name s k v
@@ -43,3 +46,10 @@ allForKey :: (Serialise k, Serialise v) =>
 allForKey tx (SMultiMap _ s) k = reverse <$> S.foldMuForKey tx s (storableKey k) f []
     where
         f z _ (SValue sv) = pure $! fromStorable sv : z
+
+
+stats :: (Serialise k, Serialise v) =>
+        Tx s m -> SMultiMap name s k v -> IO SStats
+stats tx (SMultiMap _ s) = S.foldMu tx s f (SStats 0 0 0)
+    where
+        f stat skey svalue = pure $! incrementStats stat skey svalue

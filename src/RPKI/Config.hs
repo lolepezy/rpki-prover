@@ -26,13 +26,15 @@ data Config = Config {
     rsyncConf            :: RsyncConf,
     rrdpConf             :: RrdpConf,
     validationConfig     :: ValidationConfig,
+    httpApiConf          :: HttpApiConf,
     cacheCleanupInterval :: Seconds,
     cacheLifeTime        :: Seconds,
     oldVersionsLifetime  :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
-newtype RsyncConf = RsyncConf {
-    rsyncRoot :: FilePath
+data RsyncConf = RsyncConf {
+    rsyncRoot :: FilePath,
+    rsyncTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 newtype Size = Size Int64
@@ -41,7 +43,8 @@ newtype Size = Size Int64
 
 data RrdpConf = RrdpConf {
     tmpRoot :: FilePath,
-    maxSize :: Size
+    maxSize :: Size,
+    rrdpTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 data ValidationConfig = ValidationConfig {
@@ -52,5 +55,12 @@ data ValidationConfig = ValidationConfig {
     repositoryGracePeriod :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
+data HttpApiConf = HttpApiConf {
+    port :: Int16    
+} deriving stock (Show, Eq, Ord, Generic)
+
 getParallelism :: Natural 
 getParallelism = fromMaybe 1 $ toNatural numCapabilities
+
+setParallelism :: Natural -> IO ()
+setParallelism = setNumCapabilities . fromIntegral

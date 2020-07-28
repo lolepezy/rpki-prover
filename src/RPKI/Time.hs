@@ -8,7 +8,7 @@ import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
 
-import           RPKI.Serialise.Orphans
+import           RPKI.Orphans.Serialise
 
 import GHC.Generics (Generic)
 import Codec.Serialise (Serialise)
@@ -44,20 +44,24 @@ timedMS action = do
 
 nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
+{-# INLINE nanosPerSecond #-}
 
 toNanoseconds :: Instant -> Int64
 toNanoseconds (Instant instant) = 
     nanosPerSecond * seconds + nanos
     where 
         ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP instant
+{-# INLINE toNanoseconds #-}
 
 fromNanoseconds :: Int64 -> Instant
 fromNanoseconds totalNanos =    
     Instant $ timeConvert elapsed
     where 
         elapsed = ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos)
-        (seconds, nanos) = totalNanos `divMod` nanosPerSecond        
+        (seconds, nanos) = totalNanos `divMod` nanosPerSecond     
+{-# INLINE fromNanoseconds #-}
 
 closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
 closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds = 
     timeDiff secondMoment firstMoment < intervalSeconds
+{-# INLINE closeEnoughMoments #-}    

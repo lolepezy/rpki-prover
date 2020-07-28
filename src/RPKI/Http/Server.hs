@@ -1,10 +1,12 @@
 {-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
 
 module RPKI.Http.Server where
 
 import           Control.Monad.IO.Class
 import           Servant
+import           FileEmbedLzma
+import           Servant.Server.StaticFiles
 
 import qualified Data.List.NonEmpty      as NonEmpty
 
@@ -19,10 +21,12 @@ import           RPKI.Version
 
 
 validatorServer :: forall s . Storage s => AppContext s -> Server API
-validatorServer AppContext { database = DB {..}} = 
+validatorServer AppContext {..} = 
     liftIO getVRPs
     :<|> liftIO getVRPs
     :<|> liftIO getVResults
+    :<|> getStats
+    :<|> getRpkiObject
     where
         getVRPs = 
             getForTheLastVersion $ \tx lastVersion -> 
@@ -39,11 +43,24 @@ validatorServer AppContext { database = DB {..}} =
         getForTheLastVersion :: (Tx s 'RO -> WorldVersion -> IO [a]) -> IO [a]
         getForTheLastVersion f = 
             roTx versionStore $ \tx -> do 
-                versions <- allVersions tx versionStore
-                case versions of
+                versions' <- allVersions tx versionStore
+                case versions' of
                     [] -> pure []
-                    vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]                        
+                    vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]      
 
+        getStats = stats database
+
+        getRpkiObject hash = 
+            liftIO $ roTx objectStore $ \tx -> 
+                (RObject <$>) <$> getByHash tx objectStore hash            
+
+        DB {..} = database
+
+
+embeddedUI :: Server Raw
+embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
 
 httpApi :: Storage s => AppContext s -> Application
-httpApi = serve api . validatorServer
+httpApi appContext = serve 
+                        (Proxy :: Proxy (API :<|> Raw))
+                        (validatorServer appContext :<|> embeddedUI)

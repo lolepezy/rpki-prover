@@ -1,11 +1,8 @@
 {-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE NumericUnderscores        #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
 
 module RPKI.ResourcesSpec where
 

@@ -45,8 +45,8 @@ data FetchStatus
   = Pending
   | FetchedAt Instant
   | FailedAt {
-      failed :: Instant,
-      lastSucceded :: Maybe Instant
+      failed :: Instant
+    -- , lastSucceded :: Maybe Instant
   }
   deriving (Show, Eq, Generic, Serialise)
 
@@ -124,14 +124,15 @@ instance Semigroup RrdpRepository where
 instance Ord FetchStatus where
     compare s1 s2 = compare (timeAndStatus s1) (timeAndStatus s2)
         where             
-            timeAndStatus Pending       = (Nothing,     0 :: Int, Nothing)
-            timeAndStatus FailedAt {..} = (Just failed, 0,        lastSucceded)
-            timeAndStatus (FetchedAt t) = (Just t,      1,        Nothing) 
+            timeAndStatus Pending       = (Nothing,     0 :: Int)
+            timeAndStatus FailedAt {..} = (Just failed, 0)
+            timeAndStatus (FetchedAt t) = (Just t,      1) 
 
 instance Semigroup FetchStatus where
-    s1 <> s2 = case (s1, s2) of 
-        (FailedAt f1 ls1, FailedAt f2 ls2) -> FailedAt (max f1 f2) (max ls1 ls2)
-        _                                  -> max s1 s2
+    -- s1 <> s2 = case (s1, s2) of 
+    --     (FailedAt f1 ls1, FailedAt f2 ls2) -> FailedAt (max f1 f2) (max ls1 ls2)
+    --     _                                  -> max s1 s2
+    s1 <> s2 = max s1 s2
 
 instance Semigroup RsyncMap where
     rs1 <> rs2 = rs1 `mergeRsyncs` rs2

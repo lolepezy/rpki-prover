@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE QuasiQuotes         #-}
 {-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Rsync where
     
@@ -19,7 +18,7 @@ import           Control.Monad
 import           Control.Monad.Except
 
 import qualified Data.ByteString                  as BS
-import           Data.IORef
+import           Data.IORef.Lifted
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
@@ -35,6 +34,7 @@ import           RPKI.Repository
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Version
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 
@@ -48,10 +48,13 @@ import           System.IO
 import           System.Process.Typed
 
 import           System.IO.Posix.MMap             (unsafeMMapFile)
+import Control.Monad.Reader.Class (asks)
 
 
 
 -- | Download one file using rsync
+-- | 
+-- | This function doesn't throw exceptions.
 rsyncRpkiObject :: AppContext s -> 
                     RsyncURL -> 
                     ValidatorT vc IO RpkiObject
@@ -99,8 +102,7 @@ updateObjectForRsyncRepository
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
-            (validations, count) <- fromEitherM $ 
-                loadRsyncRepository appContext uri destination objectStore
+            (validations, count) <- loadRsyncRepository appContext uri destination objectStore
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
@@ -120,83 +122,96 @@ loadRsyncRepository :: Storage s =>
                         RsyncURL -> 
                         FilePath -> 
                         RpkiObjectStore s -> 
-                        IO (Either AppError (Validations, Integer))
-loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do        
-        counter <- newIORef 0
-        let cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
+                        ValidatorT vc IO (Validations, Integer)
+loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
+    parentContext <- asks getVC
+    worldVersion  <- liftIO $ getWorldVerion versions
 
-        (r1, r2) <- bracketChanClosable 
+    doSaveObjects parentContext worldVersion
+    where 
+        doSaveObjects parentContext worldVersion = do 
+            counter <- newIORef (0 :: Integer)
+            let cpuParallelism = config ^. typed @Parallelism . field @"cpuParallelism"
+
+            r <- liftIO $ try $ 
+                    bracketChanClosable 
                         cpuParallelism
                         traverseFS
                         (saveObjects counter)
                         kill
-        c <- readIORef counter        
-        pure $ void r1 >> (, c) <$> r2            
-    where
-        kill = cancelTask . snd
 
-        threads = cpuBottleneck appBottlenecks
+            c <- readIORef counter
+            case r of 
+                Left (AppException e) -> appError e
+                Right (_, z)          -> pure (z, c)
 
-        traverseFS queue = 
-            first (RsyncE . FileReadError . U.fmtEx) <$> 
-                try (readFiles queue rootPath)
-
-        readFiles queue currentPath = do
-            names <- getDirectoryContents currentPath
-            let properNames = filter (`notElem` [".", ".."]) names
-            forM_ properNames $ \name -> do
-                let path = currentPath </> name
-                doesDirectoryExist path >>= \case
-                    True  -> readFiles queue path
-                    False -> 
-                        when (supportedExtension path) $ do         
-                            let uri = pathToUri repositoryUrl rootPath path
-                            task <- (readAndParseObject path (RsyncU uri)) `strictTask` threads                                                                      
-                            atomically $ writeCQueue queue (uri, task)
             where
-                readAndParseObject filePath uri = do                                         
-                    (_, content)  <- getSizeAndContent filePath                
-                    case content of 
-                        Left e   -> pure $! SError e
-                        Right bs ->                            
-                            case first ParseE $ readObject uri bs of
-                                Left e   -> pure $! SError e
-                                -- All these bangs here make sense because
-                                -- 
-                                -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                                -- force computation of the serialised object and gain some parallelism
-                                -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                -- a slow CPU-intensive transaction (verify that it's the case)
-                                Right ro -> pure $! SObject $ toStorableObject ro
-        
-        saveObjects counter queue = 
-            first (StorageE . StorageError . U.fmtEx) <$> 
-                try (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
-            where            
-                go tx validations = 
-                    atomically (readCQueue queue) >>= \case 
-                        Nothing       -> pure validations
-                        Just (uri, a) -> try (waitTask a) >>= 
-                                            process tx uri validations >>= 
-                                            go tx
+                kill = cancelTask . snd
 
-                process tx (RsyncURL uri) validations = \case
-                    Left (e :: SomeException) -> do
-                        logError_ logger [i|An error reading and parsing the object: #{e}|]
-                        pure $ validations <> mError (vContext $ unURI uri) (UnspecifiedE $ U.fmtEx e)
-                    Right (SError e) -> do
-                        logError_ logger [i|An error parsing or serialising the object: #{e}|]
-                        pure $ validations <> mError (vContext $ unURI uri) e
-                    Right (SObject so@(StorableObject ro _)) -> do                        
-                        alreadyThere <- hashExists tx objectStore (getHash ro)
-                        if alreadyThere 
-                            then do
-                                -- complain
-                                pure ()
-                            else do 
-                                putObject tx objectStore so
-                                atomicModifyIORef' counter $ \c -> (c + 1, ())                            
-                        pure validations
+                threads = cpuBottleneck appBottlenecks
+
+                traverseFS queue = 
+                    mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
+                        traverseDirectory queue rootPath
+
+                traverseDirectory queue currentPath = do
+                    names <- getDirectoryContents currentPath
+                    let properNames = filter (`notElem` [".", ".."]) names
+                    forM_ properNames $ \name -> do
+                        let path = currentPath </> name
+                        doesDirectoryExist path >>= \case
+                            True  -> traverseDirectory queue path
+                            False -> 
+                                when (supportedExtension path) $ do         
+                                    let uri = pathToUri repositoryUrl rootPath path
+                                    task <- (readAndParseObject path (RsyncU uri)) `strictTask` threads                                                                      
+                                    atomically $ writeCQueue queue (uri, task)
+                    where
+                        readAndParseObject filePath uri = do                                         
+                            (_, content) <- getSizeAndContent filePath                
+                            case content of 
+                                Left e   -> pure $! SError e
+                                Right bs ->                            
+                                    case first ParseE $ readObject uri bs of
+                                        Left e   -> pure $! SError e
+                                        -- All these bangs here make sense because
+                                        -- 
+                                        -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
+                                        -- force computation of the serialised object and gain some parallelism
+                                        -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
+                                        -- a slow CPU-intensive transaction (verify that it's the case)
+                                        Right ro -> pure $! SObject $ toStorableObject ro
+                
+                saveObjects counter queue = do            
+                    mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
+                        (rwTx objectStore $ \tx -> go tx (mempty :: Validations))
+                    where            
+                        go tx validations = 
+                            atomically (readCQueue queue) >>= \case 
+                                Nothing       -> pure validations
+                                Just (uri, a) -> try (waitTask a) >>= 
+                                                    process tx uri validations >>= 
+                                                    go tx
+
+                        process tx (RsyncURL uri) validations = \case
+                            Left (e :: SomeException) -> do                        
+                                logError_ logger [i|An error reading and parsing the object: #{e}|]
+                                pure $ validations <> mError vc (UnspecifiedE $ U.fmtEx e)
+                            Right (SError e) -> do
+                                logError_ logger [i|An error parsing or serialising the object: #{e}|]
+                                pure $ validations <> mError vc e
+                            Right (SObject so@(StorableObject ro _)) -> do                        
+                                alreadyThere <- hashExists tx objectStore (getHash ro)
+                                if alreadyThere 
+                                    then do
+                                        -- complain
+                                        pure ()
+                                    else do 
+                                        putObject tx objectStore so worldVersion
+                                        atomicModifyIORef' counter $ \c -> (c + 1, ())                            
+                                pure validations
+                            where
+                                vc = childVC (unURI uri) parentContext
                     
 
 data RsyncMode = RsyncOneFile | RsyncDirectory

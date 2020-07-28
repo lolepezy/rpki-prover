@@ -19,14 +19,13 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
-default-extensions: ViewPatterns, LambdaCase, 
-                    ConstraintKinds, DataKinds, 
+default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, DataKinds, 
                     DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
-                    DuplicateRecordFields, FlexibleContexts, GADTs, 
-                    KindSignatures, MultiWayIf, NoMonomorphismRestriction, NumericUnderscores,
-                    PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
-                    StandaloneDeriving, TupleSections, TypeApplications, TypeFamilies, 
-                    TypeOperators
+                    DuplicateRecordFields, FlexibleContexts, GADTs,
+                    KindSignatures, MultiParamTypeClasses, MultiWayIf, NoMonomorphismRestriction, 
+                    NumericUnderscores, PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
+                    StandaloneDeriving, ScopedTypeVariables, TupleSections, TypeApplications, 
+                    TypeFamilies, TypeOperators
 
 dependencies:
 - base >= 4.7 && < 5
@@ -52,6 +51,7 @@ dependencies:
 - dlist
 - exceptions
 - filepath
+- file-embed-lzma
 - generic-lens
 - hashable
 - hex
@@ -104,6 +104,7 @@ dependencies:
 - quickcheck-instances
 - vector
 - warp
+- wai-app-static
 
 
 ghc-options:
@@ -126,7 +127,8 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - -with-rtsopts=-N    
+    - -with-rtsopts=-N 
+    - -with-rtsopts=-A32m 
     # - -fPIC
     # cc-options: -static
     # ld-options: -static -pthread  

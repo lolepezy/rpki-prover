@@ -2,7 +2,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Orphans where
 
@@ -336,11 +335,11 @@ instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncParent where
+instance Arbitrary RsyncMap where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncMap where
+instance Arbitrary RsyncParent where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

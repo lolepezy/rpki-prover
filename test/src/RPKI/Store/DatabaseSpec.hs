@@ -1,13 +1,10 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE RecordWildCards           #-}
-{-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE NumericUnderscores        #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Store.DatabaseSpec where
 
@@ -40,6 +37,7 @@ import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.Version
+import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB              (LmdbEnv)
 import           RPKI.Store.Util
@@ -79,15 +77,6 @@ repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
 
 
 
-sizes :: Storage s =>
-        RpkiObjectStore s ->  IO (Int, Int, Int)
-sizes objectStore =
-    roTx objectStore $ \tx ->
-        (,,) <$> M.size tx (objects objectStore)
-            <*> MM.size tx (byAKI objectStore)
-            <*> MM.size tx (mftByAKI objectStore)
-
-
 should_insert_and_get_all_back_from_object_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_object_store io = do  
     (_, DB {..}) <- io
@@ -101,9 +90,11 @@ should_insert_and_get_all_back_from_object_store io = do
     let ros2 = List.map (replaceAKI aki2) secondHalf
     let ros' = ros1 <> ros2 
 
+    Now now <- thisInstant 
+
     rwTx objectStore $ \tx -> 
         for_ ros' $ \ro -> 
-            putObject tx objectStore $ toStorableObject ro  
+            putObject tx objectStore (toStorableObject ro) (instantToVersion now)
 
     extracted <- roTx objectStore $ \tx -> getAll tx objectStore
     HU.assertEqual "Not the same objects" (sortOn getHash extracted) (sortOn getHash ros')
@@ -198,13 +189,13 @@ generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
 
 withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
-withDB testTree = withResource (makeLmdbStuff createDatabase) releaseLmdb testTree
+withDB = withResource (makeLmdbStuff createDatabase) releaseLmdb
 
 
 makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
 makeLmdbStuff mkStore = do 
     dir <- createTempDirectory "/tmp" "lmdb-test"
-    e <- mkLmdb dir 100
+    e <- mkLmdb dir 1000 1000 
     store <- mkStore e
     pure ((dir, e), store)
 

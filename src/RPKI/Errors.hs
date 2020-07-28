@@ -94,21 +94,23 @@ data RrdpError = BrokenXml Text |
                 LocalSerialBiggerThanRemote Serial Serial |
                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
                 CantDownloadFile Text |
-                CantDownloadNotification String |
-                CantDownloadSnapshot String |
-                CantDownloadDelta String |
+                CantDownloadNotification Text |
+                CantDownloadSnapshot Text |
+                CantDownloadDelta Text |
                 SnapshotHashMismatch Hash Hash |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType
+                UnsupportedObjectType | 
+                RrdpDownloadTimeout
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |
-                    RsyncDirError Text                    
+                    RsyncDirError Text |               
+                    RsyncDownloadTimeout
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

@@ -36,8 +36,18 @@ validatorT s = lift $ ExceptT $ do
                 put w
                 pure v
 
-fromTry :: Exception exc => (exc -> AppError) -> IO r -> ValidatorT env IO r
-fromTry mapErr t = fromEitherM $ first mapErr <$> try t
+-- This one is slightly heuristical: never catch AsyncExceptions.
+fromTry :: Exception exc => 
+            (exc -> AppError) -> 
+            IO r -> 
+            ValidatorT env IO r
+fromTry mapErr t =
+    fromEitherM $ (Right <$> t) `catch` recoverOrRethrow        
+    where
+        recoverOrRethrow e = 
+            case fromException (toException e) of
+                Just (SomeAsyncException _) -> throwIO e
+                Nothing                     -> pure $ Left $ mapErr e
 
 fromTryEither :: Exception exc =>
                 (exc -> AppError) -> IO (Either AppError r) -> ValidatorT env IO r

@@ -10,15 +10,17 @@ import           Codec.Serialise
 import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
 
-import           Control.Lens
-import           Data.Generics.Product.Typed
+import           Control.Concurrent.STM      (atomically)
+import           Control.Exception.Lifted    (mapException, SomeException)
+import           Control.Monad               (forM_, void)
+import qualified Data.List                   as List
 
 import           Data.Int
-import           Data.List                   (length)
 
 import           GHC.Generics
 
 import           RPKI.Domain
+import           RPKI.Errors
 import           RPKI.Store.Base.Map         (SMap (..))
 import           RPKI.Store.Base.MultiMap    (SMultiMap (..))
 import           RPKI.TAL
@@ -31,30 +33,28 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
-import           RPKI.Util (increment)
+import           RPKI.Util                   (increment, fmtEx)
 
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
 
-import           Control.Concurrent.STM      (atomically)
-import           Control.Monad               (forM_, void, when)
-import qualified Data.List as List
-
-
 
 data ROMeta = ROMeta {
-        validatedBy :: WorldVersion
+        insertedBy :: WorldVersion,
+        validatedBy :: Maybe WorldVersion
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass (Serialise)
 
 -- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
-    objects     :: SMap "objects" s Hash SValue,
-    byAKI       :: SMultiMap "byAKI" s AKI Hash,
-    mftByAKI    :: SMultiMap "mftByAKI" s AKI (Hash, Int),
-    objectMetas :: SMap "object-meta" s Hash ROMeta
+    keys        :: Sequence s,
+    objects     :: SMap "objects" s ArtificialKey SValue,
+    hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
+    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, Int),
+    objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
+
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
@@ -100,46 +100,66 @@ instance Storage s => WithStorage s (VersionStore s) where
 
 
 
-
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe RpkiObject)
-getByHash tx store h = (fromSValue <$>) <$> liftIO (M.get tx (objects store) h)
+getByHash tx store h = (snd <$>) <$> getByHash_ tx store h    
+
+getByHash_ :: (MonadIO m, Storage s) => 
+              Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (ArtificialKey, RpkiObject))
+getByHash_ tx RpkiObjectStore {..} h = liftIO $
+    M.get tx hashToKey h >>= \case
+        Nothing -> pure Nothing 
+        Just k  -> 
+            M.get tx objects k >>= \case 
+                Nothing -> pure Nothing 
+                Just sv -> pure $ Just (k, fromSValue sv)
+            
 
 putObject :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> m ()
-putObject tx store (StorableObject ro sv) = liftIO $ do
+            Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> WorldVersion -> m ()
+putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
     let h = getHash ro
-    M.put tx (objects store) h sv  
-    ifJust (getAKI ro) $ \aki' -> do 
-        MM.put tx (byAKI store) aki' h
-        case ro of
-            MftRO mft -> MM.put tx (mftByAKI store) aki' (h, getMftNumber mft)
-            _         -> pure ()
+    
+    M.get tx hashToKey h >>= \case
+        -- check if this object is already there, don't insert it twice
+        Just _  -> pure ()
+        Nothing -> do 
+            SequenceValue k <- nextValue tx keys
+            let key = ArtificialKey k
+            M.put tx hashToKey h key
+            M.put tx objects key sv  
+            M.put tx objectMetas key (ROMeta wv Nothing)  
+            ifJust (getAKI ro) $ \aki' ->
+                case ro of
+                    MftRO mft -> MM.put tx mftByAKI aki' (key, getMftNumber mft)
+                    _         -> pure ()
+        
+                
 
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
-hashExists tx store h = liftIO $ M.exists tx (objects store) h
+hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
 deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
-    ro' <- getByHash tx store h
-    ifJust ro' $ \ro -> do         
-        M.delete tx objects h
-        ifJust (getAKI ro) $ \aki' -> do 
-            MM.delete tx byAKI aki' h
+    p <- getByHash_ tx store h
+    ifJust p $ \(k, ro) -> do         
+        M.delete tx objects k
+        M.delete tx objectMetas k
+        M.delete tx hashToKey h
+        ifJust (getAKI ro) $ \aki' ->
             case ro of
-                MftRO mft -> MM.delete tx mftByAKI aki' (h, getMftNumber mft)
-                _         -> pure ()      
-        M.delete tx objectMetas h
+                MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftNumber mft)
+                _         -> pure ()        
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
-findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $ 
+findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
     MM.foldS tx mftByAKI aki' f Nothing >>= \case
-        Nothing        -> pure Nothing
-        Just (hash, _) -> do 
-            o <- getByHash tx store hash
+        Nothing     -> pure Nothing
+        Just (k, _) -> do 
+            o <- (fromSValue <$>) <$> M.get tx objects k
             pure $ case o of 
                 Just (MftRO mft) -> Just mft
                 _                -> Nothing
@@ -153,10 +173,12 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
 
 findMftsByAKI :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
-findMftsByAKI tx store aki' = liftIO $ 
-    MM.foldS tx (mftByAKI store) aki' f []
+findMftsByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
+    MM.foldS tx mftByAKI aki' f []
     where
-        f mfts _ (h, _) = accumulate <$> getByHash tx store h
+        f mfts _ (k, _) = do 
+            o <- (fromSValue <$>) <$> M.get tx objects k
+            pure $ accumulate o            
             where 
                 accumulate (Just (MftRO mft)) = mft : mfts
                 accumulate _                  = mfts            
@@ -165,10 +187,15 @@ findMftsByAKI tx store aki' = liftIO $
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
 markValidated tx RpkiObjectStore {..} hash wv = liftIO $ do
-    meta <- M.get tx objectMetas hash 
-    -- TODO If ROMeta stores more stuff, logic must be different
-    let meta' = maybe (ROMeta wv) (& typed @WorldVersion .~ wv) meta
-    M.put tx objectMetas hash meta'
+    k <- M.get tx hashToKey hash
+    ifJust k $ \key ->
+        M.get tx objectMetas key >>= \case
+            Nothing ->
+                -- Normally that should never happen
+                pure ()
+            Just meta -> do 
+                let m = meta { validatedBy = Just wv }
+                M.put tx objectMetas key m                        
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
@@ -190,7 +217,7 @@ ifJust a f = maybe (pure ()) f a
 putVResult :: (MonadIO m, Storage s) => 
             Tx s 'RW -> VResultStore s -> WorldVersion -> VResult -> m ()
 putVResult tx VResultStore {..} wv vr = liftIO $ do 
-    SequenceValue k <- nextValue tx keys     
+    SequenceValue k <- nextValue tx keys
     MM.put tx whToKey wv (ArtificialKey k)
     M.put tx results (ArtificialKey k) vr
 
@@ -241,32 +268,39 @@ deleteVersion tx (VersionStore s) wv = liftIO $ M.delete tx s wv
 -- Delete all the objects from the objectStore if they were 
 -- validated longer than certain time ago.
 cleanObjectCache :: (MonadIO m, Storage s) => 
-                    RpkiObjectStore s -> 
+                    DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m (Int, Int)
-cleanObjectCache objectStore@RpkiObjectStore {..} tooOld = liftIO $ do
+cleanObjectCache DB {..} tooOld = liftIO $ do
     kept    <- newIORef (0 :: Int)
     deleted <- newIORef (0 :: Int)
     
-    let readOldObjects queue = do
-            roTx objectStore $ \tx -> do
-                M.traverse tx objectMetas $ \hash ROMeta {..} -> do
-                    if tooOld validatedBy
-                        then increment deleted >> atomically (writeCQueue queue hash)
-                        else increment kept
-                    when (tooOld validatedBy) $ atomically $ writeCQueue queue hash
+    let queueForDeltionOrKeep worldVersion queue hash = 
+            if tooOld worldVersion
+                then increment deleted >> atomically (writeCQueue queue hash)
+                else increment kept
+
+    let readOldObjects queue =
+            roTx objectStore $ \tx ->
+                M.traverse tx (hashToKey objectStore) $ \hash key -> do
+                    r <- M.get tx (objectMetas objectStore) key
+                    ifJust r $ \ROMeta {..} -> 
+                        case validatedBy of
+                            Nothing           -> queueForDeltionOrKeep insertedBy queue hash
+                            Just validatedBy' -> queueForDeltionOrKeep validatedBy' queue hash
 
     -- Don't lock the DB for potentially too long, use big but finite chunks
-    let deleteObjects queue = do
-            readQueueChunked queue 50_000 $ \quuElems -> do
+    let deleteObjects queue =
+            readQueueChunked queue 50_000 $ \quuElems ->
                 rwTx objectStore $ \tx ->
                     forM_ quuElems $ deleteObject tx objectStore
 
-    void $ bracketChanClosable 
-            100_000
-            readOldObjects
-            deleteObjects
-            (const $ pure ())    
+    void $ mapException (AppException . storageError) <$> 
+                bracketChanClosable 
+                    100_000
+                    readOldObjects
+                    deleteObjects
+                    (const $ pure ())    
     
     (,) <$> readIORef deleted <*> readIORef kept
 
@@ -277,9 +311,10 @@ deleteOldVersions :: (MonadIO m, Storage s) =>
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m Int
-deleteOldVersions DB {..} tooOld = liftIO $ do
-    versions <- roTx versionStore $ \tx -> allVersions tx versionStore
+deleteOldVersions DB {..} tooOld = 
+    mapException (AppException . storageError) <$> liftIO $ do
 
+    versions <- roTx versionStore $ \tx -> allVersions tx versionStore    
     let toDelete = 
             case [ version | (version, FinishedVersion) <- versions ] of
                 []       -> 
@@ -302,6 +337,68 @@ deleteOldVersions DB {..} tooOld = liftIO $ do
     pure $ List.length toDelete
 
 
+data RpkiObjectStats = RpkiObjectStats {
+    objectsStats    :: !SStats,
+    mftByAKIStats   :: !SStats,
+    objectMetaStats :: !SStats,
+    hashToKeyStats  :: !SStats
+} deriving stock (Show, Eq, Generic)
+
+data VResultStats = VResultStats {
+    resultsStats :: !SStats,
+    whToKeyStats :: !SStats    
+} deriving stock (Show, Eq, Generic)
+
+data RepositoryStats = RepositoryStats {
+    rrdpStats  :: !SStats,
+    rsyncStats :: !SStats,
+    perTAStats :: !SStats    
+} deriving stock (Show, Eq, Generic)
+
+data DBStats = DBStats {
+    taStats         :: !SStats,
+    repositoryStats :: !RepositoryStats,
+    rpkiObjectStats :: !RpkiObjectStats,    
+    vResultStats    :: !VResultStats,    
+    vrpStats        :: !SStats,    
+    versionStats    :: !SStats
+} deriving stock (Show, Eq, Generic)
+
+
+-- Compute database stats
+stats :: (MonadIO m, Storage s) => 
+        DB s -> m DBStats
+stats db@DB {..} = liftIO $ roTx db $ \tx ->    
+    DBStats <$>
+        (let TAStore sm = taStore in M.stats tx sm) <*>
+        repositoryStats tx <*>
+        rpkiObjectStats tx <*>
+        vResultStats tx <*>
+        (let VRPStore sm = vrpStore in MM.stats tx sm) <*>
+        (let VersionStore sm = versionStore in M.stats tx sm)
+    where
+        rpkiObjectStats tx = 
+            let RpkiObjectStore {..} = objectStore
+            in RpkiObjectStats <$>
+                M.stats tx objects <*>
+                MM.stats tx mftByAKI <*>
+                M.stats tx objectMetas <*>
+                M.stats tx hashToKey
+
+        repositoryStats tx = 
+            let RepositoryStore {..} = repositoryStore
+            in RepositoryStats <$>
+                M.stats tx rrdpS <*>
+                M.stats tx rsyncS <*>
+                MM.stats tx perTA
+
+        vResultStats tx = 
+            let VResultStore {..} = resultStore
+            in VResultStats <$>
+                M.stats tx results <*>
+                MM.stats tx whToKey
+        
+
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -315,3 +412,7 @@ data DB s = DB {
 
 instance Storage s => WithStorage s (DB s) where
     storage DB {..} = storage taStore
+
+
+storageError :: SomeException -> AppError
+storageError = StorageE . StorageError . fmtEx    

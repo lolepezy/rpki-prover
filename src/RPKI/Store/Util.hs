@@ -19,19 +19,20 @@ import           RPKI.Store.Sequence
 createObjectStore :: LmdbEnv -> IO (RpkiObjectStore LmdbStorage)
 createObjectStore e =
     RpkiObjectStore <$>
-        (SMap lmdb <$> create e) <*>        
-        (SMultiMap lmdb <$> createMulti e) <*>
-        (SMultiMap lmdb <$> createMulti e) <*>
-        (SMap lmdb <$> create e)
+        createSequenceStore e "object-key" <*>
+        (SMap lmdb <$> createLmdbStore e) <*>        
+        (SMap lmdb <$> createLmdbStore e) <*>
+        (SMultiMap lmdb <$> createLmdbMultiStore e) <*>
+        (SMap lmdb <$> createLmdbStore e)
     where 
         lmdb = LmdbStorage e        
 
 createRepositoryStore :: LmdbEnv -> IO (RepositoryStore LmdbStorage)
 createRepositoryStore e = 
     RepositoryStore <$>
-        (SMap lmdb <$> create e) <*>
-        (SMap lmdb <$> create e) <*>
-        (SMultiMap lmdb <$> createMulti e)
+        (SMap lmdb <$> createLmdbStore e) <*>
+        (SMap lmdb <$> createLmdbStore e) <*>
+        (SMultiMap lmdb <$> createLmdbMultiStore e)
     where 
         lmdb = LmdbStorage e
 
@@ -39,32 +40,32 @@ createResultStore :: LmdbEnv -> IO (VResultStore LmdbStorage)
 createResultStore e = 
     VResultStore <$> 
         createSequenceStore e "vresult-key" <*>
-        (SMap lmdb <$> create e) <*>
-        (SMultiMap lmdb <$> createMulti e)
+        (SMap lmdb <$> createLmdbStore e) <*>
+        (SMultiMap lmdb <$> createLmdbMultiStore e)
     where 
         lmdb = LmdbStorage e
 
 createVRPStore :: LmdbEnv -> IO (VRPStore LmdbStorage)
-createVRPStore e = VRPStore . SMultiMap (LmdbStorage e) <$> createMulti e    
+createVRPStore e = VRPStore . SMultiMap (LmdbStorage e) <$> createLmdbMultiStore e    
 
 createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
-createTAStore e = TAStore . SMap (LmdbStorage e) <$> create e    
+createTAStore e = TAStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 createVersionStore :: LmdbEnv -> IO (VersionStore LmdbStorage)
-createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> create e    
+createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
-createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> create e    
+createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 
-mkLmdb :: FilePath -> Int -> IO LmdbEnv
-mkLmdb fileName maxReaders = 
+mkLmdb :: FilePath -> Int -> Int -> IO LmdbEnv
+mkLmdb fileName maxSizeMb maxReaders = 
     LmdbEnv <$> 
         initializeReadWriteEnvironment mapSize maxReaders maxDatabases fileName <*>
         createSemaphore maxReaders
     where
         -- TODO Make it configurable?
-        mapSize = 64*1024*1024*1024
+        mapSize = maxSizeMb * 1024 * 1024
         maxDatabases = 120
 
 closeLmdb :: Environment e -> IO ()

@@ -106,7 +106,7 @@ rangesIntersection p1 p2 getEnds fromRange =
             | otherwise -> fromRange (Range (max f1 f2) (min l1 l2))
         where
         (!f1, !l1, !f2, !l2) = getEnds p1 p2
-
+{-# INLINE rangesIntersection #-}    
 
 endsV4 :: Ipv4Prefix -> Ipv4Prefix -> (V4.IpAddress, V4.IpAddress, V4.IpAddress, V4.IpAddress)
 endsV4 (Ipv4Prefix ip1) (Ipv4Prefix ip2) = (f1, l1, f2, l2)
@@ -211,6 +211,7 @@ containsAsn (AS a) (ASRange b0 b1) = a >= b0 && a <= b1
 containsAsn (ASRange a0 a1) (AS b) = a0 == b && a1 == b
 containsAsn (ASRange a0 a1) (ASRange b0 b1) = 
     a0 >= b0 && a0 <= b1 && a1 >= b0 && a1 <= b1
+{-# INLINE containsAsn #-}    
 
 intersectionAsn :: AsResource -> AsResource -> [AsResource]
 intersectionAsn (AS a) (AS b)
@@ -229,6 +230,7 @@ intersectionAsn (ASRange a0 a1) (ASRange b0 b1)
     | a1 < b0 || a0 > b1 = []
     | otherwise          = [ASRange (max a0 b0) (min a1 b1)]
 
+{-# INLINE intersectionAsn #-}    
 
 subtractAsn :: AsResource -> AsResource -> [AsResource]
 subtractAsn (AS a) (AS b)
@@ -253,6 +255,7 @@ subtractAsn (ASRange a0 a1) (ASRange b0 b1) =
             | b0 > a0 && b1 < a1  = [ASRange a0 (pred b0), ASRange (succ b1) a1]
             | b0 > a0 && b1 >= a1 = [ASRange a0 (pred b0)]
 
+{-# INLINE subtractAsn #-}    
 
 optimiseAsns :: [AsResource] -> [AsResource]
 optimiseAsns = mapMaybe f 
@@ -262,6 +265,8 @@ optimiseAsns = mapMaybe f
             | a == b    = Just $ AS a
             | a > b     = Nothing
             | otherwise = Just r
+{-# INLINE optimiseAsns #-}    
+
 
 -- Bits munching
 fourW8sToW32 :: [Word8] -> Word32

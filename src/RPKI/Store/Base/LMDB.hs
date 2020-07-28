@@ -1,10 +1,7 @@
-{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE InstanceSigs          #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 
@@ -136,9 +133,9 @@ foldGeneric tx db f a0 withC makeProducer =
         readIORef z
 
 
-create :: forall name . KnownSymbol name => 
-            LmdbEnv -> IO (LmdbStore name)
-create env@LmdbEnv {..} = do
+createLmdbStore :: forall name . KnownSymbol name => 
+                    LmdbEnv -> IO (LmdbStore name)
+createLmdbStore env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy :: P.Proxy name)
     db <- withTransaction nativeEnv $ \tx -> openDatabase tx (Just name') dbSettings     
     pure $ LmdbStore db env
@@ -147,9 +144,9 @@ create env@LmdbEnv {..} = do
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             byteString byteString
 
-createMulti :: forall name . KnownSymbol name =>  
-                LmdbEnv -> IO (LmdbMultiStore name)
-createMulti env@LmdbEnv {..} = do
+createLmdbMultiStore :: forall name . KnownSymbol name =>  
+                        LmdbEnv -> IO (LmdbMultiStore name)
+createLmdbMultiStore env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy :: P.Proxy name)
     db <- withTransaction nativeEnv $ \tx -> openMultiDatabase tx (Just name') dbSettings 
     pure $ LmdbMultiStore db env
