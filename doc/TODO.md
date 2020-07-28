@@ -54,6 +54,7 @@
 + Read config and CLI options
 + Set timeouts on repository downloads and interrupt downloads that are too long.
 + Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
++ Implement "object browser"
 
 
 ---------------------------------  In progress ----------------------------------------
@@ -73,17 +74,13 @@
 
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
-
 - Implement RTR server
-- Implement "object browser"
 - Implement UI
 
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
   choices when to download one or another.
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
-
-- Have more general framework for "thread that read from the channel and does stuff", it's repeating all over the place.
 
 - Keep in LMDB only the necessary part of an object after checking it's signature.
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)

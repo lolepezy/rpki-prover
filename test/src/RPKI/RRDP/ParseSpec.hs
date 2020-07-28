@@ -45,7 +45,7 @@ prop_generate_and_parse_snapshot_creates_same_object = monadicIO $ do
   snapshot :: Snapshot <- pick arbitrary
   let xml = snaphostToXml snapshot
   let s = parseSnapshot (convert xml)
-  assert $ (Right snapshot) == s  
+  assert $ Right snapshot == s  
 
 prop_generate_and_parse_delta_creates_same_object :: QC.Property
 prop_generate_and_parse_delta_creates_same_object = monadicIO $ do
