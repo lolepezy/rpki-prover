@@ -339,6 +339,14 @@ instance Arbitrary RsyncMap where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary LastSuccededMap where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary FetchLastSuccess where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RsyncParent where
     arbitrary = genericArbitrary
     shrink = genericShrink

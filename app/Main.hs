@@ -156,9 +156,8 @@ createAppContext CLIOptions{..} logger = do
                 maxSize = Size (lmdbSize `orDefault` 2048) * 1024 * 1024,
                 rrdpTimeout = Seconds $ rsyncTimeout `orDefault` (5 * 60)
             },
-            validationConfig = ValidationConfig {
-                -- allow repositories to be down for 30 minutes before ignoring their objects
-                repositoryGracePeriod          = 30 * 60,
+            validationConfig = ValidationConfig {                
+                repositoryGracePeriod          = Nothing,
                 revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
                 rsyncRepositoryRefreshInterval = Seconds $ rrdpRefreshInterval `orDefault` (11 * 660)
@@ -253,11 +252,18 @@ data CLIOptions wrapped = CLIOptions {
         ("Timeout for rsync repositories. If fetching of a repository does not "
         `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
 
+    repositoryGracePeriod :: wrapped ::: Maybe Int64 <?> 
+        ("Period of time in seconds for which a repository is 'allowed' to be unavailable, "
+        `AppendSymbol` "before its cached objects are ignored. "
+        `AppendSymbol` "The default is zero, so repository objects are ignored immediately "
+        `AppendSymbol` "after the repository could not be successfully downloaded."),
+
     httpApiPort :: wrapped ::: Maybe Int16 <?> 
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 
-        "Maximal LMDB cache size in MBs (default is 2048mb)",
+        ("Maximal LMDB cache size in MBs (default is 2048mb). Note that about 1Gb of cache is "
+        `AppendSymbol` "required for every extra day of cache life time"),
 
     withUI :: wrapped ::: Maybe Bool <?>  
         "Start web-based UI"

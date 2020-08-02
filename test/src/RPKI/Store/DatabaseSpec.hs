@@ -150,7 +150,10 @@ should_insert_and_get_all_back_from_repository_store io = do
     let rsyncPPs = fromRsyncPPs repositoriesURIs 
     rrdpMap :: RrdpMap <- QC.generate arbitrary    
 
-    let createdPPs = rsyncPPs <> PublicationPoints rrdpMap mempty     
+    let lastSuccess = Map.fromList [ (RrdpU u, FetchLastSuccess t) | 
+            RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
+
+    let createdPPs = rsyncPPs <> PublicationPoints rrdpMap mempty (LastSuccededMap lastSuccess)
 
     storedPps1 <- roTx repositoryStore $ \tx -> 
                     getTaPublicationPoints tx repositoryStore taName1
@@ -171,7 +174,7 @@ should_insert_and_get_all_back_from_repository_store io = do
     keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
     let rrdpMap2 = RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
 
-    let shrunkPPs = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty     
+    let shrunkPPs = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty mempty
 
     let changeSet2 = changeSet storedPps2 shrunkPPs
 

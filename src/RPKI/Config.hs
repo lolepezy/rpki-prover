@@ -52,7 +52,7 @@ data ValidationConfig = ValidationConfig {
     rrdpRepositoryRefreshInterval :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds,
     -- allow repositories to be down for a while before completely ignoring their objects
-    repositoryGracePeriod :: Seconds
+    repositoryGracePeriod :: Maybe Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConf = HttpApiConf {

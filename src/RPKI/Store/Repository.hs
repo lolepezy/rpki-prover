@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -8,9 +7,6 @@ module RPKI.Store.Repository where
 import           Control.Monad.IO.Class
 
 import           Control.Monad
-
-import           Codec.Serialise
-import           GHC.Generics
 
 import qualified Data.Map.Strict          as Map
 
@@ -27,11 +23,12 @@ import           RPKI.Store.Base.Storage
 data RepositoryStore s = RepositoryStore {
     rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
     rsyncS :: SMap "rsync-repositories" s RsyncURL RsyncParent,
+    lastS  :: SMap "last-fetch-success" s RpkiURL FetchLastSuccess,
     perTA  :: SMultiMap "repositories-per-ta" s TaName RpkiURL
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _) = storage s
+    storage (RepositoryStore s _ _ _) = storage s
 
 
 putRepositories :: (MonadIO m, Storage s) => 
@@ -39,7 +36,8 @@ putRepositories :: (MonadIO m, Storage s) =>
 putRepositories tx RepositoryStore {..} 
                 PublicationPoints { 
                     rsyncs = RsyncMap rsyncs',
-                    rrdps = RrdpMap rrdps' } 
+                    rrdps = RrdpMap rrdps', 
+                    lastSucceded = LastSuccededMap lastSucceded'} 
                 taName' = liftIO $ do    
     forM_ (Map.toList rsyncs') $ \(u, p) -> do
             M.put tx rsyncS u p    
@@ -47,15 +45,17 @@ putRepositories tx RepositoryStore {..}
     forM_ (Map.toList rrdps') $ \(u, p) -> do
             M.put tx rrdpS u p    
             MM.put tx perTA taName' $ RrdpU u
+    forM_ (Map.toList lastSucceded') $ \(u, p) -> 
+            M.put tx lastS u p                
 
     
 applyChangeSet :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> 
                 RepositoryStore s -> 
-                ([Change RrdpRepository], [Change (RsyncURL, RsyncParent)]) -> 
+                ChangeSet -> 
                 TaName -> 
                 m ()
-applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' = 
+applyChangeSet tx RepositoryStore {..} (ChangeSet rrdpChanges rsyncChanges lastSucceded) taName' = 
     liftIO $ do
         -- Do the Remove first and only then Put
         let (rrdpPuts, rrdpRemoves) = separate rrdpChanges        
@@ -75,6 +75,12 @@ applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' =
         forM_ rsyncPuts $ \(uri', p) -> do
                 M.put tx rsyncS uri' p
                 MM.put tx perTA taName' (RsyncU uri')
+
+        let (lastSPuts, lastSRemoves) = separate lastSucceded
+        forM_ lastSRemoves $ \(uri', _) -> 
+                M.delete tx lastS uri'                
+        forM_ lastSPuts $ \(uri', p) ->
+                M.put tx lastS uri' p                
     where
         separate = foldr f ([], [])
             where 
@@ -85,19 +91,27 @@ applyChangeSet tx RepositoryStore {..} (rrdpChanges, rsyncChanges) taName' =
 getTaPublicationPoints :: (MonadIO m, Storage s) => 
                         Tx s mode -> RepositoryStore s -> TaName -> m PublicationPoints
 getTaPublicationPoints tx s taName' = liftIO $ do
-        (rrdpList, rsyncList) <- MM.foldS tx (perTA s) taName' mergeAllRepos ([], [])
+        (rrdpList, rsyncList, lastSucceded) <- MM.foldS 
+            tx (perTA s) taName' mergeAllRepos ([], [], [])
         pure $ PublicationPoints 
             (RrdpMap $ Map.fromList rrdpList) 
             (RsyncMap $ Map.fromList rsyncList)
+            (LastSuccededMap $ Map.fromList lastSucceded)
     where
-        mergeAllRepos result@(rrdps, rsyncs) _ index = 
-            case index of 
+        mergeAllRepos (rrdps, rsyncs, lastSucc) _ indexUrl = do
+            z <- M.get tx (lastS s) indexUrl 
+            let lastSucc' = case z of
+                    Nothing -> lastSucc
+                    Just ls -> (indexUrl, ls) : lastSucc
+            
+            let result = (rrdps, rsyncs, lastSucc')
+            case indexUrl of 
                 RrdpU uri' -> 
                     M.get tx (rrdpS s) uri' >>= \case
-                        Just r  -> pure ((uri', r) : rrdps, rsyncs)
-                        Nothing -> pure result                
+                        Just r  -> pure ((uri', r) : rrdps, rsyncs, lastSucc')
+                        Nothing -> pure result
                 RsyncU uri' -> 
                     M.get tx (rsyncS s) uri' >>= \case
-                        Just r  -> pure (rrdps, (uri', r) : rsyncs)
+                        Just r  -> pure (rrdps, (uri', r) : rsyncs, lastSucc')
                         Nothing -> pure result
                 

@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -12,6 +13,7 @@ import           Control.Lens
 import           GHC.Generics
 
 import           Data.Bifunctor
+import           Data.Ord
 import           Data.Generics.Labels
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
@@ -34,30 +36,33 @@ import           RPKI.Time
 
 import           RPKI.TAL
 import           RPKI.Util
-
+import Data.Semigroup
 
 
 data RepositoryFetchType = RRDP | Rsync
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass Serialise
 
+newtype FetchLastSuccess = FetchLastSuccess Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass Serialise
+    deriving (Semigroup) via Max Instant
+
 data FetchStatus
   = Pending
   | FetchedAt Instant
-  | FailedAt {
-      failed :: Instant
-    -- , lastSucceded :: Maybe Instant
-  }
-  deriving (Show, Eq, Generic, Serialise)
+  | FailedAt Instant  
+    deriving stock (Show, Eq, Generic)    
+    deriving anyclass Serialise
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass Serialise
 
 data RrdpRepository = RrdpRepository {
-        uri      :: !RrdpURL,
-        rrdpMeta :: !(Maybe (SessionId, Serial)),
-        status   :: !FetchStatus
+        uri         :: !RrdpURL,
+        rrdpMeta    :: !(Maybe (SessionId, Serial)),
+        status      :: !FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -73,27 +78,33 @@ data Repository = RrdpR !RrdpRepository |
     deriving anyclass Serialise
 
 data RsyncRepository = RsyncRepository {
-        repos  :: !RsyncPublicationPoint,
-        status :: !FetchStatus
+        repoPP      :: !RsyncPublicationPoint,
+        status      :: !FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data PublicationPoints = PublicationPoints {
     rrdps  :: RrdpMap,
-    rsyncs :: RsyncMap
+    rsyncs :: RsyncMap,
+    lastSucceded :: LastSuccededMap
 } deriving stock (Show, Eq, Ord, Generic)   
 
 data RsyncParent = ParentURI !RsyncURL | Root !FetchStatus
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncMap = RsyncMap (Map RsyncURL RsyncParent)
+newtype RsyncMap = RsyncMap { unRsyncMap :: Map RsyncURL RsyncParent }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid)
 
-newtype RrdpMap = RrdpMap (Map RrdpURL RrdpRepository)
+newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype (Monoid)
+
+newtype LastSuccededMap = LastSuccededMap (Map RpkiURL FetchLastSuccess)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid)
@@ -104,11 +115,7 @@ instance WithRpkiURL PublicationPoint where
 
 instance WithRpkiURL Repository where
     getRpkiURL (RrdpR (RrdpRepository {..})) = RrdpU uri
-    getRpkiURL (RsyncR (RsyncRepository RsyncPublicationPoint {..} _)) = RsyncU uri
-
-instance Semigroup PublicationPoints where
-    PublicationPoints rrdps1 rsyncs1 <> PublicationPoints rrdps2 rsyncs2 = 
-        PublicationPoints (rrdps1 <> rrdps2) (rsyncs1 <> rsyncs2)
+    getRpkiURL (RsyncR (RsyncRepository { repoPP = RsyncPublicationPoint {..} })) = RsyncU uri
 
 instance Semigroup RrdpRepository where
     RrdpRepository { uri = u1, rrdpMeta = m1, status = s1 } <> 
@@ -122,37 +129,42 @@ instance Semigroup RrdpRepository where
 
 -- always use the latest one
 instance Ord FetchStatus where
-    compare s1 s2 = compare (timeAndStatus s1) (timeAndStatus s2)
+    compare s1 s2 = comparing timeAndStatus s1 s2
         where             
-            timeAndStatus Pending       = (Nothing,     0 :: Int)
-            timeAndStatus FailedAt {..} = (Just failed, 0)
-            timeAndStatus (FetchedAt t) = (Just t,      1) 
+            timeAndStatus Pending       = (Nothing, 0 :: Int)
+            timeAndStatus (FailedAt t)  = (Just t,  0)
+            timeAndStatus (FetchedAt t) = (Just t,  1) 
 
+            
 instance Semigroup FetchStatus where
-    -- s1 <> s2 = case (s1, s2) of 
-    --     (FailedAt f1 ls1, FailedAt f2 ls2) -> FailedAt (max f1 f2) (max ls1 ls2)
-    --     _                                  -> max s1 s2
-    s1 <> s2 = max s1 s2
+    (<>) = max
 
 instance Semigroup RsyncMap where
     rs1 <> rs2 = rs1 `mergeRsyncs` rs2
 
+instance Semigroup LastSuccededMap where
+    LastSuccededMap ls1 <> LastSuccededMap ls2 = LastSuccededMap $ Map.unionWith (<>) ls1 ls2        
+
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
 
+instance Semigroup PublicationPoints where
+    PublicationPoints rr1 rs1 ls1 <> PublicationPoints rr2 rs2 ls2 = 
+        PublicationPoints (rr1 <> rr2) (rs1 <> rs2) (ls1 <> ls2)
+
 instance Monoid PublicationPoints where
     mempty = emptyPublicationPoints
-
+    
 
 rsyncR :: RsyncURL -> Repository
 rrdpR  :: RrdpURL  -> Repository
 rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) Pending
-rrdpR u = RrdpR $ RrdpRepository u Nothing Pending 
+rrdpR u = RrdpR $ RrdpRepository u Nothing Pending
 
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
-rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending 
+rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
 
 toRepository :: PublicationPoint -> Repository
 toRepository (RrdpPP r) = RrdpR r
@@ -163,7 +175,7 @@ fetchStatus (RsyncR RsyncRepository {..}) = status
 fetchStatus (RrdpR RrdpRepository {..})   = status
 
 toRepoStatusPairs :: PublicationPoints -> [(Repository, FetchStatus)]
-toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) = 
+toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap) _) = 
     rrdpList <> rsyncList
     where 
         rrdpList = map (\r -> (RrdpR r, r ^. typed)) (Map.elems rrdps)
@@ -172,20 +184,20 @@ toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) =
 
 
 hasURI :: RpkiURL -> PublicationPoints -> Bool
-hasURI u (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap)) = 
+hasURI u (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap) _) = 
     case u of
         RrdpU  rrdpUrl  -> isJust $ Map.lookup rrdpUrl rrdps
         RsyncU rsyncUrl -> isJust $ Map.lookup rsyncUrl rsyncMap    
 
 
 allURIs :: PublicationPoints -> Set RpkiURL
-allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) = 
+allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) = 
     Map.foldMapWithKey (\u _ -> Set.singleton $ RrdpU u) rrdps <> 
     Map.foldMapWithKey (\u _ -> Set.singleton $ RsyncU u) rsyncs
 
 
 findPublicationPointStatus :: RpkiURL -> PublicationPoints -> Maybe FetchStatus
-findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap) =     
+findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =     
     case u of
         RrdpU rrdpUrl   -> (^. #status) <$> Map.lookup rrdpUrl rrdps
         RsyncU rsyncUrl -> snd <$> findRsyncStatus rsyncMap rsyncUrl           
@@ -195,13 +207,13 @@ findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap) =
                 go u' =
                     Map.lookup u' m >>= \case            
                         ParentURI parentUri -> go parentUri
-                        Root status         -> pure (u, status)
+                        Root status       -> pure (u, status)
 
 
 repositoryHierarchy :: PublicationPoints -> 
                     (Map PublicationPoint Repository, 
                      Map Repository (Set PublicationPoint))
-repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) = 
+repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) = 
     (direct, inverse)    
     where
         direct = rrdp <> rsync    
@@ -217,8 +229,8 @@ repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) =
                 ]
         findRoot u = 
             Map.lookup u rsyncs >>= \case             
-                Root status         -> Just $ RsyncRepository (RsyncPublicationPoint u) status
-                ParentURI parentUri -> findRoot parentUri        
+                Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
+                ParentURI parentUri  -> findRoot parentUri        
                 
 
 
@@ -229,13 +241,14 @@ mergeRsyncs (RsyncMap m1) (RsyncMap m2) =
         mergeEach u parentOrStatus m = 
             case Map.splitLookup u m of        
                 (_, Just (ParentURI _), _) -> m
-                (_, Just (Root status), _) -> 
+                (_, Just r@(Root status), _) -> 
                     case parentOrStatus of
-                        Root status1 -> Map.insert u (Root $ status <> status1) m
+                        Root status1 -> 
+                            Map.insert u (Root (status <> status1)) m
                         ParentURI _  -> 
                             -- really weird case, we don't know what to do here,
                             -- but practically just overwrite the PP with a repository
-                            Map.insert u (Root status) m
+                            Map.insert u r m
 
                 (potentialParents, _, potentialChildren) -> 
                     replaceTheirParents $ Map.insert u parentUriOrStatus m
@@ -271,8 +284,17 @@ mergeRsyncPP (RsyncPublicationPoint u) pps =
     pps & typed %~ (RsyncMap (Map.singleton u (Root Pending)) <>)
 
 mergeRsyncRepo :: RsyncRepository -> PublicationPoints -> PublicationPoints
-mergeRsyncRepo (RsyncRepository (RsyncPublicationPoint u) status) pps = 
-    pps & typed %~ (RsyncMap (Map.singleton u (Root status)) <>)
+mergeRsyncRepo 
+    (RsyncRepository (RsyncPublicationPoint u) status) 
+    (PublicationPoints rrdps rsyncs lastSucceded) = 
+    PublicationPoints rrdps rsyncs' lastSucceded'
+    where
+        rsyncs'       = rsyncs <> RsyncMap (Map.singleton u (Root status)) 
+        lastSucceded' = 
+            case status of    
+                FetchedAt t -> lastSucceded <> LastSuccededMap (Map.singleton (RsyncU u) (FetchLastSuccess t))
+                _           -> lastSucceded
+        
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository { uri = u } pps = 
@@ -287,7 +309,7 @@ mergeRrdp r@RrdpRepository { uri = u } pps =
         rrdpLens = typed @RrdpMap . coerced    
 
 
--- | Merge rsync repositories into the hierarchy based on their URIs
+-- | Merge rsync publication points into the hierarchy based on their URIs
 -- e.g.
 --   rsync://host/foo/
 --     rsync://host/foo/bar/
@@ -297,14 +319,11 @@ mergeRrdp r@RrdpRepository { uri = u } pps =
 --       rsync://host/foo/baz/bop
 --
 fromRsyncPPs :: [RsyncPublicationPoint] -> PublicationPoints
-fromRsyncPPs = List.foldr mergeRsyncPP mempty
+fromRsyncPPs = List.foldr mergeRsyncPP emptyPublicationPoints
 
 emptyPublicationPoints :: PublicationPoints
-emptyPublicationPoints = PublicationPoints mempty mempty
+emptyPublicationPoints = PublicationPoints mempty mempty mempty
 
-
--- | Update repository and return the status of the repository 
--- | as it was before the update.
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
 mergePP (RrdpPP r) = mergeRrdp r
 mergePP (RsyncPP r) = mergeRsyncPP r    
@@ -313,8 +332,11 @@ mergeRepo :: Repository -> PublicationPoints -> PublicationPoints
 mergeRepo (RrdpR r) = mergeRrdp r
 mergeRepo (RsyncR r) = mergeRsyncRepo r    
 
-mergeRepos :: Foldable t =>  t Repository -> PublicationPoints -> PublicationPoints
+mergeRepos :: Foldable t => t Repository -> PublicationPoints -> PublicationPoints
 mergeRepos repos pps = foldr mergeRepo pps repos
+
+mergePPs :: Foldable t => t Repository -> PublicationPoints -> PublicationPoints
+mergePPs repos pps = foldr mergeRepo pps repos
 
 
 -- | Extract repositories from URIs in TAL and in TA certificate,
@@ -365,13 +387,21 @@ publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate
 data Change a = Put a | Remove a 
     deriving stock (Show, Eq, Ord, Generic)
 
+data ChangeSet = ChangeSet
+    [Change RrdpRepository]    
+    [Change (RsyncURL, RsyncParent)]
+    [Change (RpkiURL, FetchLastSuccess)]
+
+
 -- | Derive a diff between two states of publication points
-changeSet :: PublicationPoints -> PublicationPoints -> 
-            ([Change RrdpRepository], [Change (RsyncURL, RsyncParent)])
+changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncMap rsyncOld)) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncMap rsyncNew)) = 
-    (putNewRrdps <> removeOldRrdps, putNewRsyncs <> removeOldRsyncs)
+    (PublicationPoints (RrdpMap rrdpOld) (RsyncMap rsyncOld) (LastSuccededMap lastSuccededOld)) 
+    (PublicationPoints (RrdpMap rrdpNew) (RsyncMap rsyncNew) (LastSuccededMap lastSuccededNew)) = 
+    ChangeSet 
+        (putNewRrdps <> removeOldRrdps) 
+        (putNewRsyncs <> removeOldRsyncs)
+        (putNewSucceded <> removeOldSucceded)
     where
         -- TODO Don't generate removes if there's a PUT for the same URL
         rrdpOldSet = Set.fromList $ Map.elems rrdpOld
@@ -384,30 +414,46 @@ changeSet
         putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList
 
+        lastSuccededOldList = Map.toList lastSuccededOld
+        lastSuccededNewList = Map.toList lastSuccededNew
+        putNewSucceded    = map Put    $ filter (not . (\(u, p) -> Map.lookup u lastSuccededOld == Just p)) lastSuccededNewList        
+        removeOldSucceded = map Remove $ filter (not . (\(u, p) -> Map.lookup u lastSuccededNew == Just p)) lastSuccededOldList
 
+
+-- Update statuses of the repositories and last successful fetch times for the 
 updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus) -> PublicationPoints
 updateStatuses 
-    (PublicationPoints rrdps rsyncs) newStatuses = 
+    (PublicationPoints rrdps rsyncs lastSucceded) newStatuses = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdpUpdates))
             (rsyncs <> RsyncMap (Map.fromList rsyncUpdates))
+            (lastSucceded <> LastSuccededMap (Map.fromList lastSuccededUpdates))
     where
-        (rrdpUpdates, rsyncUpdates) = foldr foldRepos ([], []) newStatuses
+        (rrdpUpdates, rsyncUpdates, lastSuccededUpdates) = 
+            foldr foldRepos ([], [], []) newStatuses
 
-        foldRepos (RrdpR r@RrdpRepository {..}, newStatus) (rrdps', rsyncs') = 
-                    ((uri, r { status = newStatus } :: RrdpRepository) : rrdps', rsyncs')
-        foldRepos (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newStatus) (rrdps', rsyncs') = 
-                    (rrdps', (uri, Root newStatus) : rsyncs')
+        foldRepos (RrdpR r@RrdpRepository {..}, newStatus) (rrdps', rsyncs', lastS) = 
+                    ((uri, r { status = newStatus } :: RrdpRepository) : rrdps', 
+                    rsyncs', 
+                    status2Success (RrdpU uri) newStatus lastS)
+        foldRepos (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newStatus) (rrdps', rsyncs', lastS) = 
+                    (rrdps', 
+                    (uri, Root newStatus) : rsyncs', 
+                    status2Success (RsyncU uri) newStatus lastS)
+
+        status2Success u (FetchedAt t) lastS = (u, FetchLastSuccess t) : lastS
+        status2Success _ _             lastS = lastS
 
 
 -- Limit PublicationPoints only to the set of URIs in the set that comes the first argument.
 -- For rsync, also add all the parent URLs.
 shrinkTo :: PublicationPoints -> Set RpkiURL -> PublicationPoints
-shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs)) uris = 
-    PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs')
+shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (LastSuccededMap lastSucceded)) uris = 
+    PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs') (LastSuccededMap lastSucceded')
     where
-        rrdps'  = Map.filterWithKey (\u _ -> u `Set.member` rrdpURLs) rrdps
-        rsyncs' = Map.foldrWithKey addWithParents Map.empty rsyncs
+        rrdps'        = Map.filterWithKey (\u _ -> u `Set.member` rrdpURLs) rrdps
+        rsyncs'       = Map.foldrWithKey addWithParents Map.empty rsyncs
+        lastSucceded' = Map.filterWithKey (\u _ -> u `Set.member` uris) lastSucceded
 
         (rrdpURLs, rsyncURLs) = first Set.fromList $ 
                                     second Set.fromList $ 

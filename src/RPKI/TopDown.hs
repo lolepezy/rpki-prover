@@ -406,10 +406,20 @@ validateCAWithQueue
             atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
                 updateStatuses pubPoints [statusUpdate]
 
+
+            -- case result of
+            --     FetchFailure r t _ -> do  
+            --         (r, FailedAt t)
+            --     FetchSuccess r t _ -> do 
+            --         atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
+            --             updateStatuses pubPoints [(r, FetchedAt t)]
+
+            -- atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
+            --     updateStatuses pubPoints [statusUpdate]                
+
             case result of
                 FetchFailure _ t validations -> do 
                     let repositoryGracePeriod = appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod
-
                     pure validations 
                 FetchSuccess _ t validations -> do                                        
                     validateWaitingList waitingHashesForThesePPs                    

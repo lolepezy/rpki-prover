@@ -33,7 +33,7 @@ is_a_semigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 is_a_semigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 
 repositoriesURIs :: [RsyncPublicationPoint]
-repositoriesURIs = map (\s -> RsyncPublicationPoint (RsyncURL $ URI $ "rsync://host1.com/" <> s)) [
+repositoriesURIs = map (RsyncPublicationPoint . RsyncURL . URI . ("rsync://host1.com/" <>)) [
         "a",
         "a/b",
         "a/c",
