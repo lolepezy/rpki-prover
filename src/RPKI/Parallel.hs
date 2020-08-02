@@ -250,10 +250,10 @@ data BottleneckFullExecutor = Requestor | Submitter
 data Task m a
     = AsyncTask !(Async (StM m a))
     | RequestorTask !(m a)
-    | SubmitterTask !a
+    | SubmitterTask !(Async (StM m a))
 
 
--- | If the bootleneck is full, io will be execute by the caller of "waitTask"
+-- | If the bootleneck is full, `io` will be executed by the caller of `waitTask`
 lazyTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
 lazyTask io bottleneck = newTask io bottleneck Requestor
 
@@ -270,33 +270,46 @@ newTask :: (MonadBaseControl IO m, MonadIO m) =>
         m a -> Bottleneck -> BottleneckFullExecutor -> m (Task m a)
 newTask io (Bottleneck bottlenecks) execution = 
     join $ liftIO $ atomically $ do     
-        eachHasSomeSpace <- forM bottlenecks $ \(currentSize, maxSize) -> do 
-                                    cs <- readTVar currentSize
-                                    pure $ cs < maxSize        
+        eachHasSomeSpace <- someSpaceInBottleneck
         if and eachHasSomeSpace 
             then do 
                 incSizes
-                pure $! do 
-                    a <- async $ io `finally` liftIO (atomically decSizes)
-                    pure $ AsyncTask a    
+                pure $! AsyncTask <$> asyncForTask                    
             else pure $ 
                 case execution of
                     Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
-                    Submitter -> SubmitterTask <$> io    -- do it now                                      
+                    Submitter -> submitterTask
         where            
+            someSpaceInBottleneck =
+                forM bottlenecks $ \(currentSize, maxSize) -> do 
+                        cs <- readTVar currentSize
+                        pure $ cs < maxSize                        
+
             incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
             decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
 
+            asyncForTask = async $ io `finally` liftIO (atomically decSizes)
+
+            submitterTask = do 
+                a <- asyncForTask
+                -- Wait for either the task to finish, or only until there's 
+                -- some free space in the bottleneck.
+                void $ liftIO $ race 
+                    (wait a)
+                    (atomically $ do 
+                        thereSomeSpace <- someSpaceInBottleneck
+                        unless (and thereSomeSpace) retry)
+                pure $ SubmitterTask a    
 
 
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m a
 waitTask (RequestorTask t) = t
-waitTask (SubmitterTask a) = pure a
+waitTask (SubmitterTask a) = wait a
 waitTask (AsyncTask a)     = wait a
 
 cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m ()
 cancelTask (RequestorTask _) = pure ()
-cancelTask (SubmitterTask _) = pure ()
+cancelTask (SubmitterTask a) = cancel a
 cancelTask (AsyncTask a)     = cancel a
 
 
