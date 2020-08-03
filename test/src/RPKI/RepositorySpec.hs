@@ -18,8 +18,13 @@ repositoryGroup = testGroup "PublicationPoints" [
         QC.testProperty
             "Generates the same hierarchy regardless of the order"
             prop_creates_same_hierarchy_regardless_of_shuffle_map,
+
         QC.testProperty
-            "Make sure RsyncMap is a semigroup"
+            "Make sure RsyncMap is a commutative"
+            prop_rsync_map_is_commutative,
+
+        QC.testProperty
+            "Make sure RsyncMap is a semigroup (for a list of URLs)"
             prop_rsync_map_is_a_semigroup,
 
         QC.testProperty "FetchStatus is a semigroup" $ is_a_semigroup @FetchStatus,
@@ -68,5 +73,14 @@ prop_rsync_map_is_a_semigroup =
                     rm1 = fromRsyncPPs rs1
                     rm2 = fromRsyncPPs rs2
                     rm3 = fromRsyncPPs rs3
-                    in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3    
+                in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3    
+
+prop_rsync_map_is_commutative :: QC.Property
+prop_rsync_map_is_commutative = 
+    QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->         
+        QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->                     
+            let 
+                rm1 = fromRsyncPPs rs1
+                rm2 = fromRsyncPPs rs2                    
+            in rm1 <> rm2 == rm2 <> rm1
 

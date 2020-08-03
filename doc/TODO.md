@@ -55,6 +55,7 @@
 + Set timeouts on repository downloads and interrupt downloads that are too long.
 + Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
 + Implement "object browser"
++ add 'race (try $ wait) (atomically $ unless (isEmpty queue) retry)' to the submitTask (???)
 
 
 ---------------------------------  In progress ----------------------------------------
@@ -62,7 +63,6 @@
 - Introduce "fetch failure tolerance period" within which we are okay to use object from the cache in case repository fetching failed.
   It is not a monoid, so keep this RpkiUrl -> LastSuccessuflFetch as separate map. Use some 'merge' intead of '<>' to PublicationPoints.
 
-- add 'race (try $ wait) (atomically $ unless (isEmpty queue) retry)' to the submitTask (???)
 
 --------------------------------------- TODOs -----------------------------------------
 

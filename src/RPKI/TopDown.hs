@@ -265,14 +265,14 @@ fetchRepository
     parentContext 
     (Now now) 
     repo = liftIO $ do
-        let (Seconds duration, timeoutError) = case repoURL of
+        let (Seconds maxDduration, timeoutError) = case repoURL of
                 RrdpU _ -> (config ^. typed @RrdpConf . #rrdpTimeout, RrdpE RrdpDownloadTimeout)
                 RsyncU _ -> (config ^. typed @RsyncConf . #rsyncTimeout, RsyncE RsyncDownloadTimeout)
         
-        r <- timeout (1000_000 * fromIntegral duration) fetchIt
+        r <- timeout (1_000_000 * fromIntegral maxDduration) fetchIt
         case r of 
             Nothing -> do 
-                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{duration}s.|]
+                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDduration}s.|]
                 pure $ FetchFailure repo now (mError vContext' timeoutError)
             Just z -> pure z        
     where 
@@ -297,7 +297,7 @@ fetchRepository
 
 
 fetchTimeout :: Config -> RpkiURL -> Seconds
-fetchTimeout config (RrdpU _)  = config ^. typed @RrdpConf . #rrdpTimeout
+fetchTimeout config (RrdpU _)  = config ^. typed @RrdpConf .  #rrdpTimeout
 fetchTimeout config (RsyncU _) = config ^. typed @RsyncConf . #rsyncTimeout
 
 type RepoTriple = (Repository, Instant, Validations)
@@ -367,7 +367,7 @@ validateCAWithQueue
                     globalPPs           <- readTVar publicationPoints                    
                     alreadyTakenCareOf  <- readTVar takenCareOf
 
-                    let newGlobalPPs     = globalPPs <> ppsToFetch
+                    let newGlobalPPs     = adjustLastSucceeded $ globalPPs <> ppsToFetch
                     let discoveredURIs   = allURIs ppsToFetch
                     let urisToTakeCareOf = Set.difference discoveredURIs alreadyTakenCareOf
 
@@ -403,26 +403,19 @@ validateCAWithQueue
                     FetchFailure r t _ -> (r, FailedAt t)
                     FetchSuccess r t _ -> (r, FetchedAt t)  
 
-            atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
-                updateStatuses pubPoints [statusUpdate]
-
-
-            -- case result of
-            --     FetchFailure r t _ -> do  
-            --         (r, FailedAt t)
-            --     FetchSuccess r t _ -> do 
-            --         atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
-            --             updateStatuses pubPoints [(r, FetchedAt t)]
-
-            -- atomically $ modifyTVar' publicationPoints $ \pubPoints -> 
-            --     updateStatuses pubPoints [statusUpdate]                
-
+            pps <- atomically $ do 
+                    modifyTVar' publicationPoints $ \pubPoints -> updateStatuses pubPoints [statusUpdate]
+                    readTVar publicationPoints
+                        
             case result of
-                FetchFailure _ t validations -> do 
-                    let repositoryGracePeriod = appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod
-                    pure validations 
-                FetchSuccess _ t validations -> do                                        
-                    validateWaitingList waitingHashesForThesePPs                    
+                FetchFailure r _ validations -> 
+                    withinGracePeriod 
+                        (lastSuccess pps $ getRpkiURL r)
+                        (validateWaitingList waitingHashesForThesePPs >> pure validations)
+                        (pure validations)                    
+
+                FetchSuccess _ _ validations -> do
+                    validateWaitingList waitingHashesForThesePPs
                     pure validations
 
         -- Resume tree validation starting from every certificate on the waiting list.
@@ -445,6 +438,20 @@ validateCAWithQueue
                             ro ->
                                 logErrorM logger
                                     [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]            
+        
+        -- withinGracePeriod :: Bool
+        withinGracePeriod lastSuccessInstant yes no = 
+            case lastSuccessInstant of
+                Nothing             -> no
+                Just successInstant -> checkGracePeriod successInstant
+            where
+                Now n = now
+                checkGracePeriod successInstant = 
+                    case appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod of
+                        Nothing -> no
+                        Just repositoryGracePeriod 
+                            | closeEnoughMoments n successInstant repositoryGracePeriod -> yes
+                            | otherwise                                                     -> no
         
     
 
@@ -561,7 +568,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                                                 visitObject appContext topDownContext ro'
                                                 validateChild vContext' validCrl ro'
 
-                        pure $ mconcat childrenResults
+                        pure $ first adjustLastSucceeded $ mconcat childrenResults                                
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
     
