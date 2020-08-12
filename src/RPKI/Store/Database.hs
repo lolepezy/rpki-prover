@@ -344,14 +344,15 @@ data RpkiObjectStats = RpkiObjectStats {
     hashToKeyStats  :: !SStats
 } deriving stock (Show, Eq, Generic)
 
-data VResultStats = VResultStats {
+data VResultStats = VResultStats {     
     resultsStats :: !SStats,
-    whToKeyStats :: !SStats    
-} deriving stock (Show, Eq, Generic)
+    whToKeyStats :: !SStats
+} deriving  (Show, Eq, Generic)
 
 data RepositoryStats = RepositoryStats {
     rrdpStats  :: !SStats,
     rsyncStats :: !SStats,
+    lastSStats :: !SStats,
     perTAStats :: !SStats    
 } deriving stock (Show, Eq, Generic)
 
@@ -361,7 +362,8 @@ data DBStats = DBStats {
     rpkiObjectStats :: !RpkiObjectStats,    
     vResultStats    :: !VResultStats,    
     vrpStats        :: !SStats,    
-    versionStats    :: !SStats
+    versionStats    :: !SStats,
+    sequenceStats   :: !SStats
 } deriving stock (Show, Eq, Generic)
 
 
@@ -375,7 +377,8 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
         rpkiObjectStats tx <*>
         vResultStats tx <*>
         (let VRPStore sm = vrpStore in MM.stats tx sm) <*>
-        (let VersionStore sm = versionStore in M.stats tx sm)
+        (let VersionStore sm = versionStore in M.stats tx sm) <*>
+        M.stats tx sequences
     where
         rpkiObjectStats tx = 
             let RpkiObjectStore {..} = objectStore
@@ -390,6 +393,7 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
             in RepositoryStats <$>
                 M.stats tx rrdpS <*>
                 M.stats tx rsyncS <*>
+                M.stats tx lastS <*>
                 MM.stats tx perTA
 
         vResultStats tx = 
@@ -407,7 +411,8 @@ data DB s = DB {
     objectStore     :: RpkiObjectStore s,
     resultStore     :: VResultStore s,
     vrpStore        :: VRPStore s,
-    versionStore    :: VersionStore s
+    versionStore    :: VersionStore s,
+    sequences       :: SequenceMap s
 } deriving stock (Generic)
 
 instance Storage s => WithStorage s (DB s) where

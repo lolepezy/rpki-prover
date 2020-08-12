@@ -390,40 +390,59 @@ validateCAWithQueue
         -- list of this PP.
         fetchAndValidateWaitingList rootToPps repo (WaitingList waitingList) = do
 
+            -- Gather the PPs and hashes of the objects from their waiting lists
             let ppsForTheRepo = fromMaybe Set.empty $ Map.lookup repo rootToPps            
-            let waitingHashesForThesePPs = Set.toList $ fromMaybe Set.empty $ fold $ 
+            let waitingListForThesePPs = Set.toList $ fromMaybe Set.empty $ fold $ 
                     Set.map (\pp -> getRpkiURL pp `Map.lookup` waitingList) ppsForTheRepo
             
-            let vContext' = case waitingHashesForThesePPs of
+            -- try to recover the validation context
+            let vContext' = case waitingListForThesePPs of
                                 []              -> vc
                                 (_, vc', _) : _ -> vc'
 
-            result <- fetchRepository appContext vContext' now repo                                
-            let statusUpdate = case result of
-                    FetchFailure r t _ -> (r, FailedAt t)
-                    FetchSuccess r t _ -> (r, FetchedAt t)  
+            fetchResult <- fetchRepository appContext vContext' now repo                                            
 
             pps <- atomically $ do 
+                    let statusUpdate = case fetchResult of
+                            FetchFailure r t _ -> (r, FailedAt t)
+                            FetchSuccess r t _ -> (r, FetchedAt t)  
                     modifyTVar' publicationPoints $ \pubPoints -> updateStatuses pubPoints [statusUpdate]
                     readTVar publicationPoints
-                        
-            case result of
-                FetchFailure r _ validations -> 
-                    withinGracePeriod 
-                        (lastSuccess pps $ getRpkiURL r)
-                        (validateWaitingList waitingHashesForThesePPs >> pure validations)
-                        (pure validations)                    
 
-                FetchSuccess _ _ validations -> do
-                    validateWaitingList waitingHashesForThesePPs
-                    pure validations
+            let 
+                proceedWithValidation validations = validateWaitingList waitingListForThesePPs >> pure validations                
+                noFurtherValidation  = pure
+                Now now' = now
+                in case fetchResult of
+                    FetchSuccess _ _ validations -> proceedWithValidation validations
+                    FetchFailure r _ validations -> 
+                        -- check when was the last successful fetch of this URL
+                        case (lastSuccess pps $ getRpkiURL r) of
+                            Nothing -> do 
+                                logWarnM logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
+                                noFurtherValidation validations
+                            Just successInstant -> 
+                                case appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod of
+                                    Nothing -> noFurtherValidation validations
+                                    Just repositoryGracePeriod 
+                                        | closeEnoughMoments now' successInstant repositoryGracePeriod -> do 
+                                            logWarnM logger $ 
+                                                [i|Repository #{getRpkiURL r} failed, but grace period of #{repositoryGracePeriod} is set, |] <>
+                                                [i|last success #{successInstant}, current moment is #{now'}.|]    
+                                            proceedWithValidation validations
+                                        | otherwise -> do 
+                                            logWarnM logger $
+                                                [i|Repository #{getRpkiURL r} failed, grace period of #{repositoryGracePeriod} has expired, |] <>
+                                                [i|last success #{successInstant}, current moment is #{now'}.|]    
+                                            noFurtherValidation validations
+                                 
 
         -- Resume tree validation starting from every certificate on the waiting list.
         -- 
-        validateWaitingList waitingListHashes = do 
+        validateWaitingList waitingList = do 
             void $ parallelTasks 
                     (cpuBottleneck appBottlenecks) 
-                    waitingListHashes $ \(hash, certVContext, verifiedResources') -> do                    
+                    waitingList $ \(hash, certVContext, verifiedResources') -> do                    
                         o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                         case o of 
                             Just (CerRO waitingCertificate) -> do
@@ -438,20 +457,6 @@ validateCAWithQueue
                             ro ->
                                 logErrorM logger
                                     [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]            
-        
-        -- withinGracePeriod :: Bool
-        withinGracePeriod lastSuccessInstant yes no = 
-            case lastSuccessInstant of
-                Nothing             -> no
-                Just successInstant -> checkGracePeriod successInstant
-            where
-                Now n = now
-                checkGracePeriod successInstant = 
-                    case appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod of
-                        Nothing -> no
-                        Just repositoryGracePeriod 
-                            | closeEnoughMoments n successInstant repositoryGracePeriod -> yes
-                            | otherwise                                                     -> no
         
     
 
@@ -561,13 +566,21 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                                             when (null nameMatches) $ 
                                                 vWarn $ ManifestLocationMismatch filename objectLocations
 
-                                            liftIO $ do                                                        
+                                            liftIO $ do    
+                                                -- 
+                                                -- TODO This comment is literally wrong, we don't do it here!!!
+                                                --                                                    
                                                 -- Mark as validated all the children of the manifest regardless of
                                                 -- errors on the manifest, to avoid partial deletion of MFT children 
                                                 -- by the cache cleanup.
                                                 visitObject appContext topDownContext ro'
+
+                                                -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
+                                                -- or recursively validate CA if the child is a certificate.
                                                 validateChild vContext' validCrl ro'
 
+                        -- Combine PPs and their waiting lists. On top of it, fix the 
+                        -- last successfull validation times for PPs based on their fetch statuses.
                         pure $ first adjustLastSucceeded $ mconcat childrenResults                                
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
@@ -626,6 +639,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                 withEmptyPPs f = f >> pure (emptyPublicationPoints, mempty)
         
 
+-- Check if an URL need to be re-fetched, based on fetch status and current time.
 needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
 needsFetching r status ValidationConfig {..} (Now now) = 
     case status of
@@ -662,8 +676,8 @@ markValidatedObjects AppContext { database = DB {..}, .. } TopDownContext {..} =
 
 
 -- Do whatever is required to notify other subsystems that the object was touched 
--- during top-down validation. It doesn't the object is valida, just that we read
--- it from the database and looked at it.
+-- during top-down validation. It doesn't mean that the object is valid, just that 
+-- we read it from the database and looked at it.
 visitObject :: (MonadIO m, WithHash ro, WithLocations ro, Storage s) => 
                     AppContext s -> TopDownContext s -> ro -> m ()
 visitObject AppContext { database = DB {..}, .. } TopDownContext {..} ro = do

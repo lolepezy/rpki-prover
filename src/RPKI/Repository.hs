@@ -1,8 +1,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE OverloadedLabels           #-}
 
@@ -13,30 +11,29 @@ import           Control.Lens
 import           GHC.Generics
 
 import           Data.Bifunctor
-import           Data.Ord
 import           Data.Generics.Labels
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
+import           Data.Ord
 
-import           Data.X509                    (Certificate)
+import           Data.X509                   (Certificate)
 
-import           Data.List.NonEmpty           (NonEmpty (..))
+import           Data.List.NonEmpty          (NonEmpty (..))
 
-import qualified Data.List                    as List
-import           Data.Map.Strict              (Map)
-import qualified Data.Map.Strict              as Map
-import           Data.Maybe                   (isJust)
-import           Data.Set                     (Set)
-import qualified Data.Set                     as Set
+import qualified Data.List                   as List
+import           Data.Map.Strict             (Map)
+import qualified Data.Map.Strict             as Map
+import           Data.Maybe                  (isJust)
+import           Data.Set                    (Set)
+import qualified Data.Set                    as Set
 
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Parse.Parse
 import           RPKI.Time
 
+import           Data.Semigroup
 import           RPKI.TAL
 import           RPKI.Util
-import Data.Semigroup
 
 
 data RepositoryFetchType = RRDP | Rsync
@@ -490,6 +487,7 @@ shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (LastSuccededMap l
 --
 -- That's why adjusting lastSucceeded must happen as a separate step without all the semigroup laws.
 --
+-- There must be a more elegant way of doing this, but that works for now.
 adjustLastSucceeded :: PublicationPoints -> PublicationPoints
 adjustLastSucceeded 
     (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) lastSucceded) = 

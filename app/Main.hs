@@ -115,9 +115,9 @@ createAppContext CLIOptions{..} logger = do
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
     lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
 
-    let maxLmdbFileSizeMb = 2 * 1024
-    let maxReaderCount = 1024
-    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb maxLmdbFileSizeMb maxReaderCount
+    let maxLmdbReaderCount = 1024
+    let maxLmdbFileSizeMb = lmdbSize `orDefault` 2048    
+    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb maxLmdbFileSizeMb maxLmdbReaderCount
     database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
 
     -- clean up tmp directory if it's not empty
@@ -151,13 +151,12 @@ createAppContext CLIOptions{..} logger = do
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,
-                -- Do not download files bigger than 1Gb
-                -- TODO Make it configurable
-                maxSize = Size (lmdbSize `orDefault` 2048) * 1024 * 1024,
+                -- Do not download files bigger than 1Gb, it's fishy
+                maxSize = Size 1024 * 1024 * 1024,
                 rrdpTimeout = Seconds $ rsyncTimeout `orDefault` (5 * 60)
             },
             validationConfig = ValidationConfig {                
-                repositoryGracePeriod          = Nothing,
+                repositoryGracePeriod          = Seconds <$> repositoryGracePeriod,
                 revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
                 rsyncRepositoryRefreshInterval = Seconds $ rrdpRefreshInterval `orDefault` (11 * 660)
@@ -265,7 +264,7 @@ data CLIOptions wrapped = CLIOptions {
         ("Maximal LMDB cache size in MBs (default is 2048mb). Note that about 1Gb of cache is "
         `AppendSymbol` "required for every extra day of cache life time"),
 
-    withUI :: wrapped ::: Maybe Bool <?>  
+    withUi :: wrapped ::: Maybe Bool <?>  
         "Start web-based UI"
 
 } deriving (Generic)

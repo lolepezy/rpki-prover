@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+
 module RPKI.Store.Sequence where
 
 import           Codec.Serialise
@@ -18,9 +19,11 @@ import           RPKI.Store.Base.Storage
 newtype SequenceValue = SequenceValue Int64
     deriving (Show, Eq, Generic, Serialise)
 
+type SequenceMap s = SMap "sequences" s Text SequenceValue
+
 data Sequence s = Sequence {
     sequenceName :: Text,
-    sequences :: SMap "sequences" s Text SequenceValue
+    sequenceMap :: SMap "sequences" s Text SequenceValue
 }
 
 instance Storage s => WithStorage s (Sequence s) where
@@ -29,7 +32,7 @@ instance Storage s => WithStorage s (Sequence s) where
 nextValue :: Storage s =>             
             Tx s 'RW -> Sequence s -> IO SequenceValue
 nextValue tx Sequence {..} = do    
-    current <- M.get tx sequences sequenceName
+    current <- M.get tx sequenceMap sequenceName
     let next = SequenceValue $ maybe 1 (\(SequenceValue n) -> n + 1) current
-    M.put tx sequences sequenceName next
+    M.put tx sequenceMap sequenceName next
     pure next
