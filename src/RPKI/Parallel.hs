@@ -283,7 +283,7 @@ newTask io (Bottleneck bottlenecks) execution =
             someSpaceInBottleneck =
                 forM bottlenecks $ \(currentSize, maxSize) -> do 
                         cs <- readTVar currentSize
-                        pure $ cs < maxSize                        
+                        pure $! cs < maxSize                        
 
             incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
             decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
@@ -291,6 +291,7 @@ newTask io (Bottleneck bottlenecks) execution =
             asyncForTask = async $ io `finally` liftIO (atomically decSizes)
 
             submitterTask = do 
+                liftIO $ atomically incSizes
                 a <- asyncForTask
                 -- Wait for either the task to finish, or only until there's 
                 -- some free space in the bottleneck.
