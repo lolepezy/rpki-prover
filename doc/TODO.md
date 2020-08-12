@@ -56,19 +56,17 @@
 + Store verified resource set in the waiting list for an overclaiming certificate, to recover the process properly.
 + Implement "object browser"
 + add 'race (try $ wait) (atomically $ unless (isEmpty queue) retry)' to the submitTask (???)
-
++ Introduce "fetch failure tolerance period" within which we are okay to use object from the cache in case repository fetching failed.
+  It is not a monoid, so keep this RpkiUrl -> LastSuccessuflFetch as separate map. Use some 'merge' intead of '<>' to PublicationPoints.
 
 ---------------------------------  In progress ----------------------------------------
 
-- Introduce "fetch failure tolerance period" within which we are okay to use object from the cache in case repository fetching failed.
-  It is not a monoid, so keep this RpkiUrl -> LastSuccessuflFetch as separate map. Use some 'merge' intead of '<>' to PublicationPoints.
+- Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 
 
 --------------------------------------- TODOs -----------------------------------------
 
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
-
-- Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 
 - Implement 'reset'.
 - Fix 'ctrl+c', it should stop the applications
