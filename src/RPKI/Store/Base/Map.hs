@@ -6,8 +6,6 @@ module RPKI.Store.Base.Map where
 
 import           Codec.Serialise
 
-import qualified Data.ByteString          as BS
-
 import           GHC.TypeLits
 
 import           Data.Maybe               (isJust)
