@@ -9,6 +9,7 @@ module RPKI.RRDP.Update where
 
 import           Control.Lens                     ((^.))
 import           Control.Monad.Except
+import           Control.Exception.Lifted (finally)
 import           Control.Monad.Reader.Class
 import           Data.Generics.Product.Typed
 
@@ -36,13 +37,14 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Time
-import           RPKI.Version
 import qualified RPKI.Util                        as U
+import           RPKI.Version
 
 import           Data.IORef.Lifted
 
 import qualified Streaming.Prelude                as S
 
+import           System.Mem                       (performGC)
 
 
 
@@ -86,15 +88,16 @@ downloadAndUpdateRRDP
     where        
         hoistHere = vHoist . fromEither . first RrdpE
                 
-        rrdpConf = appContext ^. typed @Config . typed
+        rrdpConf = appContext ^. typed @Config . typed @RrdpConf
         logger   = appContext ^. typed @AppLogger
         ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck
 
-        useSnapshot (SnapshotInfo uri hash) notification = do       
-            logDebugM logger [i|#{uri}: downloading snapshot.|]
-            (r, v, downloadedIn, savedIn) <- downloadAndSave
-            logDebugM logger [i|#{uri}: downloaded in #{downloadedIn} and saved snapshot in #{savedIn}.|]                        
-            pure (r, v)
+        useSnapshot (SnapshotInfo uri hash) notification = 
+            forChild (U.convert uri) $ do       
+                logDebugM logger [i|#{uri}: downloading snapshot.|]
+                (r, v, downloadedIn, savedIn) <- downloadAndSave
+                logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot in #{savedIn}ms.|]                        
+                pure (r, v)
             where                     
                 downloadAndSave = do
                     ((rawContent, _), downloadedIn) <- timedMS $ 
@@ -109,7 +112,11 @@ downloadAndUpdateRRDP
         useDeltas sortedDeltas notification = do
             let repoURI = getURL $ repo ^. #uri
             logDebugM logger [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
-            (r, elapsed) <- timedMS downloadAndSave
+
+            -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
+            -- they will hold too much files open.
+            (r, elapsed) <- timedMS $ downloadAndSave `finally` liftIO performGC
+
             logDebugM logger [i|#{repoURI}: downloaded and saved deltas, took #{elapsed}ms.|]                        
             pure r
             where
@@ -123,7 +130,7 @@ downloadAndUpdateRRDP
                                         downloadDelta
                                         (\bs validations -> (validations <>) <$> handleDeltaBS bs)
                                         (mempty :: Validations)
-
+                    
                     pure (repo { rrdpMeta = rrdpMeta' }, validations)                    
 
                 downloadDelta (DeltaInfo uri hash serial) = do
@@ -156,8 +163,8 @@ rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} =
     Right $ UseSnapshot snapshotInfo
 rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notification{..} =
     if  | sessionId /= repoSessionId -> Right $ UseSnapshot snapshotInfo
-        | repoSerial > serial  -> Left $ LocalSerialBiggerThanRemote repoSerial serial
-        | repoSerial == serial -> Right NothingToDo
+        | repoSerial > serial        -> Left $ LocalSerialBiggerThanRemote repoSerial serial
+        | repoSerial == serial       -> Right NothingToDo
         | otherwise ->
             case (deltas, nonConsecutive) of
                 ([], _) -> Right $ UseSnapshot snapshotInfo

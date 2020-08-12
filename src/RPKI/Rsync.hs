@@ -22,11 +22,11 @@ import           Data.IORef.Lifted
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
+import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.AppContext
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -34,13 +34,11 @@ import           RPKI.Repository
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import           RPKI.Version
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Version
 
-import           System.Directory                 (createDirectoryIfMissing,
-                                                   doesDirectoryExist,
-                                                   getDirectoryContents)
+import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
 import           System.FilePath                  ((</>))
 
 import           System.Exit
@@ -48,8 +46,10 @@ import           System.IO
 import           System.Process.Typed
 
 import           System.IO.Posix.MMap             (unsafeMMapFile)
-import Control.Monad.Reader.Class (asks)
 
+import           Control.Monad.Reader.Class       (asks)
+
+import           System.Mem                       (performGC)
 
 
 -- | Download one file using rsync
@@ -102,7 +102,11 @@ updateObjectForRsyncRepository
     logInfoM logger [i|Finished rsynching #{destination}|]
     case exitCode of  
         ExitSuccess -> do 
-            (validations, count) <- loadRsyncRepository appContext uri destination objectStore
+            -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
+            -- they will hold too much files open.
+            (validations, count) <- 
+                    loadRsyncRepository appContext uri destination objectStore
+                    `finally` liftIO performGC
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
             pure (repo, validations)
         ExitFailure errorCode -> do
