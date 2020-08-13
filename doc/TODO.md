@@ -58,14 +58,23 @@
 + add 'race (try $ wait) (atomically $ unless (isEmpty queue) retry)' to the submitTask (???)
 + Introduce "fetch failure tolerance period" within which we are okay to use object from the cache in case repository fetching failed.
   It is not a monoid, so keep this RpkiUrl -> LastSuccessuflFetch as separate map. Use some 'merge' intead of '<>' to PublicationPoints.
++ Check manifest SIA == manifest location
 
----------------------------------  In progress ----------------------------------------
+
+---------------------------------  In testing -----------------------------------------
 
 - Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 
 
+---------------------------------  In progress ----------------------------------------
+
 --------------------------------------- TODOs -----------------------------------------
 
+- Check signature algorithms (
+    http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
+    https://www.arin.net/announcements/20200812/)
+
+- Check CRL SIA == CRL location and CRL location on the MFT
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Implement 'reset'.
