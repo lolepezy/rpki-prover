@@ -52,6 +52,8 @@ data ValidationError = InvalidCert Text |
                         NoMFTNoRepository AKI Locations |
                         NoCRLOnMFT AKI Locations |
                         MoreThanOneCRLOnMFT AKI Locations [(Text, Hash)] |
+                        NoMFTSIA Locations |
+                        MFTOnDifferentLocation URI Locations |
                         NoCRLExists AKI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |

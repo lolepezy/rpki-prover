@@ -46,6 +46,7 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Update
 import           RPKI.RRDP.Http
+import           RPKI.Parse.Parse
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
@@ -337,7 +338,7 @@ validateCAWithQueue
     -- logInfoM logger [i|Starting to validate #{getLocations certificate}.|]    
 
     let treeDescend = do 
-            (r, validations) <- runValidatorT vc $ validateTree appContext topDownContext certificate
+            (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
             queueVResult appContext topDownContext validations            
             case r of
                 Left _alreadyQueued                -> pure ()
@@ -410,14 +411,15 @@ validateCAWithQueue
                     readTVar publicationPoints
 
             let 
-                proceedWithValidation validations = validateWaitingList waitingListForThesePPs >> pure validations                
+                proceedWithValidation validations = 
+                        validateWaitingList waitingListForThesePPs >> pure validations                
                 noFurtherValidation  = pure
                 Now now' = now
                 in case fetchResult of
                     FetchSuccess _ _ validations -> proceedWithValidation validations
                     FetchFailure r _ validations -> 
                         -- check when was the last successful fetch of this URL
-                        case (lastSuccess pps $ getRpkiURL r) of
+                        case lastSuccess pps $ getRpkiURL r of
                             Nothing -> do 
                                 logWarnM logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
                                 noFurtherValidation validations
@@ -463,12 +465,12 @@ validateCAWithQueue
 -- | Do top-down validation starting from the given certificate
 -- Returns the discovered publication points that are not registered 
 -- in the top-down context yet.
-validateTree :: Storage s =>
+validateCaCertificate :: Storage s =>
                 AppContext s ->
                 TopDownContext s ->
                 CerObject ->                
                 ValidatorT VContext IO (PublicationPoints, WaitingList)
-validateTree appContext@AppContext {..} topDownContext certificate = do          
+validateCaCertificate appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
     let validationConfig = appContext ^. typed @Config . typed
@@ -513,6 +515,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
             visitObject appContext topDownContext (CerRO certificate)
 
             mft <- findMft childrenAki certLocations'
+            checkMftLocation mft certificate
 
             -- this for the manifest
             incValidObject topDownContext
@@ -596,6 +599,19 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
         findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $ 
             mftEntries $ getCMSContent $ extract mft
 
+        -- Check that manifest URL in the certificate is the same as the one 
+        -- the manifest was actually fetched from.
+        checkMftLocation mft certficate = do
+            case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of
+                Nothing     -> vError $ NoMFTSIA $ getLocations certficate
+                Just mftSIA -> 
+                    let 
+                        mftLocations = getLocations mft
+                        in case NonEmpty.filter ((mftSIA ==) . getURL) mftLocations of 
+                            [] -> vWarn $ MFTOnDifferentLocation mftSIA mftLocations
+                            _ ->  pure ()
+
+
         validateChild :: VContext -> Validated CrlObject -> RpkiObject -> IO (PublicationPoints, WaitingList)
         validateChild parentContext validCrl ro = 
             case ro of
@@ -606,7 +622,7 @@ validateTree appContext@AppContext {..} topDownContext certificate = do
                                     Validated validCert <- validateResourceCert now childCert certificate validCrl
                                     validateResources verifiedResources childCert validCert 
                             let childTopDownContext = topDownContext { verifiedResources = Just childVerifiedResources }
-                            validateTree appContext childTopDownContext childCert 
+                            validateCaCertificate appContext childTopDownContext childCert 
                                     
                     queueVResult appContext topDownContext validations
                     pure $ case r of

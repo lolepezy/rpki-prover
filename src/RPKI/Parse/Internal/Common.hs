@@ -31,6 +31,8 @@ oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
 id_pe_sia, id_ad_rpki_notify, id_ad_rpki_repository :: OID
+id_ad_rpkiManifest :: OID
+
 
 oid_pkix = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
@@ -42,6 +44,7 @@ id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]
 
 id_ad_rpki_notify         = oid_pkix <> [ 48, 13 ]  
 id_ad_rpki_repository     = oid_pkix <> [ 48, 5 ]  
+id_ad_rpkiManifest        = oid_pkix <> [48, 10]
 
 id_cp_ipAddr_asNumber, id_cps_qualifier :: OID
 id_cp_ipAddr_asNumber = oid_pkix <> [ 14, 2 ]
@@ -173,3 +176,6 @@ getRrdpNotifyUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_notify
 
 getRepositoryUri :: Certificate -> Maybe URI
 getRepositoryUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_repository
+
+getManifestUri :: Certificate -> Maybe URI
+getManifestUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpkiManifest

@@ -56,7 +56,7 @@ data WorkflowTask =
 runWorkflow :: Storage s => 
             AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
-    -- Use a command queue for every to avoid fully concurrent operations, i.e.
+    -- Use a command queue to avoid fully concurrent operations, i.e.
     -- cache GC should not run at the same time as the validation (not for consistency reasons,
     -- but we want to avoid locking the DB for long time).    
     globalQueue <- newCQueueIO 10
@@ -149,7 +149,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             
                                                                 
 
--- Execute certain IO actiion every N secods
+-- Execute certain IO actiion every N seconds
 -- 
 periodically :: Seconds -> IO () -> IO ()
 periodically (Seconds interval) action =
