@@ -69,6 +69,7 @@ dependencies:
 - modern-uri
 - monad-control
 - mtl
+- network-simple
 - optparse-applicative
 - optparse-generic
 - pipes

@@ -44,7 +44,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Errors
-import           RPKI.Http.Server
+import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext

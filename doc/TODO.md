@@ -68,6 +68,8 @@
 
 ---------------------------------  In progress ----------------------------------------
 
+- Implement RTR server
+
 --------------------------------------- TODOs -----------------------------------------
 
 - Check signature algorithms (
@@ -85,13 +87,13 @@
 - Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 
-- ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
-- Implement RTR server
 - Implement UI
 
 - Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
   choices when to download one or another.
+
+- ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Lock the ".rpki" directory (or whatever is used instead) to avoid multiple copies of the same thing?
 
