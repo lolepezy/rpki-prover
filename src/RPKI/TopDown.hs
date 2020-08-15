@@ -427,7 +427,7 @@ validateCAWithQueue
                                 case appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod of
                                     Nothing -> noFurtherValidation validations
                                     Just repositoryGracePeriod 
-                                        | closeEnoughMoments now' successInstant repositoryGracePeriod -> do 
+                                        | closeEnoughMoments successInstant now' repositoryGracePeriod -> do 
                                             logWarnM logger $ 
                                                 [i|Repository #{getRpkiURL r} failed, but grace period of #{repositoryGracePeriod} is set, |] <>
                                                 [i|last success #{successInstant}, current moment is #{now'}.|]    
