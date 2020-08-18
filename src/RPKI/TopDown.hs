@@ -413,7 +413,7 @@ validateCAWithQueue
             let 
                 proceedWithValidation validations = 
                         validateWaitingList waitingListForThesePPs >> pure validations                
-                noFurtherValidation  = pure
+                noFurtherValidation = pure
                 Now now' = now
                 in case fetchResult of
                     FetchSuccess _ _ validations -> proceedWithValidation validations
@@ -421,7 +421,7 @@ validateCAWithQueue
                         -- check when was the last successful fetch of this URL
                         case lastSuccess pps $ getRpkiURL r of
                             Nothing -> do 
-                                logWarnM logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
+                                logWarnM logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed.|]    
                                 noFurtherValidation validations
                             Just successInstant -> 
                                 case appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod of
@@ -466,10 +466,10 @@ validateCAWithQueue
 -- Returns the discovered publication points that are not registered 
 -- in the top-down context yet.
 validateCaCertificate :: Storage s =>
-                AppContext s ->
-                TopDownContext s ->
-                CerObject ->                
-                ValidatorT VContext IO (PublicationPoints, WaitingList)
+                        AppContext s ->
+                        TopDownContext s ->
+                        CerObject ->                
+                        ValidatorT VContext IO (PublicationPoints, WaitingList)
 validateCaCertificate appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
@@ -494,7 +494,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             case findPublicationPointStatus url asIfItIsMerged of 
                 -- this publication point hasn't been seen at all, so stop here
                 Nothing -> stopDescend
-                
+
                 -- If it's been fetched too long ago, stop here and add the certificate 
                 -- to the waiting list of this PP
                 -- if the PP is fresh enough, proceed with the tree descend                

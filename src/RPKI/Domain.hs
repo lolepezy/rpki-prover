@@ -471,6 +471,9 @@ toAKI (SKI ki) = AKI ki
 mkKI :: BS.ByteString -> KI
 mkKI = KI . BSS.toShort
 
+skiLen :: SKI -> Int
+skiLen (SKI (KI bs)) = BSS.length bs
+
 getCMSContent :: CMS a -> a
 getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so
 
