@@ -142,6 +142,13 @@ createAppContext CLIOptions{..} logger = do
 
     -- TODO read stuff from the config, CLI
     httpContext <- liftIO newHttpContext
+    
+    let rtrConfig = if withRtr `orDefault` False
+            then Just $ RtrConfig { 
+                    address = rtrAddress `orDefault` "localhost",
+                    port    = rtrPort `orDefault` 8283
+                }
+            else Nothing 
 
     let appContext = AppContext {        
         logger = logger,
@@ -161,19 +168,21 @@ createAppContext CLIOptions{..} logger = do
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
                 rsyncRepositoryRefreshInterval = Seconds $ rrdpRefreshInterval `orDefault` (11 * 660)
             },
-            httpApiConf = HttpApiConf {
+            httpApiConf = HttpApiConfing {
                 port = httpApiPort `orDefault` 9999
             },
+            rtrConfig = rtrConfig,
             cacheCleanupInterval = 30 * 60,
             cacheLifeTime = Seconds $ 60 * 60 * (cacheLifetimeHours `orDefault` 72),
 
-            -- TODO Think about it, it should be in lifetime or we should store N last versions
+            -- TODO Think about it, it should be lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
         },
         versions = versions,
         database = database,
         appBottlenecks = appBottlenecks,
-        httpContext = httpContext
+        httpContext = httpContext,        
+        rtrContext = Nothing
     }    
 
     logDebugM logger [i|Created application context: #{config appContext}|]
@@ -191,8 +200,6 @@ createLogger = do
     where
         fullMessageAction = upgradeMessageAction defaultFieldMap $ 
             cmapM fmtRichMessageDefault logTextStdout  
-          
-
 
 listTALFiles :: FilePath -> IO [FilePath]
 listTALFiles talDirectory = do     
@@ -200,7 +207,6 @@ listTALFiles talDirectory = do
     pure $ map (talDirectory </>) $ 
             filter (".tal" `List.isSuffixOf`) $ 
             filter (`notElem` [".", ".."]) names
-
 
 talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
@@ -262,10 +268,16 @@ data CLIOptions wrapped = CLIOptions {
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 
         ("Maximal LMDB cache size in MBs (default is 2048mb). Note that about 1Gb of cache is "
-        `AppendSymbol` "required for every extra day of cache life time"),
+        `AppendSymbol` "required for every extra day of cache life time"),    
 
-    withUi :: wrapped ::: Maybe Bool <?>  
-        "Start web-based UI"
+    withRtr :: wrapped ::: Maybe Bool <?> 
+        "Start RTR server (default is false)",
+
+    rtrAddress :: wrapped ::: Maybe String <?> 
+        "Address to bind to for the RTR server (default is localhost)",
+
+    rtrPort :: wrapped ::: Maybe Int16 <?> 
+        "Port to listen to for the RTR server (default is 8282)"
 
 } deriving (Generic)
 

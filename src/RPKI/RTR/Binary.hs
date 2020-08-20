@@ -1,11 +1,14 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE StrictData   #-}
+{-# LANGUAGE OverloadedStrings   #-}
 
 module RPKI.RTR.Binary where
 
 import qualified Data.ByteString         as BS
 import           Data.ByteString.Builder
+import           Data.Text
+import qualified Data.Text               as Text
 
 import           Data.Int
 import           GHC.TypeLits
@@ -101,3 +104,8 @@ pduToBytes pdu =
             word8 0 <> 
             byteString (prefix rtrPrefix) <> 
             int32BE (fromIntegral $ asn rtrPrefix)    
+
+
+-- TODO Implement
+bytesToPdu :: BS.ByteString -> Either Text (Pdu v t)
+bytesToPdu _ = Left "Not implemented"

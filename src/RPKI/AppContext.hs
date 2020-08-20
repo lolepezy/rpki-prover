@@ -10,6 +10,7 @@ import           RPKI.Parallel
 import           RPKI.Version
 import           RPKI.Store.Database
 import           RPKI.RRDP.HttpContext
+import           RPKI.RTR.RtrContext
 
 data AppBottleneck = AppBottleneck {
     cpuBottleneck :: Bottleneck,
@@ -22,6 +23,7 @@ data AppContext s = AppContext {
     versions       :: !Versions,
     database       :: !(DB s),
     appBottlenecks :: !AppBottleneck,
-    httpContext    :: !HttpContext
+    httpContext    :: !HttpContext,
+    rtrContext     :: Maybe RtrContext
 } deriving stock (Generic)
 

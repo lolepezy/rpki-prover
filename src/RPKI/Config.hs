@@ -26,7 +26,8 @@ data Config = Config {
     rsyncConf            :: RsyncConf,
     rrdpConf             :: RrdpConf,
     validationConfig     :: ValidationConfig,
-    httpApiConf          :: HttpApiConf,
+    httpApiConf          :: HttpApiConfing,
+    rtrConfig            :: Maybe RtrConfig,
     cacheCleanupInterval :: Seconds,
     cacheLifeTime        :: Seconds,
     oldVersionsLifetime  :: Seconds
@@ -48,15 +49,19 @@ data RrdpConf = RrdpConf {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data ValidationConfig = ValidationConfig {
-    revalidationInterval :: Seconds,
-    rrdpRepositoryRefreshInterval :: Seconds,
-    rsyncRepositoryRefreshInterval :: Seconds,
-    -- allow repositories to be down for a while before completely ignoring their objects
-    repositoryGracePeriod :: Maybe Seconds
+    revalidationInterval           :: Seconds,
+    rrdpRepositoryRefreshInterval  :: Seconds,
+    rsyncRepositoryRefreshInterval :: Seconds,    
+    repositoryGracePeriod          :: Maybe Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
-data HttpApiConf = HttpApiConf {
+data HttpApiConfing = HttpApiConfing {
     port :: Int16    
+} deriving stock (Show, Eq, Ord, Generic)
+
+data RtrConfig = RtrConfig {
+    address :: String,
+    port :: Int16
 } deriving stock (Show, Eq, Ord, Generic)
 
 getParallelism :: Natural 

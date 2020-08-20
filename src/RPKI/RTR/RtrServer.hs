@@ -5,29 +5,75 @@
 
 module RPKI.RTR.RtrServer where
 
+import           Control.Concurrent        (forkFinally)
+
+import           Control.Concurrent.Async
+import           Control.Concurrent.STM
+import           Control.Monad
 import           Control.Monad.IO.Class
+import           Control.Exception.Lifted
 
-import           Network.Simple.TCP
+import qualified Data.ByteString           as BS
 
-import           RPKI.RTR.Types
-import           RPKI.AppContext
+import           Network.Socket hiding (recv)
+import           Network.Socket.ByteString (recv, sendAll)
+
 import           RPKI.Config
-import           RPKI.Store.Base.Storage
+import           RPKI.AppContext
+import           RPKI.RTR.RtrContext
+import           RPKI.RTR.Types
+import           RPKI.RTR.Binary
 
 
-data RtrCntext = RtrCntext {
+runRtrServer :: RtrConfig -> RtrContext -> IO ()
+runRtrServer _ rtrContext = 
+    withSocketsDo $ do         
+        addr <- resolve "3000"
+        bracket (open addr) close (loop rtrContext)        
+    where
+        resolve port = do
+            let hints = defaultHints {
+                    addrFlags = [AI_PASSIVE], 
+                    addrSocketType = Stream
+                }
+            addr:_ <- getAddrInfo (Just hints) Nothing (Just port)
+            return addr
+        open addr = do
+            sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+            setSocketOption sock ReuseAddr 1
+            bind sock (addrAddress addr)            
+            let fd = fdSocket sock
+            setCloseOnExecIfNeeded fd
+            listen sock 10
+            return sock
+        loop rtrContext sock = forever $ do
+            (conn, peer) <- accept sock
+            putStrLn $ "Connection from " ++ show peer
+            void $ forkFinally 
+                (connectionProcessor rtrContext conn) 
+                (\_ -> close conn)
 
-}
+        connectionProcessor RtrContext {..} connection = 
+            race receiveFromClient sendToClient
+            where
+                receiveFromClient = forever $ do
+                     pduBytes <- recv connection 1024
+                     unless (BS.null pduBytes) $ do                         
+                         case bytesToPdu pduBytes of 
+                            Left e -> do
+                                 -- TODO Complain
+                                 pure ()
+                            Right pdu -> do
+                                -- TODO Process PDU
+                                 pure ()                                
 
-rtrListen :: (Storage s, MonadIO m) => 
-            AppContext s -> HostPreference -> ServiceName -> m a
-rtrListen appContext address port = do 
-    serve address port $ \(connectionSocket, remoteAddr) -> do        
-        putStrLn $ "TCP connection established from " ++ show remoteAddr
-        -- add client to the set of connected clients
-
-        -- remove client on excep[tion]
-
-
-        -- Now you may use connectionSocket as you please within this scope,
-        -- possibly using recv and send to interact with the remote end.
+                sendToClient = do
+                    localChan <- atomically $ dupTChan worldVersionUpdateChan
+                    forever $ do 
+                        updated <- atomically $ readTChan localChan
+                        let msg = toBytes updated
+                        sendAll connection msg
+                    where
+                        -- TODO Implement
+                        toBytes _ = BS.empty
+                    
