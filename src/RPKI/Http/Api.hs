@@ -155,6 +155,9 @@ instance ToJSON Domain.EncodedBase64 where
 instance ToJSON BS.ByteString where
     toJSON = toJSON . showHex
 
+instance ToJSON BSS.ShortByteString where
+    toJSON = toJSON . showHex . BSS.fromShort
+
 instance ToJSON BSL.ByteString where
     toJSON = toJSON . showHexL
 

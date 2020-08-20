@@ -65,7 +65,7 @@ parseCrl bs = do
                         (Instant thisUpdate)
                         (Instant <$> nextUpdate)
                         (SignatureAlgorithmIdentifier signatureId) 
-                        signatureVal encoded crlNumber' revokedSerials
+                        signatureVal (toShortBS encoded) crlNumber' revokedSerials
             pure (extensions, mkSignCRL)            
         
         getCrlContent = do        
