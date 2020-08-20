@@ -12,7 +12,7 @@ import           RPKI.Domain
 validateCertSignature :: (WithResourceCertificate c, WithResourceCertificate parent) => 
                         c -> parent -> SignatureVerification                
 validateCertSignature certificate parentCert = 
-    verifySignature algorithm pubKey signedData signature1    
+    verifySignature algorithm pubKey (toNormalBS signedData) (toNormalBS signature1)
     where
         CertificateWithSignature {
             cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
@@ -25,7 +25,7 @@ validateCertSignature certificate parentCert =
 -- | Validate the signature of a CRL object
 validateCRLSignature :: WithResourceCertificate c => CrlObject -> c -> SignatureVerification                
 validateCRLSignature crl parentCert = 
-    verifySignature signAlgorithm pubKey encoded signature'
+    verifySignature signAlgorithm pubKey (toNormalBS encoded) (toNormalBS signature')
     where
         pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
         SignCRL { 
@@ -37,7 +37,8 @@ validateCRLSignature crl parentCert =
  
 -- | Validate that the CMS is signed by the public key of the EE certficate it has
 validateCMSSignature :: CMS a -> SignatureVerification
-validateCMSSignature (CMS so) = verifySignature signAlgorithm pubKey signData sign    
+validateCMSSignature (CMS so) = 
+    verifySignature signAlgorithm pubKey (toNormalBS signData) (toNormalBS sign)    
     where
         SignatureValue sign = signature $ scSignerInfos $ soContent so
         CertificateWithSignature

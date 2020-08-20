@@ -90,7 +90,8 @@ parseSignedObject eContentParse =
               Right eeCertificate -> do
                   sigAlgorithm <- parseSignatureAlgorithm
                   signature'   <- parseSignature
-                  let certWithSig = CertificateWithSignature eeCertificate sigAlgorithm signature' encodedCert
+                  let certWithSig = CertificateWithSignature 
+                        eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
                   case toResourceCert certWithSig of
                     Left e                    -> throwParseError $ "EE certificate is broken " <> show e
                     Right (_,   _,  Nothing)  -> throwParseError $ "EE certificate doesn't have an AKI"
@@ -109,7 +110,7 @@ parseSignedObject eContentParse =
       parseSignature
       where 
         parseSid = getNext >>= \case 
-          Other Context 0 si -> pure $ SignerIdentifier si
+          Other Context 0 si -> pure $ SignerIdentifier $ toShortBS si
           s                  -> throwParseError $ "Unknown SID : " <> show s
 
         parseSignedAttributes = 
@@ -118,7 +119,7 @@ parseSignedObject eContentParse =
             Just asns  -> 
               case runParseASN1 parseSA asns of
                 Left e -> throwParseError $ show e
-                Right attributes -> pure $ SignedAttributes attributes saEncoded
+                Right attributes -> pure $ SignedAttributes attributes $ toShortBS saEncoded
                 where 
                   saEncoded = encodeASN1' DER $ [Start Set] <> asns <> [End Set]
                   parseSA = getMany $ 
@@ -128,7 +129,7 @@ parseSignedObject eContentParse =
                                       Just [OID ct] -> pure $ ContentTypeAttr $ ContentType ct
                                       s -> throwParseError $ "Unknown contentType: " <> show s
                               | attrId == id_messageDigest -> getNextContainerMaybe Set >>= \case
-                                      Just [OctetString md] -> pure $ MessageDigest md
+                                      Just [OctetString md] -> pure $ MessageDigest $ toShortBS md
                                       s -> throwParseError $ "Unknown SID: " <> show s
                               | attrId == id_signingTime -> getNextContainerMaybe Set >>= \case
                                       Just [ASN1Time TimeUTC dt tz] -> pure $ SigningTime dt tz

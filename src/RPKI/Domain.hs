@@ -296,7 +296,7 @@ data SignCRL = SignCRL {
         nextUpdateTime     :: Maybe Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
-        encodedValue       :: BS.ByteString,
+        encodedValue       :: BSS.ShortByteString,
         crlNumber          :: Integer,
         revokenSerials     :: Set Serial
     } 
@@ -325,7 +325,7 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
         cwsSignature :: SignatureValue,
-        cwsEncoded :: BS.ByteString
+        cwsEncoded :: BSS.ShortByteString
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -390,7 +390,7 @@ newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text.Text
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Serialise
 
-newtype SignerIdentifier = SignerIdentifier BS.ByteString 
+newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -410,19 +410,19 @@ newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.Signatu
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
-newtype SignatureValue = SignatureValue BS.ByteString 
+newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
     deriving anyclass Serialise
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
-data SignedAttributes = SignedAttributes [Attribute] BS.ByteString
+data SignedAttributes = SignedAttributes [Attribute] BSS.ShortByteString
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
 data Attribute = ContentTypeAttr ContentType 
-            | MessageDigest BS.ByteString
+            | MessageDigest BSS.ShortByteString
             | SigningTime DateTime (Maybe TimezoneOffset)
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
@@ -515,3 +515,9 @@ newCert u a s h rc = With (IdentityMeta h (u :| [])) $ With a $ With s rc
 
 newEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
 newEECert a s rc = With a $ With s rc
+
+toShortBS :: BS.ByteString -> BSS.ShortByteString
+toShortBS = BSS.toShort
+
+toNormalBS :: BSS.ShortByteString -> BS.ByteString
+toNormalBS = BSS.fromShort

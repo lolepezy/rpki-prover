@@ -140,16 +140,16 @@ oid2Hash = \case
 
 parseSignature :: ParseASN1 SignatureValue
 parseSignature = getNext >>= \case 
-    OctetString sig            -> pure $ SignatureValue sig
-    BitString (BitArray _ sig) -> pure $ SignatureValue sig
+    OctetString sig            -> pure $ SignatureValue $ toShortBS sig
+    BitString (BitArray _ sig) -> pure $ SignatureValue $ toShortBS sig
     s                          -> throwParseError $ "Unknown signature value : " <> show s
 
 unifyCert :: SignedExact X509.Certificate -> CertificateWithSignature
 unifyCert signedExact = CertificateWithSignature {
         cwsX509certificate = signedObject signed,
         cwsSignatureAlgorithm = SignatureAlgorithmIdentifier $ signedAlg signed,
-        cwsSignature = SignatureValue $ signedSignature signed,
-        cwsEncoded = getSignedData signedExact      
+        cwsSignature = SignatureValue $ toShortBS $ signedSignature signed,
+        cwsEncoded = toShortBS $ getSignedData signedExact      
     }
     where 
         signed = getSigned signedExact
