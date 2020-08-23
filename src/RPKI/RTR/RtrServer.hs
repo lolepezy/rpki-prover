@@ -55,17 +55,18 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
             return sock
         loop sock = forever $ do
             (conn, peer) <- accept sock
-            logDebug_ logger [i|Connection from|]        
-            putStrLn $ "Connection from " ++ show peer
+            logDebug_ logger [i|Connection from #{peer}|]
             void $ forkFinally 
-                (connectionProcessor rtrContext conn) 
-                (\_ -> close conn)
+                (connectionProcessor rtrContext conn peer) 
+                (\_ -> do 
+                    logDebug_ logger [i|Closing connection with #{peer}|]
+                    close conn)
 
         -- For every connection run 3 threads:
         --      receiveFromClient blocks on `recv` and accepts client requests
         --      updateFromRtrState blocks on updates from the new data coming from the validation process
         --      sendToClient simply sends all PDU to the client
-        connectionProcessor RtrContext {..} connection = do
+        connectionProcessor RtrContext {..} connection peer = do
             sendChan <- atomically newTChan
             race 
                 (receiveFromClient sendChan)
@@ -80,16 +81,23 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
                         -- TODO Implement
                         toBytes _ = BS.empty
 
-                receiveFromClient sendChan = forever $ do
-                     pduBytes <- recv connection 1024
-                     unless (BS.null pduBytes) $ do                         
-                         case bytesToPdu pduBytes of 
-                            Left e -> do
-                                 -- TODO Complain
-                                 pure ()
-                            Right pdu -> do
-                                -- TODO Process PDU
-                                 pure ()                                
+                receiveFromClient sendChan = go 
+                    where 
+                        go = do
+                            logDebug_ logger [i|Waiting data from the client #{peer}|]
+                            pduBytes <- recv connection 1024
+                            logDebug_ logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
+                            if BS.null pduBytes
+                                then
+                                    logDebug_ logger [i|Connection with #{peer} is closed.|] 
+                                else do                         
+                                    case bytesToPdu pduBytes of 
+                                        Left e -> do
+                                            logError_ logger [i|Error parsing a PDU #{e}.|]                                                 
+                                        Right pdu -> do
+                                            logDebug_ logger [i|Parsed PDU: #{pdu}.|]
+                                            pure ()                                
+                                    go
 
                 updateFromRtrState sendChan = do
                     localChan <- atomically $ dupTChan worldVersionUpdateChan

@@ -24,7 +24,7 @@ data ProtocolVersion =
 
 
 data APdu where
-    APdu :: forall (version :: ProtocolVersion) (pduType :: Nat) . Pdu version pduType -> APdu
+    APdu :: forall (version :: ProtocolVersion) (pduType :: Nat) . Pdu version pduType -> APdu    
 
 -- | PDUs definede both by V0 and V1 protocols
 data Pdu (version :: ProtocolVersion) (pduType :: Nat) where
@@ -40,6 +40,12 @@ data Pdu (version :: ProtocolVersion) (pduType :: Nat) where
     RouterKeyPduV1   :: ASN -> Flags -> SKI -> BSL.ByteString -> Pdu 'V1 9
     ErrorPdu         :: ErrorCode -> BSL.ByteString -> BSL.ByteString -> Pdu version 10    
     
+
+deriving instance Show APdu
+
+deriving instance Show (Pdu version pduType)
+deriving instance Eq (Pdu version pduType)
+deriving instance Ord (Pdu version pduType)
 
 newtype SerialNumber = SerialNumber Int16
     deriving stock (Show, Eq, Ord, Generic)
@@ -68,7 +74,7 @@ data RtrPrefix = RtrPrefix {
     maxLength :: Int8,
     prefix :: BS.ByteString,
     asn :: Int32
-}
+} deriving stock (Show, Eq, Ord, Generic)
 
 data Intervals = Intervals {
     refreshInterval :: Int32,

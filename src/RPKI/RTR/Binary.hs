@@ -5,23 +5,24 @@
 
 module RPKI.RTR.Binary where
 
-import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Lazy         as BSL
-import           Data.ByteString.Builder
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as BSL
 import           Data.Text
-import qualified Data.Text               as Text
+import qualified Data.Text            as Text
 
-import Data.Binary
-import Data.Binary.Put (runPut)
-import Data.Binary.Get (runGetOrFail)
+import           Data.Binary
+import           Data.Binary.Get      (getByteString, runGetOrFail)
+import           Data.Binary.Put      (runPut)
 
 import           Data.Int
 import           GHC.TypeLits
 
+import           Control.Monad        (unless)
 import           Data.Data
-import           RPKI.Domain             (KI (..), SKI (..), skiLen)
+import           RPKI.Domain          (KI (..), SKI (..), skiLen, toShortBS)
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
+
 
 
 pduLength :: Pdu version pduType -> Int32 
@@ -115,6 +116,10 @@ bytesToPdu bs =
         Left (bs, offset, errorMessage) -> Left $ Text.pack $ "Error parsing " <> show bs 
         Right (_, _, pdu) -> Right pdu
     where 
+        assertLength len mustBe =     
+            unless (len == mustBe) $ 
+                fail $ "Wrong length " <> show len <> ", must be " <> show mustBe
+
         getIt = do 
             protocolVersion :: Word8 <- get
             case protocolVersion of
@@ -126,19 +131,98 @@ bytesToPdu bs =
         parsePdu protocolVersion = do 
             pduType :: Word8 <- get
             case pduType of 
-                0  -> APdu <$> (NotifyPdu <$> get <*> get)
-                1  -> APdu <$> (SerialQueryPdu <$> get <*> get)            
-                2  -> pure $ APdu ResetQueryPdu
-                3  -> APdu <$> (CacheResponsePdu <$> get)            
-                4  -> APdu <$> (IPv4PrefixPdu <$> get <*> get)            
-                6  -> APdu <$> (IPv6PrefixPdu <$> get <*> get)            
-                7  -> case protocolVersion of 
-                    V0 -> APdu <$> (EndOfDataPduV0 <$> get <*> get)            
-                    V1 -> APdu <$> (EndOfDataPduV1 <$> get <*> get <*> get)
-                8  -> pure $ APdu CacheResetPdu
-                9  -> APdu <$> (RouterKeyPduV1 <$> get <*> get <*> get<*> get)            
-                10 -> APdu <$> (ErrorPdu <$> get <*> get <*> get)
+                0  -> do
+                    sessionId <- get
+                    len :: Int32  <- get
+                    assertLength len 12
+                    serial    <- get
+                    pure $ APdu $ NotifyPdu sessionId serial
+
+                1  -> do 
+                    sessionId <- get
+                    len :: Int32  <- get
+                    assertLength len 12
+                    serial    <- get
+                    pure $ APdu $ SerialQueryPdu sessionId serial                    
+
+                2  -> do 
+                    zero :: Word16 <- get 
+                    unless (zero == 0) $ fail "Field must be zero for ResetQueryPdu"
+                    len  :: Int32 <- get
+                    assertLength len 8                    
+                    pure $ APdu ResetQueryPdu
+
+                3  -> do 
+                    sessionId :: SessionId <- get
+                    len :: Int32           <- get
+                    assertLength len 8
+                    pure $ APdu $ CacheResponsePdu sessionId
+
+                4  -> do 
+                    zero :: Word16 <- get 
+                    unless (zero == 0) $ fail "Field must be zero for IPv4PrefixPdu"
+                    len  :: Int32 <- get
+                    assertLength len 20
+                    flags <- get
+                    rtrPrefix <- get
+                    pure $ APdu $ IPv4PrefixPdu flags rtrPrefix
+
+                6  -> do 
+                    zero :: Word16 <- get 
+                    unless (zero == 0) $ fail "Field must be zero for IPv6PrefixPdu"
+                    len  :: Int32 <- get
+                    assertLength len 32
+                    flags     <- get
+                    rtrPrefix <- get
+                    pure $ APdu $ IPv6PrefixPdu flags rtrPrefix
+
+                7  -> do
+                    sessionId     <- get
+                    len  :: Int32 <- get                    
+                    serial        <- get 
+                    case protocolVersion of 
+                        V0 -> do 
+                            assertLength len 12
+                            pure $ APdu $ EndOfDataPduV0 sessionId serial
+                        V1 -> do                        
+                            intervals <- get
+                            assertLength len 24
+                            pure $ APdu $ EndOfDataPduV1 sessionId serial intervals                        
+
+                8  -> do 
+                    zero :: Word16 <- get 
+                    unless (zero == 0) $ fail "Field must be zero for ResetQueryPdu"
+                    len  :: Int32 <- get
+                    assertLength len 8
+                    pure $ APdu CacheResetPdu
+
+                9  -> do 
+                    flags         <- get
+                    zero :: Word8 <- get
+                    unless (zero == 0) $ fail "Field must be zero for RouterKeyPduV1"
+                    len  :: Int32 <- get
+                    ski <- getByteString 20
+                    asn' <- get
+                    spki <- getRemainingLazyByteString
+
+                    assertLength len $ 8 + 4 + 
+                            (fromIntegral (BS.length ski) :: Int32) + 
+                            (fromIntegral (BSL.length spki) :: Int32)
+
+                    pure $ APdu $ RouterKeyPduV1 asn' flags (SKI (KI $ toShortBS ski)) spki
+
+                10 -> do 
+                    errorCode <- get
+                    encapsulatedPduLen :: Int32 <- get
+                    encapsulatedPdu <- getByteString $ fromIntegral encapsulatedPduLen
+                    textLen :: Int32 <- get
+                    text <- getByteString $ fromIntegral textLen
+                    pure $ APdu $ ErrorPdu errorCode (BSL.fromStrict encapsulatedPdu) (BSL.fromStrict text)
+                    
                 n  -> fail $ "Invalid PDU type " <> show n
+
+getRemainingLazyByteString :: Get a0
+getRemainingLazyByteString = error "not implemented"
 
 
     
