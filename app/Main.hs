@@ -143,10 +143,10 @@ createAppContext CLIOptions{..} logger = do
     -- TODO read stuff from the config, CLI
     httpContext <- liftIO newHttpContext
     
-    let rtrConfig = if withRtr `orDefault` False
+    let rtrConfig = if withRtr
             then Just $ RtrConfig { 
-                    address = rtrAddress `orDefault` "localhost",
-                    port    = rtrPort `orDefault` 8283
+                    rtrAddress = rtrAddress `orDefault` "localhost",
+                    rtrPort    = rtrPort `orDefault` 8283
                 }
             else Nothing 
 
@@ -181,8 +181,7 @@ createAppContext CLIOptions{..} logger = do
         versions = versions,
         database = database,
         appBottlenecks = appBottlenecks,
-        httpContext = httpContext,        
-        rtrContext = Nothing
+        httpContext = httpContext
     }    
 
     logDebugM logger [i|Created application context: #{config appContext}|]
@@ -270,7 +269,7 @@ data CLIOptions wrapped = CLIOptions {
         ("Maximal LMDB cache size in MBs (default is 2048mb). Note that about 1Gb of cache is "
         `AppendSymbol` "required for every extra day of cache life time"),    
 
-    withRtr :: wrapped ::: Maybe Bool <?> 
+    withRtr :: wrapped ::: Bool <?> 
         "Start RTR server (default is false)",
 
     rtrAddress :: wrapped ::: Maybe String <?> 

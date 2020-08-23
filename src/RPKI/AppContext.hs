@@ -23,7 +23,6 @@ data AppContext s = AppContext {
     versions       :: !Versions,
     database       :: !(DB s),
     appBottlenecks :: !AppBottleneck,
-    httpContext    :: !HttpContext,
-    rtrContext     :: Maybe RtrContext
+    httpContext    :: !HttpContext    
 } deriving stock (Generic)
 

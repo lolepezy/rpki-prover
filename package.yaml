@@ -36,6 +36,7 @@ dependencies:
 - async
 - base16-bytestring
 - base64
+- binary
 - bytestring
 - bytestring-conversion
 - bytestring-mmap

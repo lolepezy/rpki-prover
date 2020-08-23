@@ -37,6 +37,7 @@ import           RPKI.Util                   (increment, fmtEx)
 
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
+import Data.Maybe (fromMaybe)
 
 
 data ROMeta = ROMeta {
@@ -249,6 +250,11 @@ deleteVRPs :: (MonadIO m, Storage s) =>
             Tx s 'RW -> VRPStore s -> WorldVersion -> m ()
 deleteVRPs tx (VRPStore s) wv = liftIO $ MM.deleteAll tx s wv
 
+forAllVrps :: (MonadIO m, Storage s) => 
+            Tx s mode -> VRPStore s -> WorldVersion -> (Roa -> IO ()) -> m ()
+forAllVrps tx (VRPStore s) wv f = liftIO $ 
+    MM.foldS tx s wv (\_ _ roa -> f roa) ()    
+
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> VersionStore s -> WorldVersion -> VersionState -> m ()
@@ -284,10 +290,9 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
             roTx objectStore $ \tx ->
                 M.traverse tx (hashToKey objectStore) $ \hash key -> do
                     r <- M.get tx (objectMetas objectStore) key
-                    ifJust r $ \ROMeta {..} -> 
-                        case validatedBy of
-                            Nothing           -> queueForDeltionOrKeep insertedBy queue hash
-                            Just validatedBy' -> queueForDeltionOrKeep validatedBy' queue hash
+                    ifJust r $ \ROMeta {..} -> do
+                        let cutoffVersion = fromMaybe insertedBy validatedBy
+                        queueForDeltionOrKeep cutoffVersion queue hash                        
 
     -- Don't lock the DB for potentially too long, use big but finite chunks
     let deleteObjects queue =

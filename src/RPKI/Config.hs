@@ -60,8 +60,8 @@ data HttpApiConfing = HttpApiConfing {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data RtrConfig = RtrConfig {
-    address :: String,
-    port :: Int16
+    rtrAddress :: String,
+    rtrPort :: Int16
 } deriving stock (Show, Eq, Ord, Generic)
 
 getParallelism :: Natural 

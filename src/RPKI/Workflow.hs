@@ -16,16 +16,19 @@ import           Data.Generics.Labels
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
+import           Data.List                        (sortBy)
+import           Data.IORef.Lifted
+
 import           Data.Int                         (Int64)
+import           Data.Set                         (Set)
+import qualified Data.Set                         as Set
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
 
-import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -37,11 +40,12 @@ import           RPKI.AppContext
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
+import           RPKI.RTR.RtrContext
+import           RPKI.RTR.RtrServer
 
 import           RPKI.Store.Base.LMDB
 
 import           System.Exit
-
 
 
 type AppEnv = AppContext LmdbStorage
@@ -61,17 +65,21 @@ runWorkflow appContext@AppContext {..} tals = do
     -- but we want to avoid locking the DB for long time).    
     globalQueue <- newCQueueIO 10
 
+    (notifyRtr, rtrServer) <- initRtrIfNeeded
+
     mapConcurrently_ (\f -> f globalQueue) [ 
-            taskExecutor,
+            taskExecutor notifyRtr,
             generateNewWorldVersion, 
             cacheGC,
-            cleanOldVersions            
+            cleanOldVersions,
+            \_ -> rtrServer   
         ]
-    where  
+    where          
         cacheCleanupInterval = config ^. #cacheCleanupInterval
         oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
         revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval           
+        rtrConfig            = config ^. #rtrConfig
 
         validateTaTask globalQueue worldVersion = 
             atomically $ writeCQueue globalQueue $ ValidateTAs worldVersion             
@@ -92,13 +100,13 @@ runWorkflow appContext@AppContext {..} tals = do
                 atomically $ writeCQueue globalQueue $ CacheGC worldVersion
 
         cleanOldVersions globalQueue = do 
-            -- wait a little so that GC doesn't start before the actual validation
+            -- wait a little so that deleting old versions comes last in the queue of actions
             threadDelay 30_000_000
             periodically cacheCleanupInterval $ do
                 worldVersion <- getWorldVerion versions
-                atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion
+                atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion        
 
-        taskExecutor globalQueue = do
+        taskExecutor notifyRtr globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
             forever $ do 
                 task <- atomically $ readCQueue globalQueue 
@@ -110,7 +118,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         executeOrDie
                             (sequence <$> mapConcurrently processTAL tals)
                             (\_ elapsed -> do
-                                completeWorldVersion appContext worldVersion
+                                completeWorldVersion appContext worldVersion                                
+                                notifyRtr worldVersion
                                 logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|])
                         where 
                             processTAL tal = validateTA appContext tal worldVersion                                
@@ -138,16 +147,52 @@ runWorkflow appContext@AppContext {..} tals = do
             exec `catches` [
                     Handler $ \(AppException (StorageE storageBroken)) ->
                         die [i|Storage error #{storageBroken}, exiting.|],
-                    Handler $ \(weird :: SomeException) ->
-                        logError_ logger [i|Something weird happened #{weird}, exiting.|]
+                    Handler $ \(_ :: AsyncCancelled) ->
+                        die [i|Interrupted with Ctrl-C, exiting.|],                        
+                    Handler $ \(weirdShit :: SomeException) ->
+                        logError_ logger [i|Something weird happened #{weirdShit}, exiting.|]
                 ] 
             where
                 exec = do 
                     (r, elapsed) <- timedMS f
                     onRight r elapsed
-                     
-                            
-                                                                
+
+        initRtrIfNeeded = 
+            case rtrConfig of 
+                Nothing -> do 
+                    pure (\_ -> pure (), pure ())
+                Just rtrConfig' -> do 
+                    rtrContext' <- newRtrContext                    
+                    pure (
+                        \worldVersion -> notifyRTRServer rtrContext' worldVersion,
+                        runRtrServer appContext rtrConfig' rtrContext')
+            where
+                notifyRTRServer RtrContext {..} worldVersion = do
+                    rtrUpdate <- roTx database $ \tx -> do 
+                        latestVRPs <- vrpSet tx worldVersion 
+                        versions'  <- allVersions tx (versionStore database)
+
+                        let previsouVersionsLatestFirst = 
+                                sortBy (flip compare) $ filter ((< worldVersion) . fst) versions'   
+                                                         
+                        case previsouVersionsLatestFirst of 
+                            []                       -> pure $ RtrAll latestVRPs        
+                            (previousVersion, _) : _ -> do 
+                                previousVRPs <- vrpSet tx previousVersion
+                                pure $ RtrDiff {
+                                        added = Set.difference latestVRPs previousVRPs,
+                                        deleted = Set.difference previousVRPs latestVRPs
+                                    }
+
+                    atomically $ writeTChan worldVersionUpdateChan rtrUpdate
+                    where
+                        vrpSet tx version = do 
+                            latestVRPsRef <- newIORef Set.empty                
+                            forAllVrps tx (vrpStore database) version $ \r -> 
+                                modifyIORef' latestVRPsRef $ \vrps -> 
+                                    Set.insert r vrps
+                            readIORef latestVRPsRef
+                    
 
 -- Execute certain IO actiion every N seconds
 -- 

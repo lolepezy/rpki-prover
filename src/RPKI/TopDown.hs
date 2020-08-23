@@ -159,8 +159,8 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
     let validationConfig = config ^. typed @ValidationConfig
 
-    r <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName'
-    case r of
+    taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName'
+    case taByName of
         Nothing -> fetchValidateAndStore now
         Just StorableTA { taCert, initialRepositories, fetchStatus }
             | needsFetching (getTaCertURL tal) fetchStatus validationConfig now ->
@@ -184,7 +184,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
         taStore = database ^. #taStore   
 
 
--- | Do the actual validation starting from the TA certificate.
+-- | Do the validation starting from the TA certificate.
 -- | 
 -- | This function doesn't throw exceptions.
 validateFromTACert :: (WithVContext env, Storage s) =>
@@ -194,7 +194,7 @@ validateFromTACert :: (WithVContext env, Storage s) =>
                     NonEmpty Repository -> 
                     WorldVersion -> 
                     ValidatorT env IO ()
-validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion = do  
+validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldVersion = do  
     -- this will be used as the "now" in all subsequent time and period validations 
     let now = Now $ versionToMoment worldVersion
 
@@ -208,10 +208,10 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
             filter (\(pp, status) -> needsFetching pp status (config ^. typed @ValidationConfig) now) $ 
             toRepoStatusPairs $ 
                 -- merge repos that we want to be fetched with the ones that are stored                     
-                mergeRepos repos storedPubPoints
+                mergeRepos initialRepos storedPubPoints
                 -- we only care about URLs from 'repos', so shrink the PPs                        
                     `shrinkTo` 
-                Set.fromList (map getRpkiURL $ NonEmpty.toList repos)
+                Set.fromList (map getRpkiURL $ NonEmpty.toList initialRepos)
 
     fetchStatuses <- parallelTasks 
                         (ioBottleneck appBottlenecks)
@@ -269,7 +269,7 @@ fetchRepository
         let (Seconds maxDduration, timeoutError) = case repoURL of
                 RrdpU _ -> (config ^. typed @RrdpConf . #rrdpTimeout, RrdpE RrdpDownloadTimeout)
                 RsyncU _ -> (config ^. typed @RsyncConf . #rsyncTimeout, RsyncE RsyncDownloadTimeout)
-        
+                
         r <- timeout (1_000_000 * fromIntegral maxDduration) fetchIt
         case r of 
             Nothing -> do 
@@ -342,7 +342,7 @@ validateCAWithQueue
             queueVResult appContext topDownContext validations            
             case r of
                 Left _alreadyQueued                -> pure ()
-                Right (discoveredPPs, waitingList) -> pickUpNewPPsAndValidateDown discoveredPPs waitingList
+                Right (discoveredPPs, waitingList) -> extractPPsAndValidateDown discoveredPPs waitingList
 
     (r, elapsed) <- timedMS $ case qWhat of 
             CreateQ -> do            
@@ -363,7 +363,7 @@ validateCAWithQueue
         -- From the set of discovered PPs figure out which ones must be fetched, 
         -- fetch them and validate, starting from the cerfificates in their 
         -- waiting lists.        
-        pickUpNewPPsAndValidateDown ppsToFetch waitingList = do            
+        extractPPsAndValidateDown ppsToFetch waitingList = do            
             ppsToFetch' <- atomically $ do 
                     globalPPs           <- readTVar publicationPoints                    
                     alreadyTakenCareOf  <- readTVar takenCareOf
@@ -383,7 +383,8 @@ validateCAWithQueue
             -- or fetched long ago), drill down recursively.
             void $ parallelTasks 
                 (ioBottleneck appBottlenecks) 
-                (Map.keys rootToPps) $ \repo -> do
+                (Map.keys rootToPps) 
+                $ \repo -> do
                     validations <- fetchAndValidateWaitingList rootToPps repo waitingList
                     queueVResult appContext topDownContext validations
 
