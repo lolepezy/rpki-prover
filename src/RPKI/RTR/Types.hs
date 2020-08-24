@@ -7,7 +7,6 @@ module RPKI.RTR.Types where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.ByteString.Builder
 
 import Data.Binary
 import Data.Int
@@ -23,11 +22,17 @@ data ProtocolVersion =
   | V1 -- | as defined by https://tools.ietf.org/rfc/rfc8210
 
 
+
+-- newtype Versioned (version :: ProtocolVersion) a = Versioned a
+--     deriving stock (Show, Eq, Ord, Generic)
+
 data APdu where
-    APdu :: forall (version :: ProtocolVersion) (pduType :: Nat) . Pdu version pduType -> APdu    
+    APdu :: forall (protocolVersion :: ProtocolVersion) (pduCode :: Nat) .             
+            (KnownNat pduCode, ToValue protocolVersion Word8) =>
+            Pdu protocolVersion pduCode -> APdu    
 
 -- | PDUs definede both by V0 and V1 protocols
-data Pdu (version :: ProtocolVersion) (pduType :: Nat) where
+data Pdu (version :: ProtocolVersion) (pduCode :: Nat) where
     NotifyPdu        :: SessionId -> SerialNumber -> Pdu version 0
     SerialQueryPdu   :: SessionId -> SerialNumber -> Pdu version 1
     ResetQueryPdu    :: Pdu version 2    
@@ -43,9 +48,9 @@ data Pdu (version :: ProtocolVersion) (pduType :: Nat) where
 
 deriving instance Show APdu
 
-deriving instance Show (Pdu version pduType)
-deriving instance Eq (Pdu version pduType)
-deriving instance Ord (Pdu version pduType)
+deriving instance Show (Pdu version pduCode)
+deriving instance Eq (Pdu version pduCode)
+deriving instance Ord (Pdu version pduCode)
 
 newtype SerialNumber = SerialNumber Int16
     deriving stock (Show, Eq, Ord, Generic)
@@ -68,6 +73,12 @@ data ErrorCode
   | UnexpectedProtocolVersion
   deriving stock (Show, Eq, Ord, Generic)
 
+data ASession where
+    ASession :: forall (protocolVersion :: ProtocolVersion) . 
+                Session protocolVersion -> ASession
+
+newtype Session (protocolVersion :: ProtocolVersion) = Session SessionId
+    deriving stock (Show, Eq, Ord, Generic)
 
 data RtrPrefix = RtrPrefix {
     prefixLength :: Int8,
@@ -82,18 +93,15 @@ data Intervals = Intervals {
     expireInterval:: Int32
 } deriving stock (Show, Eq, Ord)
 
-class VersionToBytes a where    
-    versionToBytes :: Proxy a -> Word8
 
-class ValueToBytes a where    
-    valueToBytes :: a -> Builder
-    
-instance VersionToBytes 'V0 where versionToBytes _ = 0
-instance VersionToBytes 'V1 where versionToBytes _ = 1
+class ToValue a b where
+    toValue :: Proxy a -> b
 
--- instance KnownNat c => ValueToBytes (ErrorCode c) where 
---     valueToBytes _ = word8 $ fromIntegral $ natVal (Proxy :: Proxy c)    
+instance ToValue 'V0 ProtocolVersion where toValue _ = V0
+instance ToValue 'V1 ProtocolVersion where toValue _ = V1
 
+instance ToValue 'V0 Word8 where toValue _ = 0
+instance ToValue 'V1 Word8 where toValue _ = 1
 
 instance Binary SessionId
 instance Binary SerialNumber

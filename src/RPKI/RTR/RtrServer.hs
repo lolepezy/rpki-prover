@@ -14,6 +14,11 @@ import           Control.Monad.IO.Class
 import           Control.Exception.Lifted
 
 import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as BSL
+
+import           Data.Text
+import qualified Data.Text            as Text
+
 
 import           Control.Lens
 import           Data.Generics.Labels
@@ -29,7 +34,7 @@ import           RPKI.AppContext
 import           RPKI.Logging
 import           RPKI.RTR.RtrContext
 import           RPKI.RTR.Types
-import           RPKI.RTR.Binary
+import           RPKI.RTR.Pdus
 
 
 runRtrServer :: AppContext s -> RtrConfig -> RtrContext -> IO ()
@@ -67,7 +72,7 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
         --      updateFromRtrState blocks on updates from the new data coming from the validation process
         --      sendToClient simply sends all PDU to the client
         connectionProcessor RtrContext {..} connection peer = do
-            sendChan <- atomically newTChan
+            sendChan :: TChan APdu <- atomically newTChan
             race 
                 (receiveFromClient sendChan)
                 (race 
@@ -76,12 +81,17 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
             where
                 sendToClient sendChan = do 
                     pdu <- atomically $ readTChan sendChan                    
-                    sendAll connection (toBytes pdu)
-                    where
-                        -- TODO Implement
-                        toBytes _ = BS.empty
+                    sendAll connection (BSL.toStrict $ withPdu pdu pduToBytes)                    
 
-                receiveFromClient sendChan = go 
+                receiveFromClient sendChan = do
+                    firstPdu <- recv connection 1024
+                    case processFirstPdu firstPdu of
+                        Left e -> do 
+                            logError_ logger [i|First PDU is wrong: #{e}.|]
+                        Right (pdu, session') -> do 
+                            let responsePdu = withSession session' (respondWith pdu)  
+                            atomically $ writeTChan sendChan responsePdu
+                            go 
                     where 
                         go = do
                             logDebug_ logger [i|Waiting data from the client #{peer}|]
@@ -93,9 +103,10 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
                                 else do                         
                                     case bytesToPdu pduBytes of 
                                         Left e -> do
-                                            logError_ logger [i|Error parsing a PDU #{e}.|]                                                 
+                                            logError_ logger [i|Error parsing a PDU #{e}.|]
                                         Right pdu -> do
                                             logDebug_ logger [i|Parsed PDU: #{pdu}.|]
+                                            -- respond pdu
                                             pure ()                                
                                     go
 
@@ -103,8 +114,16 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
                     localChan <- atomically $ dupTChan worldVersionUpdateChan
                     forever $ atomically $ do
                         update <- readTChan localChan
-                        writeTChan sendChan update
-                        
+                        -- writeTChan sendChan update
+                        pure ()                        
                                                 
-                    
-                    
+                
+
+processFirstPdu :: BS.ByteString -> Either Text (APdu, ASession)
+processFirstPdu bs = Left "Bla"
+
+
+respondWith :: APdu -> 
+            Session (protocolVersion :: ProtocolVersion) -> 
+            APdu
+respondWith (APdu pdu) s = APdu pdu

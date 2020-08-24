@@ -136,7 +136,7 @@ foldGeneric tx db f a0 withC makeProducer =
 createLmdbStore :: forall name . KnownSymbol name => 
                     LmdbEnv -> IO (LmdbStore name)
 createLmdbStore env@LmdbEnv {..} = do
-    let name' = symbolVal (P.Proxy :: P.Proxy name)
+    let name' = symbolVal (P.Proxy @name)
     db <- withTransaction nativeEnv $ \tx -> openDatabase tx (Just name') dbSettings     
     pure $ LmdbStore db env
     where
@@ -147,7 +147,7 @@ createLmdbStore env@LmdbEnv {..} = do
 createLmdbMultiStore :: forall name . KnownSymbol name =>  
                         LmdbEnv -> IO (LmdbMultiStore name)
 createLmdbMultiStore env@LmdbEnv {..} = do
-    let name' = symbolVal (P.Proxy :: P.Proxy name)
+    let name' = symbolVal (P.Proxy @name)
     db <- withTransaction nativeEnv $ \tx -> openMultiDatabase tx (Just name') dbSettings 
     pure $ LmdbMultiStore db env
     where

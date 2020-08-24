@@ -62,5 +62,5 @@ embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
 
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext = serve 
-                        (Proxy :: Proxy (API :<|> Raw))
+                        (Proxy @(API :<|> Raw))
                         (validatorServer appContext :<|> embeddedUI)
