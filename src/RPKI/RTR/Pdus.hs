@@ -124,10 +124,12 @@ pduToBytes pdu =
 -- 
 -- | Parse PDUs from bytestrings according to the RTR protocal 
 -- 
-bytesToPdu :: BS.ByteString -> Either Text APdu
+bytesToPdu :: BS.ByteString -> Either (Maybe ErrorCode, Maybe Text) APdu
 bytesToPdu bs = 
     case runGetOrFail getIt (BSL.fromStrict bs) of
-        Left (bs, offset, errorMessage) -> Left $ Text.pack $ "Error parsing " <> show bs 
+        Left (bs, offset, errorMessage) -> 
+            Left (Just InvalidRequest, Just $ Text.pack $ "Error parsing " <> show bs)
+            
         Right (_, _, pdu) -> Right pdu
     where
         getIt = do 
