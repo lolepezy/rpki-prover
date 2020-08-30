@@ -13,10 +13,10 @@ Currently implemented features are
 - Validation of resource sets, including support for RFC8360 "validation reconsidered"
 - Output of VRPs in CSV and JSON formats
 - Output of found problems
+- Cache cleanup, scheduled revalidation
 
 Current and future work
 - Static binaries (at least for linux), packaging and a Docker image
-- Cache cleanup, scheduled revalidation
 - Support for RTR protocol
 - SLURM support
 - Fancy UI
@@ -32,7 +32,9 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
    - Run `mkdirs.sh` script. It will create some directory structure inside of ~/.rpki and download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
    - Run `rpki-prover-exe` from the `~/.local/bin`
 
-Normally it prints quite a lot of logs about what it's doing to the stdout. After it prints "Validated all TAs, took ..." (it should take 2-4 minutes depending on how fast the CPU and network are) VRPs can be fetched by executing `curl -s http://localhost:9999/vrps.csv` (or `curl -s http://localhost:9999/vrps.json`).
+Running Run `rpki-prover-exe --help` gives some help on the CLI options.
+
+Normally it prints quite a lot of logs about what it's doing to the stdout. After it prints "Validated all TAs, took ..." (it should take 2-4 minutes depending on how fast the CPU and network are) VRPs can be fetched by executing `curl -s http://localhost:9999/api/vrps.csv` (or `curl -s http://localhost:9999/api/vrps.json`).
 
 
  
