@@ -172,10 +172,10 @@ runWorkflow appContext@AppContext {..} tals = do
                         latestVRPs <- vrpSet tx worldVersion 
                         versions'  <- allVersions tx (versionStore database)
 
-                        let previsouVersionsLatestFirst = 
+                        let previousVersionsLatestFirst = 
                                 sortBy (flip compare) $ filter ((< worldVersion) . fst) versions'   
                                                          
-                        case previsouVersionsLatestFirst of 
+                        case previousVersionsLatestFirst of 
                             []                       -> pure $ RtrAll latestVRPs        
                             (previousVersion, _) : _ -> do 
                                 previousVRPs <- vrpSet tx previousVersion
@@ -185,13 +185,12 @@ runWorkflow appContext@AppContext {..} tals = do
                                     }
 
                     atomically $ writeTChan worldVersionUpdateChan rtrUpdate
-                    where
+                    where                        
                         vrpSet tx version = do 
-                            latestVRPsRef <- newIORef Set.empty                
+                            vrps <- newIORef Set.empty                
                             forAllVrps tx (vrpStore database) version $ \r -> 
-                                modifyIORef' latestVRPsRef $ \vrps -> 
-                                    Set.insert r vrps
-                            readIORef latestVRPsRef
+                                modifyIORef' vrps $ Set.insert r
+                            readIORef vrps
                     
 
 -- Execute certain IO actiion every N seconds

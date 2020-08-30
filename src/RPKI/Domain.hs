@@ -273,7 +273,10 @@ newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
-data Roa = Roa !ASN !IpPrefix !Int16
+data Roa = Roa 
+    {-# UNPACK #-} !ASN 
+    {-# UNPACK #-} !IpPrefix 
+    {-# UNPACK #-} !Int16
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

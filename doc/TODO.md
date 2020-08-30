@@ -94,11 +94,8 @@
 
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 
-<<<<<<< HEAD
-=======
 
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
->>>>>>> master
 
 - Implement UI
 

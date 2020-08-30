@@ -42,14 +42,6 @@ pduLength (RouterKeyPduV1 _ _ ski bs2) =
 pduLength (ErrorPdu _ bs1 bs2) = 
     fromIntegral $ 8 + 4 + 4 + BSL.length bs1 + BSL.length bs2
 
-
--- encode :: APdu -> 
---         (forall version pduCode . KnownNat pduCode => 
---             ToValue version Word8 =>             
---             Pdu version pduCode -> BSL.ByteString) -> 
---         BSL.ByteString
--- encode (APdu p) f = f p
-
 -- 
 -- | Serialise PDU into bytes according to the RTR protocal 
 -- 
@@ -135,17 +127,17 @@ bytesToPdu bs =
         getIt = do 
             protocolVersion :: Word8 <- get
             case protocolVersion of
-                0 -> parseVersionedPdu (Proxy @'V0) V0
-                1 -> parseVersionedPdu (Proxy @'V1) V1
+                0 -> parseVersionedPdu (Session @'V0) V0
+                1 -> parseVersionedPdu (Session @'V1) V1
                 n -> fail $ "Invalid protocol version " <> show n
 
 --                 
 -- | Parse PDUs from bytestrings according to the RTR protocal 
 -- 
 bytesToVersionedPdu :: forall (protocolVersion :: ProtocolVersion) . 
-                    (ToValue protocolVersion Word8, ToValue protocolVersion ProtocolVersion) => 
-                    Proxy protocolVersion -> BS.ByteString -> Either Text APdu
-bytesToVersionedPdu _ bs = 
+                    IsProtocolVersion protocolVersion  => 
+                    Session protocolVersion -> BS.ByteString -> Either Text APdu
+bytesToVersionedPdu session bs = 
     case runGetOrFail getIt (BSL.fromStrict bs) of
         Left (bs, offset, errorMessage) -> Left $ Text.pack $ "Error parsing " <> show bs 
         Right (_, _, pdu) -> Right pdu
@@ -154,7 +146,7 @@ bytesToVersionedPdu _ bs =
             protocolVersion :: Word8 <- get
             if (toValue (Proxy @protocolVersion) :: Word8) == protocolVersion
                 then parseVersionedPdu 
-                        (Proxy @protocolVersion) 
+                        session
                         (toValue (Proxy @protocolVersion) :: ProtocolVersion)
                 else fail $ "Invalid protocol version " <> show protocolVersion
             
@@ -163,8 +155,8 @@ bytesToVersionedPdu _ bs =
 -- | Parse PDU with statically known protocol version.
 -- 
 parseVersionedPdu :: forall (protocolVersion :: ProtocolVersion) . 
-                    ToValue protocolVersion Word8 =>
-                    Proxy protocolVersion -> ProtocolVersion -> Get APdu
+                    IsProtocolVersion protocolVersion =>
+                    Session protocolVersion -> ProtocolVersion -> Get APdu
 parseVersionedPdu _ protocolVersion = do 
     pduCode :: Word8 <- get
     case pduCode of 
@@ -267,11 +259,13 @@ parseVersionedPdu _ protocolVersion = do
     
 withSession :: ASession -> 
             (forall (protocolVersion :: ProtocolVersion) . 
+             IsProtocolVersion protocolVersion =>
              Session protocolVersion -> a) -> a
 withSession (ASession s) f = f s
 
 withPdu :: APdu -> 
         (forall (protocolVersion :: ProtocolVersion) (pduCode :: Nat) . 
-         (KnownNat pduCode, ToValue protocolVersion Word8) =>
+         (KnownNat pduCode, IsProtocolVersion protocolVersion) =>
          Pdu protocolVersion pduCode -> a) -> a
 withPdu (APdu pdu) f = f pdu
+ 

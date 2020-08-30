@@ -1,7 +1,7 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE StrictData   #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE StrictData          #-}
+
 
 module RPKI.RTR.Types where
 
@@ -20,15 +20,17 @@ import GHC.Generics (Generic)
 data ProtocolVersion = 
     V0 -- | as defined by https://tools.ietf.org/rfc/rfc6810
   | V1 -- | as defined by https://tools.ietf.org/rfc/rfc8210
+  deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 
-
--- newtype Versioned (version :: ProtocolVersion) a = Versioned a
---     deriving stock (Show, Eq, Ord, Generic)
+type IsProtocolVersion version = (ToValue version Word8,                                  
+                                 ToValue version ProtocolVersion,
+                                 Typeable version)
 
 data APdu where
     APdu :: forall (protocolVersion :: ProtocolVersion) (pduCode :: Nat) .             
-            (KnownNat pduCode, ToValue protocolVersion Word8) =>
+            (KnownNat pduCode, 
+             IsProtocolVersion protocolVersion) =>
             Pdu protocolVersion pduCode -> APdu    
 
 -- | PDUs definede both by V0 and V1 protocols
@@ -52,7 +54,7 @@ deriving instance Show (Pdu version pduCode)
 deriving instance Eq (Pdu version pduCode)
 deriving instance Ord (Pdu version pduCode)
 
-newtype SerialNumber = SerialNumber Int16
+newtype SerialNumber = SerialNumber Int32
     deriving stock (Show, Eq, Ord, Generic)
 
 newtype SessionId = SessionId Int16
@@ -75,9 +77,10 @@ data ErrorCode
 
 data ASession where
     ASession :: forall (protocolVersion :: ProtocolVersion) . 
+                IsProtocolVersion protocolVersion =>
                 Session protocolVersion -> ASession
 
-newtype Session (protocolVersion :: ProtocolVersion) = Session SessionId
+data Session (protocolVersion :: ProtocolVersion) = Session
     deriving stock (Show, Eq, Ord, Generic)
 
 data RtrPrefix = RtrPrefix {
@@ -171,3 +174,14 @@ instance Binary Intervals where
 
     get = Intervals <$> get <*> get <*> get
     
+
+-- 
+-- Wrap around at 2^31 - 1
+-- https://tools.ietf.org/html/rfc8210#page-5
+-- 
+nextSerial :: SerialNumber -> SerialNumber 
+nextSerial (SerialNumber n) = 
+    SerialNumber $ 
+        if (fromIntegral n :: Integer) == (2 :: Integer)^(31 :: Integer) - 1
+            then 0
+            else n + 1    

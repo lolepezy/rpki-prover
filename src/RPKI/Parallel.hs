@@ -140,7 +140,12 @@ txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
                                 _ -> go (Just tx) (leftToRead - 1) accum'
 
 
-
+-- 
+-- | Created two threads and queue between then. Calls
+-- 'produce' in one thread and 'consume' in the other thread,
+-- 'kill' is used to kill an item in the queue in case
+-- the whole thing is interrupted with an exception.
+--
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 Natural ->
                 (ClosableQueue t -> m b) ->
@@ -218,9 +223,6 @@ readCQueue (ClosableQueue q queueState) = do
             readTVar queueState >>= \case 
                 QClosed -> pure Nothing
                 QWorks  -> retry
-
-readCQueuState :: ClosableQueue a -> STM QState
-readCQueuState (ClosableQueue _ queueState) = readTVar queueState
 
 -- | Simple straioghtforward implementation of a thread pool for submition of tasks.
 -- 

@@ -5,21 +5,22 @@
 
 module RPKI.RTR.RtrServer where
 
-import           Control.Concurrent        (forkFinally)
+import           Control.Concurrent               (forkFinally)
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
+import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Control.Exception.Lifted
 
-import qualified Data.ByteString           as BS
-import qualified Data.ByteString.Lazy      as BSL
+import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as BSL
 
 import           Data.Text
-import qualified Data.Text            as Text
-import qualified Data.Text.Encoding   as TE
+import qualified Data.Text                        as Text
+import qualified Data.Text.Encoding               as TE
 
+import           Data.Typeable
 
 import           Control.Lens
 import           Data.Generics.Labels
@@ -27,20 +28,26 @@ import           Data.Generics.Product.Typed
 
 import           Data.String.Interpolate.IsString
 
-import           Network.Socket hiding (recv)
-import           Network.Socket.ByteString (recv, sendAll)
+import           Network.Socket                   hiding (recv)
+import           Network.Socket.ByteString        (recv, sendAll)
 
-import           RPKI.Config
 import           RPKI.AppContext
+import           RPKI.Config
 import           RPKI.Logging
+import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrContext
 import           RPKI.RTR.Types
-import           RPKI.RTR.Pdus
 
-import           RPKI.Util (convert)
-import Data.Maybe (fromMaybe, fromJust)
+import           RPKI.Util                        (convert)
 
+import           Data.Maybe                       (fromMaybe)
+import           Data.Word                        (Word8)
+import           GHC.TypeLits                     (Nat)
 
+-- 
+-- | Main entry point, here we start the RTR server. 
+-- 
+-- RtrContext must be created separately.
 runRtrServer :: AppContext s -> RtrConfig -> RtrContext -> IO ()
 runRtrServer AppContext {..} RtrConfig {..} rtrContext = 
     withSocketsDo $ do                 
@@ -89,31 +96,31 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
 
                 receiveFromClient sendChan = do
                     firstPdu <- recv connection 1024
-                    r <- processFirstPdu firstPdu
+                    r <- processFirstPdu rtrContext firstPdu
                     case r of
-                        Left e -> do 
-                            logError_ logger [i|First PDU is wrong: #{e}.|]
-                        Right (pdu, session') -> do 
-                            let responsePdu = withSession session' (respondWith pdu)  
+                        Left (responsePdu, message) -> do 
+                            logError_ logger message
                             atomically $ writeTChan sendChan responsePdu
-                            go 
-                    where 
-                        go = do
+                        Right (responsePdu, session') -> do
+                            forM_ responsePdu $ atomically . writeTChan sendChan
+                            withSession session' go
+                    where
+                        go :: forall version . 
+                                IsProtocolVersion version => 
+                                Session version -> IO () 
+                        go session' = do
                             logDebug_ logger [i|Waiting data from the client #{peer}|]
                             pduBytes <- recv connection 1024
                             logDebug_ logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
-                            if BS.null pduBytes
-                                then
-                                    logDebug_ logger [i|Connection with #{peer} is closed.|] 
-                                else do                         
-                                    case bytesToPdu pduBytes of 
-                                        Left e -> do
-                                            logError_ logger [i|Error parsing a PDU #{e}.|]
-                                        Right pdu -> do
-                                            logDebug_ logger [i|Parsed PDU: #{pdu}.|]
-                                            -- respond pdu
-                                            pure ()                                
-                                    go
+                            unless (BS.null pduBytes) $ do      
+                                case bytesToVersionedPdu session' pduBytes of 
+                                    Left e -> do
+                                        logError_ logger [i|Error parsing a PDU #{e}.|]
+                                    Right pdu -> do
+                                        logDebug_ logger [i|Parsed PDU: #{pdu}.|]
+                                        -- respond pdu
+                                        pure ()                                
+                                go session'
 
                 updateFromRtrState sendChan = do
                     localChan <- atomically $ dupTChan worldVersionUpdateChan
@@ -126,30 +133,81 @@ runRtrServer AppContext {..} RtrConfig {..} rtrContext =
 -- 
 -- | Process the first PDU and do the protocol version negotiation
 -- 
-processFirstPdu :: BS.ByteString -> IO (Either (APdu, Text) (APdu, ASession))
-processFirstPdu pduBytes = do    
+processFirstPdu :: RtrContext 
+                -> BS.ByteString 
+                -> IO (Either (APdu, Text) ([APdu], ASession))
+processFirstPdu rtrContext@RtrContext {..} pduBytes = do    
     case bytesToPdu pduBytes of    
-        Left (Just code, maybeText) -> do
-            let 
-                text = fromMaybe "Wrong PDU" maybeText
-                in pure $ Left (APdu $ ErrorPdu @'V0 code (convert pduBytes) (convert text), text)
+        Left (Just code, maybeText) -> let 
+            text = fromMaybe "Wrong PDU" maybeText
+            in pure $ Left (APdu $ ErrorPdu @'V0 code (convert pduBytes) (convert text), text)
 
-        Right (APdu pdu) -> 
+        Right pdu -> 
             case pdu of 
-                (SerialQueryPdu sessionId serial :: Pdu protocolVersion code) -> 
-                    pure $ Right (APdu pdu, ASession (Session @protocolVersion sessionId))
+                APdu (SerialQueryPdu _ _ :: Pdu protocolVersion code) -> do
+                    let session' = Session @protocolVersion
+                    r <- respondToPdu rtrContext pdu pduBytes session'
+                    pure $ (, ASession session') <$> r                    
 
-                (ResetQueryPdu :: Pdu protocolVersion code) -> 
-                    pure $ Right (APdu pdu, ASession (Session @protocolVersion $ SessionId 1))
+                APdu (ResetQueryPdu :: Pdu protocolVersion code) -> do
+                    let session' = Session @protocolVersion
+                    r <- respondToPdu rtrContext pdu pduBytes session'
+                    pure $ (, ASession session') <$> r
 
-                (otherPdu :: Pdu protocolVersion code) -> 
+                APdu (otherPdu :: Pdu protocolVersion code) -> 
                     let 
                         text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, but received " <> show otherPdu
-                        in pure $ Left (APdu $ ErrorPdu @protocolVersion InvalidRequest (convert pduBytes) (convert text), text)                    
+                        in pure $ Left (APdu $ ErrorPdu @protocolVersion InvalidRequest (convert pduBytes) (convert text), text)
 
 
+respondToPdu :: forall protocolVersion . 
+               IsProtocolVersion protocolVersion => 
+                RtrContext
+                -> APdu 
+                -> BS.ByteString 
+                -> Session (protocolVersion :: ProtocolVersion) 
+                -> IO (Either (APdu, Text) [APdu])
+respondToPdu RtrContext {..} (APdu pdu) pduBytes _ = do                  
+    case pdu of 
+        (SerialQueryPdu sessionId serial :: Pdu version code) -> let
+                text :: Text = [i|Unexpected serial query PDU.|]
+                in pure $ Left (APdu $ 
+                        ErrorPdu @protocolVersion CorruptData (convert pduBytes) (convert text), text)
+            
 
-respondWith :: APdu -> 
-            Session (protocolVersion :: ProtocolVersion) -> 
-            APdu
-respondWith (APdu pdu) s = APdu pdu
+        (ResetQueryPdu :: Pdu version code) -> 
+            withProtocolVersionCheck pdu $ pure $ Right []
+
+        (RouterKeyPduV1 _ _ _ _)  -> 
+            pure $ Right []
+        
+    where
+        withProtocolVersionCheck :: forall 
+                            (version :: ProtocolVersion) 
+                            (pduCode :: Nat) a                             
+                            . (Typeable protocolVersion, Typeable version) => 
+                            Pdu version pduCode 
+                            -> IO (Either (APdu, Text) a) 
+                            -> IO (Either (APdu, Text) a)
+        withProtocolVersionCheck _ respond = 
+            case eqT @protocolVersion @version of
+                Just _  -> respond
+                Nothing -> let
+                    text :: Text = [i|Protocol version is not the same.|]                                
+                    in pure $ Left (APdu $ 
+                        ErrorPdu @protocolVersion UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
+
+        withSessionIdCheck :: SessionId 
+                            -> IO (Either (APdu, Text) a) 
+                            -> IO (Either (APdu, Text) a)
+        withSessionIdCheck sessionId respond = do 
+            currentSessionId <- readTVarIO session
+            if currentSessionId == sessionId
+                then respond
+                else let 
+                    text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{currentSessionId}.|]
+                    in pure $ Left (APdu $ 
+                        ErrorPdu @protocolVersion CorruptData (convert pduBytes) (convert text), text)
+
+                
+                
