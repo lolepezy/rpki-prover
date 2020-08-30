@@ -59,16 +59,18 @@
 + Introduce "fetch failure tolerance period" within which we are okay to use object from the cache in case repository fetching failed.
   It is not a monoid, so keep this RpkiUrl -> LastSuccessuflFetch as separate map. Use some 'merge' intead of '<>' to PublicationPoints.
 + Check manifest SIA == manifest location
++ Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 
 
 ---------------------------------  In testing -----------------------------------------
 
-- Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 
 
 ---------------------------------  In progress ----------------------------------------
 
 --------------------------------------- TODOs -----------------------------------------
+
+- Fix ARIN broken CRL 
 
 - Check signature algorithms (
     http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
@@ -77,13 +79,19 @@
 - Check CRL SIA == CRL location and CRL location on the MFT
 - Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
-- Implement 'reset'.
+- Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept, RRDP -> rsync fall-back).
+
+- Implement `--reset`, i.e. erase cache/tmp/rsync on the start.
 - Fix 'ctrl+c', it should stop the applications
 
-- SLURM (store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.)
+- Implement SLURM support (https://tools.ietf.org/html/rfc8416) 
+   * store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.
+   * in any case SLURM data must not be stored in LMDB so that it would be possible to erase the cache. 
 
-- Fix Warnings "No object #{uri} with hash #{oldHash} to replace."
+- Fix Warnings "No object #{uri} with hash #{oldHash} to replace." or ignore it. 
+
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
+
 
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
