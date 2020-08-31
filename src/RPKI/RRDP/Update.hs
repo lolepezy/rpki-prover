@@ -207,7 +207,7 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
                 (saveDelta appContext stats)          
         RrdpStat {..} <- liftIO $ completeRrdpStat stats
         let repoURI = getURL $ repository ^. #uri
-        logDebugM logger [i|Downloaded #{repoURI}, added #{added} objects, removed #{removed}.|]
+        logDebugM logger [i|Downloaded #{repoURI}, added #{added} objects, ignored removals of #{removed}.|]
         pure (r, v)
 
 
@@ -339,7 +339,7 @@ saveDelta appContext rrdpStats deltaContent = do
                             pure $ validations <> mError vc e
                         SObject so@(StorableObject ro _) -> do
                             alreadyThere <- DB.hashExists tx objectStore (getHash ro)
-                            unless alreadyThere $ do                                    
+                            unless alreadyThere $ do
                                 DB.putObject tx objectStore so worldVersion                      
                                 addedOne rrdpStats
                             pure validations
@@ -352,27 +352,21 @@ saveDelta appContext rrdpStats deltaContent = do
                             pure $ validations <> mError vc e
                         SObject so@(StorableObject ro _) -> do        
                             oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
-                            if oldOneIsAlreadyThere 
+                            validations' <- if oldOneIsAlreadyThere 
                                 then do 
                                     -- Ignore withdraws and just use the time-based garbage collection
-                                    -- DB.deleteObject tx objectStore oldHash
                                     removedOne rrdpStats
-
-                                    let newHash = getHash ro
-                                    newOneIsAlreadyThere <- DB.hashExists tx objectStore newHash
-                                    if newOneIsAlreadyThere
-                                        then do
-                                            logWarn_ logger [i|There's an existing object with hash: #{newHash}|]
-                                            pure $ validations <> mWarning vc 
-                                                (VWarning $ RrdpE $ ObjectExistsWhenReplacing uri oldHash)
-                                        else do                                             
-                                            DB.putObject tx objectStore so worldVersion
-                                            addedOne rrdpStats
-                                            pure validations                                            
+                                    pure validations
                                 else do 
                                     logWarn_ logger [i|No object #{uri} with hash #{oldHash} to replace.|]
                                     pure $ validations <> mWarning vc
                                         (VWarning $ RrdpE $ NoObjectToReplace uri oldHash) 
+
+                            newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
+                            unless newOneIsAlreadyThere $ do                            
+                                DB.putObject tx objectStore so worldVersion
+                                addedOne rrdpStats
+                            pure validations'                                                                                    
 
         logger         = appContext ^. typed @AppLogger           
         cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
