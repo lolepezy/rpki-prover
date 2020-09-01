@@ -25,7 +25,10 @@ The only option to use it at the moment is to build from sources:
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested)
     
-   - Install these libraries: `sudo apt-get install liblmdb-dev liblzma-dev libexpat1-dev` (or your system's version of it)
+   - Install libraries for: `lmdb`, `lzma` and `expat1`
+      - On linux using apt-get, that will be : `sudo apt-get install liblmdb-dev liblzma-dev libexpat1-dev`
+      - On MacOS using brew, that will be: `brew install lmdb xz expat` 
+      - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers
    - Install `stack` as described here `https://docs.haskellstack.org/en/stable/install_and_upgrade/`
    - Clone https://github.com/lolepezy/rpki-prover/
    - Run `stack install rpki-prover:rpki-prover-exe` inside of the rpki-prover. It should take quite some time (30-50 minutes as it has to build all the required libraries)
