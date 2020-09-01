@@ -313,8 +313,3 @@ cancelTask (RequestorTask _) = pure ()
 cancelTask (SubmitterTask a) = cancel a
 cancelTask (AsyncTask a)     = cancel a
 
-
-
-
-
-

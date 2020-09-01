@@ -33,7 +33,7 @@ import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
-import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory, removeFile)
+import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory, removePathForcibly)
 import           System.Environment
 import           System.FilePath                  ((</>))
 import           System.IO                        (BufferMode (..), hSetBuffering, stdout)
@@ -122,22 +122,23 @@ createAppContext CLIOptions{..} logger = do
 
     -- clean up tmp directory if it's not empty
     fromTry (InitE . InitError . fmtEx) $ 
-        listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
+        listDirectory tmpd >>= mapM_ (removePathForcibly . (tmpd </>))
 
     versions <- liftIO createDynamicState
+    
+    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
 
     -- Create 2 times more threads than there're CPUs available.
-    -- In most cases it seems to be beneficial.
-    para <- case cpuCount of 
-                Nothing -> pure $ 2 * getParallelism
-                Just c  -> do 
-                    liftIO $ setParallelism c
-                    pure $ 2 * c    
-    let parallelism' = Parallelism para 64
+    -- In most tested cases it seems to be beneficial.    
+    liftIO $ setCpuCount cpuCount'
+    let cpuParallelism = 2 * cpuCount'
+
+    -- Hardcoded (not sure it makes sense to make it configurable)
+    let ioParallelism = 64     
 
     appBottlenecks <- liftIO $ do 
-        cpuBottleneck <- newBottleneckIO $ cpuParallelism parallelism'
-        ioBottleneck  <- newBottleneckIO $ ioParallelism parallelism'
+        cpuBottleneck <- newBottleneckIO cpuParallelism
+        ioBottleneck  <- newBottleneckIO ioParallelism
         pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     -- TODO read stuff from the config, CLI
@@ -147,7 +148,7 @@ createAppContext CLIOptions{..} logger = do
         logger = logger,
         config = Config {
             talDirectory = tald,
-            parallelism  = parallelism',
+            parallelism  = Parallelism cpuParallelism ioParallelism,
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
                 tmpRoot = tmpd,

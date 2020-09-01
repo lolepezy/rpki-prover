@@ -59,8 +59,8 @@ data HttpApiConf = HttpApiConf {
     port :: Int16    
 } deriving stock (Show, Eq, Ord, Generic)
 
-getParallelism :: Natural 
-getParallelism = fromMaybe 1 $ toNatural numCapabilities
+getRtsCpuCount :: Natural 
+getRtsCpuCount = fromMaybe 1 $ toNatural numCapabilities
 
-setParallelism :: Natural -> IO ()
-setParallelism = setNumCapabilities . fromIntegral
+setCpuCount :: Natural -> IO ()
+setCpuCount = setNumCapabilities . fromIntegral
