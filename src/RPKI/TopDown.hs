@@ -277,7 +277,7 @@ fetchRepository
                 pure $ FetchFailure repo now (mError vContext' timeoutError)
             Just z -> pure z        
     where 
-        repoURL = getRpkiURL repo
+        repoURL   = getRpkiURL repo
         vContext' = childVC (toText repoURL) parentContext
 
         fetchIt = do
@@ -341,8 +341,10 @@ validateCAWithQueue
             (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
             queueVResult appContext topDownContext validations            
             case r of
-                Left _alreadyQueued                -> pure ()
-                Right (discoveredPPs, waitingList) -> extractPPsAndValidateDown discoveredPPs waitingList
+                Left _alreadyQueued -> pure ()
+                Right (discoveredPPs, waitingList, vrps) -> do
+                    queueVRP appContext topDownContext (Set.toList vrps)
+                    extractPPsAndValidateDown discoveredPPs waitingList
 
     (r, elapsed) <- timedMS $ case qWhat of 
             CreateQ -> do            
@@ -467,10 +469,10 @@ validateCAWithQueue
 -- Returns the discovered publication points that are not registered 
 -- in the top-down context yet.
 validateCaCertificate :: Storage s =>
-                        AppContext s ->
-                        TopDownContext s ->
-                        CerObject ->                
-                        ValidatorT VContext IO (PublicationPoints, WaitingList)
+                AppContext s ->
+                TopDownContext s ->
+                CerObject ->                
+                ValidatorT VContext IO (PublicationPoints, WaitingList, Set Roa)
 validateCaCertificate appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
@@ -490,7 +492,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                 (getRpkiURL discoveredPP) 
                                 (getHash certificate) 
                                 vContext' 
-                                (verifiedResources topDownContext))
+                                (verifiedResources topDownContext), mempty)
 
             case findPublicationPointStatus url asIfItIsMerged of 
                 -- this publication point hasn't been seen at all, so stop here
@@ -504,11 +506,10 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     in if needToRefetch
                         then stopDescend 
                         else validateThisCertAndGoDown                    
-    where        
+    where
 
-        validateThisCertAndGoDown :: ValidatorT VContext IO (PublicationPoints, WaitingList)
-        validateThisCertAndGoDown = do
-            vContext' :: VContext <- asks getVC
+        validateThisCertAndGoDown :: ValidatorT VContext IO (PublicationPoints, WaitingList, Set Roa)
+        validateThisCertAndGoDown = do            
             let (childrenAki, certLocations') = (toAKI $ getSKI certificate, getLocations certificate)        
 
             -- this for the certificate
@@ -516,25 +517,21 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             visitObject appContext topDownContext (CerRO certificate)
 
             mft <- findMft childrenAki certLocations'
-            checkMftLocation mft certificate
-
-            -- this for the manifest
-            incValidObject topDownContext
-            visitObject appContext topDownContext mft
-
-            forChild (toText $ NonEmpty.head $ getLocations mft) $ do
-
+            checkMftLocation mft certificate            
+                    
+            manifestResult <- forChild (toText $ NonEmpty.head $ getLocations mft) $ do
+                -- find CRL on the manifest
                 (_, crlHash) <- case findCrlOnMft mft of 
                     []    -> vError $ NoCRLOnMFT childrenAki certLocations'
                     [crl] -> pure crl
                     crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
 
                 let objectStore' = objectStore database
-                crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                crlObject <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
                 case crlObject of 
                     Nothing          -> vError $ NoCRLExists childrenAki certLocations'    
                     Just (CrlRO crl) -> do      
-
+                        -- validate CRL and MFT together
                         validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ do
                             vHoist $ do          
                                 crl' <- validateCrl (now topDownContext) crl certificate
@@ -546,55 +543,127 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         visitObject appContext topDownContext (CrlRO crl)
 
                         let childrenHashes = filter ((/= getHash crl) . snd) $ -- filter out CRL itself
-                                                mftEntries $ getCMSContent $ extract mft
-
-                        vhs <- liftIO $ readTVarIO $ visitedHashes topDownContext
-
-                        -- Be very strict about the manifest entries, if at least one of them 
-                        -- is broken, the whole manifest is considered broken.
-                        childrenResults <- parallelTasks 
-                            (cpuBottleneck appBottlenecks) 
-                            childrenHashes $ \(filename, hash') -> do
-                                ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' hash'
-                                case ro of 
-                                    Nothing  -> vError $ ManifestEntryDontExist hash'
-                                    Just ro'
-                                        | Set.member hash' vhs ->
-                                            -- we have already visited this object before, so 
-                                            -- there're some circular references in the objects
-                                            vError $ CircularReference hash' (getLocations ro')
-                                        | otherwise -> do
-                                            -- warn about names on the manifest mismatching names in the object URLs
-                                            let objectLocations = getLocations ro'
-                                            let nameMatches = NonEmpty.filter ((filename `Text.isSuffixOf`) . toText) objectLocations
-                                            when (null nameMatches) $ 
-                                                vWarn $ ManifestLocationMismatch filename objectLocations
-
-                                            liftIO $ do    
-                                                -- 
-                                                -- TODO This comment is literally wrong, we don't do it here!!!
-                                                --                                                    
-                                                -- Mark as validated all the children of the manifest regardless of
-                                                -- errors on the manifest, to avoid partial deletion of MFT children 
-                                                -- by the cache cleanup.
-                                                visitObject appContext topDownContext ro'
-
-                                                -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
-                                                -- or recursively validate CA if the child is a certificate.
-                                                validateChild vContext' validCrl ro'
+                                                mftEntries $ getCMSContent $ extract mft                                                
+                    
+                        -- Mark all manifest entries as visited to avoid the situation
+                        -- when some of the objects are deleted from the cache and some
+                        -- are still there. Do it both in case of successful validation
+                        -- or a validation error.
+                        let markAllEntriesAsVisited = 
+                                visitObjects topDownContext $ map snd childrenHashes
+                        
+                        let processChildren = do 
+                                r <- parallelTasks 
+                                    (cpuBottleneck appBottlenecks) 
+                                    childrenHashes $ \(filename, hash') -> 
+                                        validateManifestEntry filename hash' validCrl
+                                markAllEntriesAsVisited
+                                pure r
+                        
+                        childrenResults <- processChildren `catchError` 
+                                        (\e -> markAllEntriesAsVisited >> throwError e)
 
                         -- Combine PPs and their waiting lists. On top of it, fix the 
                         -- last successfull validation times for PPs based on their fetch statuses.
-                        pure $ first adjustLastSucceeded $ mconcat childrenResults                                
+                        let (pps, waitingList, vrps) = mconcat childrenResults
+                        pure (adjustLastSucceeded pps, waitingList, vrps)
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
-    
+
+            -- this for the valid manifest
+            incValidObject topDownContext
+
+            pure manifestResult
+
+        --
+        -- | Validate an entry of the manifest, i.e. a pair of filename and hash
+        -- 
+        validateManifestEntry filename hash' validCrl = do                    
+            -- 
+            visitedObjects <- liftIO $ readTVarIO $ visitedHashes topDownContext
+
+            let objectStore' = objectStore database
+            ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' hash'
+            case ro of 
+                Nothing -> vError $ ManifestEntryDontExist hash'
+                Just ro'
+                    | Set.member hash' visitedObjects ->
+                        -- we have already visited this object before, so 
+                        -- there're some circular references in the objects
+                        vError $ CircularReference hash' (getLocations ro')
+                    | otherwise -> do
+                        -- warn about names on the manifest mismatching names in the object URLs
+                        let objectLocations = getLocations ro'
+                        let nameMatches = NonEmpty.filter ((filename `Text.isSuffixOf`) . toText) objectLocations
+                        when (null nameMatches) $ 
+                            vWarn $ ManifestLocationMismatch filename objectLocations
+
+                        -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
+                        -- or recursively validate CA if the child is a certificate.                           
+                        validateChild validCrl ro'
+
+        -- 
+        validateChild :: Validated CrlObject -> 
+                        RpkiObject -> 
+                        ValidatorT VContext IO (PublicationPoints, WaitingList, Set Roa)
+        validateChild validCrl ro = do
+            -- At the moment of writing RFC 6486-bis 
+            -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-00#page-12) 
+            -- prescribes to consider the manifest invalid if any of the objects 
+            -- referred by the manifest is invalid. 
+            -- 
+            -- That's why recursive validation of the child CA happens in the separate   
+            -- runValidatorT (...) call, but all the other objects are supposed to be 
+            -- validated withing the same context of ValidatorT, i.e. have short-circuit
+            -- logic implemented by ExceptT.
+            parentContext :: VContext <- asks getVC
+            case ro of
+                CerRO childCert -> do 
+                    let TopDownContext{..} = topDownContext
+                    (r, validations) <- liftIO $ runValidatorT parentContext $ do                    
+                            forChild (toText $ NonEmpty.head $ getLocations ro) $ do
+                                childVerifiedResources <- vHoist $ do                 
+                                        Validated validCert <- validateResourceCert now childCert certificate validCrl
+                                        validateResources verifiedResources childCert validCert 
+                                let childTopDownContext = topDownContext { verifiedResources = Just childVerifiedResources }
+                                validateCaCertificate appContext childTopDownContext childCert                            
+                                        
+                    queueVResult appContext topDownContext validations                    
+                    case r of
+                        Left _               -> pure $ (emptyPublicationPoints, mempty, mempty)
+                        Right z@(_, _, vrps) -> do 
+                            queueVRP appContext topDownContext (Set.toList vrps)
+                            pure z
+
+                RoaRO roa ->
+                    forChild (toText $ NonEmpty.head $ getLocations ro) $ do
+                        void $ vHoist $ validateRoa (now topDownContext) roa certificate validCrl
+                                            
+                        incValidObject topDownContext
+                            -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Roa])}|]
+                        let vrps = getCMSContent (extract roa :: CMS [Roa])
+                        pure (emptyPublicationPoints, mempty, Set.fromList vrps)                        
+
+                GbrRO gbr -> withEmptyPPs $
+                    forChild (toText $ NonEmpty.head $ getLocations ro) $ do
+                        void $ vHoist $ validateGbr (now topDownContext) gbr certificate validCrl                    
+                        incValidObject topDownContext                    
+
+                -- TODO Anything else?
+                _ -> withEmptyPPs $ pure ()
+
+            where                
+                withEmptyPPs f = f >> pure (emptyPublicationPoints, mempty, mempty)
+        
+
         findMft childrenAki locations = do
             mft' <- liftIO $ roTx (objectStore database) $ \tx -> 
                 findLatestMftByAKI tx (objectStore database) childrenAki
             case mft' of
                 Nothing  -> vError $ NoMFT childrenAki locations
-                Just mft -> pure mft
+                Just mft -> do
+                    visitObject appContext topDownContext mft
+                    pure mft
 
         -- TODO Is there a more reliable way to find it? Compare it with SIA?
         findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $ 
@@ -612,49 +681,6 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                             [] -> vWarn $ MFTOnDifferentLocation mftSIA mftLocations
                             _ ->  pure ()
 
-
-        validateChild :: VContext -> Validated CrlObject -> RpkiObject -> IO (PublicationPoints, WaitingList)
-        validateChild parentContext validCrl ro = 
-            case ro of
-                CerRO childCert -> do 
-                    let TopDownContext{..} = topDownContext
-                    (r, validations) <- runValidatorT childContext $ do
-                            childVerifiedResources <- vHoist $ do                 
-                                    Validated validCert <- validateResourceCert now childCert certificate validCrl
-                                    validateResources verifiedResources childCert validCert 
-                            let childTopDownContext = topDownContext { verifiedResources = Just childVerifiedResources }
-                            validateCaCertificate appContext childTopDownContext childCert 
-                                    
-                    queueVResult appContext topDownContext validations
-                    pure $ case r of
-                        Left _    -> (emptyPublicationPoints, mempty)
-                        Right z -> z
-
-                RoaRO roa -> withEmptyPPs $ do 
-                    let (r, validations) = runPureValidator childContext $                                     
-                                void $ validateRoa (now topDownContext) roa certificate validCrl
-                    queueVResult appContext topDownContext validations
-                    case r of 
-                        Left _  -> pure ()
-                        Right _ -> do                                
-                            incValidObject topDownContext
-                            -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Roa])}|]
-                            queueVRP appContext topDownContext $ getCMSContent (extract roa :: CMS [Roa])
-
-                GbrRO gbr -> withEmptyPPs $ do
-                    z <- queueVResult appContext topDownContext $ snd $ 
-                        runPureValidator childContext $ 
-                            void $ validateGbr (now topDownContext) gbr certificate validCrl
-                    incValidObject topDownContext
-                    pure z
-
-                -- TODO Anything else?
-                _ -> withEmptyPPs $ pure ()
-
-            where
-                childContext = childVContext parentContext $ toText $ NonEmpty.head $ getLocations ro
-                withEmptyPPs f = f >> pure (emptyPublicationPoints, mempty)
-        
 
 -- Check if an URL need to be re-fetched, based on fetch status and current time.
 needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
@@ -696,10 +722,13 @@ markValidatedObjects AppContext { database = DB {..}, .. } TopDownContext {..} =
 -- during top-down validation. It doesn't mean that the object is valid, just that 
 -- we read it from the database and looked at it.
 visitObject :: (MonadIO m, WithHash ro, WithLocations ro, Storage s) => 
-                    AppContext s -> TopDownContext s -> ro -> m ()
-visitObject AppContext { database = DB {..}, .. } TopDownContext {..} ro = do
-        -- logDebugM logger [i|Visited #{NonEmpty.head $ getLocations ro}, #{getHash ro}.|]
-        liftIO $ atomically $ modifyTVar' visitedHashes $ Set.insert $ getHash ro
+                AppContext s -> TopDownContext s -> ro -> m ()
+visitObject _ topDownContext ro = 
+    visitObjects topDownContext [getHash ro]    
+
+visitObjects :: MonadIO m => TopDownContext s -> [Hash] -> m ()
+visitObjects TopDownContext {..} hashes =
+    liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
 
 
 -- | Put validation result into a queue for writing
