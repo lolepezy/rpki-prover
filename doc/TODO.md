@@ -60,6 +60,7 @@
   It is not a monoid, so keep this RpkiUrl -> LastSuccessuflFetch as separate map. Use some 'merge' intead of '<>' to PublicationPoints.
 + Check manifest SIA == manifest location
 + Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
++ Fix ARIN broken CRL 
 
 
 ---------------------------------  In testing -----------------------------------------
@@ -70,7 +71,10 @@
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Fix ARIN broken CRL 
+- Introduce shared state for "the latest discovered bunch of VRPs" to be used in 
+  * RTR responses to reset queuries and diffs
+  * /api/vrps.* responses
+  OR figure out an option to get the from LMDB with less CPU/allocations
 
 - Check signature algorithms (
     http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
