@@ -71,6 +71,8 @@
 
 --------------------------------------- TODOs -----------------------------------------
 
+- Connect objects to repositories and implement a strict delta->snapshot fallback
+
 - Introduce shared state for "the latest discovered bunch of VRPs" to be used in 
   * RTR responses to reset queuries and diffs
   * /api/vrps.* responses
@@ -85,7 +87,7 @@
 
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept, RRDP -> rsync fall-back).
 
-- Implement `--reset`, i.e. erase cache/tmp/rsync on the start.
+- Implement `--reset`, i.e. erase cache/tmp/rsync on the start (keep some metadata, i.e. "version" of the DB and refuse to work with an older incompatible version)
 - Fix 'ctrl+c', it should stop the applications
 
 - Implement SLURM support (https://tools.ietf.org/html/rfc8416) 

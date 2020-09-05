@@ -298,8 +298,8 @@ newTask io (Bottleneck bottlenecks) execution =
                 void $ liftIO $ race 
                     (wait a)
                     (atomically $ do 
-                        thereSomeSpace <- someSpaceInBottleneck
-                        unless (and thereSomeSpace) retry)
+                        spaceInBottlenecks <- someSpaceInBottleneck
+                        unless (and spaceInBottlenecks) retry)
                 pure $ SubmitterTask a    
 
 
