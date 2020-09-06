@@ -49,7 +49,7 @@ import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.RRDP.Update
+import           RPKI.RRDP.RrpdFetch
 import           RPKI.RRDP.Http
 import           RPKI.Rsync
 import           RPKI.Store.Database

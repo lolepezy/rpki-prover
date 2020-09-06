@@ -7,13 +7,12 @@
 {-# LANGUAGE TypeOperators         #-}
 
 module RPKI.Http.Api where
-
+    
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as BSL
 import qualified Data.ByteString.Short      as BSS
 
 import           Data.Int
-import           Data.Proxy
 import           Data.Text                  (Text)
 
 import           Data.ByteArray             (convert)
@@ -50,6 +49,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database
 import           RPKI.Time
 import qualified RPKI.Util                  as U
+
 
 
 
@@ -267,6 +267,9 @@ instance ToJSON ASN1Class
 instance ToJSON ASN1ConstructionType
 instance ToJSON SerializedPoint
 instance ToJSON Crypto.PubKey.ECC.Types.CurveName
+
+instance ToJSON SessionId where
+    toJSON (SessionId s) = shortBsJson s
 
 -- Parsing
 instance FromHttpApiData Hash where    

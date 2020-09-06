@@ -1,9 +1,9 @@
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData                 #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module RPKI.Errors where
     
@@ -100,6 +100,10 @@ data RrdpError = BrokenXml Text |
                 CantDownloadSnapshot Text |
                 CantDownloadDelta Text |
                 SnapshotHashMismatch Hash Hash |
+                SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
+                SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
+                DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
+                DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
                 ObjectExistsWhenReplacing URI Hash |

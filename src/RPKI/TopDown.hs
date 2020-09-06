@@ -44,7 +44,7 @@ import           RPKI.Parallel
 import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
-import           RPKI.RRDP.Update
+import           RPKI.RRDP.RrpdFetch
 import           RPKI.RRDP.Http
 import           RPKI.Parse.Parse
 import           RPKI.Rsync
