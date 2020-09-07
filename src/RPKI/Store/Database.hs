@@ -7,37 +7,39 @@
 module RPKI.Store.Database where
 
 import           Codec.Serialise
+import           Control.Concurrent.STM   (atomically)
+import           Control.Exception.Lifted
+import           Control.Monad            (forM_, void)
 import           Control.Monad.IO.Class
+import           Control.Monad.Reader     (ask)
+
+import           Data.Data                (Typeable)
+import           Data.Int
 import           Data.IORef.Lifted
 
-import           Control.Concurrent.STM      (atomically)
-import           Control.Exception.Lifted    (mapException, SomeException)
-import           Control.Monad               (forM_, void)
-import qualified Data.List                   as List
-
-import           Data.Int
+import qualified Data.List                as List
 
 import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Store.Base.Map         (SMap (..))
-import           RPKI.Store.Base.MultiMap    (SMultiMap (..))
+import           RPKI.Store.Base.Map      (SMap (..))
+import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
 import           RPKI.Version
 
-import qualified RPKI.Store.Base.Map         as M
-import qualified RPKI.Store.Base.MultiMap    as MM
+import qualified RPKI.Store.Base.Map      as M
+import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
-import           RPKI.Util                   (increment, fmtEx)
+import           RPKI.Util                (fmtEx, increment)
 
+import           RPKI.AppMonad
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-
 
 data ROMeta = ROMeta {
         insertedBy :: WorldVersion,
@@ -127,7 +129,7 @@ putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
             SequenceValue k <- nextValue tx keys
             let key = ArtificialKey k
             M.put tx hashToKey h key
-            M.put tx objects key sv  
+            M.put tx objects key sv   
             M.put tx objectMetas key (ROMeta wv Nothing)  
             ifJust (getAKI ro) $ \aki' ->
                 case ro of
@@ -421,3 +423,119 @@ instance Storage s => WithStorage s (DB s) where
 
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx    
+
+
+
+-- Utilities to have storage transaction in ValidatorT monad.
+roAppTx :: (Storage s, WithStorage s ws) => 
+            ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+roAppTx s f = appTx s f roTx    
+
+rwAppTx :: (Storage s, WithStorage s ws) => 
+            ws -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTx s f = appTx s f rwTx
+
+appTx :: (Storage s, WithStorage s ws) => 
+        ws -> (Tx s mode -> ValidatorT env IO a) -> 
+        (ws -> (Tx s mode -> IO (Either AppError a, Validations))
+            -> IO (Either AppError a, Validations)) -> 
+        ValidatorT env IO a
+appTx s f txF = do
+    env <- ask
+    validatorT $ txF s $ runValidatorT env . f
+
+
+roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> 
+            (exc -> AppError) -> 
+            (Tx s 'RO -> ValidatorT env IO a) -> 
+            ValidatorT env IO a 
+roAppTxEx ws err f = appTxEx ws err f roTx
+
+rwAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> (exc -> AppError) -> 
+            (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTxEx s err f = appTxEx s err f rwTx
+
+appTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> (exc -> AppError) -> 
+            (Tx s mode -> ValidatorT env IO a) -> 
+            (s -> (Tx s mode -> IO (Either AppError a, Validations))
+               -> IO (Either AppError a, Validations)) -> 
+            ValidatorT env IO a
+appTxEx ws err f txF = do
+    env <- ask
+    -- TODO Make it less ugly and complicated
+    t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
+    validatorT $ pure $ case t of 
+                            Left e  -> (Left (err e), mempty)
+                            Right r -> r   
+
+
+---------- 
+
+roAppTx1 :: (Storage s, WithStorage s ws) => 
+            ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+roAppTx1 s f = appTx1 s f roTx    
+
+rwAppTx1 :: (Storage s, WithStorage s ws) => 
+            ws -> (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTx1 s f = appTx1 s f rwTx
+
+
+appTx1 :: (Storage s, WithStorage s ws) => 
+        ws -> (Tx s mode -> ValidatorT env IO a) -> 
+        (ws -> (Tx s mode -> IO (Either AppError a, Validations))
+            -> IO (Either AppError a, Validations)) -> 
+        ValidatorT env IO a
+appTx1 s f txF = do
+    env <- ask    
+    validatorT $ transaction env `catch` 
+                (\(TxRollbackException e vs) -> pure (Left e, vs))
+  where
+    transaction env = txF s $ \tx -> do 
+        (r, vs) <- runValidatorT env $ f tx
+        case r of
+            -- abort transaction on ExceptT error
+            Left e  -> throwIO $ TxRollbackException e vs
+            Right _ -> pure (r, vs)
+         
+
+roAppTxEx1 :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> 
+            (exc -> AppError) -> 
+            (Tx s 'RO -> ValidatorT env IO a) -> 
+            ValidatorT env IO a 
+roAppTxEx1 ws err f = appTxEx ws err f roTx
+
+rwAppTxEx1 :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> (exc -> AppError) -> 
+            (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTxEx1 s err f = appTxEx s err f rwTx
+
+
+appTxEx1 :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> (exc -> AppError) -> 
+            (Tx s mode -> ValidatorT env IO a) -> 
+            (s -> (Tx s mode -> IO (Either AppError a, Validations))
+               -> IO (Either AppError a, Validations)) -> 
+            ValidatorT env IO a
+appTxEx1 ws err f txF = do
+    env <- ask
+    validatorT $ transaction env `catches` [
+            Handler $ \(TxRollbackException e vs) -> pure (Left e, vs),
+            Handler $ \e -> pure (Left (err e), mempty)
+        ]       
+    where
+        transaction env = txF (storage ws) $ \tx -> do 
+            (r, vs) <- runValidatorT env $ f tx
+            case r of
+                -- abort transaction on ExceptT error
+                Left e  -> throwIO $ TxRollbackException e vs
+                Right _ -> pure (r, vs)
+
+
+data TxRollbackException = TxRollbackException AppError Validations
+    deriving stock (Show, Eq, Ord, Generic)
+
+instance Exception TxRollbackException
