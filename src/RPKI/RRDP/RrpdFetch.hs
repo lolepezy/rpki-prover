@@ -344,7 +344,7 @@ saveDelta appContext rrdpStats notification deltaContent = do
 
         saveStorable tx (Right op) validations =
             case op of
-                Delete _                  -> do
+                Delete oldHash -> do
                     -- Ignore withdraws and just use the time-based garbage collection
                     -- DB.deleteObject tx objectStore hash
                     pure validations
@@ -407,11 +407,6 @@ parseAndProcess u b64 =
 data DeltaOp m a = Delete !Hash 
                 | Add !URI !(Task m a) 
                 | Replace !URI !(Task m a) !Hash
-
-
-data DeltaLog a = DeleteLog !Hash 
-                | AddLog !URI !SValue
-                | ReplaceLog !URI !Hash !SValue
 
 data RrdpStat = RrdpStat {
     added   :: !Int,
