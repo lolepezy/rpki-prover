@@ -233,7 +233,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
             incValidObject topDownContext
 
             -- Do the tree descend, gather validation results and VRPs            
-            fromTry (UnspecifiedE . fmtEx) $
+            fromTry (\e -> UnspecifiedE (unTaName taName') (fmtEx e)) $
                 validateCA appContext taCertURI topDownContext taCert                    
 
             -- get publication points from the topDownContext and save it to the database
@@ -285,16 +285,16 @@ fetchRepository
             ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
                 case repo of
                     RsyncR r -> 
-                        first RsyncR <$> updateObjectForRsyncRepository appContext r 
+                        RsyncR <$> updateObjectForRsyncRepository appContext r 
                     RrdpR r -> 
-                        first RrdpR <$> updateObjectForRrdpRepository appContext r
+                        RrdpR <$> updateObjectForRrdpRepository appContext r
             case r of
                 Left e -> do                        
                     logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
                     pure $ FetchFailure repo now (mError vContext' e <> v)
-                Right (resultRepo, vs) -> do
+                Right resultRepo -> do
                     logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-                    pure $ FetchSuccess resultRepo now (vs <> v)
+                    pure $ FetchSuccess resultRepo now v
 
 
 fetchTimeout :: Config -> RpkiURL -> Seconds

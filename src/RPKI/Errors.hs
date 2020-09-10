@@ -106,6 +106,7 @@ data RrdpError = BrokenXml Text |
                 DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
+                NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
                 UnsupportedObjectType | 
                 RrdpDownloadTimeout
@@ -146,7 +147,7 @@ data AppError = ParseE (ParseError Text) |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
-                UnspecifiedE Text
+                UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -173,10 +174,13 @@ instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
 mError :: VContext -> AppError -> Validations
-mError vc e = Validations $ Map.singleton vc $ Set.fromList [VErr e]
+mError vc w = mProblem vc (VErr w)
 
 mWarning :: VContext -> VWarning -> Validations
-mWarning vc w = Validations $ Map.singleton vc $ Set.fromList [VWarn w]
+mWarning vc w = mProblem vc (VWarn w)
+
+mProblem :: VContext -> VProblem -> Validations
+mProblem vc p = Validations $ Map.singleton vc $ Set.fromList [p]
 
 emptyValidations :: Validations -> Bool 
 emptyValidations (Validations m) = List.all Set.null $ Map.elems m  

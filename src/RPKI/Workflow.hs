@@ -136,8 +136,8 @@ runWorkflow appContext@AppContext {..} tals = do
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 
             exec `catches` [
-                    Handler $ \(AppException (StorageE storageBroken)) ->
-                        die [i|Storage error #{storageBroken}, exiting.|],
+                    Handler $ \(AppException seriousProblem) ->
+                        die [i|Something really bad happened #{seriousProblem}, exiting.|],
                     Handler $ \(weird :: SomeException) ->
                         logError_ logger [i|Something weird happened #{weird}, exiting.|]
                 ] 
@@ -147,7 +147,6 @@ runWorkflow appContext@AppContext {..} tals = do
                     onRight r elapsed
                      
                             
-                                                                
 
 -- Execute certain IO actiion every N seconds
 -- 

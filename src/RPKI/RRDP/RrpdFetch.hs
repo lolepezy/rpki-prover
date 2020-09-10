@@ -7,9 +7,9 @@
 
 module RPKI.RRDP.RrpdFetch where
 
+import           Control.Exception.Lifted         (finally)
 import           Control.Lens                     ((^.))
 import           Control.Monad.Except
-import           Control.Exception.Lifted (finally)
 import           Control.Monad.Reader.Class
 import           Data.Generics.Product.Typed
 
@@ -35,6 +35,7 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Database              (roAppTx, rwAppTx)
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Time
 import qualified RPKI.Util                        as U
@@ -59,9 +60,9 @@ downloadAndUpdateRRDP :: WithVContext vc =>
                 AppContext s ->
                 HttpContext ->
                 RrdpRepository ->                 
-                (Notification -> LBS.ByteString -> ValidatorT vc IO Validations) ->
-                (Notification -> LBS.ByteString -> ValidatorT vc IO Validations) ->
-                ValidatorT vc IO (RrdpRepository, Validations)
+                (Notification -> LBS.ByteString -> ValidatorT vc IO ()) ->
+                (Notification -> LBS.ByteString -> ValidatorT vc IO ()) ->
+                ValidatorT vc IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext
         httpContext
@@ -75,7 +76,7 @@ downloadAndUpdateRRDP
     nextStep             <- hoistHere $ rrdpNextStep repo notification
 
     case nextStep of
-        NothingToDo                         -> pure (repo, mempty)
+        NothingToDo                         -> pure repo
         UseSnapshot snapshotInfo            -> useSnapshot snapshotInfo notification            
         UseDeltas sortedDeltas snapshotInfo -> 
                 useDeltas sortedDeltas notification
@@ -95,17 +96,17 @@ downloadAndUpdateRRDP
         useSnapshot (SnapshotInfo uri hash) notification = 
             forChild (U.convert uri) $ do       
                 logDebugM logger [i|#{uri}: downloading snapshot.|]
-                (r, v, downloadedIn, savedIn) <- downloadAndSave
+                (r, downloadedIn, savedIn) <- downloadAndSave
                 logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot in #{savedIn}ms.|]                        
-                pure (r, v)
+                pure r
             where                     
                 downloadAndSave = do
                     ((rawContent, _), downloadedIn) <- timedMS $ 
                             fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                     downloadHashedLazyBS httpContext rrdpConf uri hash                                    
                                         (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
-                    (validations, savedIn) <- timedMS $ handleSnapshotBS notification rawContent            
-                    pure (repo { rrdpMeta = rrdpMeta' }, validations, downloadedIn, savedIn)   
+                    (_, savedIn) <- timedMS $ handleSnapshotBS notification rawContent            
+                    pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
 
                 rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
 
@@ -124,15 +125,15 @@ downloadAndUpdateRRDP
                     -- TODO Do not thrash the same server with too big amount of parallel 
                     -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much.         
                     localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-                    validations <- foldPipeline
+                    void $ foldPipeline
                                         (localRepoBottleneck <> ioBottleneck)
                                         (S.each sortedDeltas)
                                         downloadDelta
                                         (\rawContent validations -> 
                                             (validations <>) <$> handleDeltaBS notification rawContent)
-                                        (mempty :: Validations)
+                                        (mempty :: ())
                     
-                    pure (repo { rrdpMeta = rrdpMeta' }, validations)                    
+                    pure $ repo { rrdpMeta = rrdpMeta' }
 
                 downloadDelta (DeltaInfo uri hash serial) = do
                     (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
@@ -200,10 +201,10 @@ nextSerial (Serial s) = Serial $ s + 1
 updateObjectForRrdpRepository :: Storage s => 
                                 AppContext s ->
                                 RrdpRepository ->
-                                ValidatorT vc IO (RrdpRepository, Validations)
+                                ValidatorT vc IO RrdpRepository
 updateObjectForRrdpRepository appContext@AppContext {..} repository = do        
         stats <- liftIO newRrdpStat
-        (r, v) <- downloadAndUpdateRRDP 
+        r <- downloadAndUpdateRRDP 
                 appContext 
                 httpContext
                 repository 
@@ -212,7 +213,7 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
         RrdpStat {..} <- liftIO $ completeRrdpStat stats
         let repoURI = getURL $ repository ^. #uri
         logDebugM logger [i|Downloaded #{repoURI}, added #{added} objects, ignored removals of #{removed}.|]
-        pure (r, v)
+        pure r
 
 
 {- Snapshot case, done in parallel by two thread
@@ -224,13 +225,12 @@ saveSnapshot :: Storage s =>
                 RrdpStatWork ->
                 Notification ->
                 LBS.ByteString -> 
-                ValidatorT vc IO Validations
-saveSnapshot appContext rrdpStats notification snapshotContent = do  
-    parentContext <- asks getVC         
-    worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
-    doSaveObjects parentContext worldVersion 
+                ValidatorT vc IO ()
+saveSnapshot appContext rrdpStats notification snapshotContent = do      
+    worldVersion <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
+    doSaveObjects worldVersion 
   where
-    doSaveObjects parentContext worldVersion = do
+    doSaveObjects worldVersion = do
         -- TODO check that the session_id and serial are the same as in the notification file
         (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
             fromEither $ first RrdpE $ parseSnapshot snapshotContent
@@ -245,41 +245,38 @@ saveSnapshot appContext rrdpStats notification snapshotContent = do
 
         -- split into writing transactions of 10000 elements to make them always finite 
         -- and independent from the size of the snapshot.
-        fromTry 
-            (StorageE . StorageError . U.fmtEx)    
-            (txFoldPipeline 
-                cpuParallelism
-                (S.mapM newStorable $ S.each snapshotItems)
-                (rwTx objectStore)     
-                saveStorable
-                (mempty :: Validations))                 
+        void $ txFoldPipeline 
+                    cpuParallelism
+                    (S.mapM newStorable $ S.each snapshotItems)
+                    (rwAppTx objectStore)     
+                    saveStorable
+                    (mempty :: ())
       where
         newStorable (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
                     task <- readBlob `pureTask` bottleneck
                     pure $ Right (uri, task)
-                else 
-                    pure $ Left (UnsupportedObjectType, uri)
+                else
+                    pure $ Left (RrdpE UnsupportedObjectType, uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
-                    Left e        -> SError $ RrdpE $ BadURL $ U.convert e
+                    Left e        -> SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
                     Right rpkiURL -> parseAndProcess rpkiURL encodedb64
-                                
-        saveStorable _ (Left (e, uri)) validations = do
-            let vc = childVC (unURI uri) parentContext
-            pure $ validations <> mWarning vc (VWarning $ RrdpE e)
+                                        
+        saveStorable _ (Left (e, uri)) _             = forChild (unURI uri) $ appWarn e             
 
-        saveStorable tx (Right (uri, a)) validations = do
-            let vc = childVC (unURI uri) parentContext
+        saveStorable tx (Right (uri, a)) _ = do            
             waitTask a >>= \case                        
-                SError e   -> do
-                    logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    pure $ validations <> mError vc e
+                SError (VWarn (VWarning e)) -> do                    
+                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                    forChild (unURI uri) $ appWarn e 
+                SError (VErr e) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    forChild (unURI uri) $ appError e 
                 SObject so -> do 
                     DB.putObject tx objectStore so worldVersion
-                    addedOne rrdpStats
-                    pure validations
+                    liftIO $ addedOne rrdpStats                    
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
@@ -288,21 +285,24 @@ saveSnapshot appContext rrdpStats notification snapshotContent = do
 
 
 {-
-    The same as snapshots but takes base64s from ordered 
-    list of deltas.
+    Similar to `saveSnapshot` but takes base64s from ordered list of deltas.
+
+    NOTE: Delta application is more strict; we require complete consistency, 
+    i.e. applying delta is considered failed if it tries to withdraw or replace
+    a non-existent object, or place an existent one. In all these cases, we
+    fall back to downloading the snapshot.
 -}
 saveDelta :: Storage s => 
             AppContext s 
             -> RrdpStatWork 
             -> Notification 
             -> LBS.ByteString 
-            -> ValidatorT conf IO Validations
+            -> ValidatorT conf IO ()
 saveDelta appContext rrdpStats notification deltaContent = do        
-    parentContext <- asks getVC
     worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
-    doSaveObjects parentContext worldVersion
+    doSaveObjects worldVersion
   where
-    doSaveObjects parentContext worldVersion = do
+    doSaveObjects worldVersion = do
         Delta _ sessionId serial deltaItems <- 
             vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
 
@@ -315,13 +315,16 @@ saveDelta appContext rrdpStats notification deltaContent = do
             appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
 
         let deltaItemS = S.each deltaItems
-        fromTry (StorageE . StorageError . U.fmtEx) 
-            (txFoldPipeline 
+
+        -- Propagate exceptions from here, anything that can happen here 
+        -- (storage failure, mmap failure) should stop the validation and 
+        -- probably stop the whole process.
+        txFoldPipeline 
                 cpuParallelism
                 (S.mapM newStorable deltaItemS)
-                (rwTx objectStore) 
+                (rwAppTx objectStore) 
                 saveStorable
-                (mempty :: Validations))
+                (mempty :: ())                        
       where
         newStorable (DP (DeltaPublish uri hash encodedb64)) =
             if supportedExtension $ U.convert uri 
@@ -329,64 +332,65 @@ saveDelta appContext rrdpStats notification deltaContent = do
                     task <- readBlob `pureTask` bottleneck
                     pure $ Right $ maybe (Add uri task) (Replace uri task) hash
                 else 
-                    pure $ Left (UnsupportedObjectType, uri)
+                    pure $ Left (RrdpE UnsupportedObjectType, uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
-                    Left e        -> SError $ RrdpE $ BadURL $ U.convert e
+                    Left e        -> SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
                     Right rpkiURL -> parseAndProcess rpkiURL encodedb64
 
-        newStorable (DW (DeltaWithdraw _ hash)) = 
-            pure $ Right $ Delete hash
-
-        saveStorable _ (Left (e, uri)) validations = do
-            let vc = childVC (unURI uri) parentContext
-            pure $ validations <> mWarning vc (VWarning $ RrdpE e)
-
-        saveStorable tx (Right op) validations =
-            case op of
-                Delete oldHash -> do
-                    -- Ignore withdraws and just use the time-based garbage collection
-                    -- DB.deleteObject tx objectStore hash
-                    pure validations
-                Add uri async'             -> addObject tx uri async' validations
-                Replace uri async' oldHash -> replaceObject tx uri async' oldHash validations                    
+        newStorable (DW (DeltaWithdraw uri hash)) = 
+            pure $ Right $ Delete uri hash
         
-        addObject tx uri a validations =
+        saveStorable _ (Left (e, uri)) _             = forChild (unURI uri) $ appWarn e             
+
+        saveStorable tx (Right op) _ =
+            case op of
+                Delete uri existingHash -> do
+                    -- Ignore withdraws and just use the time-based garbage collection
+                    existsLocally <- DB.hashExists tx objectStore existingHash
+                    unless existsLocally $
+                        appError $ RrdpE $ NoObjectToWithdraw uri existingHash
+                        
+                Add uri async'             -> addObject tx uri async'                
+                Replace uri async' oldHash -> replaceObject tx uri async' oldHash                    
+        
+        addObject tx uri a =
             waitTask a >>= \case
-                SError e -> do                    
-                    logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    let vc = childVC (unURI uri) parentContext
-                    pure $ validations <> mError vc e
-                SObject so@(StorableObject ro _) -> do
+                SError (VWarn (VWarning e)) -> do                    
+                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                    forChild (unURI uri) $ appWarn e 
+                SError (VErr e) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    forChild (unURI uri) $ appError e 
+                SObject so@(StorableObject ro _) -> liftIO $ do
                     alreadyThere <- DB.hashExists tx objectStore (getHash ro)
                     unless alreadyThere $ do
                         DB.putObject tx objectStore so worldVersion                      
                         addedOne rrdpStats
-                    pure validations
 
-        replaceObject tx uri a oldHash validations = do
-            let vc = childVC (unURI uri) parentContext
+        replaceObject tx uri a oldHash = do            
             waitTask a >>= \case
-                SError e -> do                    
-                    logError_ logger [i|Couldn't parse object #{uri}, error #{e} |]                    
-                    pure $ validations <> mError vc e
+                SError (VWarn (VWarning e)) -> do                    
+                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                    forChild (unURI uri) $ appWarn e 
+                SError (VErr e) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    forChild (unURI uri) $ appError e 
                 SObject so@(StorableObject ro _) -> do        
                     oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
-                    validations' <- if oldOneIsAlreadyThere 
+                    if oldOneIsAlreadyThere 
                         then do 
                             -- Ignore withdraws and just use the time-based garbage collection
-                            removedOne rrdpStats
-                            pure validations
+                            liftIO $ removedOne rrdpStats
                         else do 
-                            logWarn_ logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                            pure $ validations <> mWarning vc
-                                (VWarning $ RrdpE $ NoObjectToReplace uri oldHash) 
+                            logWarnM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
+                            forChild (unURI uri) $ appError (RrdpE $ NoObjectToReplace uri oldHash) 
 
                     newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
                     unless newOneIsAlreadyThere $ do                            
                         DB.putObject tx objectStore so worldVersion
-                        addedOne rrdpStats
-                    pure validations'                                                                                    
+                        liftIO $ addedOne rrdpStats                                                                                                 
+
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
@@ -394,17 +398,17 @@ saveDelta appContext rrdpStats notification deltaContent = do
     objectStore    = appContext ^. #database . #objectStore
 
 
-parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject AppError
+parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject VProblem
 parseAndProcess u b64 =     
     case parsed of
-        Left e   -> SError e
+        Left e   -> SError $ VErr e
         Right ro -> SObject $! toStorableObject ro                    
     where
         parsed = do
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
             first ParseE $ readObject u b    
 
-data DeltaOp m a = Delete !Hash 
+data DeltaOp m a = Delete !URI !Hash 
                 | Add !URI !(Task m a) 
                 | Replace !URI !(Task m a) !Hash
 

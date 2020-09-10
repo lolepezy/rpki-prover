@@ -445,7 +445,7 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 
-newtype TaName = TaName Text.Text
+newtype TaName = TaName { unTaName :: Text.Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

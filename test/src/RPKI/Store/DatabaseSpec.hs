@@ -81,7 +81,7 @@ repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
 txGroup :: TestTree
 txGroup = withDB $ \io -> testGroup "App transaction test"
     [
-        HU.testCase "Should rollback App transactions properly" (should_rollback_app_tx_properly io)        
+        HU.testCase "Should rollback App transactions properly" (shouldRollbackAppTx io)        
     ]
 
 
@@ -196,23 +196,22 @@ should_insert_and_get_all_back_from_repository_store io = do
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
     
-should_rollback_app_tx_properly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-should_rollback_app_tx_properly io = do  
+shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldRollbackAppTx io = do  
     ((_, env), DB {..}) <- io
 
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    _ <- runValidatorT (vContext "bla") $ rwAppTx1 storage' $ \tx -> do
+    void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
-        appError $ UnspecifiedE "Test problem"
+        appError $ UnspecifiedE "Test" "Test problem"
 
-    _ <- runValidatorT (vContext "bla") $ rwAppTx1 storage' $ \tx ->
+    void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx ->
         liftIO $ M.put tx z 2 "bb"        
 
-
     let throwFromTx =
-            void $ runValidatorT (vContext "bla") $ rwAppTx1 storage' $ \tx -> liftIO $ do
+            void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
                     M.put tx z 3 "cc"        
                     throwIO RatioZeroDenominator
 
@@ -221,7 +220,7 @@ should_rollback_app_tx_properly io = do
             (fromException (toException e)) 
             (Just RatioZeroDenominator)
 
-    void $ runValidatorT (vContext "bla") $ roAppTx1 storage' $ \tx -> liftIO $ do         
+    void $ runValidatorT (vContext "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
          v1 <- M.get tx z 1  
          HU.assertEqual "Must not be there" v1 Nothing
          v2 <- M.get tx z 2  
@@ -267,3 +266,7 @@ replaceAKI a = go
                 ee = scCertificate sc
                 sc = soContent so
                 ee' = withMeta ee (\_ _ -> a)        
+
+
+
+-- gsutil rm gs://mp_test_bucket/ada.jpg

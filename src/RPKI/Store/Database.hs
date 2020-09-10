@@ -427,13 +427,61 @@ storageError = StorageE . StorageError . fmtEx
 
 
 -- Utilities to have storage transaction in ValidatorT monad.
+-- roAppTx :: (Storage s, WithStorage s ws) => 
+--             ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+-- roAppTx s f = appTx s f roTx    
+
+-- rwAppTx :: (Storage s, WithStorage s ws) => 
+--             ws -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
+-- rwAppTx s f = appTx s f rwTx
+
+-- appTx :: (Storage s, WithStorage s ws) => 
+--         ws -> (Tx s mode -> ValidatorT env IO a) -> 
+--         (ws -> (Tx s mode -> IO (Either AppError a, Validations))
+--             -> IO (Either AppError a, Validations)) -> 
+--         ValidatorT env IO a
+-- appTx s f txF = do
+--     env <- ask
+--     validatorT $ txF s $ runValidatorT env . f
+
+
+-- roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+--             ws -> 
+--             (exc -> AppError) -> 
+--             (Tx s 'RO -> ValidatorT env IO a) -> 
+--             ValidatorT env IO a 
+-- roAppTxEx ws err f = appTxEx ws err f roTx
+
+-- rwAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+--             ws -> (exc -> AppError) -> 
+--             (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+-- rwAppTxEx s err f = appTxEx s err f rwTx
+
+-- appTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+--             ws -> (exc -> AppError) -> 
+--             (Tx s mode -> ValidatorT env IO a) -> 
+--             (s -> (Tx s mode -> IO (Either AppError a, Validations))
+--                -> IO (Either AppError a, Validations)) -> 
+--             ValidatorT env IO a
+-- appTxEx ws err f txF = do
+--     env <- ask
+--     -- TODO Make it less ugly and complicated
+--     t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
+--     validatorT $ pure $ case t of 
+--                             Left e  -> (Left (err e), mempty)
+--                             Right r -> r   
+
+
+---------- 
+
 roAppTx :: (Storage s, WithStorage s ws) => 
             ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
 roAppTx s f = appTx s f roTx    
 
 rwAppTx :: (Storage s, WithStorage s ws) => 
-            ws -> (forall mode . Tx s mode -> ValidatorT env IO a) -> ValidatorT env IO a
+            ws -> (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
 rwAppTx s f = appTx s f rwTx
+
 
 appTx :: (Storage s, WithStorage s ws) => 
         ws -> (Tx s mode -> ValidatorT env IO a) -> 
@@ -441,9 +489,17 @@ appTx :: (Storage s, WithStorage s ws) =>
             -> IO (Either AppError a, Validations)) -> 
         ValidatorT env IO a
 appTx s f txF = do
-    env <- ask
-    validatorT $ txF s $ runValidatorT env . f
-
+    env <- ask    
+    validatorT $ transaction env `catch` 
+                (\(TxRollbackException e vs) -> pure (Left e, vs))
+  where
+    transaction env = txF s $ \tx -> do 
+        (r, vs) <- runValidatorT env $ f tx
+        case r of
+            -- abort transaction on ExceptT error
+            Left e  -> throwIO $ TxRollbackException e vs
+            Right _ -> pure (r, vs)
+         
 
 roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> 
@@ -457,6 +513,7 @@ rwAppTxEx :: (Storage s, WithStorage s ws, Exception exc) =>
             (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
 rwAppTxEx s err f = appTxEx s err f rwTx
 
+
 appTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> (exc -> AppError) -> 
             (Tx s mode -> ValidatorT env IO a) -> 
@@ -464,63 +521,6 @@ appTxEx :: (Storage s, WithStorage s ws, Exception exc) =>
                -> IO (Either AppError a, Validations)) -> 
             ValidatorT env IO a
 appTxEx ws err f txF = do
-    env <- ask
-    -- TODO Make it less ugly and complicated
-    t <- liftIO $ try $ txF (storage ws) $ runValidatorT env . f
-    validatorT $ pure $ case t of 
-                            Left e  -> (Left (err e), mempty)
-                            Right r -> r   
-
-
----------- 
-
-roAppTx1 :: (Storage s, WithStorage s ws) => 
-            ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
-roAppTx1 s f = appTx1 s f roTx    
-
-rwAppTx1 :: (Storage s, WithStorage s ws) => 
-            ws -> (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
-rwAppTx1 s f = appTx1 s f rwTx
-
-
-appTx1 :: (Storage s, WithStorage s ws) => 
-        ws -> (Tx s mode -> ValidatorT env IO a) -> 
-        (ws -> (Tx s mode -> IO (Either AppError a, Validations))
-            -> IO (Either AppError a, Validations)) -> 
-        ValidatorT env IO a
-appTx1 s f txF = do
-    env <- ask    
-    validatorT $ transaction env `catch` 
-                (\(TxRollbackException e vs) -> pure (Left e, vs))
-  where
-    transaction env = txF s $ \tx -> do 
-        (r, vs) <- runValidatorT env $ f tx
-        case r of
-            -- abort transaction on ExceptT error
-            Left e  -> throwIO $ TxRollbackException e vs
-            Right _ -> pure (r, vs)
-         
-
-roAppTxEx1 :: (Storage s, WithStorage s ws, Exception exc) => 
-            ws -> 
-            (exc -> AppError) -> 
-            (Tx s 'RO -> ValidatorT env IO a) -> 
-            ValidatorT env IO a 
-roAppTxEx1 ws err f = appTxEx ws err f roTx
-
-rwAppTxEx1 :: (Storage s, WithStorage s ws, Exception exc) => 
-            ws -> (exc -> AppError) -> 
-            (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
-rwAppTxEx1 s err f = appTxEx s err f rwTx
-
-
-appTxEx1 :: (Storage s, WithStorage s ws, Exception exc) => 
-            ws -> (exc -> AppError) -> 
-            (Tx s mode -> ValidatorT env IO a) -> 
-            (s -> (Tx s mode -> IO (Either AppError a, Validations))
-               -> IO (Either AppError a, Validations)) -> 
-            ValidatorT env IO a
-appTxEx1 ws err f txF = do
     env <- ask
     validatorT $ transaction env `catches` [
             Handler $ \(TxRollbackException e vs) -> pure (Left e, vs),
