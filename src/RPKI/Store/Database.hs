@@ -85,7 +85,7 @@ instance Storage s => WithStorage s (VResultStore s) where
 
 -- | VRP store
 newtype VRPStore s = VRPStore {
-    vrps :: SMultiMap "vrps" s WorldVersion Roa
+    vrps :: SMultiMap "vrps" s WorldVersion Vrp
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -240,11 +240,11 @@ deleteVResults tx VResultStore {..} wv = liftIO $ do
 
 
 putVRP :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> VRPStore s -> WorldVersion -> Roa -> m ()
+        Tx s 'RW -> VRPStore s -> WorldVersion -> Vrp -> m ()
 putVRP tx (VRPStore s) wv vrp = liftIO $ MM.put tx s wv vrp
 
 allVRPs :: (MonadIO m, Storage s) => 
-            Tx s mode -> VRPStore s -> WorldVersion -> m [Roa]
+            Tx s mode -> VRPStore s -> WorldVersion -> m [Vrp]
 allVRPs tx (VRPStore s) wv = liftIO $ MM.allForKey tx s wv
 
 deleteVRPs :: (MonadIO m, Storage s) => 

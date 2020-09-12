@@ -38,7 +38,7 @@ parseRoa bs = do
                     Right Ipv6F -> getRoa asId $ \bs' nzBits -> Ipv6P $ make bs' (fromIntegral nzBits)                
                     Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
-        getRoa :: Int -> (BS.ByteString -> Word64 -> IpPrefix) -> ParseASN1 [Roa]
+        getRoa :: Int -> (BS.ByteString -> Word64 -> IpPrefix) -> ParseASN1 [Vrp]
         getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
             getNextContainerMaybe Sequence >>= \case       
                 Just [BitString (BitArray nzBits bs')] -> 
@@ -48,4 +48,4 @@ parseRoa bs = do
                 Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
                 Nothing -> throwParseError "Unexpected ROA content"
             where 
-                mkRoa bs' nz = Roa (ASN (fromIntegral asId)) (mkPrefix bs' nz)
+                mkRoa bs' nz = Vrp (ASN (fromIntegral asId)) (mkPrefix bs' nz)

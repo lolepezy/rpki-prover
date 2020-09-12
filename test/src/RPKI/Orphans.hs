@@ -173,7 +173,7 @@ instance Arbitrary Manifest where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary Roa where
+instance Arbitrary Vrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

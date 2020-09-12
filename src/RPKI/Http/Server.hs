@@ -30,7 +30,7 @@ validatorServer AppContext {..} =
     where
         getVRPs = 
             getForTheLastVersion $ \tx lastVersion -> 
-                map (\(Roa a p len) -> VRP a p len) 
+                map (\(Vrp a p len) -> VrpDto a p len) 
                     <$> allVRPs tx vrpStore lastVersion            
 
         getVResults = 

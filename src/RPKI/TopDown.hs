@@ -97,6 +97,11 @@ data TopDownContext s = TopDownContext {
     visitedHashes               :: TVar (Set Hash)
 } deriving stock (Generic)
 
+data TopDownResult = TopDownResult {
+    vrps :: Set Vrp
+}
+
+
 newTopDownContext :: MonadIO m => 
                     AppContext s -> 
                     WorldVersion -> 
@@ -481,7 +486,7 @@ validateCaCertificate :: Storage s =>
                 AppContext s ->
                 TopDownContext s ->
                 CerObject ->                
-                ValidatorT VContext IO (PublicationPoints, WaitingList, Set Roa)
+                ValidatorT VContext IO (PublicationPoints, WaitingList, Set Vrp)
 validateCaCertificate appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
@@ -517,7 +522,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         else validateThisCertAndGoDown                    
     where
 
-        validateThisCertAndGoDown :: ValidatorT VContext IO (PublicationPoints, WaitingList, Set Roa)
+        validateThisCertAndGoDown :: ValidatorT VContext IO (PublicationPoints, WaitingList, Set Vrp)
         validateThisCertAndGoDown = do            
             let (childrenAki, certLocations') = (toAKI $ getSKI certificate, getLocations certificate)        
 
@@ -614,7 +619,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
         -- 
         validateChild :: Validated CrlObject -> 
                         RpkiObject -> 
-                        ValidatorT VContext IO (PublicationPoints, WaitingList, Set Roa)
+                        ValidatorT VContext IO (PublicationPoints, WaitingList, Set Vrp)
         validateChild validCrl ro = do
             -- At the moment of writing RFC 6486-bis 
             -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-00#page-12) 
@@ -649,8 +654,8 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         void $ vHoist $ validateRoa (now topDownContext) roa certificate validCrl
                                             
                         incValidObject topDownContext
-                            -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Roa])}|]
-                        let vrps = getCMSContent (extract roa :: CMS [Roa])
+                            -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Vrp])}|]
+                        let vrps = getCMSContent (extract roa :: CMS [Vrp])
                         pure (emptyPublicationPoints, mempty, Set.fromList vrps)                        
 
                 GbrRO gbr -> withEmptyPPs $
@@ -707,7 +712,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
 
 
 queueVRP :: (MonadIO m, Storage s) =>
-            AppContext s -> TopDownContext s -> [Roa] -> m ()
+            AppContext s -> TopDownContext s -> [Vrp] -> m ()
 queueVRP AppContext { database = DB {..}, .. } TopDownContext {..} roas =    
     liftIO $ for_ roas $ \vrp -> 
         atomically $ writeCQueue databaseQueue $ \tx -> 
