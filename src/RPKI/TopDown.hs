@@ -79,6 +79,7 @@ toWaitingList :: RpkiURL -> Hash -> VContext -> Maybe (VerifiedRS PrefixesAndAsn
 toWaitingList rpkiUrl hash vc resources =     
     WaitingList $ Map.singleton rpkiUrl (Set.singleton (hash, vc, resources))
 
+
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext s = TopDownContext {    
@@ -242,16 +243,25 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
                         readTVar (objectStats topDownContext)
             
             logDebugM logger [i|#{taName'} validCount = #{validCount} |]
-
-            let changeSet' = changeSet storedPubPoints pubPointAfterTopDown
-            rwAppTxEx database storageError $ \tx -> 
+            
+            rwAppTxEx database storageError $ \tx -> do                
+                -- 
+                -- `latestStoreState` is the state in the storage that contains updates 
+                -- made during validation, i.e. RRDP serials updates. In principle, in-memory 
+                -- state (pubPointAfterTopDown) must be the same, but "just in case" we re-read 
+                -- `latestStoreState` and merge them before applying the change set. 
+                -- 
+                -- TODO It needs to be refactored as it's obviously too complicated, brittle
+                -- and nobody would understand what's going on there.
+                -- 
+                latestStoreState <- getTaPublicationPoints tx (repositoryStore database) taName'
+                let changeSet' = changeSet storedPubPoints (pubPointAfterTopDown <> latestStoreState)
                 applyChangeSet tx (repositoryStore database) changeSet' taName'
 
         (broken, _) -> do
             let brokenUrls = map (getRpkiURL . (^. _1)) broken
             logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download.|]
 
-     
 
 data FetchResult = 
     FetchSuccess !Repository !Instant !Validations | 

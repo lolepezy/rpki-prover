@@ -37,6 +37,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database              (roAppTx, rwAppTx)
 import qualified RPKI.Store.Database              as DB
+import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Version
@@ -257,7 +258,7 @@ saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do
         savingTx sessionId serial f = 
             rwAppTx objectStore $ \tx -> do
                 f tx
-                updateRrdpMeta repositoryStore tx repoUri sessionId serial
+                RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
         newStorable (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
@@ -343,7 +344,7 @@ saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent =
         savingTx sessionId serial f = 
             rwAppTx database $ \tx -> do
                 f tx
-                updateRrdpMeta repositoryStore tx repoUri sessionId serial
+                RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
         newStorable (DP (DeltaPublish uri hash encodedb64)) =
             if supportedExtension $ U.convert uri 
@@ -429,10 +430,6 @@ parseAndProcess u b64 =
         parsed = do
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
             first ParseE $ readObject u b    
-
-
-updateRrdpMeta repositoryStore tx repoUri sessionId serial = 
-    pure ()
 
 
 data DeltaOp m a = Delete !URI !Hash 

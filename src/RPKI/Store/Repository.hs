@@ -49,6 +49,13 @@ putRepositories tx RepositoryStore {..}
             M.put tx lastS u p                
 
     
+updateRrdpMeta :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> RepositoryStore s -> (SessionId, Serial) -> RrdpURL -> m ()
+updateRrdpMeta tx RepositoryStore {..} meta url = liftIO $ 
+    M.get tx rrdpS url >>= \case    
+        Nothing -> pure ()
+        Just r  -> M.put tx rrdpS url (r { rrdpMeta = Just meta })    
+
 applyChangeSet :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> 
                 RepositoryStore s -> 
