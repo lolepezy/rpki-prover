@@ -61,6 +61,7 @@
 + Check manifest SIA == manifest location
 + Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 + Fix ARIN broken CRL 
++ Fix Warnings "No object #{uri} with hash #{oldHash} to replace." or ignore it. 
 + Connect objects to repositories and implement a strict delta->snapshot fallback
 
 
@@ -94,7 +95,9 @@
    * store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.
    * in any case SLURM data must not be stored in LMDB so that it would be possible to erase the cache. 
 
-- Fix Warnings "No object #{uri} with hash #{oldHash} to replace." or ignore it. 
+- Refactor RPKI.Repository and RPKI.Store.Repository to be more ergonamic and easy to understand.
+
+
 
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 
