@@ -57,12 +57,12 @@ import           System.Mem                       (performGC)
 --    - do something appropriate with either of them
 -- 
 downloadAndUpdateRRDP :: WithVContext vc => 
-                AppContext s ->
-                HttpContext ->
-                RrdpRepository ->                 
-                (Notification -> LBS.ByteString -> ValidatorT vc IO ()) ->
-                (Notification -> LBS.ByteString -> ValidatorT vc IO ()) ->
-                ValidatorT vc IO RrdpRepository
+                        AppContext s ->
+                        HttpContext ->
+                        RrdpRepository ->                 
+                        (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT vc IO ()) ->
+                        (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT vc IO ()) ->
+                        ValidatorT vc IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext
         httpContext
@@ -73,7 +73,7 @@ downloadAndUpdateRRDP
     (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
                                 downloadToLazyBS httpContext rrdpConf (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
-    nextStep             <- hoistHere $ rrdpNextStep repo notification
+    nextStep             <- vHoist $ rrdpNextStep repo notification
 
     case nextStep of
         NothingToDo                         -> pure repo
@@ -105,7 +105,7 @@ downloadAndUpdateRRDP
                             fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                     downloadHashedLazyBS httpContext rrdpConf uri hash                                    
                                         (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
-                    (_, savedIn) <- timedMS $ handleSnapshotBS notification rawContent            
+                    (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent            
                     pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
 
                 rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
@@ -126,20 +126,19 @@ downloadAndUpdateRRDP
                     -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much.         
                     localRepoBottleneck <- liftIO $ newBottleneckIO 8            
                     void $ foldPipeline
-                                        (localRepoBottleneck <> ioBottleneck)
-                                        (S.each sortedDeltas)
-                                        downloadDelta
-                                        (\rawContent validations -> 
-                                            (validations <>) <$> handleDeltaBS notification rawContent)
-                                        (mempty :: ())
-                    
+                                (localRepoBottleneck <> ioBottleneck)
+                                (S.each sortedDeltas)
+                                downloadDelta
+                                (\(rawContent, serial) _ -> handleDeltaBS repoUri notification serial rawContent)
+                                (mempty :: ())
+            
                     pure $ repo { rrdpMeta = rrdpMeta' }
 
                 downloadDelta (DeltaInfo uri hash serial) = do
                     (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                                             downloadHashedLazyBS httpContext rrdpConf uri hash
                                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
-                    pure rawContent
+                    pure (rawContent, serial)
 
                 serials = map (^. typed @Serial) sortedDeltas
                 maxSerial = List.maximum serials
@@ -160,22 +159,24 @@ data Step
 
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
-rrdpNextStep :: RrdpRepository -> Notification -> Either RrdpError Step
+rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT env Step
 rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} = 
-    Right $ UseSnapshot snapshotInfo
+    pure $ UseSnapshot snapshotInfo
 rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notification{..} =
-    if  | sessionId /= repoSessionId -> Right $ UseSnapshot snapshotInfo
-        | repoSerial > serial        -> Left $ LocalSerialBiggerThanRemote repoSerial serial
-        | repoSerial == serial       -> Right NothingToDo
+    if  | sessionId /= repoSessionId -> pure $ UseSnapshot snapshotInfo
+        | repoSerial > serial        -> do 
+            appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
+            pure $ UseSnapshot snapshotInfo
+        | repoSerial == serial       -> pure NothingToDo
         | otherwise ->
             case (deltas, nonConsecutive) of
-                ([], _) -> Right $ UseSnapshot snapshotInfo
+                ([], _) -> pure $ UseSnapshot snapshotInfo
                 (_, []) | nextSerial repoSerial < head (map deltaSerial sortedDeltas) ->
                             -- we are too far behind
-                            Right $ UseSnapshot snapshotInfo
+                            pure $ UseSnapshot snapshotInfo
                         | otherwise ->
-                            Right $ UseDeltas chosenDeltas snapshotInfo
-                (_, nc) -> Left $ NonConsecutiveDeltaSerials nc
+                            pure $ UseDeltas chosenDeltas snapshotInfo
+                (_, nc) -> appError $ RrdpE $ NonConsecutiveDeltaSerials nc
             where
                 sortedSerials = map deltaSerial sortedDeltas
                 sortedDeltas = List.sortOn deltaSerial deltas
@@ -221,12 +222,13 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
     - another thread read parsing tasks, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
-                AppContext s -> 
-                RrdpStatWork ->
-                Notification ->
-                LBS.ByteString -> 
-                ValidatorT vc IO ()
-saveSnapshot appContext rrdpStats notification snapshotContent = do      
+                AppContext s 
+                -> RrdpStatWork 
+                -> RrdpURL
+                -> Notification 
+                -> LBS.ByteString 
+                -> ValidatorT vc IO ()
+saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do      
     worldVersion <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
     doSaveObjects worldVersion 
   where
@@ -248,10 +250,15 @@ saveSnapshot appContext rrdpStats notification snapshotContent = do
         void $ txFoldPipeline 
                     cpuParallelism
                     (S.mapM newStorable $ S.each snapshotItems)
-                    (rwAppTx objectStore)     
+                    (savingTx sessionId serial)
                     saveStorable
                     (mempty :: ())
       where
+        savingTx sessionId serial f = 
+            rwAppTx objectStore $ \tx -> do
+                f tx
+                updateRrdpMeta repositoryStore tx repoUri sessionId serial
+
         newStorable (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
@@ -276,12 +283,14 @@ saveSnapshot appContext rrdpStats notification snapshotContent = do
                     forChild (unURI uri) $ appError e 
                 SObject so -> do 
                     DB.putObject tx objectStore so worldVersion
-                    liftIO $ addedOne rrdpStats                    
+                    addedOne rrdpStats                    
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
     bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck
-    objectStore    = appContext ^. #database . #objectStore
+    database        = appContext ^. #database
+    objectStore     = database ^. #objectStore
+    repositoryStore = database ^. #repositoryStore
 
 
 {-
@@ -294,11 +303,13 @@ saveSnapshot appContext rrdpStats notification snapshotContent = do
 -}
 saveDelta :: Storage s => 
             AppContext s 
-            -> RrdpStatWork 
+            -> RrdpStatWork
+            -> RrdpURL 
             -> Notification 
+            -> Serial             
             -> LBS.ByteString 
             -> ValidatorT conf IO ()
-saveDelta appContext rrdpStats notification deltaContent = do        
+saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent = do        
     worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
     doSaveObjects worldVersion
   where
@@ -314,6 +325,9 @@ saveDelta appContext rrdpStats notification deltaContent = do
         when (serial > notificationSerial) $ 
             appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
 
+        when (currentSerial /= serial) $
+            appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
+
         let deltaItemS = S.each deltaItems
 
         -- Propagate exceptions from here, anything that can happen here 
@@ -322,10 +336,15 @@ saveDelta appContext rrdpStats notification deltaContent = do
         txFoldPipeline 
                 cpuParallelism
                 (S.mapM newStorable deltaItemS)
-                (rwAppTx objectStore) 
+                (savingTx sessionId serial)
                 saveStorable
                 (mempty :: ())                        
-      where
+      where        
+        savingTx sessionId serial f = 
+            rwAppTx database $ \tx -> do
+                f tx
+                updateRrdpMeta repositoryStore tx repoUri sessionId serial
+
         newStorable (DP (DeltaPublish uri hash encodedb64)) =
             if supportedExtension $ U.convert uri 
                 then do 
@@ -384,18 +403,21 @@ saveDelta appContext rrdpStats notification deltaContent = do
                             liftIO $ removedOne rrdpStats
                         else do 
                             logWarnM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                            forChild (unURI uri) $ appError (RrdpE $ NoObjectToReplace uri oldHash) 
+                            forChild (unURI uri) $ 
+                                appError (RrdpE $ NoObjectToReplace uri oldHash) 
 
                     newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
                     unless newOneIsAlreadyThere $ do                            
                         DB.putObject tx objectStore so worldVersion
-                        liftIO $ addedOne rrdpStats                                                                                                 
+                        addedOne rrdpStats                                                                                                 
 
 
-    logger         = appContext ^. typed @AppLogger           
-    cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
-    bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
-    objectStore    = appContext ^. #database . #objectStore
+    logger          = appContext ^. typed @AppLogger           
+    cpuParallelism  = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+    bottleneck      = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
+    database        = appContext ^. #database
+    objectStore     = database ^. #objectStore
+    repositoryStore = database ^. #repositoryStore
 
 
 parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject VProblem
@@ -407,6 +429,11 @@ parseAndProcess u b64 =
         parsed = do
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
             first ParseE $ readObject u b    
+
+
+updateRrdpMeta repositoryStore tx repoUri sessionId serial = 
+    pure ()
+
 
 data DeltaOp m a = Delete !URI !Hash 
                 | Add !URI !(Task m a) 
@@ -429,8 +456,8 @@ completeRrdpStat RrdpStatWork {..} =
 newRrdpStat :: IO RrdpStatWork
 newRrdpStat = RrdpStatWork <$> newIORef 0 <*> newIORef 0
 
-addedOne :: RrdpStatWork -> IO ()
+addedOne :: MonadIO m => RrdpStatWork -> m ()
 addedOne RrdpStatWork {..} = U.increment added
 
-removedOne :: RrdpStatWork -> IO ()
+removedOne :: MonadIO m => RrdpStatWork -> m ()
 removedOne RrdpStatWork {..} = U.increment removed

@@ -103,6 +103,7 @@ data RrdpError = BrokenXml Text |
                 SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
                 SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
+                DeltaSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
