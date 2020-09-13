@@ -210,3 +210,22 @@ newtype Validations = Validations (Map VContext (Set VProblem))
 
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
+
+
+validationsToList :: Validations -> [(VContext, Set VProblem)]
+validationsToList (Validations vMap) = Map.toList vMap 
+
+-- Experimental more economical version of Validations
+
+data VTree = 
+    VLeaf (Set VProblem) | 
+    VNode (Map Text VTree)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+
+
+instance Monoid VTree where
+    mempty = VLeaf mempty
+
+instance Semigroup VTree where
+    t1 <> t2 = t1

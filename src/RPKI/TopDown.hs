@@ -166,9 +166,7 @@ validateTA appContext@AppContext {..} tal worldVersion = do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
-
-    -- mapException (AppException . storageError) <$> 
-    --     writeVResult appContext validations worldVersion            
+          
     pure $ flatten r    
     where                            
         taContext = vContext taNameText
@@ -299,8 +297,8 @@ validateFromTACert appContext@AppContext {..} taName' taCert repos worldVersion 
 
 
 data FetchResult = 
-    FetchSuccess !Repository !Instant !Validations | 
-    FetchFailure !Repository !Instant !Validations
+    FetchSuccess Repository Instant Validations | 
+    FetchFailure Repository Instant Validations
     deriving stock (Show, Eq, Generic)
 
 -- | Download repository, either rsync or RRDP.
@@ -360,44 +358,31 @@ partitionFailedSuccess = go
 -- 
 validateCA :: Storage s =>
             AppContext s -> VContext -> TopDownContext s -> CerObject -> IO TopDownResult
-validateCA appContext vContext' topDownContext certificate = do        
-    validateCARecursively appContext vContext' topDownContext certificate FirstEntry
+validateCA appContext caVContext topDownContext certificate =
+    validateCARecursively appContext caVContext topDownContext certificate
+        `finally` 
+    markValidatedObjects appContext topDownContext            
 
 
-data QWhat = FirstEntry | NotFirstEntry
-
--- TODO Write a good explanation why do we use queues.
 -- 
 validateCARecursively :: Storage s => 
-                        AppContext s -> 
-                        VContext -> 
-                        TopDownContext s -> 
-                        CerObject -> 
-                        QWhat -> IO TopDownResult
+                        AppContext s 
+                    -> VContext 
+                    -> TopDownContext s
+                    -> CerObject 
+                    -> IO TopDownResult
 validateCARecursively 
         appContext@AppContext {..} 
         vc 
         topDownContext@TopDownContext{..} 
-        certificate qWhat = do     
+        certificate = do     
 
-    -- logInfoM logger [i|Starting to validate #{getLocations certificate}.|]    
-
-    let treeDescend = do 
-            (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
-            -- queueVResult appContext topDownContext validations            
-            case r of
-                Left _alreadyQueued -> pure $ fromValidations validations
-                Right (Triple discoveredPPs waitingList tdResult) -> do                    
-                    tdResults <- pickUpNewPPsAndValidateDown discoveredPPs waitingList
-                    pure $ mconcat tdResults <> tdResult <> fromValidations validations
-
-    (r, elapsed) <- timedMS $ case qWhat of 
-            FirstEntry -> treeDescend `finally` markValidatedObjects appContext topDownContext            
-            NotFirstEntry -> treeDescend
- 
-    -- logDebugM logger [i|Validated #{getLocations certificate}, took #{elapsed}ms.|]    
-    pure r
-            
+    (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
+    case r of
+        Left _alreadyQueued -> pure $ fromValidations validations
+        Right (Triple discoveredPPs waitingList tdResult) -> do                    
+            tdResults <- pickUpNewPPsAndValidateDown discoveredPPs waitingList
+            pure $ mconcat tdResults <> tdResult <> fromValidations validations                
     where
         -- From the set of discovered PPs figure out which ones must be fetched, 
         -- fetch them and validate, starting from the cerfificates in their 
@@ -504,8 +489,7 @@ validateCARecursively
                                     -- as it is already has been verified
                                     verifiedResources = verifiedResources'                                                
                                 }
-                            validateCARecursively appContext certVContext 
-                                    childTopDownContext waitingCertificate NotFirstEntry
+                            validateCARecursively appContext certVContext childTopDownContext waitingCertificate 
                         ro -> do
                             logErrorM logger [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]            
                             pure mempty
@@ -532,7 +516,6 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
 
             let stopDescend = do 
                     -- remember to come back to this certificate when the PP is fetched
-                    -- logDebugM logger [i|to waiting list: #{getRpkiURL discoveredPP} + #{getHash certificate}.|]
                     vContext' <- asks getVC                    
                     pure $! Triple 
                                 (asIfItIsMerged `shrinkTo` (Set.singleton url)) 

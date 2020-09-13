@@ -408,7 +408,7 @@ instance Arbitrary VContext where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary VResult where
+instance Arbitrary Validations where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

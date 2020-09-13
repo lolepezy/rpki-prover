@@ -89,7 +89,7 @@ runValidatorApp appContext@AppContext {..} = do
         forM talFileNames $ \talFileName -> 
             forChild (convert talFileName) $ parseTALFromFile talFileName
 
-    rwTx database $ \tx -> writeVResult tx database validations worldVersion
+    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion validations
     case tals of 
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    

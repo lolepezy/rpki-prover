@@ -118,8 +118,8 @@ runWorkflow appContext@AppContext {..} tals = do
                             processTAL tal = validateTA appContext tal worldVersion                                
 
                             saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
-                                writeVResult tx database tdValidations worldVersion
-                                writeVRPs tx database (Set.fromList vrps) worldVersion
+                                putValidations tx (validationsStore database) worldVersion tdValidations 
+                                putVrps tx database (Set.fromList vrps) worldVersion
                                 completeWorldVersion tx database worldVersion
 
 

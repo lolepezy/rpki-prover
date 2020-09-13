@@ -39,17 +39,14 @@ createRepositoryStore e =
     where 
         lmdb = LmdbStorage e
 
-createResultStore :: LmdbEnv -> SequenceMap LmdbStorage -> IO (VResultStore LmdbStorage)
-createResultStore e seqMap = 
-    VResultStore <$> 
-        pure (Sequence "vresult-key" seqMap) <*>
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMultiMap lmdb <$> createLmdbMultiStore e)
+createResultStore :: LmdbEnv -> IO (ValidationsStore LmdbStorage)
+createResultStore e = 
+    ValidationsStore <$> (SMap lmdb <$> createLmdbStore e)
     where 
         lmdb = LmdbStorage e
 
 createVRPStore :: LmdbEnv -> IO (VRPStore LmdbStorage)
-createVRPStore e = VRPStore . SMultiMap (LmdbStorage e) <$> createLmdbMultiStore e    
+createVRPStore e = VRPStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
 createTAStore e = TAStore . SMap (LmdbStorage e) <$> createLmdbStore e    
@@ -81,7 +78,7 @@ createDatabase e = do
         createTAStore e <*>
         createRepositoryStore e <*>
         createObjectStore e seqMap <*>
-        createResultStore e seqMap <*>
+        createResultStore e <*>
         createVRPStore e <*>
         createVersionStore e <*>
         pure seqMap
