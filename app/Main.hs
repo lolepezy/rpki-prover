@@ -58,6 +58,8 @@ import           RPKI.Workflow
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
 import           Numeric.Natural                  (Natural)
+import RPKI.Store.Database
+import RPKI.Store.Base.Storage
 
 
 
@@ -87,7 +89,7 @@ runValidatorApp appContext@AppContext {..} = do
         forM talFileNames $ \talFileName -> 
             forChild (convert talFileName) $ parseTALFromFile talFileName
 
-    writeVResult appContext validations worldVersion        
+    rwTx database $ \tx -> writeVResult tx database validations worldVersion
     case tals of 
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    

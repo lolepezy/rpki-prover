@@ -1,8 +1,9 @@
-{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE StrictData                 #-}
 
 module RPKI.Repository where
 
@@ -57,26 +58,26 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
     deriving anyclass Serialise
 
 data RrdpRepository = RrdpRepository {
-        uri         :: !RrdpURL,
-        rrdpMeta    :: !(Maybe (SessionId, Serial)),
-        status      :: !FetchStatus
+        uri         :: RrdpURL,
+        rrdpMeta    :: Maybe (SessionId, Serial),
+        status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data PublicationPoint = RrdpPP  !RrdpRepository | 
-                        RsyncPP !RsyncPublicationPoint
+data PublicationPoint = RrdpPP  RrdpRepository | 
+                        RsyncPP RsyncPublicationPoint
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-data Repository = RrdpR !RrdpRepository | 
-                  RsyncR !RsyncRepository
+data Repository = RrdpR RrdpRepository | 
+                  RsyncR RsyncRepository
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data RsyncRepository = RsyncRepository {
-        repoPP      :: !RsyncPublicationPoint,
-        status      :: !FetchStatus
+        repoPP      :: RsyncPublicationPoint,
+        status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise

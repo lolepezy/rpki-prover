@@ -27,6 +27,7 @@ import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Time
 import           RPKI.Resources.Types
+import Data.Maybe (listToMaybe)
 
 
 
@@ -166,14 +167,6 @@ data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype Validations = Validations (Map VContext (Set VProblem))
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-    deriving newtype Monoid
-
-instance Semigroup Validations where
-    (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
-
 mError :: VContext -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
 
@@ -185,6 +178,10 @@ mProblem vc p = Validations $ Map.singleton vc $ Set.fromList [p]
 
 emptyValidations :: Validations -> Bool 
 emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
+
+findError :: Validations -> Maybe AppError
+findError (Validations m) = 
+    listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
 
 class WithVContext v where
     getVC :: v -> VContext
@@ -204,3 +201,12 @@ newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
 
 instance Exception AppException
+
+
+newtype Validations = Validations (Map VContext (Set VProblem))
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype Monoid
+
+instance Semigroup Validations where
+    (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2

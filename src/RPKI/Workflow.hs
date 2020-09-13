@@ -39,6 +39,7 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
+import           RPKI.Store.Database
 
 import           System.Exit
 
@@ -108,12 +109,18 @@ runWorkflow appContext@AppContext {..} tals = do
                     Just (ValidateTAs worldVersion) -> do
                         logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
                         executeOrDie
-                            (sequence <$> mapConcurrently processTAL tals)
-                            (\_ elapsed -> do
-                                completeWorldVersion appContext worldVersion
-                                logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|])
+                            (mconcat <$> mapConcurrently processTAL tals)
+                            (\tdResult elapsed -> do 
+                                saveTopDownResult tdResult                                
+                                logInfoM logger [i|Validated all TAs, took #{elapsed}ms|])
                         where 
                             processTAL tal = validateTA appContext tal worldVersion                                
+
+                            saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
+                                writeVResult tx database tdValidations worldVersion
+                                writeVRPs tx database vrps worldVersion
+                                completeWorldVersion tx database worldVersion
+
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion

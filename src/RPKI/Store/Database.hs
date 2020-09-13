@@ -18,6 +18,8 @@ import           Data.Int
 import           Data.IORef.Lifted
 
 import qualified Data.List                as List
+import qualified Data.Map.Strict          as Map
+import qualified Data.Set                 as Set
 
 import           GHC.Generics
 
@@ -40,6 +42,8 @@ import           RPKI.Util                (fmtEx, increment)
 import           RPKI.AppMonad
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
+import Data.Foldable
+
 
 data ROMeta = ROMeta {
         insertedBy :: WorldVersion,
@@ -239,6 +243,25 @@ deleteVResults tx VResultStore {..} wv = liftIO $ do
         f _ _ artificialKey = M.delete tx results artificialKey    
 
 
+-- Write validation result synchronously
+writeVResult :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> Validations -> WorldVersion -> m ()
+writeVResult tx database validations worldVersion = liftIO $
+    case validations of
+        Validations validationsMap
+            | emptyValidations validations -> pure ()
+            | otherwise ->
+                void $ flip Map.traverseWithKey validationsMap $ 
+                    \vc' problems -> do
+                        let vResult = VResult (Set.toList problems) vc'   
+                        putVResult tx (resultStore database) worldVersion vResult                
+
+completeWorldVersion :: Storage s => 
+                        Tx s 'RW -> DB s -> WorldVersion -> IO ()
+completeWorldVersion tx DB {..} worldVersion =    
+    putVersion tx versionStore worldVersion FinishedVersion
+
+
 putVRP :: (MonadIO m, Storage s) => 
         Tx s 'RW -> VRPStore s -> WorldVersion -> Vrp -> m ()
 putVRP tx (VRPStore s) wv vrp = liftIO $ MM.put tx s wv vrp
@@ -251,6 +274,10 @@ deleteVRPs :: (MonadIO m, Storage s) =>
             Tx s 'RW -> VRPStore s -> WorldVersion -> m ()
 deleteVRPs tx (VRPStore s) wv = liftIO $ MM.deleteAll tx s wv
 
+writeVRPs :: (MonadIO m, Storage s, Foldable f) => 
+            Tx s 'RW -> DB s -> f Vrp -> WorldVersion -> m ()
+writeVRPs tx DB  {..} vrps worldVersion = liftIO $ 
+    for_ vrps $ putVRP tx vrpStore worldVersion
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> VersionStore s -> WorldVersion -> VersionState -> m ()
