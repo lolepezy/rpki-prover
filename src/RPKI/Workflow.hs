@@ -42,6 +42,7 @@ import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Database
 
 import           System.Exit
+import qualified Data.Set as Set
 
 
 
@@ -118,7 +119,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
                             saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
                                 writeVResult tx database tdValidations worldVersion
-                                writeVRPs tx database vrps worldVersion
+                                writeVRPs tx database (Set.fromList vrps) worldVersion
                                 completeWorldVersion tx database worldVersion
 
 
