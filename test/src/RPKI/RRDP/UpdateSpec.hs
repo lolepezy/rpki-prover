@@ -9,7 +9,7 @@ import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Errors
 import           RPKI.RRDP.Types
-import           RPKI.RRDP.RrpdFetch
+import           RPKI.RRDP.RrdpFetch
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU

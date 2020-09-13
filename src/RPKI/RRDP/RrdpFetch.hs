@@ -5,7 +5,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 
 
-module RPKI.RRDP.RrpdFetch where
+module RPKI.RRDP.RrdpFetch where
 
 import           Control.Exception.Lifted         (finally)
 import           Control.Lens                     ((^.))
