@@ -5,6 +5,16 @@ import           RPKI.Errors
 import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Resources.Types
 
+
+-- | Validate two sets of resources with two options: 
+--
+-- 'strict' validation (https://tools.ietf.org/html/rfc6487#page-17) 
+-- verifies that child resources are nested into parent's.
+--
+-- 'reconsidered' (https://tools.ietf.org/html/rfc8360) verifies that child 
+-- resources are nested into verifiedResources that are, in general case, a 
+-- subset of parent resources.
+-- 
 validateChildParentResources :: ValidationRFC -> 
                                 AllResources -> 
                                 AllResources -> 
