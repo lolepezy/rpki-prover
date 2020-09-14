@@ -118,7 +118,7 @@ createAppContext logger = do
 
     -- TODO Make it configurable?
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let rootDir = home </> ".rpki"
+    let rootDir = home </> ".rpki-rrdp-perf"
     
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
