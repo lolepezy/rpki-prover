@@ -1,9 +1,9 @@
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData                 #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module RPKI.Errors where
     
@@ -27,6 +27,7 @@ import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Time
 import           RPKI.Resources.Types
+import Data.Maybe (listToMaybe)
 
 
 
@@ -100,8 +101,14 @@ data RrdpError = BrokenXml Text |
                 CantDownloadSnapshot Text |
                 CantDownloadDelta Text |
                 SnapshotHashMismatch Hash Hash |
+                SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
+                SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
+                DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
+                DeltaSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
+                DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaHashMismatch Hash Hash Serial |
                 NoObjectToReplace URI Hash |
+                NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
                 UnsupportedObjectType | 
                 RrdpDownloadTimeout
@@ -142,7 +149,7 @@ data AppError = ParseE (ParseError Text) |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
-                UnspecifiedE Text
+                UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -160,22 +167,21 @@ data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype Validations = Validations (Map VContext (Set VProblem))
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-    deriving newtype Monoid
-
-instance Semigroup Validations where
-    (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
-
 mError :: VContext -> AppError -> Validations
-mError vc e = Validations $ Map.singleton vc $ Set.fromList [VErr e]
+mError vc w = mProblem vc (VErr w)
 
 mWarning :: VContext -> VWarning -> Validations
-mWarning vc w = Validations $ Map.singleton vc $ Set.fromList [VWarn w]
+mWarning vc w = mProblem vc (VWarn w)
+
+mProblem :: VContext -> VProblem -> Validations
+mProblem vc p = Validations $ Map.singleton vc $ Set.fromList [p]
 
 emptyValidations :: Validations -> Bool 
 emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
+
+findError :: Validations -> Maybe AppError
+findError (Validations m) = 
+    listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
 
 class WithVContext v where
     getVC :: v -> VContext
@@ -195,3 +201,31 @@ newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
 
 instance Exception AppException
+
+
+newtype Validations = Validations (Map VContext (Set VProblem))
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype Monoid
+
+instance Semigroup Validations where
+    (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
+
+
+validationsToList :: Validations -> [(VContext, Set VProblem)]
+validationsToList (Validations vMap) = Map.toList vMap 
+
+-- Experimental more economical version of Validations
+
+data VTree = 
+    VLeaf (Set VProblem) | 
+    VNode (Map Text VTree)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+
+
+instance Monoid VTree where
+    mempty = VLeaf mempty
+
+instance Semigroup VTree where
+    t1 <> t2 = t1

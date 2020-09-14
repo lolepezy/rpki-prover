@@ -97,11 +97,10 @@ txFoldPipeline poolSize stream withTx consume accum0 =
                         Just a' -> consume tx a' accum >>= go tx
 
 
--- | Utility function for a specific case of producer-consumer pair 
--- where consumer works within a transaction (represented as withTx function)
---  
+-- | The same as `txFoldPipeline` but transaction is divided into chunks.
+--
 txFoldPipelineChunked :: (MonadBaseControl IO m, MonadIO m) =>
-            Natural ->
+            Natural ->                  -- ^ Amount of queue element to be processed within one transaction
             Stream (Of q) m () ->
             ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
             Natural -> 
@@ -300,8 +299,8 @@ newTask io (Bottleneck bottlenecks) execution =
                 void $ liftIO $ race 
                     (wait a)
                     (atomically $ do 
-                        thereSomeSpace <- someSpaceInBottleneck
-                        unless (and thereSomeSpace) retry)
+                        spaceInBottlenecks <- someSpaceInBottleneck
+                        unless (and spaceInBottlenecks) retry)
                 pure $ SubmitterTask a    
 
 

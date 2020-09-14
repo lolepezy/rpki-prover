@@ -61,6 +61,8 @@
 + Check manifest SIA == manifest location
 + Fix 'Fetching repository https://rpki.cnnic.cn/rrdp/notify.xml failed: RrdpE (CantDownloadSnapshot "/Users/mpuzanov/.rpki/tmp: openTempFile: resource exhausted (Too many open files)")'
 + Fix ARIN broken CRL 
++ Fix Warnings "No object #{uri} with hash #{oldHash} to replace." or ignore it. 
++ Connect objects to repositories and implement a strict delta->snapshot fallback
 
 
 ---------------------------------  In testing -----------------------------------------
@@ -69,15 +71,14 @@
 
 ---------------------------------  In progress ----------------------------------------
 
-- Test PDUs serialisation-deserialisation
-- Implement RTR server
-
---------------------------------------- TODOs -----------------------------------------
 
 - Introduce shared state for "the latest discovered bunch of VRPs" to be used in 
   * RTR responses to reset queuries and diffs
   * /api/vrps.* responses
   OR figure out an option to get the from LMDB with less CPU/allocations
+
+--------------------------------------- TODOs -----------------------------------------
+
 
 - Check signature algorithms (
     http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
@@ -88,14 +89,16 @@
 
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept, RRDP -> rsync fall-back).
 
-- Implement `--reset`, i.e. erase cache/tmp/rsync on the start.
+- Implement `--reset`, i.e. erase cache/tmp/rsync on the start (keep some metadata, i.e. "version" of the DB and refuse to work with an older incompatible version?)
 - Fix 'ctrl+c', it should stop the applications
 
 - Implement SLURM support (https://tools.ietf.org/html/rfc8416) 
    * store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.
    * in any case SLURM data must not be stored in LMDB so that it would be possible to erase the cache. 
 
-- Fix Warnings "No object #{uri} with hash #{oldHash} to replace." or ignore it. 
+- Refactor RPKI.Repository and RPKI.Store.Repository to be more ergonamic and easy to understand.
+
+
 
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 

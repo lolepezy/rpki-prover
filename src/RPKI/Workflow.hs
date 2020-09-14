@@ -44,8 +44,11 @@ import           RPKI.RTR.RtrContext
 import           RPKI.RTR.RtrServer
 
 import           RPKI.Store.Base.LMDB
+import           RPKI.Store.Database
 
 import           System.Exit
+import qualified Data.Set as Set
+import Data.Maybe
 
 
 type AppEnv = AppContext LmdbStorage
@@ -116,13 +119,18 @@ runWorkflow appContext@AppContext {..} tals = do
                     Just (ValidateTAs worldVersion) -> do
                         logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
                         executeOrDie
-                            (sequence <$> mapConcurrently processTAL tals)
-                            (\_ elapsed -> do
-                                completeWorldVersion appContext worldVersion                                
-                                notifyRtr worldVersion
-                                logInfo_ logger [i|Validated all TAs, took #{elapsed}ms|])
+                            (mconcat <$> mapConcurrently processTAL tals)
+                            (\tdResult elapsed -> do 
+                                saveTopDownResult tdResult                                
+                                logInfoM logger [i|Validated all TAs, took #{elapsed}ms|])
                         where 
                             processTAL tal = validateTA appContext tal worldVersion                                
+
+                            saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
+                                putValidations tx (validationsStore database) worldVersion tdValidations 
+                                putVrps tx database (Set.fromList vrps) worldVersion
+                                completeWorldVersion tx database worldVersion
+
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
@@ -145,8 +153,8 @@ runWorkflow appContext@AppContext {..} tals = do
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 
             exec `catches` [
-                    Handler $ \(AppException (StorageE storageBroken)) ->
-                        die [i|Storage error #{storageBroken}, exiting.|],
+                    Handler $ \(AppException seriousProblem) ->
+                        die [i|Something really bad happened #{seriousProblem}, exiting.|],
                     Handler $ \(_ :: AsyncCancelled) ->
                         die [i|Interrupted with Ctrl-C, exiting.|],                        
                     Handler $ \(weirdShit :: SomeException) ->
@@ -169,8 +177,8 @@ runWorkflow appContext@AppContext {..} tals = do
             where
                 notifyRTRServer RtrContext {..} worldVersion = do
                     rtrUpdate <- roTx database $ \tx -> do 
-                        latestVRPs <- vrpSet tx worldVersion 
-                        versions'  <- allVersions tx (versionStore database)
+                        latestVRPs <- getVrps tx database worldVersion 
+                        versions'  <- allVersions tx database
 
                         let previousVersionsLatestFirst = 
                                 sortBy (flip compare) $ filter ((< worldVersion) . fst) versions'   
@@ -178,19 +186,14 @@ runWorkflow appContext@AppContext {..} tals = do
                         case previousVersionsLatestFirst of 
                             []                       -> pure $ RtrAll latestVRPs        
                             (previousVersion, _) : _ -> do 
-                                previousVRPs <- vrpSet tx previousVersion
+                                previousVRPs <- getVrps tx database previousVersion
                                 pure $ RtrDiff {
                                         added = Set.difference latestVRPs previousVRPs,
                                         deleted = Set.difference previousVRPs latestVRPs
                                     }
 
-                    atomically $ writeTChan worldVersionUpdateChan rtrUpdate
-                    where                        
-                        vrpSet tx version = do 
-                            vrps <- newIORef Set.empty                
-                            forAllVrps tx (vrpStore database) version $ \r -> 
-                                modifyIORef' vrps $ Set.insert r
-                            readIORef vrps
+                    atomically $ writeTChan worldVersionUpdateChan rtrUpdate                      
+                            
                     
 
 -- Execute certain IO actiion every N seconds

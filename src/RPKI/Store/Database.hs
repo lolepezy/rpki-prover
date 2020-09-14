@@ -7,37 +7,45 @@
 module RPKI.Store.Database where
 
 import           Codec.Serialise
+import           Control.Concurrent.STM   (atomically)
+import           Control.Exception.Lifted
+import           Control.Monad            (forM_, void)
 import           Control.Monad.IO.Class
+import           Control.Monad.Reader     (ask)
+
+import           Data.Data                (Typeable)
+import           Data.Foldable
+import           Data.Int
 import           Data.IORef.Lifted
 
-import           Control.Concurrent.STM      (atomically)
-import           Control.Exception.Lifted    (mapException, SomeException)
-import           Control.Monad               (forM_, void)
-import qualified Data.List                   as List
-
-import           Data.Int
+import qualified Data.List                as List
+import qualified Data.Map.Strict          as Map
+import           Data.Set                 (Set)
+import qualified Data.Set                 as Set
 
 import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Store.Base.Map         (SMap (..))
-import           RPKI.Store.Base.MultiMap    (SMultiMap (..))
+import           RPKI.Store.Base.Map      (SMap (..))
+import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
 import           RPKI.Version
 
-import qualified RPKI.Store.Base.Map         as M
-import qualified RPKI.Store.Base.MultiMap    as MM
+import qualified RPKI.Store.Base.Map      as M
+import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
-import           RPKI.Util                   (increment, fmtEx)
+import           RPKI.Util                (fmtEx, increment)
 
+import           RPKI.AppMonad
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
 import Data.Maybe (fromMaybe)
+
 
 
 data ROMeta = ROMeta {
@@ -72,19 +80,17 @@ newtype ArtificialKey = ArtificialKey Int64
     deriving (Show, Eq, Generic, Serialise)
 
 -- | Validation result store
-data VResultStore s = VResultStore {
-    keys    :: Sequence s,
-    results :: SMap "validation-results" s ArtificialKey VResult,
-    whToKey :: SMultiMap "wh-to-key" s WorldVersion ArtificialKey
+newtype ValidationsStore s = ValidationsStore {
+    results :: SMap "validations" s WorldVersion Validations    
 }
 
-instance Storage s => WithStorage s (VResultStore s) where
-    storage (VResultStore s _ _) = storage s
+instance Storage s => WithStorage s (ValidationsStore s) where
+    storage (ValidationsStore s) = storage s
 
 
 -- | VRP store
-newtype VRPStore s = VRPStore {
-    vrps :: SMultiMap "vrps" s WorldVersion Roa
+newtype VRPStore s = VRPStore {    
+    vrps :: SMap "vrps" s WorldVersion (Set Vrp)
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -128,7 +134,7 @@ putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
             SequenceValue k <- nextValue tx keys
             let key = ArtificialKey k
             M.put tx hashToKey h key
-            M.put tx objects key sv  
+            M.put tx objects key sv   
             M.put tx objectMetas key (ROMeta wv Nothing)  
             ifJust (getAKI ro) $ \aki' ->
                 case ro of
@@ -215,58 +221,53 @@ ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a
 
 
-putVResult :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> VResultStore s -> WorldVersion -> VResult -> m ()
-putVResult tx VResultStore {..} wv vr = liftIO $ do 
-    SequenceValue k <- nextValue tx keys
-    MM.put tx whToKey wv (ArtificialKey k)
-    M.put tx results (ArtificialKey k) vr
+putValidations :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> ValidationsStore s -> WorldVersion -> Validations -> m ()
+putValidations tx ValidationsStore {..} wv validations = liftIO $ M.put tx results wv validations
 
-allVResults :: (MonadIO m, Storage s) => 
-                Tx s mode -> VResultStore s -> WorldVersion -> m [VResult]
-allVResults tx VResultStore {..} wv = liftIO $ MM.foldS tx whToKey wv f []
-    where
-        f vrs _ artificialKey = 
-            maybe vrs (: vrs) <$> M.get tx results artificialKey            
+validationsForVersion :: (MonadIO m, Storage s) => 
+                        Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
+validationsForVersion tx ValidationsStore {..} wv = liftIO $ M.get tx results wv
 
-deleteVResults :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> VResultStore s -> WorldVersion -> m ()
-deleteVResults tx VResultStore {..} wv = liftIO $ do 
-    MM.foldS tx whToKey wv f ()
-    MM.deleteAll tx whToKey wv
-    where
-        f _ _ artificialKey = M.delete tx results artificialKey    
+deleteValidations :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv = 
+    liftIO $ M.delete tx results wv
+                 
+
+completeWorldVersion :: Storage s => 
+                        Tx s 'RW -> DB s -> WorldVersion -> IO ()
+completeWorldVersion tx database worldVersion =    
+    putVersion tx database worldVersion FinishedVersion
 
 
-putVRP :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> VRPStore s -> WorldVersion -> Roa -> m ()
-putVRP tx (VRPStore s) wv vrp = liftIO $ MM.put tx s wv vrp
-
-allVRPs :: (MonadIO m, Storage s) => 
-            Tx s mode -> VRPStore s -> WorldVersion -> m [Roa]
-allVRPs tx (VRPStore s) wv = liftIO $ MM.allForKey tx s wv
+getVrps :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Set Vrp)
+getVrps tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $
+    M.get tx vrpMap wv >>= \case 
+        Nothing -> pure Set.empty
+        Just v  -> pure v
 
 deleteVRPs :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> VRPStore s -> WorldVersion -> m ()
-deleteVRPs tx (VRPStore s) wv = liftIO $ MM.deleteAll tx s wv
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap wv
 
-forAllVrps :: (MonadIO m, Storage s) => 
-            Tx s mode -> VRPStore s -> WorldVersion -> (Roa -> IO ()) -> m ()
-forAllVrps tx (VRPStore s) wv f = liftIO $ 
-    MM.foldS tx s wv (\_ _ roa -> f roa) ()    
-
+putVrps :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set Vrp -> WorldVersion -> m ()
+putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
+    liftIO $ M.put tx vrpMap worldVersion vrps    
 
 putVersion :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> VersionStore s -> WorldVersion -> VersionState -> m ()
-putVersion tx (VersionStore s) wv versionState = liftIO $ M.put tx s wv versionState
+        Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
+putVersion tx DB { versionStore = VersionStore s } wv versionState = liftIO $ M.put tx s wv versionState
 
 allVersions :: (MonadIO m, Storage s) => 
-            Tx s mode -> VersionStore s -> m [(WorldVersion, VersionState)]
-allVersions tx (VersionStore s) = liftIO $ M.all tx s
+            Tx s mode -> DB s -> m [(WorldVersion, VersionState)]
+allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
 
 deleteVersion :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> VersionStore s -> WorldVersion -> m ()
-deleteVersion tx (VersionStore s) wv = liftIO $ M.delete tx s wv
+        Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
 
 
 -- More complicated operations
@@ -302,7 +303,7 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
 
     void $ mapException (AppException . storageError) <$> 
                 bracketChanClosable 
-                    100_000
+                    50_000
                     readOldObjects
                     deleteObjects
                     (const $ pure ())    
@@ -316,10 +317,10 @@ deleteOldVersions :: (MonadIO m, Storage s) =>
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m Int
-deleteOldVersions DB {..} tooOld = 
+deleteOldVersions database tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do
 
-    versions <- roTx versionStore $ \tx -> allVersions tx versionStore    
+    versions <- roTx database $ \tx -> allVersions tx database    
     let toDelete = 
             case [ version | (version, FinishedVersion) <- versions ] of
                 []       -> 
@@ -333,11 +334,11 @@ deleteOldVersions DB {..} tooOld =
                     let lastFinished = List.maximum finished 
                     in filter (( /= lastFinished) . fst) $ filter (tooOld . fst) versions
     
-    rwTx versionStore $ \tx -> 
+    rwTx database $ \tx -> 
         forM_ toDelete $ \(worldVersion, _) -> do
-            deleteVResults tx resultStore worldVersion
-            deleteVRPs tx vrpStore worldVersion
-            deleteVersion tx versionStore worldVersion
+            deleteValidations tx database worldVersion
+            deleteVRPs tx database worldVersion
+            deleteVersion tx database worldVersion
     
     pure $ List.length toDelete
 
@@ -350,8 +351,7 @@ data RpkiObjectStats = RpkiObjectStats {
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
-    resultsStats :: !SStats,
-    whToKeyStats :: !SStats
+    resultsStats :: !SStats    
 } deriving  (Show, Eq, Generic)
 
 data RepositoryStats = RepositoryStats {
@@ -381,7 +381,7 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
         repositoryStats tx <*>
         rpkiObjectStats tx <*>
         vResultStats tx <*>
-        (let VRPStore sm = vrpStore in MM.stats tx sm) <*>
+        (let VRPStore sm = vrpStore in M.stats tx sm) <*>
         (let VersionStore sm = versionStore in M.stats tx sm) <*>
         M.stats tx sequences
     where
@@ -402,22 +402,20 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
                 MM.stats tx perTA
 
         vResultStats tx = 
-            let VResultStore {..} = resultStore
-            in VResultStats <$>
-                M.stats tx results <*>
-                MM.stats tx whToKey
-        
+            let ValidationsStore results = validationsStore
+            in VResultStats <$> M.stats tx results
+                       
 
 
 -- All of the stores of the application in one place
 data DB s = DB {
-    taStore         :: TAStore s, 
-    repositoryStore :: RepositoryStore s, 
-    objectStore     :: RpkiObjectStore s,
-    resultStore     :: VResultStore s,
-    vrpStore        :: VRPStore s,
-    versionStore    :: VersionStore s,
-    sequences       :: SequenceMap s
+    taStore          :: TAStore s, 
+    repositoryStore  :: RepositoryStore s, 
+    objectStore      :: RpkiObjectStore s,
+    validationsStore :: ValidationsStore s,
+    vrpStore         :: VRPStore s,
+    versionStore     :: VersionStore s,
+    sequences        :: SequenceMap s
 } deriving stock (Generic)
 
 instance Storage s => WithStorage s (DB s) where
@@ -426,3 +424,73 @@ instance Storage s => WithStorage s (DB s) where
 
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx    
+
+
+
+-- Utilities to have storage transaction in ValidatorT monad.
+
+roAppTx :: (Storage s, WithStorage s ws) => 
+            ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+roAppTx s f = appTx s f roTx    
+
+rwAppTx :: (Storage s, WithStorage s ws) => 
+            ws -> (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTx s f = appTx s f rwTx
+
+
+appTx :: (Storage s, WithStorage s ws) => 
+        ws -> (Tx s mode -> ValidatorT env IO a) -> 
+        (ws -> (Tx s mode -> IO (Either AppError a, Validations))
+            -> IO (Either AppError a, Validations)) -> 
+        ValidatorT env IO a
+appTx s f txF = do
+    env <- ask    
+    validatorT $ transaction env `catch` 
+                (\(TxRollbackException e vs) -> pure (Left e, vs))
+  where
+    transaction env = txF s $ \tx -> do 
+        (r, vs) <- runValidatorT env $ f tx
+        case r of
+            -- abort transaction on ExceptT error
+            Left e  -> throwIO $ TxRollbackException e vs
+            Right _ -> pure (r, vs)
+         
+
+roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> 
+            (exc -> AppError) -> 
+            (Tx s 'RO -> ValidatorT env IO a) -> 
+            ValidatorT env IO a 
+roAppTxEx ws err f = appTxEx ws err f roTx
+
+rwAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> (exc -> AppError) -> 
+            (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+rwAppTxEx s err f = appTxEx s err f rwTx
+
+
+appTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
+            ws -> (exc -> AppError) -> 
+            (Tx s mode -> ValidatorT env IO a) -> 
+            (s -> (Tx s mode -> IO (Either AppError a, Validations))
+               -> IO (Either AppError a, Validations)) -> 
+            ValidatorT env IO a
+appTxEx ws err f txF = do
+    env <- ask
+    validatorT $ transaction env `catches` [
+            Handler $ \(TxRollbackException e vs) -> pure (Left e, vs),
+            Handler $ \e -> pure (Left (err e), mempty)
+        ]       
+    where
+        transaction env = txF (storage ws) $ \tx -> do 
+            (r, vs) <- runValidatorT env $ f tx
+            case r of
+                -- abort transaction on ExceptT error
+                Left e  -> throwIO $ TxRollbackException e vs
+                Right _ -> pure (r, vs)
+
+
+data TxRollbackException = TxRollbackException AppError Validations
+    deriving stock (Show, Eq, Ord, Generic)
+
+instance Exception TxRollbackException

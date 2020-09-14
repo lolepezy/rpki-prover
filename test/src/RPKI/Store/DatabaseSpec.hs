@@ -8,7 +8,9 @@
 
 module RPKI.Store.DatabaseSpec where
 
+import           Control.Exception.Lifted
 import           Control.Monad
+import           Control.Monad.IO.Class
 import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import           Data.List                         as List
@@ -24,6 +26,7 @@ import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
+import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Orphans
@@ -36,14 +39,13 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
-import           RPKI.Version
 import           RPKI.Time
+import           RPKI.Version
 
 import           RPKI.Store.Base.LMDB              (LmdbEnv)
 import           RPKI.Store.Util
 
 import           RPKI.RepositorySpec
-import GHC.Generics (Generic)
 
 
 
@@ -53,7 +55,8 @@ storeGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
         validationResultStoreGroup,
-        repositoryStoreGroup
+        repositoryStoreGroup,
+        txGroup
     ]
 
 objectStoreGroup :: TestTree
@@ -73,6 +76,12 @@ repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
     [
         HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io)
         -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
+    ]
+
+txGroup :: TestTree
+txGroup = withDB $ \io -> testGroup "App transaction test"
+    [
+        HU.testCase "Should rollback App transactions properly" (shouldRollbackAppTx io)        
     ]
 
 
@@ -131,14 +140,14 @@ should_insert_and_get_all_back_from_object_store io = do
 should_insert_and_get_all_back_from_validation_result_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 should_insert_and_get_all_back_from_validation_result_store io = do  
     (_, DB {..}) <- io
-    vrs :: [VResult] <- forM [1 :: Int .. 100] $ const $ QC.generate arbitrary      
+    vrs :: Validations <- QC.generate arbitrary      
 
     world <- getWorldVerion =<< createDynamicState
 
-    rwTx resultStore $ \tx -> for_ vrs $ \vr -> putVResult tx resultStore world vr
-    vrs' <- roTx resultStore $ \tx -> allVResults tx resultStore world
+    rwTx validationsStore $ \tx -> putValidations tx validationsStore world vrs
+    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world
 
-    HU.assertEqual "Not the same VResult" (sort vrs) (sort vrs')
+    HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
 
 should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
@@ -187,6 +196,40 @@ should_insert_and_get_all_back_from_repository_store io = do
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
     
+shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldRollbackAppTx io = do  
+    ((_, env), DB {..}) <- io
+
+    let storage' = LmdbStorage env
+    z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
+
+    void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx -> do
+        liftIO $ M.put tx z 1 "aa"
+        appError $ UnspecifiedE "Test" "Test problem"
+
+    void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx ->
+        liftIO $ M.put tx z 2 "bb"        
+
+    let throwFromTx =
+            void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
+                    M.put tx z 3 "cc"        
+                    throwIO RatioZeroDenominator
+
+    Left (SomeException e) <- try throwFromTx    
+    HU.assertEqual "Must be the right type of exception" 
+            (fromException (toException e)) 
+            (Just RatioZeroDenominator)
+
+    void $ runValidatorT (vContext "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
+         v1 <- M.get tx z 1  
+         HU.assertEqual "Must not be there" v1 Nothing
+         v2 <- M.get tx z 2  
+         HU.assertEqual "Must be rolled back by appError" v2 (Just "bb")
+         v3 <- M.get tx z 3  
+         HU.assertEqual "Must be rolled back by exception" v3 Nothing
+    
+
+
 
 generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
@@ -223,3 +266,7 @@ replaceAKI a = go
                 ee = scCertificate sc
                 sc = soContent so
                 ee' = withMeta ee (\_ _ -> a)        
+
+
+
+-- gsutil rm gs://mp_test_bucket/ada.jpg

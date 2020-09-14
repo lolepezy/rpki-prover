@@ -13,26 +13,26 @@ import           RPKI.Domain            hiding (SessionId)
 import           RPKI.RTR.Types
 
 data RtrUpdate = 
-      RtrAll (Set Roa) 
+      RtrAll (Set Vrp) 
     | RtrDiff { 
-        added   :: Set Roa, 
-        deleted :: Set Roa
+        added   :: Set Vrp, 
+        deleted :: Set Vrp
     }
 
 data VrpDiff = VrpDiff { 
-        added   :: Set Roa, 
-        deleted :: Set Roa
+        added   :: Set Vrp, 
+        deleted :: Set Vrp
     } 
 
 data RtrState = RtrState {
-    vrps :: Set Roa,
+    vrps :: Set Vrp,
     deltas :: Map SerialNumber VrpDiff
 }
 
 emptyState :: RtrState
 emptyState = RtrState mempty mempty
 
-updatedRtrState :: RtrState -> Set Roa -> RtrState
+updatedRtrState :: RtrState -> Set Vrp -> RtrState
 updatedRtrState RtrState {..} newVrps = RtrState newVrps newDeltas
     where
         newDeltas = 

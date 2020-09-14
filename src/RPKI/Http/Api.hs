@@ -7,13 +7,12 @@
 {-# LANGUAGE TypeOperators         #-}
 
 module RPKI.Http.Api where
-
+    
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as BSL
 import qualified Data.ByteString.Short      as BSS
 
 import           Data.Int
-import           Data.Proxy
 import           Data.Text                  (Text)
 
 import           Data.ByteArray             (convert)
@@ -53,6 +52,7 @@ import qualified RPKI.Util                  as U
 
 
 
+
 data CSVOptions = CSVOptions
 
 instance EncodeOpts CSVOptions where
@@ -61,8 +61,8 @@ instance EncodeOpts CSVOptions where
 type CSVType = CSV' 'HasHeader CSVOptions
 
 type API = "api" :> (     
-                "vrps.csv"  :> Get '[CSVType] [VRP]
-            :<|> "vrps.json" :> Get '[JSON] [VRP]
+                "vrps.csv"  :> Get '[CSVType] [VrpDto]
+            :<|> "vrps.json" :> Get '[JSON] [VrpDto]
             :<|> "validation-results" :> Get '[JSON] [ValidationResult]
             :<|> "lmdb-stats" :> Get '[JSON] DBStats
             :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)
@@ -73,7 +73,7 @@ data ValidationResult = ValidationResult {
     context  :: ![Text]
 } deriving stock (Generic)
 
-data VRP = VRP {
+data VrpDto = VrpDto {
     asn :: !ASN,
     prefix :: !IpPrefix,
     maxLength :: !Int16
@@ -84,9 +84,9 @@ newtype RObject = RObject RpkiObject
 
 
 -- CSV
-instance ToRecord VRP
-instance DefaultOrdered VRP
-instance ToNamedRecord VRP
+instance ToRecord VrpDto
+instance DefaultOrdered VrpDto
+instance ToNamedRecord VrpDto
 
 instance ToField ASN where
     toField (ASN as) = ("AS" :: Csv.Field) <> toField as
@@ -97,7 +97,7 @@ instance ToField IpPrefix where
 
 
 -- JSON
-instance ToJSON VRP 
+instance ToJSON VrpDto 
 instance ToJSON ASN where
     toJSON (ASN as) = toJSON $ "AS" <> show as
 
@@ -105,7 +105,7 @@ instance ToJSON IpPrefix where
     toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
     toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
 
-instance MimeRender CSV VRP where
+instance MimeRender CSV VrpDto where
     mimeRender _ vrp = Csv.encode [vrp]
 
 instance ToJSON ValidationResult
@@ -193,7 +193,7 @@ instance ToJSON a => ToJSON (SignedData a)
 instance ToJSON a => ToJSON (EncapsulatedContentInfo a)
 
 instance ToJSON Gbr
-instance ToJSON Roa
+instance ToJSON Vrp
 instance ToJSON Manifest
 instance ToJSON CertificateWithSignature
 instance ToJSON ResourceCertificate
@@ -270,6 +270,9 @@ instance ToJSON ASN1Class
 instance ToJSON ASN1ConstructionType
 instance ToJSON SerializedPoint
 instance ToJSON Crypto.PubKey.ECC.Types.CurveName
+
+instance ToJSON SessionId where
+    toJSON (SessionId s) = shortBsJson s
 
 -- Parsing
 instance FromHttpApiData Hash where    

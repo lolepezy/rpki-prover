@@ -4,11 +4,12 @@
 module RPKI.Http.HttpServer where
 
 import           Control.Monad.IO.Class
-import           Servant
 import           FileEmbedLzma
+import           Servant
 import           Servant.Server.StaticFiles
 
-import qualified Data.List.NonEmpty      as NonEmpty
+import qualified Data.List.NonEmpty         as NonEmpty
+import qualified Data.Set            as Set
 
 import           RPKI.AppContext
 import           RPKI.Domain
@@ -18,6 +19,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Version
+
 
 
 validatorServer :: forall s . Storage s => AppContext s -> Server API
@@ -30,20 +32,22 @@ validatorServer AppContext {..} =
     where
         getVRPs = 
             getForTheLastVersion $ \tx lastVersion -> 
-                map (\(Roa a p len) -> VRP a p len) 
-                    <$> allVRPs tx vrpStore lastVersion            
+                map (\(Vrp a p len) -> VrpDto a p len) . Set.toList
+                    <$> getVrps tx database lastVersion            
 
         getVResults = 
-            getForTheLastVersion $ \tx lastVersion ->             
-                map toVR <$> allVResults tx resultStore lastVersion  
+            getForTheLastVersion $ \tx lastVersion ->
+                validationsForVersion tx validationsStore lastVersion >>= \case 
+                    Nothing          -> pure []
+                    Just validations -> pure $ map toVR $ validationsToList validations
 
-        toVR VResult { path = VContext p, .. } = 
-            ValidationResult problem (NonEmpty.toList p)
+        toVR (VContext path, problems) = 
+            ValidationResult (Set.toList problems) (NonEmpty.toList path)
 
         getForTheLastVersion :: (Tx s 'RO -> WorldVersion -> IO [a]) -> IO [a]
         getForTheLastVersion f = 
             roTx versionStore $ \tx -> do 
-                versions' <- allVersions tx versionStore
+                versions' <- allVersions tx database
                 case versions' of
                     [] -> pure []
                     vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]      

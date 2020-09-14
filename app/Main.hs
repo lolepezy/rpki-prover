@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances  #-}
 
 module Main where
+    
 import           Colog
 
 import           Control.Monad
@@ -33,7 +34,8 @@ import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
-import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory, removePathForcibly)
+import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory,
+                                                   removePathForcibly)
 import           System.Environment
 import           System.FilePath                  ((</>))
 import           System.IO                        (BufferMode (..), hSetBuffering, stdout)
@@ -58,6 +60,8 @@ import           RPKI.Workflow
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
 import           Numeric.Natural                  (Natural)
+import           RPKI.Store.Base.Storage
+import           RPKI.Store.Database
 
 
 
@@ -87,7 +91,7 @@ runValidatorApp appContext@AppContext {..} = do
         forM talFileNames $ \talFileName -> 
             forChild (convert talFileName) $ parseTALFromFile talFileName
 
-    writeVResult appContext validations worldVersion        
+    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion validations
     case tals of 
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    

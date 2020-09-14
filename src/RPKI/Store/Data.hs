@@ -1,3 +1,4 @@
+
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -14,14 +15,6 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Repository
 import           RPKI.TAL
-
-
--- TODO Add versioning here
-data VResult = VResult {
-    problem :: [VProblem],
-    path    :: VContext
-} deriving (Show, Eq, Ord, Generic, Serialise)
-
 
 data StorableTA = StorableTA {
     tal                 :: TAL,

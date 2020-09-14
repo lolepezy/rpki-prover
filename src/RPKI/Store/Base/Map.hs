@@ -47,9 +47,6 @@ traverse :: (Serialise k, Serialise v) =>
             Tx s m -> SMap name s k v -> (k -> v -> IO ()) -> IO ()
 traverse tx m f = fold tx m (\_ k v -> f k v) ()    
 
-size :: Tx s m -> SMap name s k v -> IO Int
-size tx (SMap _ s) = S.foldS tx s (\a _ _ -> pure $! a + 1) 0
-
 all :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> IO [(k, v)]
 all tx (SMap _ s) = reverse <$> S.foldS tx s f []

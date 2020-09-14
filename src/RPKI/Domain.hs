@@ -190,7 +190,7 @@ with w c = With c w
 type CrlObject = With IdentityMeta (With AKI SignCRL)
 type CerObject = With IdentityMeta (With (Maybe AKI) (With SKI ResourceCertificate))
 type MftObject = With IdentityMeta (CMS Manifest)
-type RoaObject = With IdentityMeta (CMS [Roa])
+type RoaObject = With IdentityMeta (CMS [Vrp])
 type GbrObject = With IdentityMeta (CMS Gbr) 
 
 type EECerObject = With AKI (With SKI ResourceCertificate)
@@ -273,7 +273,7 @@ newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
-data Roa = Roa 
+data Vrp = Vrp 
     {-# UNPACK #-} !ASN 
     {-# UNPACK #-} !IpPrefix 
     {-# UNPACK #-} !Int16
@@ -448,7 +448,7 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 
-newtype TaName = TaName Text.Text
+newtype TaName = TaName { unTaName :: Text.Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
