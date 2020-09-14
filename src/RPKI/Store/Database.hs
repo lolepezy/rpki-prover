@@ -303,7 +303,7 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
 
     void $ mapException (AppException . storageError) <$> 
                 bracketChanClosable 
-                    100_000
+                    50_000
                     readOldObjects
                     deleteObjects
                     (const $ pure ())    
