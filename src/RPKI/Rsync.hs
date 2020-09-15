@@ -37,7 +37,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
-import           RPKI.Version
+import           RPKI.AppState
 
 import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
 import           System.FilePath                  ((</>))

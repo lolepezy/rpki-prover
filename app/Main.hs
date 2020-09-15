@@ -54,7 +54,7 @@ import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
-import           RPKI.Version
+import           RPKI.AppState
 import           RPKI.Workflow
 
 import           Data.Hourglass

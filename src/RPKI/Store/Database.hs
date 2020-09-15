@@ -13,24 +13,22 @@ import           Control.Monad            (forM_, void)
 import           Control.Monad.IO.Class
 import           Control.Monad.Reader     (ask)
 
-import           Data.Data                (Typeable)
-import           Data.Foldable
 import           Data.Int
 import           Data.IORef.Lifted
 
 import qualified Data.List                as List
-import qualified Data.Map.Strict          as Map
+import           Data.Maybe               (fromMaybe)
 import           Data.Set                 (Set)
 import qualified Data.Set                 as Set
 
 import           GHC.Generics
 
+import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
-import           RPKI.Version
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -44,7 +42,7 @@ import           RPKI.Util                (fmtEx, increment)
 import           RPKI.AppMonad
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-import Data.Maybe (fromMaybe)
+
 
 
 

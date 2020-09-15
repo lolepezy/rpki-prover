@@ -34,7 +34,7 @@ import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
 import           RPKI.TopDown
-import           RPKI.Version
+import           RPKI.AppState
 
 import           RPKI.AppContext
 import           RPKI.Store.Base.Storage

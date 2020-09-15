@@ -421,10 +421,10 @@ instance Arbitrary IpPrefix where
 
 instance Arbitrary Ipv4Prefix where
     arbitrary = do
-        w1 :: Word8 <- arbitrary `suchThat` (>0)
-        w2 :: Word8 <- arbitrary `suchThat` (>0)
-        w3 :: Word8 <- arbitrary `suchThat` (>0)
-        w4 :: Word8 <- arbitrary `suchThat` (>0)
+        w1 :: Word8 <- arbitrary `suchThat` (> 0)
+        w2 :: Word8 <- arbitrary `suchThat` (> 0)
+        w3 :: Word8 <- arbitrary `suchThat` (> 0)
+        w4 :: Word8 <- arbitrary `suchThat` (> 0)
         let w = fourW8sToW32 [w1, w2, w3, w4]
         m :: Word8  <- choose (8, 32)
         let x = w `shift` (32 - fromIntegral m)
@@ -433,10 +433,10 @@ instance Arbitrary Ipv4Prefix where
 
 instance Arbitrary Ipv6Prefix where
     arbitrary = do
-        w1 :: Word32 <- arbitrary `suchThat` (>0)
-        w2 :: Word32 <- arbitrary `suchThat` (>0)
-        w3 :: Word32 <- arbitrary `suchThat` (>0)
-        w4 :: Word32 <- arbitrary `suchThat` (>0)    
+        w1 :: Word32 <- arbitrary `suchThat` (> 0)
+        w2 :: Word32 <- arbitrary `suchThat` (> 0)
+        w3 :: Word32 <- arbitrary `suchThat` (> 0)
+        w4 :: Word32 <- arbitrary `suchThat` (> 0)    
         m :: Word8  <- choose (46, 128)
         let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
         pure $ mkIpv6Block x m

@@ -56,7 +56,7 @@ import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Validation.ObjectValidation
-import           RPKI.Version
+import           RPKI.AppState
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)

@@ -2,7 +2,7 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE RecordWildCards            #-}
 
-module RPKI.Version where
+module RPKI.AppState where
     
 import           Control.Concurrent.STM
 
@@ -24,7 +24,7 @@ newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
-newtype Versions = Versions {
+newtype AppState = AppState {
     world :: TVar WorldVersion
 } deriving stock (Generic)
 
@@ -33,22 +33,22 @@ data VersionState = NewVersion | FinishedVersion
     deriving anyclass (Serialise)
 
 -- 
-createDynamicState :: IO Versions
+createDynamicState :: IO AppState
 createDynamicState = do
     Now (Instant now) <- thisInstant
     let NanoSeconds nano = timeGetNanoSeconds now
-    Versions <$> atomically (newTVar $ WorldVersion nano)
+    AppState <$> atomically (newTVar $ WorldVersion nano)
 
 -- 
-updateWorldVerion :: Versions -> IO WorldVersion
-updateWorldVerion Versions {..} = do
+updateWorldVerion :: AppState -> IO WorldVersion
+updateWorldVerion AppState {..} = do
     Now now <- thisInstant    
     let wolrdVersion = WorldVersion $ toNanoseconds now
     atomically $ writeTVar world wolrdVersion
     pure wolrdVersion
 
-getWorldVerion :: Versions -> IO WorldVersion
-getWorldVerion Versions {..} = readTVarIO world    
+getWorldVerion :: AppState -> IO WorldVersion
+getWorldVerion AppState {..} = readTVarIO world    
 
 versionToMoment :: WorldVersion -> Instant
 versionToMoment (WorldVersion nanos) = fromNanoseconds nanos

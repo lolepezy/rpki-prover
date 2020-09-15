@@ -40,7 +40,7 @@ import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
 import qualified RPKI.Util                        as U
-import           RPKI.Version
+import           RPKI.AppState
 
 import           Data.IORef.Lifted
 
@@ -230,7 +230,7 @@ saveSnapshot :: Storage s =>
                 -> LBS.ByteString 
                 -> ValidatorT vc IO ()
 saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do      
-    worldVersion <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
+    worldVersion <- liftIO $ getWorldVerion $ appContext ^. typed @AppState
     doSaveObjects worldVersion 
   where
     doSaveObjects worldVersion = do
@@ -311,7 +311,7 @@ saveDelta :: Storage s =>
             -> LBS.ByteString 
             -> ValidatorT conf IO ()
 saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent = do        
-    worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
+    worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @AppState
     doSaveObjects worldVersion
   where
     doSaveObjects worldVersion = do

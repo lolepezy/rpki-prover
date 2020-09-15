@@ -62,7 +62,7 @@ import           RPKI.AppContext
 import           RPKI.Parallel
 import           RPKI.TAL
 import           RPKI.Rsync
-import           RPKI.Version
+import           RPKI.AppState
 import           RPKI.Store.Database
 import           RPKI.Store.Repository (getTaPublicationPoints)
 import           RPKI.Validation.Crypto

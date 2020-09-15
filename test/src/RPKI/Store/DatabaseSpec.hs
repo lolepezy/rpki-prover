@@ -40,7 +40,7 @@ import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.Time
-import           RPKI.Version
+import           RPKI.AppState
 
 import           RPKI.Store.Base.LMDB              (LmdbEnv)
 import           RPKI.Store.Util
