@@ -63,25 +63,25 @@ data WorkflowTask =
 runWorkflow :: Storage s => 
             AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
-    -- Use a command queue to avoid fully concurrent operations, i.e.
-    -- cache GC should not run at the same time as the validation (not for consistency reasons,
-    -- but we want to avoid locking the DB for long time).    
+    -- Use a command queue to avoid fully concurrent operations, i.e. cache GC 
+    -- should not run at the same time as the validation (not for consistency 
+    -- reasons, but we want to avoid locking the DB for long time).
     globalQueue <- newCQueueIO 10
 
-    (notifyRtr, rtrServer) <- initRtrIfNeeded
+    rtrServer <- initRtrIfNeeded
 
     mapConcurrently_ (\f -> f globalQueue) [ 
-            taskExecutor notifyRtr,
+            taskExecutor,
             generateNewWorldVersion, 
             cacheGC,
             cleanOldVersions,
-            \_ -> rtrServer   
+            rtrServer   
         ]
     where          
         cacheCleanupInterval = config ^. #cacheCleanupInterval
         oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
-        revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval           
+        revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
         rtrConfig            = config ^. #rtrConfig
 
         validateTaTask globalQueue worldVersion = 
@@ -89,8 +89,8 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- periodically update world version and re-validate all TAs
         generateNewWorldVersion globalQueue = periodically revalidationInterval $ do 
-            oldWorldVersion <- getWorldVerion versions
-            newWorldVersion <- updateWorldVerion versions
+            oldWorldVersion <- getWorldVerion appState
+            newWorldVersion <- updateWorldVerion appState
             logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
             validateTaTask globalQueue newWorldVersion
 
@@ -99,17 +99,17 @@ runWorkflow appContext@AppContext {..} tals = do
             -- wait a little so that GC doesn't start before the actual validation
             threadDelay 10_000_000
             periodically cacheCleanupInterval $ do
-                worldVersion <- getWorldVerion versions
+                worldVersion <- getWorldVerion appState
                 atomically $ writeCQueue globalQueue $ CacheGC worldVersion
 
         cleanOldVersions globalQueue = do 
-            -- wait a little so that deleting old versions comes last in the queue of actions
+            -- wait a little so that deleting old appState comes last in the queue of actions
             threadDelay 30_000_000
             periodically cacheCleanupInterval $ do
-                worldVersion <- getWorldVerion versions
+                worldVersion <- getWorldVerion appState
                 atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion        
 
-        taskExecutor notifyRtr globalQueue = do
+        taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
             forever $ do 
                 task <- atomically $ readCQueue globalQueue 
@@ -128,9 +128,12 @@ runWorkflow appContext@AppContext {..} tals = do
 
                             saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
                                 putValidations tx (validationsStore database) worldVersion tdValidations 
-                                putVrps tx database (Set.fromList vrps) worldVersion
+                                let vrpSet = Set.fromList vrps
+                                putVrps tx database vrpSet worldVersion
                                 completeWorldVersion tx database worldVersion
-
+                                atomically $ do 
+                                    writeTVar (appState ^. #world) worldVersion
+                                    writeTVar (appState ^. #currentVrps) vrpSet
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
@@ -168,32 +171,9 @@ runWorkflow appContext@AppContext {..} tals = do
         initRtrIfNeeded = 
             case rtrConfig of 
                 Nothing -> do 
-                    pure (\_ -> pure (), pure ())
-                Just rtrConfig' -> do 
-                    rtrContext' <- newRtrContext                    
-                    pure (
-                        \worldVersion -> notifyRTRServer rtrContext' worldVersion,
-                        runRtrServer appContext rtrConfig' rtrContext')
-            where
-                notifyRTRServer RtrContext {..} worldVersion = do
-                    rtrUpdate <- roTx database $ \tx -> do 
-                        latestVRPs <- getVrps tx database worldVersion 
-                        versions'  <- allVersions tx database
-
-                        let previousVersionsLatestFirst = 
-                                sortBy (flip compare) $ filter ((< worldVersion) . fst) versions'   
-                                                         
-                        case previousVersionsLatestFirst of 
-                            []                       -> pure $ RtrAll latestVRPs        
-                            (previousVersion, _) : _ -> do 
-                                previousVRPs <- getVrps tx database previousVersion
-                                pure $ RtrDiff {
-                                        added = Set.difference latestVRPs previousVRPs,
-                                        deleted = Set.difference previousVRPs latestVRPs
-                                    }
-
-                    atomically $ writeTChan worldVersionUpdateChan rtrUpdate                      
-                            
+                    pure $ \_ -> pure ()
+                Just rtrConfig' -> 
+                    pure $ \_ -> runRtrServer appContext rtrConfig' 
                     
 
 -- Execute certain IO actiion every N seconds

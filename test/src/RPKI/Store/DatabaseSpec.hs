@@ -142,7 +142,7 @@ should_insert_and_get_all_back_from_validation_result_store io = do
     (_, DB {..}) <- io
     vrs :: Validations <- QC.generate arbitrary      
 
-    world <- getWorldVerion =<< createDynamicState
+    world <- getWorldVerion =<< newAppState
 
     rwTx validationsStore $ \tx -> putValidations tx validationsStore world vrs
     vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world

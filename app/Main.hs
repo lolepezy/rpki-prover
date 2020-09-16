@@ -12,6 +12,7 @@ import           Colog
 
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Control.Concurrent.STM
 
 import           Control.Lens                     ((^.))
 import           Data.Generics.Labels
@@ -56,6 +57,7 @@ import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 import           RPKI.Workflow
+import           RPKI.RTR.RtrContext
 
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
@@ -84,7 +86,7 @@ main = do
 
 runValidatorApp :: AppEnv -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
-    worldVersion <- updateWorldVerion versions
+    worldVersion <- updateWorldVerion appState
     talFileNames <- listTALFiles $ talDirectory config
     let validationContext = vContext "validation-root"
     (tals, validations) <- runValidatorT validationContext $ 
@@ -126,9 +128,7 @@ createAppContext CLIOptions{..} logger = do
 
     -- clean up tmp directory if it's not empty
     fromTry (InitE . InitError . fmtEx) $ 
-        listDirectory tmpd >>= mapM_ (removePathForcibly . (tmpd </>))
-
-    versions <- liftIO createDynamicState
+        listDirectory tmpd >>= mapM_ (removePathForcibly . (tmpd </>))    
     
     let cpuCount' = fromMaybe getRtsCpuCount cpuCount
 
@@ -153,7 +153,12 @@ createAppContext CLIOptions{..} logger = do
                     rtrAddress = rtrAddress `orDefault` "localhost",
                     rtrPort    = rtrPort `orDefault` 8283
                 }
-            else Nothing 
+            else Nothing     
+
+    appState <- liftIO newAppState
+
+    -- Always instantiate rtrContext, it's not a big deal if it's never used
+    rtrContext <- liftIO $ atomically . newTVar =<< newRtrContext
 
     let appContext = AppContext {        
         logger = logger,
@@ -182,8 +187,9 @@ createAppContext CLIOptions{..} logger = do
 
             -- TODO Think about it, it should be lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
-        },
-        versions = versions,
+        },        
+        appState = appState,
+        rtrState = rtrContext,
         database = database,
         appBottlenecks = appBottlenecks,
         httpContext = httpContext

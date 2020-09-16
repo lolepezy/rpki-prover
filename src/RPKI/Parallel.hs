@@ -1,6 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DerivingStrategies #-}
+
 module RPKI.Parallel where
 
 import           Control.Concurrent.STM
@@ -17,11 +17,6 @@ import           Control.Monad.IO.Class          (MonadIO, liftIO)
 
 import           Control.Concurrent.Async.Lifted
 import           Control.Monad.Trans.Control
-import           Data.IORef.Lifted
-
-import RPKI.Time
-
-import Debug.Trace
 
 import Streaming
 import qualified Streaming.Prelude as S
@@ -296,12 +291,11 @@ newTask io (Bottleneck bottlenecks) execution =
                 a <- asyncForTask
                 -- Wait for either the task to finish, or only until there's 
                 -- some free space in the bottleneck.
-                void $ liftIO $ race 
-                    (wait a)
-                    (atomically $ do 
-                        spaceInBottlenecks <- someSpaceInBottleneck
-                        unless (and spaceInBottlenecks) retry)
-                pure $ SubmitterTask a    
+                liftIO $ atomically $ do 
+                    spaceInBottlenecks <- someSpaceInBottleneck
+                    unless (and spaceInBottlenecks) $ void $ waitSTM a                     
+                pure $ SubmitterTask a                    
+
 
 
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m a

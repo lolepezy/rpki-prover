@@ -195,7 +195,7 @@ createAppContext logger = do
     fromTry (InitE . InitError . fmtEx) $ 
         listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
 
-    versions <- liftIO createDynamicState
+    versions <- liftIO newAppState
 
     -- TODO Make it configurable
     let parallelism = Parallelism getParallelism 64

@@ -14,7 +14,9 @@ import           Data.Int
 import           Data.Hourglass         (timeGetNanoSeconds)
 import           Time.Types
 
+import           RPKI.Domain
 import           RPKI.Time
+import Data.Set
 
 
 
@@ -24,8 +26,9 @@ newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
-newtype AppState = AppState {
-    world :: TVar WorldVersion
+data AppState = AppState {
+    world :: TVar WorldVersion,
+    currentVrps :: TVar (Set Vrp)
 } deriving stock (Generic)
 
 data VersionState = NewVersion | FinishedVersion
@@ -33,11 +36,13 @@ data VersionState = NewVersion | FinishedVersion
     deriving anyclass (Serialise)
 
 -- 
-createDynamicState :: IO AppState
-createDynamicState = do
+newAppState :: IO AppState
+newAppState = do
     Now (Instant now) <- thisInstant
     let NanoSeconds nano = timeGetNanoSeconds now
-    AppState <$> atomically (newTVar $ WorldVersion nano)
+    atomically $ AppState <$> 
+                    newTVar (WorldVersion nano) <*>
+                    newTVar mempty
 
 -- 
 updateWorldVerion :: AppState -> IO WorldVersion
@@ -57,3 +62,12 @@ instantToVersion :: Instant -> WorldVersion
 instantToVersion (Instant t) = 
     let NanoSeconds nano = timeGetNanoSeconds t
     in WorldVersion nano
+
+
+-- Block on version updates
+listenWorldVersion :: AppState -> WorldVersion -> IO (WorldVersion, Set Vrp)
+listenWorldVersion AppState {..} knownWorldVersion = atomically $ do 
+    w <- readTVar world
+    if w > knownWorldVersion
+        then (w,) <$> readTVar currentVrps
+        else retry

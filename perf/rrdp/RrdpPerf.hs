@@ -132,7 +132,7 @@ createAppContext logger = do
     fromTry (InitE . InitError . fmtEx) $ 
         listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
 
-    versions <- liftIO createDynamicState
+    versions <- liftIO newAppState
 
     let cpuCount' = getRtsCpuCount
     liftIO $ setCpuCount cpuCount'

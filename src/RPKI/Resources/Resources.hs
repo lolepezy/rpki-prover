@@ -6,23 +6,25 @@
 
 module RPKI.Resources.Resources where
 
-import           Prelude                               hiding (subtract)
+import           Prelude                              hiding (subtract)
 
-import qualified Data.ByteString                       as BS
+import qualified Data.ByteString                      as BS
+import qualified Data.ByteString.Short                as BSS
 
 import           Data.Bits
-import qualified Data.List                             as List
+import qualified Data.List                            as List
 import           Data.Maybe
-import qualified Data.Set                              as Set
+import qualified Data.Set                             as Set
 import           Data.Word
 
-import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
-import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
+import qualified HaskellWorks.Data.Network.Ip.Ipv4    as V4
+import qualified HaskellWorks.Data.Network.Ip.Ipv6    as V6
 import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Word128
 
-import           RPKI.Resources.IntervalSet            as IS
+import           RPKI.Resources.IntervalSet           as IS
 import           RPKI.Resources.Types
+
 
 
 instance WithSetOps Ipv4Prefix where
@@ -301,3 +303,14 @@ rightPad n a = go 0
                     | otherwise = []  
         go !acc (x : xs) = x : go (acc + 1) xs    
 {-# INLINE rightPad #-}
+
+
+prefixToBytes :: Ipv4Prefix -> BSS.ShortByteString
+prefixToBytes (Ipv4Prefix (V4.IpBlock p _)) = BSS.pack [w0, w1, w2, w3]
+    where
+        (w0, w1, w2, w3) = V4.ipAddressToWords p        
+
+prefixV6ToBytes :: Ipv4Prefix -> BSS.ShortByteString
+prefixV6ToBytes (Ipv4Prefix (V4.IpBlock p _)) = BSS.pack [w0, w1, w2, w3]
+    where
+        (w0, w1, w2, w3) = V4.ipAddressToWords p        

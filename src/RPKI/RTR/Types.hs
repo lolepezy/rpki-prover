@@ -185,3 +185,6 @@ nextSerial (SerialNumber n) =
         if (fromIntegral n :: Integer) == (2 :: Integer)^(31 :: Integer) - 1
             then 0
             else n + 1    
+
+initialSerial :: SerialNumber
+initialSerial = SerialNumber 1337
