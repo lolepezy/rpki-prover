@@ -661,7 +661,12 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                 validateCaCertificate appContext childTopDownContext childCert                            
         
                     pure $! case r of
-                        Left _                         -> Triple emptyPublicationPoints mempty (fromValidations validations)
+                        -- TODO Think about: it probably should be 
+                        -- Left e -> let 
+                        --             childCaError = mError (vContext $ toText $ NonEmpty.head $ getLocations ro) e)
+                        --           in Triple emptyPublicationPoints mempty (fromValidations childCaError)
+                        -- because we want to ignore all the errors down the tree when reporting up, they can be confusing.
+                        Left _                         -> Triple emptyPublicationPoints mempty (fromValidations validations)                        
                         Right (Triple pps wl tdResult) -> Triple pps wl (tdResult <> fromValidations validations)
 
                 RoaRO roa ->
