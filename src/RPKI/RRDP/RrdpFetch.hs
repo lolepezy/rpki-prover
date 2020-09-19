@@ -14,6 +14,7 @@ import           Control.Monad.Reader.Class
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
+import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -61,8 +62,8 @@ downloadAndUpdateRRDP :: WithVContext vc =>
                         AppContext s ->
                         HttpContext ->
                         RrdpRepository ->                 
-                        (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT vc IO ()) ->
-                        (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT vc IO ()) ->
+                        (RrdpURL -> Notification -> BS.ByteString -> ValidatorT vc IO ()) ->
+                        (RrdpURL -> Notification -> Serial -> BS.ByteString -> ValidatorT vc IO ()) ->
                         ValidatorT vc IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext
@@ -72,7 +73,7 @@ downloadAndUpdateRRDP
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
     do
     (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
-                                downloadToLazyBS httpContext rrdpConf (getURL repoUri)     
+                                downloadToStrictBS httpContext rrdpConf (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
@@ -93,6 +94,7 @@ downloadAndUpdateRRDP
         rrdpConf = appContext ^. typed @Config . typed @RrdpConf
         logger   = appContext ^. typed @AppLogger
         ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck
+        
 
         useSnapshot (SnapshotInfo uri hash) notification = 
             forChild (U.convert uri) $ do       
@@ -104,12 +106,13 @@ downloadAndUpdateRRDP
                 downloadAndSave = do
                     ((rawContent, _), downloadedIn) <- timedMS $ 
                             fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                                    downloadHashedLazyBS httpContext rrdpConf uri hash                                    
+                                    downloadHashedStrictBS httpContext rrdpConf uri hash                                    
                                         (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
                     (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent            
                     pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
 
-                rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)
+                rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)                    
+        
 
         useDeltas sortedDeltas notification = do
             let repoURI = getURL $ repo ^. #uri
@@ -137,13 +140,14 @@ downloadAndUpdateRRDP
 
                 downloadDelta (DeltaInfo uri hash serial) = do
                     (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                                            downloadHashedLazyBS httpContext rrdpConf uri hash
+                                            downloadHashedStrictBS httpContext rrdpConf uri hash
                                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                     pure (rawContent, serial)
 
                 serials = map (^. typed @Serial) sortedDeltas
                 maxSerial = List.maximum serials
                 minSerial = List.minimum serials
+
                 rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)
 
 
@@ -227,7 +231,7 @@ saveSnapshot :: Storage s =>
                 -> RrdpStatWork 
                 -> RrdpURL
                 -> Notification 
-                -> LBS.ByteString 
+                -> BS.ByteString 
                 -> ValidatorT vc IO ()
 saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do      
     worldVersion <- liftIO $ getWorldVerion $ appContext ^. typed @Versions
@@ -308,7 +312,7 @@ saveDelta :: Storage s =>
             -> RrdpURL 
             -> Notification 
             -> Serial             
-            -> LBS.ByteString 
+            -> BS.ByteString 
             -> ValidatorT conf IO ()
 saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent = do        
     worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @Versions

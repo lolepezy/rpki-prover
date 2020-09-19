@@ -59,6 +59,9 @@ normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
 
+removeSpaces :: BS.ByteString -> BS.ByteString
+removeSpaces = C.filter (not . isSpace)
+
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 

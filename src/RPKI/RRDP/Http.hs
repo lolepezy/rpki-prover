@@ -91,7 +91,33 @@ downloadHashedLazyBS :: (MonadIO m) =>
                         Hash -> 
                         (Hash -> Either e (LBS.ByteString, Size)) ->
                         m (Either e (LBS.ByteString, Size))
-downloadHashedLazyBS httpContext RrdpConf {..} uri@(URI u) hash hashMishmatch = liftIO $ do
+downloadHashedLazyBS httpContext rrdpConf uri hash hashMishmatch = 
+    downloadHashedBS httpContext rrdpConf uri hash hashMishmatch  MmapLazy.unsafeMMapFile
+
+-- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
+-- streaming it to the file.
+downloadHashedStrictBS :: (MonadIO m) => 
+                        HttpContext ->
+                        RrdpConf ->
+                        URI -> 
+                        Hash -> 
+                        (Hash -> Either e (BS.ByteString, Size)) ->
+                        m (Either e (BS.ByteString, Size))
+downloadHashedStrictBS httpContext rrdpConf uri hash hashMishmatch = 
+    downloadHashedBS httpContext rrdpConf uri hash hashMishmatch  Mmap.unsafeMMapFile
+
+
+-- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
+-- streaming it to the file.
+downloadHashedBS :: (MonadIO m) => 
+                        HttpContext ->
+                        RrdpConf ->
+                        URI -> 
+                        Hash -> 
+                        (Hash -> Either e (bs, Size)) ->
+                        (FilePath -> IO bs) ->
+                        m (Either e (bs, Size))
+downloadHashedBS httpContext RrdpConf {..} uri@(URI u) hash hashMishmatch mmap = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
@@ -102,7 +128,7 @@ downloadHashedLazyBS httpContext RrdpConf {..} uri@(URI u) hash hashMishmatch = 
             then pure $! hashMishmatch actualHash
             else do
                 hClose fd
-                content <- MmapLazy.unsafeMMapFile name
+                content <- mmap name
                 pure $! Right (content, size)
 
 
