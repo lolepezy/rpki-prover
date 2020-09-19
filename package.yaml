@@ -108,6 +108,7 @@ dependencies:
 - vector
 - warp
 - wai-app-static
+- xeno
 
 
 ghc-options:
