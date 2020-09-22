@@ -120,9 +120,9 @@ runWorkflow appContext@AppContext {..} tals = do
                         logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
                         executeOrDie
                             (mconcat <$> mapConcurrently processTAL tals)
-                            (\tdResult elapsed -> do 
+                            (\tdResult@TopDownResult{..} elapsed -> do 
                                 saveTopDownResult tdResult                                
-                                logInfoM logger [i|Validated all TAs, took #{elapsed}ms|])
+                                logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
                         where 
                             processTAL tal = validateTA appContext tal worldVersion                                
 

@@ -111,7 +111,8 @@ data RrdpError = BrokenXml Text |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
                 UnsupportedObjectType | 
-                RrdpDownloadTimeout
+                RrdpDownloadTimeout | 
+                UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -119,7 +120,8 @@ data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |
                     RsyncDirError Text |               
-                    RsyncDownloadTimeout
+                    RsyncDownloadTimeout | 
+                    UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

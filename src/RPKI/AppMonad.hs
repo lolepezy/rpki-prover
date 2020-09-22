@@ -4,7 +4,7 @@
 
 module RPKI.AppMonad where
 
-import           Control.Exception
+import           Control.Exception.Lifted
 import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader
@@ -48,6 +48,18 @@ fromTry mapErr t =
             case fromException (toException e) of
                 Just (SomeAsyncException _) -> throwIO e
                 Nothing                     -> pure $ Left $ mapErr e
+
+fromTryM :: Exception exc => 
+            (exc -> AppError) -> 
+            ValidatorT env IO r -> 
+            ValidatorT env IO r
+fromTryM mapErr t =
+    t `catch` recoverOrRethrow        
+    where
+        recoverOrRethrow e = 
+            case fromException (toException e) of
+                Just (SomeAsyncException _) -> throwIO e
+                Nothing                     -> appError $ mapErr e
 
 fromTryEither :: Exception exc =>
                 (exc -> AppError) -> IO (Either AppError r) -> ValidatorT env IO r

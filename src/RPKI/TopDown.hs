@@ -80,7 +80,7 @@ instance (Semigroup a, Semigroup b, Semigroup c) => Semigroup (Triple a b c) whe
 -- that are waiting for a PP to be fetched. CA certificates, pointig to delegated 
 -- CAs are normally getting in this list.
 newtype WaitingList =  WaitingList { unWList :: 
-        (Map RpkiURL (Set (Triple Hash VContext (Maybe (VerifiedRS PrefixesAndAsns)))))
+        Map RpkiURL (Set (Triple Hash VContext (Maybe (VerifiedRS PrefixesAndAsns))))
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype Monoid
@@ -154,9 +154,8 @@ incValidObject TopDownContext {..} = liftIO $ atomically $
     modifyTVar' objectStats $ \s -> s { validCount = validCount s + 1 }
 
 
--- | Validate TA given that the TA certificate is downloaded and up-to-date.
---  is the main entry point for the top-down validation when it's known that
--- TA certificate is up-to-date and valid.
+-- | It is the main entry point for the top-down validation. 
+-- Validates TA starting from its TAL.
 --
 validateTA :: Storage s => 
             AppContext s -> TAL -> WorldVersion -> IO TopDownResult
@@ -166,8 +165,8 @@ validateTA appContext@AppContext {..} tal worldVersion = do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
-          
-    pure $ flatten r    
+    
+    pure $! flatten r    
     where                            
         taContext = vContext taNameText
         TaName taNameText = getTaName tal
@@ -284,7 +283,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
                 latestStoreState <- getTaPublicationPoints tx (repositoryStore database) taName'
                 let changeSet' = changeSet storedPubPoints (pubPointAfterTopDown <> latestStoreState)
                 applyChangeSet tx (repositoryStore database) changeSet' taName'
-
+                        
             pure topDownResult
 
         (broken, _) -> do
@@ -325,12 +324,16 @@ fetchRepository
 
         fetchIt = do
             logDebugM logger [i|Fetching #{repoURL} |]
-            ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $ 
+            ((r, v), elapsed) <- timedMS $ runValidatorT vContext' $                 
                 case repo of
-                    RsyncR r -> 
-                        RsyncR <$> updateObjectForRsyncRepository appContext r 
+                    RsyncR r -> do 
+                            RsyncR <$> fromTryM 
+                                    (RsyncE . UnknownRsyncProblem . fmtEx) 
+                                    (updateObjectForRsyncRepository appContext r)                             
                     RrdpR r -> 
-                        RrdpR <$> updateObjectForRrdpRepository appContext r
+                        RrdpR <$> fromTryM 
+                                    (RrdpE . UnknownRrdpProblem . fmtEx) 
+                                    (updateObjectForRrdpRepository appContext r)                        
             case r of
                 Left e -> do                        
                     logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
@@ -382,7 +385,8 @@ validateCARecursively
         Left _alreadyQueued -> pure $ fromValidations validations
         Right (Triple discoveredPPs waitingList tdResult) -> do                    
             tdResults <- extractPPsAndValidateDown discoveredPPs waitingList
-            pure $ mconcat tdResults <> tdResult <> fromValidations validations                
+            pure $! mconcat tdResults <> tdResult <> fromValidations validations                
+
     where
         -- From the set of discovered PPs figure out which ones must be fetched, 
         -- fetch them and validate, starting from the cerfificates in their 
@@ -399,7 +403,7 @@ validateCARecursively
                     writeTVar publicationPoints newGlobalPPs                                        
                     modifyTVar' takenCareOf (<> discoveredURIs)
                             
-                    pure $ newGlobalPPs `shrinkTo` urisToTakeCareOf
+                    pure $! newGlobalPPs `shrinkTo` urisToTakeCareOf
 
             let (_, rootToPps) = repositoryHierarchy ppsToFetch'
 
@@ -408,7 +412,7 @@ validateCARecursively
             parallelTasks 
                 (ioBottleneck appBottlenecks) 
                 (Map.keys rootToPps) $ \repo ->
-                    fetchAndValidateWaitingList rootToPps repo waitingList
+                    fetchAndValidateWaitingList rootToPps repo waitingList                    
                     
 
         -- Fetch the PP and validate all the certificates from the waiting 
@@ -445,7 +449,7 @@ validateCARecursively
         proceedUsingGracePeriod pps waitingListForThesePPs fetchResult = do
             let proceedWithValidation validations = do                
                     tdResults <- validateWaitingList waitingListForThesePPs
-                    pure $ mconcat tdResults <> fromValidations validations
+                    pure $! mconcat tdResults <> fromValidations validations
 
             let noFurtherValidation validations = pure $ fromValidations validations
 
