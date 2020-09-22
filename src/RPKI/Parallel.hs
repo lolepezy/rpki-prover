@@ -218,15 +218,16 @@ readCQueue (ClosableQueue q queueState) = do
                 QClosed -> pure Nothing
                 QWorks  -> retry
 
--- | Simple straioghtforward implementation of a thread pool for submition of tasks.
+
+-- | Simple straioghtforward implementation of a "thread pool".
 -- 
 parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck -> t a -> (a -> m b) -> m (t b)
 parallelTasks bottleneck as f = do
-    tasks <- forM as $ \a -> newTask (f a) bottleneck Submitter
-    forM tasks waitTask
+    tasks <- forM as $ \a -> strictTask (f a) bottleneck
+    forM tasks waitTask `onException` forM tasks cancelTask
 
--- Thread pool value, current and maximum size
+-- 
 newtype Bottleneck = Bottleneck (NonEmpty (TVar Natural, Natural))
     deriving newtype Semigroup
 
@@ -241,8 +242,8 @@ newBottleneckIO = atomically . newBottleneck
 -- Who is going to execute a task when the bottleneck is busy
 data BottleneckFullExecutor = Requestor | Submitter
 
--- A task can be asyncronous, executed by the requestor
--- and executed by the submitrter (eager).
+-- A task can be asyncronous, executed by the requestor (lazy)
+-- and executed by the submitter (strict).
 data Task m a
     = AsyncTask !(Async (StM m a))
     | RequestorTask !(m a)
@@ -259,7 +260,7 @@ strictTask io bottleneck = newTask io bottleneck Submitter
 
 -- | If the bottleneck is full, io will be execute by the thread that calls newTask.
 pureTask :: (MonadBaseControl IO m, MonadIO m) => a -> Bottleneck -> m (Task m a)                       
-pureTask io = strictTask (pure $! io)
+pureTask a = strictTask (pure $! a)
 
 -- General case
 newTask :: (MonadBaseControl IO m, MonadIO m) => 
@@ -279,7 +280,7 @@ newTask io (Bottleneck bottlenecks) execution =
             someSpaceInBottleneck =
                 forM bottlenecks $ \(currentSize, maxSize) -> do 
                         cs <- readTVar currentSize
-                        pure $! cs < maxSize                        
+                        pure $ cs < maxSize                        
 
             incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
             decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
