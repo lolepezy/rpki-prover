@@ -20,6 +20,7 @@ import           Control.Monad.Trans.Control
 
 import Streaming
 import qualified Streaming.Prelude as S
+import Data.IORef.Lifted
 
 
 atLeastOne :: Natural -> Natural
@@ -219,14 +220,28 @@ readCQueue (ClosableQueue q queueState) = do
                 QWorks  -> retry
 
 
--- | Simple straioghtforward implementation of a "thread pool".
+-- | Similar to mapConcurrently but uses the `Bottleneck` value
+-- to limit the parallelism.
 -- 
-parallelTasks :: (Traversable t, MonadBaseControl IO m, MonadIO m) =>
-                Bottleneck -> t a -> (a -> m b) -> m (t b)
-parallelTasks bottleneck as f = do
-    tasks <- forM as $ \a -> strictTask (f a) bottleneck
-    forM tasks waitTask `onException` forM tasks cancelTask
+parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
+                Bottleneck -> [a] -> (a -> m b) -> m [b]
+parallelTasks bottleneck as f = do    
+    tasks <- newIORef []
 
+    let makeTasks = 
+            forM_ as $ \a -> do 
+                t <- strictTask (f a) bottleneck
+                modifyIORef' tasks (t:)
+    
+    -- TODO There's still a chance that a task is created and starts to run
+    -- but an exception kills this thread before the task gets to `tasks` list.
+    -- Fix it
+    (makeTasks >> readIORef tasks >>= mapM waitTask) 
+        `onException` 
+        (readIORef tasks >>= mapM cancelTask)
+
+
+-- | Simple straioghtforward implementation of a "thread pool".
 -- 
 newtype Bottleneck = Bottleneck (NonEmpty (TVar Natural, Natural))
     deriving newtype Semigroup
@@ -287,10 +302,11 @@ newTask io (Bottleneck bottlenecks) execution =
 
             asyncForTask = async $ io `finally` liftIO (atomically decSizes)
 
+            -- TODO This is not very safe w.r.t. exceptions.
             submitterTask = do 
                 liftIO $ atomically incSizes
                 a <- asyncForTask
-                -- Wait for either the task to finish, or only until there's 
+                -- Wait for either the task to finish, or until there's 
                 -- some free space in the bottleneck.
                 liftIO $ atomically $ do 
                     spaceInBottlenecks <- someSpaceInBottleneck
