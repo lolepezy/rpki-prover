@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE StrictData          #-}
@@ -10,7 +11,6 @@ import qualified Data.ByteString.Lazy as BSL
 
 import Data.Binary
 import Data.Int
-import GHC.TypeLits
 
 import RPKI.Domain (SKI(..), KI(..))
 import RPKI.Resources.Types
@@ -23,36 +23,20 @@ data ProtocolVersion =
   deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 
-type IsProtocolVersion version = (ToValue version Word8,                                  
-                                 ToValue version ProtocolVersion,
-                                 Typeable version)
+data Pdu = NotifyPdu SessionId SerialNumber
+        | SerialQueryPdu SessionId SerialNumber
+        | ResetQueryPdu
+        | CacheResponsePdu SessionId
+        | IPv4PrefixPdu Flags RtrPrefix 
+        | IPv6PrefixPdu Flags RtrPrefix     
+        | EndOfDataPdu SessionId SerialNumber Intervals
+        | CacheResetPdu
+        | RouterKeyPdu ASN Flags SKI BSL.ByteString
+        | ErrorPdu ErrorCode BSL.ByteString BSL.ByteString
+    deriving stock (Show, Eq, Ord, Generic)
 
-data APdu where
-    APdu :: forall (protocolVersion :: ProtocolVersion) (pduCode :: Nat) .             
-            (KnownNat pduCode, 
-             IsProtocolVersion protocolVersion) =>
-            Pdu protocolVersion pduCode -> APdu    
-
--- | PDUs definede both by V0 and V1 protocols
-data Pdu (version :: ProtocolVersion) (pduCode :: Nat) where
-    NotifyPdu        :: SessionId -> SerialNumber -> Pdu version 0
-    SerialQueryPdu   :: SessionId -> SerialNumber -> Pdu version 1
-    ResetQueryPdu    :: Pdu version 2    
-    CacheResponsePdu :: SessionId -> Pdu version 3
-    IPv4PrefixPdu    :: Flags -> RtrPrefix -> Pdu version 4
-    IPv6PrefixPdu    :: Flags -> RtrPrefix -> Pdu version 6
-    EndOfDataPduV0   :: SessionId -> SerialNumber -> Pdu 'V0 7
-    EndOfDataPduV1   :: SessionId -> SerialNumber -> Intervals -> Pdu 'V1 7
-    CacheResetPdu    :: Pdu version 8        
-    RouterKeyPduV1   :: ASN -> Flags -> SKI -> BSL.ByteString -> Pdu 'V1 9
-    ErrorPdu         :: ErrorCode -> BSL.ByteString -> BSL.ByteString -> Pdu version 10    
-    
-
-deriving instance Show APdu
-
-deriving instance Show (Pdu version pduCode)
-deriving instance Eq (Pdu version pduCode)
-deriving instance Ord (Pdu version pduCode)
+data VersionedPdu = VersionedPdu Pdu ProtocolVersion
+    deriving stock (Show, Eq, Ord, Generic)
 
 newtype SerialNumber = SerialNumber Int32
     deriving stock (Show, Eq, Ord, Generic)
@@ -63,24 +47,19 @@ newtype SessionId = SessionId Int16
 data Flags = Announcement | Withdrawal
     deriving stock (Show, Eq, Ord, Generic)
 
-data ErrorCode
-  = CorruptData
-  | PduInternalError
-  | NoDataAvailable
-  | InvalidRequest
-  | UnsupportedProtocolVersion
-  | UnsupportedPduType
-  | WithdrawalOfUnknownRecord
-  | DuplicateAnnouncementReceived
-  | UnexpectedProtocolVersion
-  deriving stock (Show, Eq, Ord, Generic)
+data ErrorCode = CorruptData
+        | PduInternalError
+        | NoDataAvailable
+        | InvalidRequest
+        | UnsupportedProtocolVersion
+        | UnsupportedPduType
+        | WithdrawalOfUnknownRecord
+        | DuplicateAnnouncementReceived
+        | UnexpectedProtocolVersion
+    deriving  (Show, Eq, Ord, Generic)
 
-data ASession where
-    ASession :: forall (protocolVersion :: ProtocolVersion) . 
-                IsProtocolVersion protocolVersion =>
-                Session protocolVersion -> ASession
 
-data Session (protocolVersion :: ProtocolVersion) = Session
+newtype Session = Session ProtocolVersion
     deriving stock (Show, Eq, Ord, Generic)
 
 data RtrPrefix = RtrPrefix {
@@ -96,16 +75,6 @@ data Intervals = Intervals {
     expireInterval:: Int32
 } deriving stock (Show, Eq, Ord)
 
-
-class ToValue a b where
-    toValue :: Proxy a -> b
-
-instance ToValue 'V0 ProtocolVersion where toValue _ = V0
-instance ToValue 'V1 ProtocolVersion where toValue _ = V1
-
-instance ToValue 'V0 Word8 where toValue _ = 0
-instance ToValue 'V1 Word8 where toValue _ = 1
-
 instance Binary SessionId
 instance Binary SerialNumber
 
@@ -113,6 +82,25 @@ instance Binary SerialNumber
 instance Binary ASN
 instance Binary SKI
 instance Binary KI
+
+
+defIntervals :: Intervals
+defIntervals = Intervals { 
+    refreshInterval = 3600,
+    retryInterval = 600,
+    expireInterval = 7200
+}
+
+instance Binary ProtocolVersion where
+    put f = put $ case f of 
+        V0 -> 0 :: Word8
+        V1 -> 1
+
+    get = f <$> get
+        where 
+            f (0 :: Word8) = V0
+            f 1            = V1
+            f n            = error $ "No error code value for " <> show n
 
 instance Binary Flags where 
     put f = put $ case f of 
@@ -123,6 +111,7 @@ instance Binary Flags where
         where 
             f (0 :: Word8) = Withdrawal
             f 1            = Announcement
+            f n            = error $ "No flags value for " <> show n
 
 instance Binary RtrPrefix where 
     put RtrPrefix {..} = do

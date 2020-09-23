@@ -5,7 +5,9 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
 
 module RPKI.Domain where
 

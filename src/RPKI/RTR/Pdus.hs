@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE StrictData   #-}
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.RTR.Pdus where
 
@@ -11,7 +10,7 @@ import           Data.Text
 import qualified Data.Text            as Text
 
 import           Data.Binary
-import           Data.Binary.Get      (getRemainingLazyByteString, getByteString, runGetOrFail)
+import           Data.Binary.Get      (getByteString, getRemainingLazyByteString, runGetOrFail)
 import           Data.Binary.Put      (runPut)
 
 import           Data.Int
@@ -24,36 +23,45 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 
 
--- 
-pduLength :: Pdu version pduCode -> Int32 
-pduLength (NotifyPdu _ _)       = 12
-pduLength (SerialQueryPdu _ _)  = 12
-pduLength ResetQueryPdu         = 8
-pduLength (CacheResponsePdu _)  = 8
-pduLength (IPv4PrefixPdu _ _)   = 20
-pduLength (IPv6PrefixPdu _ _)   = 32
-pduLength (EndOfDataPduV0 _ _)  = 12
-pduLength EndOfDataPduV1 {}     = 24
-pduLength CacheResetPdu         = 8
 
-pduLength (RouterKeyPduV1 _ _ ski bs2) = 
+toPduCode :: Pdu -> Word8 
+toPduCode NotifyPdu {}        = 0
+toPduCode SerialQueryPdu {}   = 1
+toPduCode ResetQueryPdu       = 2
+toPduCode CacheResponsePdu {} = 3
+toPduCode IPv4PrefixPdu {}    = 4
+toPduCode IPv6PrefixPdu {}    = 6
+toPduCode EndOfDataPdu {}     = 7
+toPduCode CacheResetPdu       = 8
+toPduCode RouterKeyPdu {}     = 9     
+toPduCode ErrorPdu {}         = 10    
+
+-- 
+pduLength :: Pdu -> ProtocolVersion -> Int32 
+pduLength NotifyPdu {} _        = 12
+pduLength SerialQueryPdu {} _   = 12
+pduLength ResetQueryPdu       _ = 8
+pduLength CacheResponsePdu {} _ = 8
+pduLength IPv4PrefixPdu {}  _   = 20
+pduLength IPv6PrefixPdu {}  _   = 32
+pduLength EndOfDataPdu {} V0    = 12
+pduLength EndOfDataPdu {} V1    = 24
+pduLength CacheResetPdu _       = 8
+
+pduLength (RouterKeyPdu _ _ ski bs2) _ = 
     fromIntegral $ 8 + 4 + (fromIntegral (skiLen ski) :: Int64) + BSL.length bs2
 
-pduLength (ErrorPdu _ bs1 bs2) = 
+pduLength (ErrorPdu _ bs1 bs2) _ = 
     fromIntegral $ 8 + 4 + 4 + BSL.length bs1 + BSL.length bs2
 
 -- 
 -- | Serialise PDU into bytes according to the RTR protocal 
 -- 
-pduToBytes :: forall protocolVersion pduCode . KnownNat pduCode => 
-                ToValue protocolVersion Word8 =>             
-                Pdu protocolVersion pduCode -> BSL.ByteString
-pduToBytes pdu = 
+pduToBytes :: Pdu -> Session -> BSL.ByteString
+pduToBytes pdu (Session protocolVersion)  = 
     runPut $ pduHeader >> pduContent
     where
-        pduHeader = do
-            put (toValue (Proxy @protocolVersion) :: Word8)
-            put ((fromIntegral $ natVal (Proxy @pduCode)) :: Word8)
+        pduHeader = put protocolVersion >> put (toPduCode pdu)            
 
         pduContent = case pdu of 
             NotifyPdu sessionId serial ->         
@@ -71,19 +79,19 @@ pduToBytes pdu =
             IPv4PrefixPdu flags rtrPrefix -> ipvXPrefixPdu flags rtrPrefix 
             IPv6PrefixPdu flags rtrPrefix -> ipvXPrefixPdu flags rtrPrefix
 
-            EndOfDataPduV0 sessionId serial ->
-                put sessionId >> put pduLen >> put serial
-
-            EndOfDataPduV1 sessionId serial intervals -> do
+            EndOfDataPdu sessionId serial intervals -> do
                 put sessionId
                 put pduLen  
                 put serial 
-                put intervals                
+                case protocolVersion of 
+                    V0 -> pure ()
+                    V1 -> put intervals
 
             CacheResetPdu -> 
                 put (0 :: Word16) >> put pduLen
 
-            RouterKeyPduV1 (ASN asn') flags (SKI (KI ski)) spki -> do                
+            -- This is illegal to use for V0, but we are not going to complain here
+            RouterKeyPdu (ASN asn') flags (SKI (KI ski)) spki -> do                
                 put flags
                 put (0 :: Word8)
                 put pduLen
@@ -99,7 +107,7 @@ pduToBytes pdu =
                 put (fromIntegral (BSL.length errorText) :: Int32)
                 put errorText
     
-        pduLen = pduLength pdu :: Int32
+        pduLen = pduLength pdu protocolVersion :: Int32
 
         ipvXPrefixPdu :: Flags -> RtrPrefix -> Put
         ipvXPrefixPdu flags rtrPrefix = do 
@@ -116,48 +124,35 @@ pduToBytes pdu =
 -- 
 -- | Parse PDUs from bytestrings according to the RTR protocal 
 -- 
-bytesToPdu :: BS.ByteString -> Either (ErrorCode, Maybe Text) APdu
-bytesToPdu bs = 
-    case runGetOrFail getIt (BSL.fromStrict bs) of
+bytesToVersionedPdu :: BS.ByteString -> Either (ErrorCode, Maybe Text) VersionedPdu
+bytesToVersionedPdu bs = 
+    case runGetOrFail parsePdu (BSL.fromStrict bs) of
         Left (bs, offset, errorMessage) -> 
             Left (InvalidRequest, Just $ Text.pack $ "Error parsing " <> show bs)
             
         Right (_, _, pdu) -> Right pdu
     where
-        getIt = do 
-            protocolVersion :: Word8 <- get
-            case protocolVersion of
-                0 -> parseVersionedPdu (Session @'V0) V0
-                1 -> parseVersionedPdu (Session @'V1) V1
-                n -> fail $ "Invalid protocol version " <> show n
+        parsePdu = do 
+            protocolVersion <- get
+            pdu <- parseVersionedPdu $ Session protocolVersion            
+            pure $ VersionedPdu pdu protocolVersion
 
---                 
--- | Parse PDUs from bytestrings according to the RTR protocal 
--- 
-bytesToVersionedPdu :: forall (protocolVersion :: ProtocolVersion) . 
-                    IsProtocolVersion protocolVersion  => 
-                    Session protocolVersion -> BS.ByteString -> Either Text APdu
-bytesToVersionedPdu session bs = 
-    case runGetOrFail getIt (BSL.fromStrict bs) of
-        Left (bs, offset, errorMessage) -> Left $ Text.pack $ "Error parsing " <> show bs 
-        Right (_, _, pdu) -> Right pdu
-    where
-        getIt = do 
-            protocolVersion :: Word8 <- get
-            if (toValue (Proxy @protocolVersion) :: Word8) == protocolVersion
-                then parseVersionedPdu 
-                        session
-                        (toValue (Proxy @protocolVersion) :: ProtocolVersion)
-                else fail $ "Invalid protocol version " <> show protocolVersion
+bytesToPduOfKnownVersion :: Session -> BS.ByteString -> Either (ErrorCode, Maybe Text) Pdu
+bytesToPduOfKnownVersion s@(Session protocolVersion) bs = 
+    case runGetOrFail parsePdu (BSL.fromStrict bs) of
+        Left (bs, offset, errorMessage) -> 
+            Left (InvalidRequest, Just $ Text.pack $ "Error parsing " <> show bs)
             
+        Right (_, _, (VersionedPdu pdu _)) -> Right pdu
+    where
+        parsePdu = do 
+            _ignore :: ProtocolVersion <- get
+            pdu <- parseVersionedPdu s
+            pure $ VersionedPdu pdu protocolVersion
 
--- 
--- | Parse PDU with statically known protocol version.
--- 
-parseVersionedPdu :: forall (protocolVersion :: ProtocolVersion) . 
-                    IsProtocolVersion protocolVersion =>
-                    Session protocolVersion -> ProtocolVersion -> Get APdu
-parseVersionedPdu _ protocolVersion = do 
+
+parseVersionedPdu :: Session -> Get Pdu
+parseVersionedPdu (Session protocolVersion) = do 
     pduCode :: Word8 <- get
     case pduCode of 
         0  -> do
@@ -165,27 +160,27 @@ parseVersionedPdu _ protocolVersion = do
             len :: Int32  <- get
             assertLength len 12
             serial    <- get
-            pure $ APdu $ NotifyPdu @protocolVersion sessionId serial
+            pure $ NotifyPdu sessionId serial
 
         1  -> do 
             sessionId <- get
             len :: Int32  <- get
             assertLength len 12
             serial    <- get
-            pure $ APdu $ SerialQueryPdu @protocolVersion sessionId serial                    
+            pure $ SerialQueryPdu sessionId serial                    
 
         2  -> do 
             zero :: Word16 <- get 
             unless (zero == 0) $ fail "Field must be zero for ResetQueryPdu"
             len  :: Int32 <- get
             assertLength len 8                    
-            pure $ APdu $ ResetQueryPdu @protocolVersion
+            pure $ ResetQueryPdu
 
         3  -> do 
             sessionId :: SessionId <- get
             len :: Int32           <- get
             assertLength len 8
-            pure $ APdu $ CacheResponsePdu @protocolVersion sessionId
+            pure $ CacheResponsePdu sessionId
 
         4  -> do 
             zero :: Word16 <- get 
@@ -194,7 +189,7 @@ parseVersionedPdu _ protocolVersion = do
             assertLength len 20
             flags <- get
             rtrPrefix <- get
-            pure $ APdu $ IPv4PrefixPdu @protocolVersion flags rtrPrefix
+            pure $ IPv4PrefixPdu flags rtrPrefix
 
         6  -> do 
             zero :: Word16 <- get 
@@ -203,7 +198,7 @@ parseVersionedPdu _ protocolVersion = do
             assertLength len 32
             flags     <- get
             rtrPrefix <- get
-            pure $ APdu $ IPv6PrefixPdu @protocolVersion flags rtrPrefix
+            pure $ IPv6PrefixPdu flags rtrPrefix
 
         7  -> do
             sessionId     <- get
@@ -212,18 +207,21 @@ parseVersionedPdu _ protocolVersion = do
             case protocolVersion of 
                 V0 -> do 
                     assertLength len 12
-                    pure $ APdu $ EndOfDataPduV0 sessionId serial
+                    -- 1) It doesn't matter what we put into intervals, since it's 
+                    -- not going to be used anyway in V0 protocol.
+                    -- 2) Normally we are not even supposed to parse this type of PDUs                    
+                    pure $ EndOfDataPdu sessionId serial defIntervals
                 V1 -> do                        
                     intervals <- get
                     assertLength len 24
-                    pure $ APdu $ EndOfDataPduV1 sessionId serial intervals                        
+                    pure $ EndOfDataPdu sessionId serial intervals
 
         8  -> do 
             zero :: Word16 <- get 
             unless (zero == 0) $ fail "Field must be zero for ResetQueryPdu"
             len  :: Int32 <- get
             assertLength len 8
-            pure $ APdu $ CacheResetPdu @protocolVersion
+            pure CacheResetPdu
 
         9  -> do 
             flags         <- get
@@ -238,7 +236,7 @@ parseVersionedPdu _ protocolVersion = do
                     (fromIntegral (BS.length ski) :: Int32) + 
                     (fromIntegral (BSL.length spki) :: Int32)
 
-            pure $ APdu $ RouterKeyPduV1 asn' flags (SKI (KI $ toShortBS ski)) spki
+            pure $ RouterKeyPdu asn' flags (SKI (KI $ toShortBS ski)) spki
 
         10 -> do 
             errorCode <- get
@@ -246,7 +244,7 @@ parseVersionedPdu _ protocolVersion = do
             encapsulatedPdu <- getByteString $ fromIntegral encapsulatedPduLen
             textLen :: Int32 <- get
             text <- getByteString $ fromIntegral textLen
-            pure $ APdu $ ErrorPdu @protocolVersion errorCode (BSL.fromStrict encapsulatedPdu) (BSL.fromStrict text)
+            pure $ ErrorPdu errorCode (BSL.fromStrict encapsulatedPdu) (BSL.fromStrict text)
 
         n  -> fail $ "Invalid PDU type " <> show n
 
@@ -255,17 +253,4 @@ parseVersionedPdu _ protocolVersion = do
             unless (len == mustBe) $ 
                 fail $ "Wrong length " <> show len <> ", must be " <> show mustBe
 
-
-    
-withSession :: ASession -> 
-            (forall (protocolVersion :: ProtocolVersion) . 
-             IsProtocolVersion protocolVersion =>
-             Session protocolVersion -> a) -> a
-withSession (ASession s) f = f s
-
-withPdu :: APdu -> 
-        (forall (protocolVersion :: ProtocolVersion) (pduCode :: Nat) . 
-         (KnownNat pduCode, IsProtocolVersion protocolVersion) =>
-         Pdu protocolVersion pduCode -> a) -> a
-withPdu (APdu pdu) f = f pdu
  

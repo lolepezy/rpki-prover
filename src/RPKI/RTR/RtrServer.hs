@@ -17,10 +17,9 @@ import           Control.Monad
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as BSL
 
-import           Data.Generics.Product.Typed
-
-import           Data.Data
 import           Data.Text                        (Text)
+
+import qualified Data.Set                         as Set
 
 import           Data.String.Interpolate.IsString
 
@@ -37,12 +36,12 @@ import           RPKI.RTR.Types
 import           RPKI.Util                        (convert)
 
 import           Data.Maybe                       (fromMaybe)
-import           GHC.TypeLits                     (Nat)
 
 import           RPKI.AppState
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import qualified Data.Set as Set
+
+
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -50,15 +49,17 @@ import qualified Data.Set as Set
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
 runRtrServer AppContext {..} RtrConfig {..} = do 
     rtrContext <- newRtrContext 
+    -- re-initialise the rtrContext and create a broadcast 
+    -- channel to publish update for every clients
     perClientUpdateChan <- atomically $ do 
                                 writeTVar rtrState rtrContext      
                                 newBroadcastTChan 
     void $ race 
-            (runSocketBusiness rtrContext)
+            (runSocketBusiness rtrState perClientUpdateChan)
             (listenToAppStateUpdates rtrState perClientUpdateChan)
   where    
 
-    runSocketBusiness rtrContext = 
+    runSocketBusiness rtrState perClientUpdateChan = 
         withSocketsDo $ do                 
             address <- resolve (show rtrPort)
             bracket (open address) close loop
@@ -84,12 +85,12 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             (conn, peer) <- accept sock
             logDebug_ logger [i|Connection from #{peer}|]
             void $ forkFinally 
-                (connectionProcessor rtrContext conn peer) 
+                (connectionProcessor rtrState conn peer perClientUpdateChan) 
                 (\_ -> do 
                     logDebug_ logger [i|Closing connection with #{peer}|]
                     close conn)
 
-
+    -- Block till every new update of the current world version and the VRP set.
     listenToAppStateUpdates rtrState updateChan = do 
         rtrContext <- readTVarIO rtrState
         case rtrContext ^. #lastKnownVersion of
@@ -97,62 +98,68 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 -- nothing to update from yet, clients will ask for data themselves
                 pure ()
             Just knownVersion -> do
-                -- latest VRPs are in appState                    
                 (newVersion, newVrps) <- listenWorldVersion appState knownVersion                            
                 previousVRPs <- roTx database $ \tx -> getVrps tx database knownVersion
                 let vrpDiff = VrpDiff { 
                         added = Set.difference newVrps previousVRPs,
                         deleted = Set.difference previousVRPs newVrps
                     }
-                atomically $ writeTChan updateChan (newVersion, vrpDiff)
+                let newRtrContext = updateContext rtrContext newVersion vrpDiff
+                atomically $ do 
+                    writeTVar rtrState newRtrContext
+                    writeTChan updateChan $ 
+                        NotifyPdu (newRtrContext ^. #session) (newRtrContext ^. #serial)
 
-        -- For every connection run 3 threads:
-        --      receiveFromClient blocks on `recv` and accepts client requests
-        --      updateFromAppState blocks on updates from the new data coming from the validation process
-        --      sendToClient simply sends all PDU to the client
-        -- 
-    connectionProcessor rtrContext connection peer = do
-        sendChan :: TChan APdu <- atomically newTChan
-        race 
-            (receiveFromClient sendChan)
-            (race 
-                (updateFromAppState sendChan)
-                (sendToClient sendChan))
+
+    -- For every connection run 3 threads:
+    --      receiveFromClient blocks on `recv` and accepts client requests
+    --      updateFromAppState blocks on updates from the new data coming from the validation process
+    --      sendToClient simply sends all PDU to the client
+    -- 
+    connectionProcessor rtrState connection peer perClientUpdateChan = do
+        firstPdu   <- recv connection 1024
+        rtrContext <- readTVarIO rtrState        
+        sendChan   <- atomically newTChan
+
+        processFirstPdu rtrContext firstPdu >>= \case
+            Left (responsePdu, message) -> do 
+                logError_ logger message
+                atomically $ writeTChan sendChan responsePdu
+            Right (responsePdu, session) -> do                
+                forM_ responsePdu $ atomically . writeTChan sendChan
+                void $ race 
+                    (serve session)
+                    (race 
+                        (updateFromAppState sendChan)
+                        (sendToClient session sendChan))
         where
-            sendToClient sendChan = do 
+            sendToClient session sendChan = do 
                 pdu <- atomically $ readTChan sendChan                    
-                sendAll connection (BSL.toStrict $ withPdu pdu pduToBytes)                    
+                sendAll connection $ BSL.toStrict $ pduToBytes pdu session
 
-            receiveFromClient sendChan = do
-                firstPdu <- recv connection 1024
-                processFirstPdu rtrContext firstPdu >>= \case
-                    Left (responsePdu, message) -> do 
-                        logError_ logger message
-                        atomically $ writeTChan sendChan responsePdu
-                    Right (responsePdu, session') -> do
-                        forM_ responsePdu $ atomically . writeTChan sendChan
-                        withSession session' go
-                where
-                    go :: forall version . 
-                            IsProtocolVersion version => 
-                            Session version -> IO () 
-                    go session' = do
-                        logDebug_ logger [i|Waiting data from the client #{peer}|]
-                        pduBytes <- recv connection 1024
-                        logDebug_ logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
-                        unless (BS.null pduBytes) $ do      
-                            case bytesToVersionedPdu session' pduBytes of 
-                                Left e -> do
-                                    logError_ logger [i|Error parsing a PDU #{e}.|]
-                                Right pdu -> do
-                                    logDebug_ logger [i|Parsed PDU: #{pdu}.|]
-                                    -- respond pdu
-                                    pure ()                                
-                            go session'
+            serve session = do
+                logDebug_ logger [i|Waiting data from the client #{peer}|]
+                pduBytes <- recv connection 128
+                logDebug_ logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
+                -- Empty bytestring means connection is closed, so if it's 
+                -- empty just silently stop doing anything
+                unless (BS.null pduBytes) $ do                    
+                    case bytesToPduOfKnownVersion session pduBytes of 
+                        Left e -> do
+                            logError_ logger [i|Error parsing a PDU #{e}.|]
+                        Right pdu -> do
+                            logDebug_ logger [i|Parsed PDU: #{pdu}.|]
+                            -- respond pdu
+                            pure ()                                
+                    serve session           
+                    
 
-            -- listen to the appState update and send diffs to all clients
-            updateFromAppState sendChan = forever $ do
-                pure ()
+            -- send around PDUs that RTR cache initiates to all the clients
+            updateFromAppState :: TChan Pdu -> IO ()
+            updateFromAppState sendChan = do 
+                localChan <- atomically $ dupTChan perClientUpdateChan
+                forever $ atomically $ 
+                    readTChan localChan >>= writeTChan sendChan 
                     
                                                 
 -- 
@@ -160,78 +167,67 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 -- 
 processFirstPdu :: RtrContext 
                 -> BS.ByteString 
-                -> IO (Either (APdu, Text) ([APdu], ASession))
+                -> IO (Either (Pdu, Text) ([Pdu], Session))
 processFirstPdu rtrContext@RtrContext {..} pduBytes =    
-    case bytesToPdu pduBytes of    
+    case bytesToVersionedPdu pduBytes of
         Left (code, maybeText) -> let 
             text = fromMaybe "Wrong PDU" maybeText
-            in pure $ Left (APdu $ ErrorPdu @'V0 code (convert pduBytes) (convert text), text)
+            in pure $ Left (ErrorPdu code (convert pduBytes) (convert text), text)
 
-        Right pdu -> 
+        Right versionedPdu@(VersionedPdu pdu protocolVersion) -> 
             case pdu of 
-                APdu (SerialQueryPdu _ _ :: Pdu protocolVersion code) -> do
-                    let session' = Session @protocolVersion
-                    r <- respondToPdu rtrContext pdu pduBytes session'
-                    pure $ (, ASession session') <$> r                    
+                SerialQueryPdu _ _ -> do
+                    let session' = Session protocolVersion
+                    r <- respondToPdu rtrContext versionedPdu pduBytes session'
+                    pure $ (, session') <$> r
 
-                APdu (ResetQueryPdu :: Pdu protocolVersion code) -> do
-                    let session' = Session @protocolVersion
-                    r <- respondToPdu rtrContext pdu pduBytes session'
-                    pure $ (, ASession session') <$> r
+                ResetQueryPdu -> do
+                    let session' = Session protocolVersion
+                    r <- respondToPdu rtrContext versionedPdu pduBytes session'
+                    pure $ (, session') <$> r
 
-                APdu (otherPdu :: Pdu protocolVersion code) -> 
+                otherPdu -> 
                     let 
                         text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, but received " <> show otherPdu
-                        in pure $ Left (APdu $ ErrorPdu @protocolVersion InvalidRequest (convert pduBytes) (convert text), text)
+                        in pure $ Left (ErrorPdu InvalidRequest (convert pduBytes) (convert text), text)
 
 
-respondToPdu :: forall protocolVersion . 
-               IsProtocolVersion protocolVersion => 
-                RtrContext
-                -> APdu 
+-- | Generate a PDU that would be a appropriate response the request PDU.
+-- 
+respondToPdu :: RtrContext
+                -> VersionedPdu 
                 -> BS.ByteString 
-                -> Session (protocolVersion :: ProtocolVersion) 
-                -> IO (Either (APdu, Text) [APdu])
-respondToPdu RtrContext {..} (APdu pdu) pduBytes _ =                  
+                -> Session
+                -> IO (Either (Pdu, Text) [Pdu])
+respondToPdu RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes (Session sessionProtocol) =                  
     case pdu of 
-        (SerialQueryPdu sessionId serial :: Pdu version code) -> let
+        SerialQueryPdu sessionId serial -> let
                 text :: Text = [i|Unexpected serial query PDU.|]
-                in pure $ Left (APdu $ 
-                        ErrorPdu @protocolVersion CorruptData (convert pduBytes) (convert text), text)
-            
+                in pure $ Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)            
 
-        (ResetQueryPdu :: Pdu version code) -> 
+        ResetQueryPdu -> 
             withProtocolVersionCheck pdu $ pure $ Right []
 
-        (RouterKeyPduV1 _ _ _ _)  -> 
+        RouterKeyPdu _ _ _ _  -> 
             pure $ Right []
         
-    where
-        withProtocolVersionCheck :: forall 
-                            (version :: ProtocolVersion) 
-                            (pduCode :: Nat) a                             
-                            . IsProtocolVersion version => 
-                            Pdu version pduCode 
-                            -> IO (Either (APdu, Text) a) 
-                            -> IO (Either (APdu, Text) a)
+    where        
         withProtocolVersionCheck _ respond = 
-            case eqT @protocolVersion @version of
-                Just _  -> respond
-                Nothing -> let
-                    text :: Text = [i|Protocol version is not the same.|]                                
-                    in pure $ Left (APdu $ 
-                        ErrorPdu @protocolVersion UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
+            if sessionProtocol == pduProtocol
+                then respond
+                else do            
+                    let text :: Text = [i|Protocol version is not the same.|]                                
+                    pure $ Left (ErrorPdu UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
 
         withSessionIdCheck :: SessionId 
-                            -> IO (Either (APdu, Text) a) 
-                            -> IO (Either (APdu, Text) a)
-        withSessionIdCheck sessionId respond = do 
+                            -> IO (Either (Pdu, Text) a) 
+                            -> IO (Either (Pdu, Text) a)
+        withSessionIdCheck sessionId respond =
             if session == sessionId
                 then respond
                 else let 
                     text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{session}.|]
-                    in pure $ Left (APdu $ 
-                        ErrorPdu @protocolVersion CorruptData (convert pduBytes) (convert text), text)
+                    in pure $ Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)
 
                 
                 
