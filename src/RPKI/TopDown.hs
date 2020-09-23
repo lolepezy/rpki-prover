@@ -108,7 +108,7 @@ data TopDownContext s = TopDownContext {
 
 
 data TopDownResult = TopDownResult {
-        vrps          :: [Vrp],
+        vrps          :: Set Vrp,
         tdValidations :: Validations
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -675,7 +675,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         incValidObject topDownContext
                             -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Vrp])}|]
                         let vrps = getCMSContent (extract roa :: CMS [Vrp])
-                        pure $! Triple emptyPublicationPoints mempty (TopDownResult vrps mempty)
+                        pure $! Triple emptyPublicationPoints mempty (TopDownResult (Set.fromList vrps) mempty)
 
                 GbrRO gbr -> withEmptyPPs $
                     forChild (toText $ NonEmpty.head $ getLocations ro) $ do

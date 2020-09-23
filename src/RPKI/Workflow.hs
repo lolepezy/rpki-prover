@@ -127,13 +127,12 @@ runWorkflow appContext@AppContext {..} tals = do
                             processTAL tal = validateTA appContext tal worldVersion                                
 
                             saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
-                                putValidations tx (validationsStore database) worldVersion tdValidations 
-                                let vrpSet = Set.fromList vrps
-                                putVrps tx database vrpSet worldVersion
+                                putValidations tx (validationsStore database) worldVersion tdValidations                                 
+                                putVrps tx database vrps worldVersion
                                 completeWorldVersion tx database worldVersion
                                 atomically $ do 
                                     writeTVar (appState ^. #world) worldVersion
-                                    writeTVar (appState ^. #currentVrps) vrpSet
+                                    writeTVar (appState ^. #currentVrps) vrps
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
