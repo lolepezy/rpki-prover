@@ -163,19 +163,6 @@ tests:
     - generic-arbitrary
     - quickcheck-instances
 
-  simple-validator:
-    main:                SimpleValidator.hs
-    source-dirs:         
-    - bench
-    - test/src
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -Wall
-    # - -O2
-    dependencies:
-    - rpki-prover
-
   rrdp-perf:
     main:                RrdpPerf.hs
     source-dirs:         
