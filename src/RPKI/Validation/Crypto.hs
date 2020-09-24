@@ -32,7 +32,7 @@ validateCRLSignature crl parentCert =
             signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
             signatureValue = (SignatureValue signature'),
             encodedValue = encoded 
-        } = extract crl
+        } = signCrl crl
 
  
 -- | Validate that the CMS is signed by the public key of the EE certficate it has

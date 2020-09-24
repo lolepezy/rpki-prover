@@ -148,7 +148,7 @@ validateCrl now crlObject parentCert = do
     void $ validateThisUpdate now thisUpdateTime
     pure $ Validated crlObject
     where
-        SignCRL {..} = extract crlObject
+        SignCRL {..} = signCrl crlObject
 
 validateMft ::
   (WithResourceCertificate c, WithSKI c) =>
@@ -158,7 +158,7 @@ validateMft ::
   Validated CrlObject ->
   PureValidatorT conf (Validated MftObject)
 validateMft now mft parentCert crl = do
-    void $ validateCms now (extract mft) parentCert crl $ \mftCMS -> do
+    void $ validateCms now (cmsPayload mft) parentCert crl $ \mftCMS -> do
         let cmsContent = getCMSContent mftCMS
         void $ validateNextUpdate now $ Just $ nextTime cmsContent
         void $ validateThisUpdate now $ thisTime cmsContent
@@ -173,7 +173,7 @@ validateRoa ::
   Validated CrlObject ->
   PureValidatorT conf (Validated RoaObject)
 validateRoa now roa parentCert crl = do
-  void $ validateCms now (extract roa) parentCert crl pure
+  void $ validateCms now (cmsPayload roa) parentCert crl pure
   pure $ Validated roa
 
 validateGbr ::
@@ -184,7 +184,7 @@ validateGbr ::
   Validated CrlObject ->
   PureValidatorT conf (Validated GbrObject)
 validateGbr now gbr parentCert crl = do
-  void $ validateCms now (extract gbr) parentCert crl pure
+  void $ validateCms now (cmsPayload gbr) parentCert crl pure
   -- TODO Implement it
   pure $ Validated gbr
 
@@ -222,7 +222,7 @@ isRevoked :: WithResourceCertificate c => c -> Validated CrlObject -> Bool
 isRevoked cert (Validated crlObject) =
   Set.member serial revokenSerials
   where
-    SignCRL {..} = extract crlObject
+    SignCRL {..} = signCrl crlObject
     serial = getSerial cert
 
 signatureCheck :: SignatureVerification -> PureValidatorT conf ()

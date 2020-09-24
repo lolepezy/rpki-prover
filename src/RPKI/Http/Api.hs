@@ -185,8 +185,11 @@ instance ToJSON DBStats
 
 -- RPKI Object
 instance ToJSON RObject
+instance ToJSON EECerObject
+instance ToJSON CerObject
+instance ToJSON CrlObject
 instance ToJSON RpkiObject
-instance (ToJSON a, ToJSON b) => ToJSON (With a b)
+instance ToJSON a => ToJSON (CMSBasedObject a)
 instance ToJSON a => ToJSON (CMS a)
 instance ToJSON a => ToJSON (SignedObject a)
 instance ToJSON a => ToJSON (SignedData a)
@@ -208,7 +211,6 @@ instance ToJSON IpResources
 instance ToJSON AllResources
 instance ToJSON IpResourceSet
 
-instance ToJSON IdentityMeta
 instance ToJSON SignCRL
 instance ToJSON ContentType
 instance ToJSON SignerInfos

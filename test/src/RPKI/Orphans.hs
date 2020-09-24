@@ -201,11 +201,19 @@ instance Arbitrary RpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary IdentityMeta where
-    arbitrary = genericArbitrary
+instance Arbitrary CerObject where
+    arbitrary = genericArbitrary    
     shrink = genericShrink
 
-instance (Arbitrary m, Arbitrary a) => Arbitrary (With m a) where
+instance Arbitrary EECerObject where
+    arbitrary = genericArbitrary    
+    shrink = genericShrink
+
+instance Arbitrary CrlObject where
+    arbitrary = genericArbitrary    
+    shrink = genericShrink
+
+instance Arbitrary a => Arbitrary (CMSBasedObject a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

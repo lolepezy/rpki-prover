@@ -94,7 +94,7 @@ parseSignedObject eContentParse =
                         eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
                   case toResourceCert certWithSig of
                     Left e                    -> throwParseError $ "EE certificate is broken " <> show e
-                    Right (_,   _,  Nothing)  -> throwParseError $ "EE certificate doesn't have an AKI"
+                    Right (_,   _,  Nothing)  -> throwParseError "EE certificate doesn't have an AKI"
                     Right (rc, ski, Just aki) -> pure $ newEECert aki ski rc
                   where 
                     encodedCert = encodeASN1' DER $ 
@@ -145,5 +145,5 @@ parseSignedObject eContentParse =
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
-getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult (RpkiURL -> IdentityMeta)
-getMetaFromSigned _ bs = pure $ \location -> IdentityMeta (U.sha256s bs) (location :| [])
+getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult (RpkiURL -> (Hash, Locations))
+getMetaFromSigned _ bs = pure $ \location -> (U.sha256s bs, location :| [])

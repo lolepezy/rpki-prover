@@ -579,7 +579,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         visitObject appContext topDownContext (CrlRO crl)
 
                         let childrenHashes = filter ((/= getHash crl) . snd) $ -- filter out CRL itself
-                                                mftEntries $ getCMSContent $ extract mft                                                
+                                                mftEntries $ getCMSContent $ cmsPayload mft                                                
                     
                         -- Mark all manifest entries as visited to avoid the situation
                         -- when some of the objects are deleted from the cache and some
@@ -674,7 +674,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                             
                         incValidObject topDownContext
                             -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Vrp])}|]
-                        let vrps = getCMSContent (extract roa :: CMS [Vrp])
+                        let vrps = getCMSContent $ cmsPayload roa
                         pure $! Triple emptyPublicationPoints mempty (TopDownResult (Set.fromList vrps) mempty)
 
                 GbrRO gbr -> withEmptyPPs $
@@ -700,7 +700,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
 
         -- TODO Is there a more reliable way to find it? Compare it with SIA?
         findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $ 
-            mftEntries $ getCMSContent $ extract mft
+            mftEntries $ getCMSContent $ cmsPayload mft
 
         -- Check that manifest URL in the certificate is the same as the one 
         -- the manifest was actually fetched from.
@@ -747,7 +747,7 @@ markValidatedObjects AppContext { database = DB {..}, .. } TopDownContext {..} =
 -- we read it from the database and looked at it. It will be used to decide when 
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
-visitObject :: (MonadIO m, WithHash ro, WithLocations ro, Storage s) => 
+visitObject :: (MonadIO m, WithHash ro, Storage s) => 
                 AppContext s -> TopDownContext s -> ro -> m ()
 visitObject _ topDownContext ro = 
     visitObjects topDownContext [getHash ro]    

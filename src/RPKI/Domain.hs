@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE AllowAmbiguousTypes        #-}
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
@@ -61,7 +62,7 @@ newtype Hash = Hash BSS.ShortByteString
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype URI  = URI { unURI :: Text.Text } 
+newtype URI  = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -167,78 +168,98 @@ class WithSKI a where
 class WithResourceCertificate a where
     getRC :: a -> ResourceCertificate
 
-data IdentityMeta = IdentityMeta 
-                        !Hash 
-        {-# UNPACK #-} !Locations
-    deriving stock (Show, Eq, Ord, Generic)
+
+data CrlObject = CrlObject {
+        hash      :: {-# UNPACK #-} Hash,
+        locations :: {-# UNPACK #-} Locations,
+        aki :: {-# UNPACK #-} AKI,
+        signCrl :: SignCRL
+    }
+    deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
-data With meta content = With !meta !content 
-    deriving stock (Show, Eq, Ord, Generic)
+data CerObject = CerObject {
+        hash      :: {-# UNPACK #-} Hash,
+        locations :: {-# UNPACK #-} Locations,
+        ski :: SKI,
+        aki :: Maybe AKI,
+        certificate :: ResourceCertificate
+    }
+    deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
-class Contains_ a b where
-    extract :: a -> b
+data CMSBasedObject a = CMSBasedObject {
+        hash      :: {-# UNPACK #-} Hash,
+        locations :: {-# UNPACK #-} Locations,
+        cmsPayload :: CMS a
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
-instance {-# OVERLAPPING #-} Contains_ whole part => Contains_ (With meta whole) part where
-    extract (With _ b) = extract b
+type MftObject = CMSBasedObject Manifest
+type RoaObject = CMSBasedObject [Vrp]
+type GbrObject = CMSBasedObject Gbr
 
-instance {-# OVERLAPPING #-} (a ~ b) => Contains_ a b where
-    extract = id
+data EECerObject = EECerObject {
+        ski :: SKI,
+        aki :: AKI,
+        certificate :: ResourceCertificate
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise   
 
-with :: With a b -> c -> With c (With a b) 
-with w c = With c w
-
-type CrlObject = With IdentityMeta (With AKI SignCRL)
-type CerObject = With IdentityMeta (With (Maybe AKI) (With SKI ResourceCertificate))
-type MftObject = With IdentityMeta (CMS Manifest)
-type RoaObject = With IdentityMeta (CMS [Vrp])
-type GbrObject = With IdentityMeta (CMS Gbr) 
-
-type EECerObject = With AKI (With SKI ResourceCertificate)
-
-
-data RpkiObject = CerRO !CerObject 
-                | MftRO !MftObject
-                | RoaRO !RoaObject
-                | GbrRO !GbrObject
-                | CrlRO !CrlObject
+    
+data RpkiObject = CerRO CerObject 
+                | MftRO MftObject
+                | RoaRO RoaObject
+                | GbrRO GbrObject
+                | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
 
-instance WithHash (With IdentityMeta a) where
-    getHash (With (IdentityMeta h _) _) = h    
+instance WithAKI CrlObject where
+    getAKI CrlObject {..} = Just aki
 
-instance WithLocations (With IdentityMeta a) where
-    getLocations (With (IdentityMeta _ loc) _) = loc
+instance WithLocations CrlObject where
+    getLocations CrlObject {..} = locations
+
+instance WithHash CrlObject where
+    getHash CrlObject {..} = hash
+
+instance WithAKI CerObject where
+    getAKI CerObject {..} = aki
+
+instance WithLocations CerObject where
+    getLocations CerObject {..} = locations
+
+instance WithHash CerObject where
+    getHash CerObject {..} = hash
+
+instance WithSKI CerObject where
+    getSKI CerObject {..} = ski
     
-instance {-# OVERLAPPING #-} WithSKI a => WithSKI (With m a) where
-    getSKI (With _ a) = getSKI a    
+instance WithAKI (CMSBasedObject a) where
+    getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
 
-instance {-# OVERLAPPING #-} WithAKI a => WithAKI (With m a) where
-    getAKI (With _ a) = getAKI a    
+instance WithLocations (CMSBasedObject a) where
+    getLocations CMSBasedObject {..} = locations
 
-instance {-# OVERLAPPING #-} WithSKI (With SKI a) where
-    getSKI (With ski _) = ski    
+instance WithHash (CMSBasedObject a) where
+    getHash CMSBasedObject {..} = hash
 
-instance {-# OVERLAPPING #-} WithAKI (With (Maybe AKI) a) where
-    getAKI (With aki _) = aki
+instance WithAKI EECerObject where
+    getAKI EECerObject {..} = Just aki
 
-instance {-# OVERLAPPING #-} WithAKI (With AKI a) where
-    getAKI (With aki _) = Just aki
+instance WithSKI EECerObject where
+    getSKI EECerObject {..} = ski
 
-instance {-# OVERLAPPING #-} WithAKI (With x (CMS a)) where
-    getAKI (With _ (CMS signedObject)) = getAKI $ getEEResourceCert signedObject
-
-instance {-# OVERLAPPING #-} WithSKI (With x (CMS a)) where
-    getSKI (With _ (CMS signedObject)) = getSKI $ getEEResourceCert signedObject
-        
 instance WithResourceCertificate CerObject where
-    getRC = extract
+    getRC = certificate
 
 instance WithResourceCertificate EECerObject where
-    getRC = extract
+    getRC = certificate
+
 
 instance WithAKI RpkiObject where
     getAKI (CerRO c) = getAKI c
@@ -260,8 +281,8 @@ instance WithLocations RpkiObject where
     getLocations (RoaRO c) = getLocations c
     getLocations (GbrRO c) = getLocations c
     getLocations (CrlRO c) = getLocations c
-    
-    
+
+
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
 data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
@@ -277,7 +298,7 @@ newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
 
 data Vrp = Vrp 
     {-# UNPACK #-} !ASN 
-    {-# UNPACK #-} !IpPrefix 
+    !IpPrefix 
     {-# UNPACK #-} !Int16
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -327,10 +348,10 @@ data SignedObject a = SignedObject {
 
 
 data CertificateWithSignature = CertificateWithSignature {
-        cwsX509certificate :: X509.Certificate,
+        cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
-        cwsSignature :: SignatureValue,
-        cwsEncoded :: BSS.ShortByteString
+        cwsSignature          :: SignatureValue,
+        cwsEncoded            :: BSS.ShortByteString
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -391,7 +412,7 @@ data SignerInfos = SignerInfos {
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
-newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text.Text 
+newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Serialise
 
@@ -450,7 +471,7 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving anyclass Serialise
     deriving newtype (Monoid, Semigroup)
 
-newtype TaName = TaName { unTaName :: Text.Text }
+newtype TaName = TaName { unTaName :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -489,7 +510,7 @@ getCertWithSignature :: WithResourceCertificate a => a -> CertificateWithSignatu
 getCertWithSignature (getRC -> ResourceCertificate rc) = withRFC rc certX509     
 
 getEECert :: SignedObject a -> CertificateWithSignature
-getEECert (extract . scCertificate . soContent -> ResourceCertificate rc) = withRFC rc certX509     
+getEECert (getRC . scCertificate . soContent -> ResourceCertificate rc) = withRFC rc certX509     
 
 strictCert :: ResourceCert 'Strict_ -> ResourceCertificate
 strictCert = ResourceCertificate . WithStrict_ . WithRFC
@@ -504,22 +525,44 @@ emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
 
 getMftNumber :: MftObject -> Int
-getMftNumber mft = mftNumber $ getCMSContent $ extract mft
+getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
 
-withContent :: With a b -> (a -> b -> c) -> With a c
-withContent (With a b) f = With a (f a b)
+-- withContent :: With a b -> (a -> b -> c) -> With a c
+-- withContent (With a b) f = With a (f a b)
 
-withMeta :: With a b -> (a -> b -> c) -> With c b
-withMeta (With a b) f = With (f a b) b
+-- withMeta :: With a b -> (a -> b -> c) -> With c b
+-- withMeta (With a b) f = With (f a b) b
 
 newCrl :: RpkiURL -> AKI -> Hash -> SignCRL -> CrlObject
-newCrl u a h sc = With (IdentityMeta h (u :| [])) $ With a sc
+newCrl u a h sc = CrlObject {
+        hash = h,    
+        locations = u :| [],
+        aki = a,
+        signCrl = sc
+    } 
 
 newCert :: RpkiURL -> Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
-newCert u a s h rc = With (IdentityMeta h (u :| [])) $ With a $ With s rc
+newCert u a s h rc = CerObject {
+        hash = h,    
+        locations = u :| [],
+        ski = s,
+        aki = a,
+        certificate = rc
+    } 
 
 newEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
-newEECert a s rc = With a $ With s rc
+newEECert a s rc = EECerObject {
+        ski = s,
+        aki = a,
+        certificate = rc
+    }
+
+newCMSObject :: Hash -> Locations -> CMS a -> CMSBasedObject a
+newCMSObject h loc cms = CMSBasedObject {
+        hash = h,    
+        locations = loc,
+        cmsPayload = cms
+    }
 
 toShortBS :: BS.ByteString -> BSS.ShortByteString
 toShortBS = BSS.toShort

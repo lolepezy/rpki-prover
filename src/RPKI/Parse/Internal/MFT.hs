@@ -22,8 +22,8 @@ parseMft :: BS.ByteString -> ParseResult (RpkiURL -> MftObject)
 parseMft bs = do
     asns         <- first (fmtErr . show) $ decodeASN1' BER bs
     signedMft    <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
-    identityMeta <- getMetaFromSigned signedMft bs
-    pure $ \location -> With (identityMeta location) (CMS signedMft)
+    meta <- getMetaFromSigned signedMft bs
+    pure $ \url -> let (hash, loc) = meta url in newCMSObject hash loc (CMS signedMft)
     where
         parseManifest :: ParseASN1 Manifest
         parseManifest = onNextContainer Sequence $

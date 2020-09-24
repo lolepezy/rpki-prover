@@ -254,19 +254,16 @@ releaseLmdb ((dir, LmdbEnv{..}), _) = do
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = go 
     where
-        go (CerRO c) = CerRO $ withContent c (\_ w -> withMeta w (\_ _ -> Just a))
-        go (CrlRO c) = CrlRO $ withContent c (\_ w -> withMeta w (\_ _ -> a))
-        go (MftRO c) = MftRO $ withContent c (\_ cms -> mapCms cms)
-        go (RoaRO c) = RoaRO $ withContent c (\_ cms -> mapCms cms)
-        go (GbrRO c) = GbrRO $ withContent c (\_ cms -> mapCms cms)
+        go (CerRO c) = CerRO $ c { aki = Just a }
+        go (CrlRO c) = CrlRO $ c { aki = a }
+        go (MftRO c) = MftRO $ c { cmsPayload = mapCms $ cmsPayload c }
+        go (RoaRO c) = RoaRO $ c { cmsPayload = mapCms $ cmsPayload c }
+        go (GbrRO c) = GbrRO $ c { cmsPayload = mapCms $ cmsPayload c }
 
         mapCms :: CMS a -> CMS a
         mapCms (CMS so) = CMS $ so { soContent = sc { scCertificate = ee' } }
             where 
                 ee = scCertificate sc
                 sc = soContent so
-                ee' = withMeta ee (\_ _ -> a)        
+                ee' :: EECerObject = ee { aki = a :: AKI }
 
-
-
--- gsutil rm gs://mp_test_bucket/ada.jpg

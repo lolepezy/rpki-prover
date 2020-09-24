@@ -25,8 +25,8 @@ parseRoa :: BS.ByteString -> ParseResult (RpkiURL -> RoaObject)
 parseRoa bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
     signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoas') asns
-    identityMeta <- getMetaFromSigned signedRoa bs
-    pure $ \location -> With (identityMeta location) (CMS signedRoa)
+    meta <- getMetaFromSigned signedRoa bs
+    pure $ \url -> let (hash, loc) = meta url in newCMSObject hash loc (CMS signedRoa)
     where     
         parseRoas' = onNextContainer Sequence $ do      
             -- TODO Fix it so that it would work with present attestation version
