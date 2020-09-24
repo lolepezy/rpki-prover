@@ -118,48 +118,66 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     -- 
     connectionProcessor rtrState connection peer perClientUpdateChan = do
         firstPdu   <- recv connection 1024
-        rtrContext <- readTVarIO rtrState        
+        rtrContext <- readTVarIO rtrState
         sendChan   <- atomically newTChan
 
-        processFirstPdu rtrContext firstPdu >>= \case
+        case processFirstPdu rtrContext firstPdu of
             Left (responsePdu, message) -> do 
                 logError_ logger message
-                atomically $ writeTChan sendChan responsePdu
-            Right (responsePdu, session) -> do                
-                forM_ responsePdu $ atomically . writeTChan sendChan
+                atomically $ writeTChan sendChan [responsePdu]
+            Right (responsePdus, session) -> do                
+                atomically $ writeTChan sendChan responsePdus
                 void $ race 
-                    (serve session)
+                    (serveLoop session sendChan)
                     (race 
                         (updateFromAppState sendChan)
                         (sendToClient session sendChan))
         where
             sendToClient session sendChan = do 
-                pdu <- atomically $ readTChan sendChan                    
-                sendAll connection $ BSL.toStrict $ pduToBytes pdu session
+                pdus <- atomically $ readTChan sendChan                    
+                forM_ pdus $ \pdu -> 
+                    sendAll connection $ BSL.toStrict $ pduToBytes pdu session
 
-            serve session = do
+            serveLoop session sendChan = do
                 logDebug_ logger [i|Waiting data from the client #{peer}|]
                 pduBytes <- recv connection 128
                 logDebug_ logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
                 -- Empty bytestring means connection is closed, so if it's 
                 -- empty just silently stop doing anything
-                unless (BS.null pduBytes) $ do                    
-                    case bytesToPduOfKnownVersion session pduBytes of 
-                        Left e -> do
-                            logError_ logger [i|Error parsing a PDU #{e}.|]
-                        Right pdu -> do
-                            logDebug_ logger [i|Parsed PDU: #{pdu}.|]
-                            -- respond pdu
-                            pure ()                                
-                    serve session           
-                    
+                unless (BS.null pduBytes) $ do
+                    join $ atomically $ 
+                        case bytesToPduOfKnownVersion session pduBytes of 
+                            Left (errorCode, errorMessage) -> do                                
+                                let errorPdu = ErrorPdu errorCode (convert pduBytes) (convert errorMessage)
+                                writeTChan sendChan [errorPdu]
+                                pure $ logError_ logger [i|Error parsing a PDU #{errorMessage}.|]
 
-            -- send around PDUs that RTR cache initiates to all the clients
-            updateFromAppState :: TChan Pdu -> IO ()
+                            Right pdu -> do                                                                
+                                rtrContext <- readTVar rtrState
+                                let response = respondToPdu 
+                                                    rtrContext
+                                                    (toVersioned session pdu)
+                                                    pduBytes
+                                                    session                                    
+
+                                case response of 
+                                    Left e -> 
+                                        pure $ do 
+                                            logDebug_ logger [i|Respo: #{pdu}.|]
+                                            logError_ logger [i|Parsed PDU: #{pdu}.|]
+                                    Right pdus -> do
+                                        writeTChan sendChan pdus            
+                                        pure $ logDebug_ logger [i|Parsed PDU: #{pdu}.|]                                
+                            
+                    serveLoop session sendChan                
+
+
+            -- send around PDUs that RTR cache initiates to all the clients            
             updateFromAppState sendChan = do 
                 localChan <- atomically $ dupTChan perClientUpdateChan
-                forever $ atomically $ 
-                    readTChan localChan >>= writeTChan sendChan 
+                forever $ atomically $ do
+                    pdu <- readTChan localChan
+                    writeTChan sendChan [pdu]
                     
                                                 
 -- 
@@ -167,29 +185,29 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 -- 
 processFirstPdu :: RtrContext 
                 -> BS.ByteString 
-                -> IO (Either (Pdu, Text) ([Pdu], Session))
+                -> Either (Pdu, Text) ([Pdu], Session)
 processFirstPdu rtrContext@RtrContext {..} pduBytes =    
     case bytesToVersionedPdu pduBytes of
         Left (code, maybeText) -> let 
             text = fromMaybe "Wrong PDU" maybeText
-            in pure $ Left (ErrorPdu code (convert pduBytes) (convert text), text)
+            in Left (ErrorPdu code (convert pduBytes) (convert text), text)
 
         Right versionedPdu@(VersionedPdu pdu protocolVersion) -> 
             case pdu of 
-                SerialQueryPdu _ _ -> do
-                    let session' = Session protocolVersion
-                    r <- respondToPdu rtrContext versionedPdu pduBytes session'
-                    pure $ (, session') <$> r
+                SerialQueryPdu _ _ -> let 
+                    session' = Session protocolVersion
+                    r = respondToPdu rtrContext versionedPdu pduBytes session'
+                    in (, session') <$> r
 
-                ResetQueryPdu -> do
-                    let session' = Session protocolVersion
-                    r <- respondToPdu rtrContext versionedPdu pduBytes session'
-                    pure $ (, session') <$> r
+                ResetQueryPdu -> let
+                    session' = Session protocolVersion
+                    r = respondToPdu rtrContext versionedPdu pduBytes session'
+                    in (, session') <$> r
 
                 otherPdu -> 
                     let 
                         text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, but received " <> show otherPdu
-                        in pure $ Left (ErrorPdu InvalidRequest (convert pduBytes) (convert text), text)
+                        in Left (ErrorPdu InvalidRequest (convert pduBytes) (convert text), text)
 
 
 -- | Generate a PDU that would be a appropriate response the request PDU.
@@ -198,18 +216,18 @@ respondToPdu :: RtrContext
                 -> VersionedPdu 
                 -> BS.ByteString 
                 -> Session
-                -> IO (Either (Pdu, Text) [Pdu])
+                -> Either (Pdu, Text) [Pdu]
 respondToPdu RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes (Session sessionProtocol) =                  
     case pdu of 
         SerialQueryPdu sessionId serial -> let
                 text :: Text = [i|Unexpected serial query PDU.|]
-                in pure $ Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)            
+                in Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)            
 
         ResetQueryPdu -> 
-            withProtocolVersionCheck pdu $ pure $ Right []
+            withProtocolVersionCheck pdu $ Right []
 
         RouterKeyPdu _ _ _ _  -> 
-            pure $ Right []
+            Right []
         
     where        
         withProtocolVersionCheck _ respond = 
@@ -217,17 +235,17 @@ respondToPdu RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes (Session se
                 then respond
                 else do            
                     let text :: Text = [i|Protocol version is not the same.|]                                
-                    pure $ Left (ErrorPdu UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
+                    Left (ErrorPdu UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
 
         withSessionIdCheck :: SessionId 
-                            -> IO (Either (Pdu, Text) a) 
-                            -> IO (Either (Pdu, Text) a)
+                            -> Either (Pdu, Text) a 
+                            -> Either (Pdu, Text) a
         withSessionIdCheck sessionId respond =
             if session == sessionId
                 then respond
                 else let 
                     text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{session}.|]
-                    in pure $ Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)
+                    in Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)
 
                 
                 

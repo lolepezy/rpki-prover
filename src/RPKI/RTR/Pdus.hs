@@ -21,6 +21,7 @@ import           Data.Data
 import           RPKI.Domain          (KI (..), SKI (..), skiLen, toShortBS)
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
+import Data.Hex
 
 
 
@@ -137,13 +138,14 @@ bytesToVersionedPdu bs =
             pdu <- parseVersionedPdu $ Session protocolVersion            
             pure $ VersionedPdu pdu protocolVersion
 
-bytesToPduOfKnownVersion :: Session -> BS.ByteString -> Either (ErrorCode, Maybe Text) Pdu
+
+bytesToPduOfKnownVersion :: Session -> BS.ByteString -> Either (ErrorCode, Text) Pdu
 bytesToPduOfKnownVersion s@(Session protocolVersion) bs = 
     case runGetOrFail parsePdu (BSL.fromStrict bs) of
         Left (bs, offset, errorMessage) -> 
-            Left (InvalidRequest, Just $ Text.pack $ "Error parsing " <> show bs)
+            Left (InvalidRequest, Text.pack $ "Error parsing " <> show (hex bs) <> ": " <> errorMessage)
             
-        Right (_, _, (VersionedPdu pdu _)) -> Right pdu
+        Right (_, _, VersionedPdu pdu _) -> Right pdu
     where
         parsePdu = do 
             _ignore :: ProtocolVersion <- get
@@ -254,3 +256,5 @@ parseVersionedPdu (Session protocolVersion) = do
                 fail $ "Wrong length " <> show len <> ", must be " <> show mustBe
 
  
+toVersioned :: Session -> Pdu -> VersionedPdu
+toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion
