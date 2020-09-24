@@ -5,7 +5,6 @@
 module RPKI.RRDP.Parse where
 
 import           Control.Applicative
-import           Control.Monad
 import           Control.Monad.Trans.Except
 import           Control.Monad.Primitive
 import           Control.Monad.ST
@@ -13,9 +12,6 @@ import           Control.Monad.Trans
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Base64           as B64
-import qualified Data.ByteString.Builder          as BB
-import qualified Data.ByteString.Lazy             as LBS
-import qualified Data.ByteString.Short            as BSS
 
 import           Data.Hex                         (unhex)
 import qualified Data.List                        as List
@@ -28,7 +24,6 @@ import           Data.STRef
 
 import           Text.Read                        (readMaybe)
 
-import qualified Text.XML.Expat.SAX               as X
 import qualified Xeno.SAX                         as Xeno
 
 import           RPKI.Domain
@@ -48,7 +43,6 @@ parseNotification bs = runST $ do
     snapshotHash <- newSTRef Nothing
     serial       <- newSTRef Nothing
     sessionId    <- newSTRef Nothing
-
 
     let parse = parseXml bs
             (\case

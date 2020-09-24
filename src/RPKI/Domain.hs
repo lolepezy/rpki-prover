@@ -15,7 +15,6 @@ module RPKI.Domain where
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
-import qualified Data.Text                as Text
 
 import           Codec.Serialise
 import           Data.Hex
@@ -172,7 +171,7 @@ class WithResourceCertificate a where
 data CrlObject = CrlObject {
         hash      :: {-# UNPACK #-} Hash,
         locations :: {-# UNPACK #-} Locations,
-        aki :: {-# UNPACK #-} AKI,
+        aki       :: {-# UNPACK #-} AKI,
         signCrl :: SignCRL
     }
     deriving stock (Show, Eq, Generic)
@@ -201,8 +200,8 @@ type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
 
 data EECerObject = EECerObject {
-        ski :: SKI,
-        aki :: AKI,
+        ski :: {-# UNPACK #-} SKI,
+        aki :: {-# UNPACK #-} AKI,
         certificate :: ResourceCertificate
     }
     deriving stock (Show, Eq, Generic)
@@ -526,12 +525,6 @@ emptyAsResources = AsResources RS.emptyRS
 
 getMftNumber :: MftObject -> Int
 getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
-
--- withContent :: With a b -> (a -> b -> c) -> With a c
--- withContent (With a b) f = With a (f a b)
-
--- withMeta :: With a b -> (a -> b -> c) -> With c b
--- withMeta (With a b) f = With (f a b) b
 
 newCrl :: RpkiURL -> AKI -> Hash -> SignCRL -> CrlObject
 newCrl u a h sc = CrlObject {
