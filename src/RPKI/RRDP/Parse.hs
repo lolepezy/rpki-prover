@@ -4,7 +4,6 @@
 
 module RPKI.RRDP.Parse where
 
-import           Control.Applicative
 import           Control.Monad.Trans.Except
 import           Control.Monad.Primitive
 import           Control.Monad.ST
@@ -16,7 +15,6 @@ import qualified Data.ByteString.Base64           as B64
 import           Data.Hex                         (unhex)
 import qualified Data.List                        as List
 import qualified Data.Text                        as Text
-import qualified Data.Map                         as Map
 
 import           Data.String.Interpolate.IsString
 
