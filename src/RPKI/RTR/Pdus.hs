@@ -4,25 +4,23 @@
 
 module RPKI.RTR.Pdus where
 
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Lazy     as BSL
 import           Data.Text
-import qualified Data.Text            as Text
+import qualified Data.Text                as Text
 
 import           Data.Binary
-import           Data.Binary.Get      (getByteString, getRemainingLazyByteString, runGetOrFail)
-import           Data.Binary.Put      (runPut)
+import           Data.Binary.Get          (getByteString, getRemainingLazyByteString, runGetOrFail)
+import           Data.Binary.Put          (runPut)
 
 import           Data.Int
-import           GHC.TypeLits
 
-import           Control.Monad        (unless)
-import           Data.Data
-import           RPKI.Domain          (KI (..), SKI (..), skiLen, toShortBS)
+import           Control.Monad            (unless)
+import           Data.Hex
+import           RPKI.Domain              (KI (..), SKI (..), skiLen, toShortBS)
+import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
-import Data.Hex
-import RPKI.Resources.Resources
 
 
 
