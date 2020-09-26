@@ -9,7 +9,6 @@
 
 module RPKI.TopDown where
 
-import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad.Except
@@ -22,7 +21,6 @@ import           Data.Generics.Product.Typed
 -- import           Data.Generics.Product.Fields
 import           GHC.Generics
 
-import           Data.Bifunctor
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty

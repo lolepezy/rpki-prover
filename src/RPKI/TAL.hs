@@ -32,14 +32,15 @@ import           RPKI.Util
 -- | (I couldn't find any formal definiteion of the "RIPE format")
 -- | 
 data TAL = PropertiesTAL {
-    caName              :: Maybe Text.Text,
-    certificateLocation :: Locations,
-    publicKeyInfo       :: EncodedBase64,
-    prefetchUris        :: [RpkiURL]
-} | RFC_TAL {
-    certificateLocations :: Locations,
-    publicKeyInfo        :: EncodedBase64
-} 
+        caName              :: Maybe Text.Text,
+        certificateLocation :: Locations,
+        publicKeyInfo       :: EncodedBase64,
+        prefetchUris        :: [RpkiURL]
+    } 
+    | RFC_TAL {
+        certificateLocations :: Locations,
+        publicKeyInfo        :: EncodedBase64
+    } 
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (Serialise)
 

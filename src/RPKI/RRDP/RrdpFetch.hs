@@ -10,12 +10,10 @@ module RPKI.RRDP.RrdpFetch where
 import           Control.Exception.Lifted         (finally)
 import           Control.Lens                     ((^.))
 import           Control.Monad.Except
-import           Control.Monad.Reader.Class
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
-import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy             as LBS
+import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 
@@ -23,6 +21,7 @@ import           GHC.Generics
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Errors
@@ -36,18 +35,18 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database              (roAppTx, rwAppTx)
+import           RPKI.Store.Database              (rwAppTx)
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
 import qualified RPKI.Util                        as U
-import           RPKI.AppState
 
 import           Data.IORef.Lifted
 
 import qualified Streaming.Prelude                as S
 
 import           System.Mem                       (performGC)
+
 
 
 
@@ -97,7 +96,7 @@ downloadAndUpdateRRDP
         
 
         useSnapshot (SnapshotInfo uri hash) notification = 
-            forChild (U.convert uri) $ do       
+            forChild (U.convert uri) $ do
                 logDebugM logger [i|#{uri}: downloading snapshot.|]
                 (r, downloadedIn, savedIn) <- downloadAndSave
                 logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot in #{savedIn}ms.|]                        
@@ -127,22 +126,27 @@ downloadAndUpdateRRDP
             where
                 downloadAndSave = do
                     -- TODO Do not thrash the same server with too big amount of parallel 
-                    -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much.         
+                    -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
                     localRepoBottleneck <- liftIO $ newBottleneckIO 8            
                     void $ foldPipeline
                                 (localRepoBottleneck <> ioBottleneck)
                                 (S.each sortedDeltas)
                                 downloadDelta
-                                (\(rawContent, serial) _ -> handleDeltaBS repoUri notification serial rawContent)
+                                (\(rawContent, serial, deltaUri) _ -> 
+                                    forChild deltaUri $ 
+                                        handleDeltaBS repoUri notification serial rawContent)
                                 (mempty :: ())
             
                     pure $ repo { rrdpMeta = rrdpMeta' }
 
                 downloadDelta (DeltaInfo uri hash serial) = do
-                    (rawContent, _) <- fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                                            downloadHashedStrictBS httpContext rrdpConf uri hash
-                                                (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
-                    pure (rawContent, serial)
+                    let deltaUri = U.convert uri 
+                    (rawContent, _) <- 
+                        forChild deltaUri $  
+                            fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
+                                downloadHashedStrictBS httpContext rrdpConf uri hash
+                                    (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
+                    pure (rawContent, serial, deltaUri)
 
                 serials = map (^. typed @Serial) sortedDeltas
                 maxSerial = List.maximum serials

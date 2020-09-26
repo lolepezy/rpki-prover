@@ -124,7 +124,10 @@ runWorkflow appContext@AppContext {..} tals = do
                                 saveTopDownResult tdResult                                
                                 logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
                         where 
-                            processTAL tal = validateTA appContext tal worldVersion                                
+                            processTAL tal = do 
+                                (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
+                                logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+                                pure r
 
                             saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
                                 putValidations tx (validationsStore database) worldVersion tdValidations                                 

@@ -62,10 +62,10 @@ resourcesUnitTests = testGroup "AS resource unit tests" [
         intersection (ASRange (ASN 10) (ASN 30)) (ASRange (ASN 20) (ASN 35)) @?= [ASRange (ASN 20) (ASN 30)],        
 
     HU.testCase "Should subtract ASN resource" $ do     
-        checkAnsSub (10, 20) (17, 22) [ASRange (ASN 10) (ASN 16)]
-        checkAnsSub (1, 10) (5, 15) [ASRange (ASN 1) (ASN 4)]
-        checkAnsSub (10, 20) (5, 20) []
-        checkAnsSub (10, 20) (12, 18) [ASRange (ASN 10) (ASN 11), ASRange (ASN 19) (ASN 20)]
+        checkAsnSub (10, 20) (17, 22) [ASRange (ASN 10) (ASN 16)]
+        checkAsnSub (1, 10) (5, 15) [ASRange (ASN 1) (ASN 4)]
+        checkAsnSub (10, 20) (5, 20) []
+        checkAsnSub (10, 20) (12, 18) [ASRange (ASN 10) (ASN 11), ASRange (ASN 19) (ASN 20)]
         subtractAsn (ASRange (ASN 10) (ASN 20)) (AS (ASN 10)) @?= [ASRange (ASN 11) (ASN 20)]
         subtractAsn (ASRange (ASN 10) (ASN 11)) (AS (ASN 10)) @?= [AS (ASN 11)],
 
@@ -89,11 +89,11 @@ resourcesUnitTests = testGroup "AS resource unit tests" [
             (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals asChild asParent
             in do
                 n @?= IS.fromList [ASRange (ASN 15) (ASN 27), AS (ASN 37)]
-                o @?= (IS.fromList $ normalise [ASRange (ASN 10) (ASN 14), AS (ASN 32)])
+                o @?= IS.fromList (normalise [ASRange (ASN 10) (ASN 14), AS (ASN 32)])
     ]
     where 
-        checkAnsSub (a0, a1) (b0, b1) expected = 
-            (subtractAsn (ASRange (ASN a0) (ASN a1)) (ASRange (ASN b0) (ASN b1))) @?= expected
+        checkAsnSub (a0, a1) (b0, b1) expected = 
+            subtractAsn (ASRange (ASN a0) (ASN a1)) (ASRange (ASN b0) (ASN b1)) @?= expected
 
 
 intervalSetUnitTests :: TestTree
