@@ -11,6 +11,7 @@ import RPKI.RRDP.UpdateSpec
 import RPKI.Parse.ObjectParseSpec
 import RPKI.ResourcesSpec
 import RPKI.RepositorySpec
+import RPKI.RTR.RtrSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -18,5 +19,6 @@ main = defaultMain $ testGroup "All tests" [
         rrdpUpdateSpec,
         storeGroup,
         resourceGroup,
-        repositoryGroup
+        repositoryGroup,
+        rtrGroup
     ]  

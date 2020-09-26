@@ -16,6 +16,7 @@ import RPKI.Domain (SKI(..), KI(..))
 import RPKI.Resources.Types
 import Data.Data
 import GHC.Generics (Generic)
+import RPKI.Resources.Resources
 
 data ProtocolVersion = 
     V0 -- | as defined by https://tools.ietf.org/rfc/rfc6810
@@ -23,13 +24,14 @@ data ProtocolVersion =
   deriving stock (Show, Eq, Ord, Typeable, Generic)
 
 
-data Pdu = NotifyPdu SessionId SerialNumber
-        | SerialQueryPdu SessionId SerialNumber
+-- | PDUs cover both V0 and V1 versions
+data Pdu = NotifyPdu RtrSessionId SerialNumber
+        | SerialQueryPdu RtrSessionId SerialNumber
         | ResetQueryPdu
-        | CacheResponsePdu SessionId
-        | IPv4PrefixPdu Flags RtrPrefix 
-        | IPv6PrefixPdu Flags RtrPrefix     
-        | EndOfDataPdu SessionId SerialNumber Intervals
+        | CacheResponsePdu RtrSessionId
+        | IPv4PrefixPdu Flags Ipv4Prefix ASN Int16
+        | IPv6PrefixPdu Flags Ipv6Prefix ASN Int16    
+        | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
         | RouterKeyPdu ASN Flags SKI BSL.ByteString
         | ErrorPdu ErrorCode BSL.ByteString BSL.ByteString
@@ -41,7 +43,7 @@ data VersionedPdu = VersionedPdu Pdu ProtocolVersion
 newtype SerialNumber = SerialNumber Int32
     deriving stock (Show, Eq, Ord, Generic)
 
-newtype SessionId = SessionId Int16
+newtype RtrSessionId = RtrSessionId Int16
     deriving stock (Show, Eq, Ord, Generic)
 
 data Flags = Announcement | Withdrawal
@@ -62,20 +64,13 @@ data ErrorCode = CorruptData
 newtype Session = Session ProtocolVersion
     deriving stock (Show, Eq, Ord, Generic)
 
-data RtrPrefix = RtrPrefix {
-    prefixLength :: Int8,
-    maxLength :: Int8,
-    prefix :: BS.ByteString,
-    asn :: Int32
-} deriving stock (Show, Eq, Ord, Generic)
-
 data Intervals = Intervals {
     refreshInterval :: Int32,
     retryInterval :: Int32,
     expireInterval:: Int32
 } deriving stock (Show, Eq, Ord)
 
-instance Binary SessionId
+instance Binary RtrSessionId
 instance Binary SerialNumber
 
 -- Orphans
@@ -87,8 +82,8 @@ instance Binary KI
 defIntervals :: Intervals
 defIntervals = Intervals { 
     refreshInterval = 3600,
-    retryInterval = 600,
-    expireInterval = 7200
+    retryInterval   = 600,
+    expireInterval  = 7200
 }
 
 instance Binary ProtocolVersion where
@@ -96,38 +91,46 @@ instance Binary ProtocolVersion where
         V0 -> 0 :: Word8
         V1 -> 1
 
-    get = f <$> get
-        where 
-            f (0 :: Word8) = V0
-            f 1            = V1
-            f n            = error $ "No error code value for " <> show n
+    get = do 
+        n :: Word8 <- get
+        case n of 
+            0 -> pure V0
+            1 -> pure V1            
+            _ -> fail $ "No error code value for " <> show n
 
 instance Binary Flags where 
     put f = put $ case f of 
         Withdrawal   -> 0 :: Word8
         Announcement -> 1
 
-    get = f <$> get
-        where 
-            f (0 :: Word8) = Withdrawal
-            f 1            = Announcement
-            f n            = error $ "No flags value for " <> show n
+    get = do 
+        n :: Word8 <- get
+        case n of 
+            0 -> pure Withdrawal
+            1 -> pure Announcement            
+            _ -> fail $ "No flags value for " <> show n    
 
-instance Binary RtrPrefix where 
-    put RtrPrefix {..} = do
-        put (fromIntegral prefixLength :: Word8)
-        put (fromIntegral maxLength :: Word8) 
-        put (0 :: Word8)  
-        put prefix
-        put (fromIntegral asn :: Int32)    
+
+instance Binary Ipv4Prefix where 
+    put prefix = do
+        let (w0, w1, w2, w3) = prefixV4ToBytes prefix
+        put w0
+        put w1
+        put w2
+        put w3
         
-    get = do
-        prefixLength <- get            
-        maxLength    <- get
-        _skipZero :: Word8 <- get
-        prefix       <- get
-        asn          <- get
-        pure $ RtrPrefix prefixLength maxLength prefix asn
+    get = fail "Not implemented and should not be"
+
+instance Binary Ipv6Prefix where 
+    put prefix = do
+        let (w0, w1, w2, w3) = prefixV6ToBytes prefix
+        put w0
+        put w1
+        put w2
+        put w3
+        
+    get = fail "Not implemented and should not be"
+        
 
 errorCodes :: [(ErrorCode, Word8)]
 errorCodes = [

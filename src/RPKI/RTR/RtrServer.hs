@@ -28,10 +28,12 @@ import           Network.Socket.ByteString        (recv, sendAll)
 
 import           RPKI.AppContext
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrContext
 import           RPKI.RTR.Types
+import           RPKI.Resources.Types
 
 import           RPKI.Util                        (convert)
 
@@ -85,7 +87,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             (conn, peer) <- accept sock
             logDebug_ logger [i|Connection from #{peer}|]
             void $ forkFinally 
-                (connectionProcessor rtrState conn peer perClientUpdateChan) 
+                (connectionProcessor conn peer perClientUpdateChan) 
                 (\_ -> do 
                     logDebug_ logger [i|Closing connection with #{peer}|]
                     close conn)
@@ -100,7 +102,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             Just knownVersion -> do
                 (newVersion, newVrps) <- listenWorldVersion appState knownVersion                            
                 previousVRPs <- roTx database $ \tx -> getVrps tx database knownVersion
-                let vrpDiff = VrpDiff { 
+                let vrpDiff = Diff { 
                         added = Set.difference newVrps previousVRPs,
                         deleted = Set.difference previousVRPs newVrps
                     }
@@ -108,7 +110,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 atomically $ do 
                     writeTVar rtrState newRtrContext
                     writeTChan updateChan $ 
-                        NotifyPdu (newRtrContext ^. #session) (newRtrContext ^. #serial)
+                        NotifyPdu (newRtrContext ^. #currentSessionId) (newRtrContext ^. #currentSerial)
 
 
     -- For every connection run 3 threads:
@@ -116,7 +118,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --      updateFromAppState blocks on updates from the new data coming from the validation process
     --      sendToClient simply sends all PDU to the client
     -- 
-    connectionProcessor rtrState connection peer perClientUpdateChan = do
+    connectionProcessor connection peer perClientUpdateChan = do
         firstPdu   <- recv connection 1024
         rtrContext <- readTVarIO rtrState
         sendChan   <- atomically newTChan
@@ -217,12 +219,23 @@ respondToPdu :: RtrContext
                 -> BS.ByteString 
                 -> Session
                 -> Either (Pdu, Text) [Pdu]
-respondToPdu RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes (Session sessionProtocol) =                  
+respondToPdu rtrContext@RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes currentSession@(Session sessionProtocol) =                  
     case pdu of 
-        SerialQueryPdu sessionId serial -> let
-                text :: Text = [i|Unexpected serial query PDU.|]
-                in Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)            
-
+        SerialQueryPdu sessionId serial -> 
+            withProtocolVersionCheck pdu $ withSessionIdCheck sessionId $
+                case diffsFromSerial rtrContext serial of
+                    Nothing -> 
+                        -- we don't have the data, you are too far behind
+                        Right [CacheResetPdu]
+                    Just (squashDiffs -> diff) -> 
+                        let                        
+                            -- TODO Figure out how to instantiate intervals
+                            -- Should they be configurable?     
+                            pdus = [CacheResponsePdu sessionId] 
+                                <> payloadPdus diff                                
+                                <> [EndOfDataPdu sessionId currentSerial defIntervals]
+                        in Right pdus
+                            
         ResetQueryPdu -> 
             withProtocolVersionCheck pdu $ Right []
 
@@ -237,15 +250,26 @@ respondToPdu RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes (Session se
                     let text :: Text = [i|Protocol version is not the same.|]                                
                     Left (ErrorPdu UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
 
-        withSessionIdCheck :: SessionId 
+        withSessionIdCheck :: RtrSessionId 
                             -> Either (Pdu, Text) a 
                             -> Either (Pdu, Text) a
         withSessionIdCheck sessionId respond =
-            if session == sessionId
+            if currentSessionId == sessionId
                 then respond
                 else let 
-                    text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{session}.|]
+                    text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{currentSessionId}.|]
                     in Left (ErrorPdu CorruptData (convert pduBytes) (convert text), text)
 
-                
-                
+
+-- Create VRP PDUs 
+-- TODO Add router certificate PDU here.
+payloadPdus :: VrpDiff -> [Pdu]
+payloadPdus Diff {..} = 
+    map (toPdu Withdrawal) (Set.toList deleted) <>
+    map (toPdu Announcement) (Set.toList added)
+  where
+    toPdu flags (Vrp asn prefix maxLength) = 
+        case prefix of
+            Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
+            Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
+            

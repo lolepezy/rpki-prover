@@ -22,6 +22,7 @@ import           RPKI.Domain          (KI (..), SKI (..), skiLen, toShortBS)
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import Data.Hex
+import RPKI.Resources.Resources
 
 
 
@@ -77,8 +78,25 @@ pduToBytes pdu (Session protocolVersion)  =
             CacheResponsePdu sessionId -> 
                 put sessionId >> put pduLen
 
-            IPv4PrefixPdu flags rtrPrefix -> ipvXPrefixPdu flags rtrPrefix 
-            IPv6PrefixPdu flags rtrPrefix -> ipvXPrefixPdu flags rtrPrefix
+            IPv4PrefixPdu flags prefix asn maxLength -> do 
+                put (0 :: Word16)
+                put pduLen
+                put flags
+                put $ ipv4PrefixLen prefix
+                put (fromIntegral maxLength :: Word8)
+                put (0 :: Word16)
+                put prefix
+                put asn                
+
+            IPv6PrefixPdu flags prefix asn maxLength -> do 
+                put (0 :: Word16)
+                put pduLen
+                put flags
+                put $ ipv6PrefixLen prefix
+                put (fromIntegral maxLength :: Word8)
+                put (0 :: Word16)
+                put prefix
+                put asn                
 
             EndOfDataPdu sessionId serial intervals -> do
                 put sessionId
@@ -110,16 +128,14 @@ pduToBytes pdu (Session protocolVersion)  =
     
         pduLen = pduLength pdu protocolVersion :: Int32
 
-        ipvXPrefixPdu :: Flags -> RtrPrefix -> Put
-        ipvXPrefixPdu flags rtrPrefix = do 
+
+        ipvXPrefixPdu :: Binary prefix => Flags -> prefix -> Put
+        ipvXPrefixPdu flags prefix = do 
             put (0 :: Word16)
             put pduLen
             put flags
-            put (fromIntegral (prefixLength rtrPrefix) :: Word8)
-            put (fromIntegral (maxLength rtrPrefix) :: Word8) 
-            put (0 :: Word8)  
-            put (prefix rtrPrefix)
-            put (fromIntegral (asn rtrPrefix) :: Int32)    
+            put prefix    
+        
 
 
 -- 
@@ -179,28 +195,29 @@ parseVersionedPdu (Session protocolVersion) = do
             pure $ ResetQueryPdu
 
         3  -> do 
-            sessionId :: SessionId <- get
-            len :: Int32           <- get
+            sessionId :: RtrSessionId <- get
+            len :: Int32              <- get
             assertLength len 8
             pure $ CacheResponsePdu sessionId
 
-        4  -> do 
-            zero :: Word16 <- get 
-            unless (zero == 0) $ fail "Field must be zero for IPv4PrefixPdu"
-            len  :: Int32 <- get
-            assertLength len 20
-            flags <- get
-            rtrPrefix <- get
-            pure $ IPv4PrefixPdu flags rtrPrefix
+        -- TODO Finish them
+        -- 4  -> do 
+        --     zero :: Word16 <- get 
+        --     unless (zero == 0) $ fail "Field must be zero for IPv4PrefixPdu"
+        --     len  :: Int32 <- get
+        --     assertLength len 20
+        --     flags <- get
+        --     rtrPrefix <- get
+        --     pure $ IPv4PrefixPdu flags rtrPrefix
 
-        6  -> do 
-            zero :: Word16 <- get 
-            unless (zero == 0) $ fail "Field must be zero for IPv6PrefixPdu"
-            len  :: Int32 <- get
-            assertLength len 32
-            flags     <- get
-            rtrPrefix <- get
-            pure $ IPv6PrefixPdu flags rtrPrefix
+        -- 6  -> do 
+        --     zero :: Word16 <- get 
+        --     unless (zero == 0) $ fail "Field must be zero for IPv6PrefixPdu"
+        --     len  :: Int32 <- get
+        --     assertLength len 32
+        --     flags     <- get
+        --     rtrPrefix <- get
+        --     pure $ IPv6PrefixPdu flags rtrPrefix
 
         7  -> do
             sessionId     <- get
