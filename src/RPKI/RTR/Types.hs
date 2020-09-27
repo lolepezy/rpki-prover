@@ -6,7 +6,6 @@
 
 module RPKI.RTR.Types where
 
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 
 import Data.Binary

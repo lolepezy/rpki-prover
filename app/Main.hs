@@ -86,6 +86,7 @@ main = do
 
 runValidatorApp :: AppEnv -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
+    logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- updateWorldVerion appState
     talFileNames <- listTALFiles $ talDirectory config
     let validationContext = vContext "validation-root"
@@ -93,7 +94,8 @@ runValidatorApp appContext@AppContext {..} = do
         forM talFileNames $ \talFileName -> 
             forChild (convert talFileName) $ parseTALFromFile talFileName
 
-    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion validations
+    logInfo_ logger [i|Successfully loaded #{length talFileNames} TALs.|]    
+    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion validations    
     case tals of 
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    

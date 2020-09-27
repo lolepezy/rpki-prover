@@ -60,8 +60,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- long time).
     globalQueue <- newCQueueIO 10
 
-    -- Run RTR server thread when rtrConfig is present in the AppConfig.
-    logInfo_ logger [i|Mark 0.|]
+    -- Run RTR server thread when rtrConfig is present in the AppConfig.    
     rtrServer <- initRtrIfNeeded
 
     -- Fill in the current state if it's not too old.
