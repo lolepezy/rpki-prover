@@ -219,7 +219,7 @@ respondToPdu :: RtrContext
                 -> BS.ByteString 
                 -> Session
                 -> Either (Pdu, Text) [Pdu]
-respondToPdu rtrContext@RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes currentSession@(Session sessionProtocol) =                  
+respondToPdu rtrContext@RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes (Session sessionProtocol) =                  
     case pdu of 
         SerialQueryPdu sessionId serial -> 
             withProtocolVersionCheck pdu $ withSessionIdCheck sessionId $
@@ -228,12 +228,13 @@ respondToPdu rtrContext@RtrContext {..} (VersionedPdu pdu pduProtocol) pduBytes 
                         -- we don't have the data, you are too far behind
                         Right [CacheResetPdu]
                     Just (squashDiffs -> diff) -> 
-                        let                        
-                            -- TODO Figure out how to instantiate intervals
-                            -- Should they be configurable?     
+                        let                                                    
                             pdus = [CacheResponsePdu sessionId] 
-                                <> payloadPdus diff                                
+                                <> payloadPdus diff
+                                -- TODO Figure out how to instantiate intervals
+                                -- Should they be configurable?                                                                     
                                 <> [EndOfDataPdu sessionId currentSerial defIntervals]
+
                         in Right pdus
                             
         ResetQueryPdu -> 

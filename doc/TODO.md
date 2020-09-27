@@ -79,6 +79,7 @@
 
 --------------------------------------- TODOs -----------------------------------------
 
+- Fix 'cpu-count' defaulting to 1.
 
 - Check signature algorithms (
     http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
