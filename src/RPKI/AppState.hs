@@ -1,6 +1,7 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.AppState where
     
@@ -14,10 +15,9 @@ import           Data.Int
 import           Data.Hourglass         (timeGetNanoSeconds)
 import           Time.Types
 
+import           Data.Set
 import           RPKI.Domain
 import           RPKI.Time
-import Data.Set
-
 
 
 -- It's some sequence of versions that is equal to the current 
@@ -65,9 +65,12 @@ instantToVersion (Instant t) =
 
 
 -- Block on version updates
-listenWorldVersion :: AppState -> WorldVersion -> IO (WorldVersion, Set Vrp)
-listenWorldVersion AppState {..} knownWorldVersion = atomically $ do 
+listenWorldVersion :: AppState -> Maybe WorldVersion -> STM (WorldVersion, Set Vrp)
+listenWorldVersion AppState {..} knownWorldVersion = do 
     w <- readTVar world
-    if w > knownWorldVersion
-        then (w,) <$> readTVar currentVrps
-        else retry
+    case knownWorldVersion of 
+        Nothing    -> (w,) <$> readTVar currentVrps
+        Just known ->     
+            if w > known
+                then (w,) <$> readTVar currentVrps
+                else retry

@@ -5,17 +5,13 @@
 
 module RPKI.RTR.RtrContext where
 
-import           Control.Concurrent.STM
 import           Data.Foldable          (toList)
 import           Data.Set               (Set)
 import qualified Data.Set               as Set
 
-import           Data.Maybe             (fromMaybe)
 import           GHC.Generics
 
 import qualified Data.List              as List
-import           Data.Map.Strict        (Map)
-import qualified Data.Map.Strict        as Map
 
 import           Deque.Strict           as Deq
 
@@ -98,11 +94,3 @@ squashDiffs diffs =
              added   = Set.difference (Set.union (added diff) (added resultDiff)) (deleted resultDiff),
              deleted = Set.difference (Set.union (deleted diff) (deleted resultDiff)) (added resultDiff)
          }
-
-
-{-
-import Data.Set as Set
-let d1 = Diff { added = Set.fromList [1,2], deleted = Set.fromList [3,4] }
-let d2 = Diff { added = Set.fromList [4,5], deleted = Set.fromList [2] }
-squashDiffs [(SerialNumber 1, d1), (SerialNumber 3, d2)]
--}
