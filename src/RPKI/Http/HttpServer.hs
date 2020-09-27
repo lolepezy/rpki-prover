@@ -19,6 +19,8 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.AppState
+import Control.Monad.Trans.Maybe
+import Data.Maybe (fromMaybe)
 
 
 
@@ -31,26 +33,23 @@ validatorServer AppContext {..} =
     :<|> getRpkiObject
     where
         getVRPs = 
-            getForTheLastVersion $ \tx lastVersion -> 
-                map (\(Vrp a p len) -> VrpDto a p len) . Set.toList
-                    <$> getVrps tx database lastVersion            
+            roTx versionStore $ \tx ->
+                getLastFinishedVersion database tx >>= \case 
+                    Nothing          -> pure []            
+                    Just lastVersion -> do
+                        vrps <- getVrps tx database lastVersion
+                        pure $ map (\(Vrp a p len) -> VrpDto a p len) $ Set.toList vrps                    
 
         getVResults = 
-            getForTheLastVersion $ \tx lastVersion ->
-                validationsForVersion tx validationsStore lastVersion >>= \case 
-                    Nothing          -> pure []
-                    Just validations -> pure $ map toVR $ validationsToList validations
-
+            roTx versionStore $ \tx -> 
+                let txValidations = runMaybeT $ do
+                        lastVersion <- MaybeT $ getLastFinishedVersion database tx
+                        validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
+                        pure $ map toVR $ validationsToList validations
+                in fromMaybe [] <$> txValidations
+            
         toVR (VContext path, problems) = 
-            ValidationResult (Set.toList problems) (NonEmpty.toList path)
-
-        getForTheLastVersion :: (Tx s 'RO -> WorldVersion -> IO [a]) -> IO [a]
-        getForTheLastVersion f = 
-            roTx versionStore $ \tx -> do 
-                versions' <- allVersions tx database
-                case versions' of
-                    [] -> pure []
-                    vs -> f tx $ maximum [ v | (v, FinishedVersion) <- vs ]      
+            ValidationResult (Set.toList problems) (NonEmpty.toList path)    
 
         getStats = stats database
 

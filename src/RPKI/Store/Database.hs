@@ -271,7 +271,7 @@ deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx 
 -- More complicated operations
 
 -- Delete all the objects from the objectStore if they were 
--- validated longer than certain time ago.
+-- visited longer than certain time ago.
 cleanObjectCache :: (MonadIO m, Storage s) => 
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
@@ -339,6 +339,17 @@ deleteOldVersions database tooOld =
             deleteVersion tx database worldVersion
     
     pure $ List.length toDelete
+
+
+-- | Find the latest completed world version 
+-- 
+getLastFinishedVersion :: (Storage s) => 
+                        DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
+getLastFinishedVersion database tx = do 
+        vs <- allVersions tx database
+        pure $ case [ v | (v, FinishedVersion) <- vs ] of         
+            []  -> Nothing
+            vs' -> Just $ maximum vs'
 
 
 data RpkiObjectStats = RpkiObjectStats {

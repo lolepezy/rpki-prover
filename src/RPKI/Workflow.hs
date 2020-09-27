@@ -12,15 +12,9 @@ import           Control.Exception.Lifted
 import           Control.Monad
 
 import           Control.Lens                     ((^.))
-import           Data.Generics.Labels
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
-import           Data.List                        (sortBy)
-import           Data.IORef.Lifted
-
 import           Data.Int                         (Int64)
-import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 
 import           Data.Hourglass
@@ -28,27 +22,24 @@ import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
 
+import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
 import           RPKI.TopDown
-import           RPKI.AppState
 
 import           RPKI.AppContext
+import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.RTR.RtrContext
-import           RPKI.RTR.RtrServer
 
 import           RPKI.Store.Base.LMDB
-import           RPKI.Store.Database
 
 import           System.Exit
-import qualified Data.Set as Set
-import Data.Maybe
+
 
 
 type AppEnv = AppContext LmdbStorage
@@ -63,13 +54,22 @@ data WorkflowTask =
 runWorkflow :: Storage s => 
             AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
-    -- Use a command queue to avoid fully concurrent operations, i.e. cache GC 
-    -- should not run at the same time as the validation (not for consistency 
-    -- reasons, but we want to avoid locking the DB for long time).
+    -- Use a command queue to avoid fully concurrent operations, i.e. cleaup 
+    -- opearations and should not run at the same time with validation (not 
+    -- only for consistency reasons, but we want to avoid locking the DB for 
+    -- long time).
     globalQueue <- newCQueueIO 10
 
+    -- Run RTR server thread when rtrConfig is present in the AppConfig.
+    logInfo_ logger [i|Mark 0.|]
     rtrServer <- initRtrIfNeeded
 
+    -- Fill in the current state if it's not too old.
+    -- It may be useful in case of restarts.        
+    loadStoredAppState appContext
+
+    -- Run threads that periodicallly generate tasks and put them 
+    -- to the queue and one thread that executes the tasks.
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion, 
@@ -77,7 +77,7 @@ runWorkflow appContext@AppContext {..} tals = do
             cleanOldVersions,
             rtrServer   
         ]
-    where          
+    where
         cacheCleanupInterval = config ^. #cacheCleanupInterval
         oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
@@ -151,10 +151,6 @@ runWorkflow appContext@AppContext {..} tals = do
                             (\deleted elapsed -> 
                                 logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
-        versionIsOld now period (WorldVersion nanos) =
-            let validatedAt = fromNanoseconds nanos
-            in not $ closeEnoughMoments validatedAt now period
-
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 
             exec `catches` [
@@ -176,9 +172,41 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure $ \_ -> pure ()
                 Just rtrConfig' -> 
                     pure $ \_ -> runRtrServer appContext rtrConfig' 
-                    
 
--- Execute certain IO actiion every N seconds
+
+-- | Load the state corresponding to the last completed version.
+-- 
+loadStoredAppState :: Storage s => AppContext s -> IO ()
+loadStoredAppState AppContext {..} = do     
+    Now now' <- thisInstant    
+    let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
+    roTx database $ \tx -> 
+        getLastFinishedVersion database tx >>= \case 
+            Nothing          -> pure ()
+
+            Just lastVersion             
+                | versionIsOld now' revalidationInterval lastVersion ->                     
+                    logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used.|]
+
+                | otherwise -> do 
+                    (vrps, elapsed) <- timedMS $ do             
+                        -- TODO It take 350ms, which is pretty strange, profile it.           
+                        !vrps <- getVrps tx database lastVersion
+                        atomically $ do
+                            writeTVar (appState ^. #world) lastVersion
+                            writeTVar (appState ^. #currentVrps) vrps                        
+                        pure vrps
+                    logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
+                                      [i|current state (#{Set.size vrps} VRPs), took #{elapsed}ms.|]
+                
+
+-- 
+versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
+versionIsOld now period (WorldVersion nanos) =
+    let validatedAt = fromNanoseconds nanos
+    in not $ closeEnoughMoments validatedAt now period
+
+-- | Execute certain IO actiion every N seconds
 -- 
 periodically :: Seconds -> IO () -> IO ()
 periodically (Seconds interval) action =
