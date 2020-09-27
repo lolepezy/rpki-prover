@@ -67,17 +67,21 @@
 
 ---------------------------------  In testing -----------------------------------------
 
-
-
----------------------------------  In progress ----------------------------------------
-
-
 - Introduce shared state for "the latest discovered bunch of VRPs" to be used in 
   * RTR responses to reset queuries and diffs
   * /api/vrps.* responses
   OR figure out an option to get the from LMDB with less CPU/allocations
 
+
+---------------------------------  In progress ----------------------------------------
+
+Implement RTR server.
+
 --------------------------------------- TODOs -----------------------------------------
+
+- Limit 'notify PDU' to one a minute.
+- RTR keepalive should have a time interval
+- 
 
 - Fix 'cpu-count' defaulting to 1.
 
