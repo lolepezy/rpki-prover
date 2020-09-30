@@ -4,24 +4,20 @@
 module RPKI.Http.HttpServer where
 
 import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Maybe
 import           FileEmbedLzma
 import           Servant
-import           Servant.Server.StaticFiles
 
-import qualified Data.List.NonEmpty         as NonEmpty
-import qualified Data.Set            as Set
+import qualified Data.List.NonEmpty        as NonEmpty
+import           Data.Maybe                (fromMaybe)
+import qualified Data.Set                  as Set
 
 import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.Http.Api
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Data
 import           RPKI.Store.Database
-import           RPKI.AppState
-import Control.Monad.Trans.Maybe
-import Data.Maybe (fromMaybe)
-
 
 
 validatorServer :: forall s . Storage s => AppContext s -> Server API

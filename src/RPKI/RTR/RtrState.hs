@@ -3,7 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 
-module RPKI.RTR.RtrContext where
+module RPKI.RTR.RtrState where
 
 import           Data.Foldable          (toList)
 import           Data.Set               (Set)
@@ -29,13 +29,13 @@ data Diff a = Diff {
 
 type VrpDiff = Diff Vrp
 
-data RtrContext = RtrContext {
-        lastKnownVersion     :: Maybe WorldVersion,
-        currentSessionId     :: RtrSessionId,
-        currentSerial        :: SerialNumber,
-        earliestSerial       :: SerialNumber,
-        maxSerialsPerSession :: Int,
-        diffs                :: Deq.Deque (SerialNumber, VrpDiff)
+data RtrState = RtrState {
+        lastKnownWorldVersion :: WorldVersion,
+        currentSessionId      :: RtrSessionId,
+        currentSerial         :: SerialNumber,
+        earliestSerial        :: SerialNumber,
+        maxSerialsPerSession  :: Int,
+        diffs                 :: Deq.Deque (SerialNumber, VrpDiff)
     } 
     deriving stock (Eq, Generic)
 
@@ -43,11 +43,11 @@ newVrpDiff :: Diff a
 newVrpDiff = Diff Set.empty Set.empty
 
 
-newRtrContext :: IO RtrContext 
-newRtrContext = do
+newRtrContext :: WorldVersion -> IO RtrState 
+newRtrContext worldVersion = do
     session' <- generateSessionId
     serial'  <- genarateSerial
-    pure $ RtrContext Nothing session' serial' serial' 100 mempty
+    pure $ RtrState worldVersion session' serial' serial' 100 mempty
     where
         -- TODO Generate them according to the RFC
         generateSessionId = pure $ RtrSessionId 133
@@ -55,17 +55,17 @@ newRtrContext = do
 
 
 
-updateContext :: RtrContext -> WorldVersion -> VrpDiff -> RtrContext
-updateContext RtrContext {..} worldVersion diff = 
-    RtrContext {        
-        lastKnownVersion = Just worldVersion,        
+updateContext :: RtrState -> WorldVersion -> VrpDiff -> RtrState
+updateContext RtrState {..} worldVersion diff = 
+    RtrState {        
+        lastKnownWorldVersion = worldVersion,        
         diffs = diffs',
         currentSerial = newSerial,
         earliestSerial = earliestSerial',
         ..
     }
     where
-        newSerial = nextSerial currentSerial
+        newSerial       = nextSerial currentSerial
         earliestSerial' = nextSerial earliestSerial
         diffs' = let
             -- strip off the oldest serial if the list of diffs is getting too long
@@ -75,22 +75,23 @@ updateContext RtrContext {..} worldVersion diff =
                     else newDiffs
 
 
--- | Return 
-diffsFromSerial :: RtrContext -> SerialNumber -> Maybe [(SerialNumber, VrpDiff)] 
-diffsFromSerial RtrContext {..} serial = 
+-- | Return all the diffs starting from some serial if we have this data.
+-- 
+diffsFromSerial :: RtrState -> SerialNumber -> Maybe [(SerialNumber, VrpDiff)] 
+diffsFromSerial RtrState {..} serial = 
     if serial < earliestSerial
         then Nothing
         else Just $ List.filter (\(s, _) -> s > serial) $ toList diffs
 
 
+-- | Transform a list of diffs into one diff that doesn't contain duplicates
+-- or alternating 'add' and 'remove' operations for the same VRPs.
+-- 
 squashDiffs :: Ord a => [(SerialNumber, Diff a)] -> Diff a
 squashDiffs diffs = 
-    List.foldr squash newVrpDiff
-    $ map snd 
-    $ List.sortOn fst diffs
+    List.foldr (squash . snd) newVrpDiff $ List.sortOn fst diffs
   where
-     squash diff resultDiff = 
-         resultDiff {
-             added   = Set.difference (Set.union (added diff) (added resultDiff)) (deleted resultDiff),
+     squash diff resultDiff = Diff {
+             added   = Set.difference (Set.union (added diff)   (added resultDiff))   (deleted resultDiff),
              deleted = Set.difference (Set.union (deleted diff) (deleted resultDiff)) (added resultDiff)
          }

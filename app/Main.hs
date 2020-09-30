@@ -57,7 +57,7 @@ import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 import           RPKI.Workflow
-import           RPKI.RTR.RtrContext
+import           RPKI.RTR.RtrState
 
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
@@ -157,10 +157,7 @@ createAppContext CLIOptions{..} logger = do
                 }
             else Nothing     
 
-    appState <- liftIO newAppState
-
-    -- Always instantiate rtrContext, it's not a big deal if it's never used
-    rtrContext <- liftIO $ atomically . newTVar =<< newRtrContext
+    appState <- liftIO newAppState    
 
     let appContext = AppContext {        
         logger = logger,
@@ -191,7 +188,6 @@ createAppContext CLIOptions{..} logger = do
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
         },        
         appState = appState,
-        rtrState = rtrContext,
         database = database,
         appBottlenecks = appBottlenecks,
         httpContext = httpContext

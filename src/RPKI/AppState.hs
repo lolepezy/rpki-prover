@@ -18,6 +18,7 @@ import           Time.Types
 import           Data.Set
 import           RPKI.Domain
 import           RPKI.Time
+import qualified Data.Set as Set
 
 
 -- It's some sequence of versions that is equal to the current 
@@ -52,8 +53,11 @@ updateWorldVerion AppState {..} = do
     atomically $ writeTVar world wolrdVersion
     pure wolrdVersion
 
-getWorldVerion :: AppState -> IO WorldVersion
-getWorldVerion AppState {..} = readTVarIO world    
+getWorldVerionIO :: AppState -> IO WorldVersion
+getWorldVerionIO AppState {..} = readTVarIO world    
+
+getWorldVerion :: AppState -> STM WorldVersion
+getWorldVerion AppState {..} = readTVar world    
 
 versionToMoment :: WorldVersion -> Instant
 versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
@@ -64,13 +68,15 @@ instantToVersion (Instant t) =
     in WorldVersion nano
 
 
+-- TODO Probably redifine it to have more explicit/stable criteria
+hasVrps :: AppState -> STM Bool
+hasVrps AppState {..} = 
+    not . Set.null <$> readTVar currentVrps
+
 -- Block on version updates
-listenWorldVersion :: AppState -> Maybe WorldVersion -> STM (WorldVersion, Set Vrp)
+listenWorldVersion :: AppState -> WorldVersion -> STM (WorldVersion, Set Vrp)
 listenWorldVersion AppState {..} knownWorldVersion = do 
     w <- readTVar world
-    case knownWorldVersion of 
-        Nothing    -> (w,) <$> readTVar currentVrps
-        Just known ->     
-            if w > known
-                then (w,) <$> readTVar currentVrps
-                else retry
+    if w > knownWorldVersion
+        then (w,) <$> readTVar currentVrps
+        else retry

@@ -8,7 +8,6 @@ module RPKI.RTR.RtrServer where
 import           Control.Concurrent               (forkFinally)
 
 import           Control.Lens                     ((^.))
-
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
@@ -19,6 +18,7 @@ import qualified Data.ByteString.Lazy             as BSL
 
 import           Data.Text                        (Text)
 
+import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 
 import           Data.String.Interpolate.IsString
@@ -30,10 +30,10 @@ import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Logging
-import           RPKI.RTR.Pdus
-import           RPKI.RTR.RtrContext
-import           RPKI.RTR.Types
 import           RPKI.Resources.Types
+import           RPKI.RTR.Pdus
+import           RPKI.RTR.RtrState
+import           RPKI.RTR.Types
 
 import           RPKI.Parallel
 import           RPKI.Util                        (convert)
@@ -43,28 +43,25 @@ import           Data.Maybe                       (fromMaybe)
 import           RPKI.AppState
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import Data.Set (Set)
-
 
 
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
-runRtrServer AppContext {..} RtrConfig {..} = do 
-    rtrContext <- newRtrContext 
+runRtrServer AppContext {..} RtrConfig {..} = do     
+    rtrState <- atomically $ newTVar Nothing
     -- re-initialise the rtrContext and create a broadcast 
     -- channel to publish update for every clients
-    perClientUpdateChan <- atomically $ do 
-                                writeTVar rtrState rtrContext      
-                                newBroadcastTChan 
+    perClientUpdateChan <- atomically newBroadcastTChan 
+
     void $ race 
-            (runSocketBusiness perClientUpdateChan)
-            (listenToAppStateUpdates perClientUpdateChan)
+            (runSocketBusiness rtrState perClientUpdateChan)
+            (listenToAppStateUpdates rtrState perClientUpdateChan)
   where    
 
     -- | Handling TCP conections happens here
-    runSocketBusiness perClientUpdateChan = 
+    runSocketBusiness rtrState perClientUpdateChan = 
         withSocketsDo $ do                 
             address <- resolve (show rtrPort)
             bracket (open address) close loop
@@ -90,35 +87,53 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             (conn, peer) <- accept sock
             logDebug_ logger [i|Connection from #{peer}|]
             void $ forkFinally 
-                (connectionProcessor conn peer perClientUpdateChan) 
+                (connectionProcessor conn peer perClientUpdateChan rtrState) 
                 (\_ -> do 
                     logDebug_ logger [i|Closing connection with #{peer}|]
                     close conn)
 
     -- Block till every new update of the current world version and the VRP set.
-    listenToAppStateUpdates updateChan = do
+    listenToAppStateUpdates rtrState updateChan = do
 
-        -- wait till the first world version appears
-        (rtrContext, knownVersion) <- atomically $ do 
-            rtrContext <- readTVar rtrState
-            case rtrContext ^. #lastKnownVersion of
-                Nothing -> retry
-                Just knownVersion -> pure (rtrContext, knownVersion)
+        -- Wait till some VRPs are generated (or are read from the cache)
+        -- This also means that there's a world version in appState.
+        --
+        -- TODO Make it more strict and obvious if possible (but that will 
+        -- require some generic refactoring).
+        worldVersion <- atomically $ do 
+            hasVrps' <- hasVrps appState
+            if not hasVrps' 
+                then retry                
+                else getWorldVerion appState
 
+        -- Now we can initialise rtrState with a new RtrState.
+        atomically . writeTVar rtrState . Just =<< newRtrContext worldVersion      
+            
+        -- In loop
+        --  - wait for a new world version (`listenWorldVersion` does that)
+        --  - when a version update happens, update RtrState with calculated diff
+        -- 
+        -- TODO Make sure there are no lazyness anywhere in the RtrState, so no space leaks
         forever $ do
-            (newVersion, newVrps) <- atomically $ do 
-                    rtrContext      <- readTVar rtrState
-                    listenWorldVersion appState (rtrContext ^. #lastKnownVersion)                    
+            (rtrContext, previousVersion, newVersion, newVrps) 
+                <- atomically $ 
+                    readTVar rtrState >>= \case 
+                        Nothing         -> retry
+                        Just rtrContext -> do
+                            let knownVersion = rtrContext ^. #lastKnownWorldVersion
+                            (newVersion, newVrps) <- listenWorldVersion appState knownVersion
+                            pure (rtrContext, knownVersion, newVersion, newVrps)
 
-            previousVRPs <- roTx database $ \tx -> getVrps tx database knownVersion
+            previousVRPs <- roTx database $ \tx -> getVrps tx database previousVersion
             let vrpDiff = Diff { 
                     added = Set.difference newVrps previousVRPs,
                     deleted = Set.difference previousVRPs newVrps
                 }
+
             -- force evaluation of the new RTR context so that the old ones could be GC-ed.
             let !rtrContext' = updateContext rtrContext newVersion vrpDiff
             atomically $ do 
-                writeTVar rtrState rtrContext'
+                writeTVar rtrState (Just rtrContext')
                 writeTChan updateChan $ 
                     NotifyPdu (rtrContext' ^. #currentSessionId) (rtrContext' ^. #currentSerial)
 
@@ -128,7 +143,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --      updateFromAppState blocks on updates from the new data coming from the validation process
     --      sendToClient simply sends all PDU to the client
     -- 
-    connectionProcessor connection peer perClientUpdateChan = do
+    -- TODO Make it only 2 threads, it should be possible to get rid of `updateFromAppState`
+    -- and listen to the `perClientUpdateChan` in `sendToClient`.
+    connectionProcessor connection peer perClientUpdateChan rtrState = do
         firstPdu   <- recv connection 1024
         (rtrContext, currentVrps', sendQueue) <- 
             atomically $ (,,) <$> 
@@ -209,11 +226,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 -- 
 -- | Process the first PDU and do the protocol version negotiation
 -- 
-processFirstPdu :: RtrContext 
+processFirstPdu :: Maybe RtrState 
                 -> Set Vrp
                 -> BS.ByteString 
                 -> Either (Pdu, Text) ([Pdu], Session)
-processFirstPdu rtrContext@RtrContext {..} currentVrps pduBytes =    
+processFirstPdu rtrContext currentVrps pduBytes =    
     case bytesToVersionedPdu pduBytes of
         Left (code, maybeText) -> let 
             text = fromMaybe "Wrong PDU" maybeText
@@ -239,27 +256,27 @@ processFirstPdu rtrContext@RtrContext {..} currentVrps pduBytes =
 
 -- | Generate a PDU that would be a appropriate response the request PDU.
 -- 
-respondToPdu :: RtrContext
+respondToPdu :: Maybe RtrState
                 -> Set Vrp
                 -> VersionedPdu 
                 -> BS.ByteString 
                 -> Session
                 -> Either (Pdu, Text) [Pdu]
 respondToPdu 
-    rtrContext@RtrContext {..} 
+    rtrContext
     currentVrps 
     (VersionedPdu pdu pduProtocol) 
     pduBytes 
     (Session sessionProtocol) =
-        if Set.null currentVrps 
-            then let
+        case rtrContext of 
+            Nothing -> let
                 text :: Text = "VRP set is empty, the RTR cache is not ready yet."
                 in Left (ErrorPdu NoDataAvailable (convert pduBytes) (convert text), text)
-            else 
+            Just rtrState@RtrState {..} ->             
                 case pdu of 
                     SerialQueryPdu sessionId serial -> 
-                        withProtocolVersionCheck pdu $ withSessionIdCheck sessionId $
-                            case diffsFromSerial rtrContext serial of
+                        withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
+                            case diffsFromSerial rtrState serial of
                                 Nothing -> 
                                     -- we don't have the data, you are too far behind
                                     Right [CacheResetPdu]
@@ -287,10 +304,7 @@ respondToPdu
                     let text :: Text = [i|Protocol version is not the same.|]                                
                     Left (ErrorPdu UnexpectedProtocolVersion (convert pduBytes) (convert text), text)
 
-        withSessionIdCheck :: RtrSessionId 
-                            -> Either (Pdu, Text) a 
-                            -> Either (Pdu, Text) a
-        withSessionIdCheck sessionId respond =
+        withSessionIdCheck currentSessionId sessionId respond =
             if currentSessionId == sessionId
                 then respond
                 else let 

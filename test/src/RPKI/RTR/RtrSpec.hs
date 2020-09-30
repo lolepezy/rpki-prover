@@ -23,7 +23,7 @@ import           RPKI.Util                         (convert)
 
 import           RPKI.Orphans
 import           RPKI.RTR.Types
-import           RPKI.RTR.RtrContext
+import           RPKI.RTR.RtrState
 import           RPKI.RTR.Pdus
 
 import qualified Test.Tasty.HUnit        as HU

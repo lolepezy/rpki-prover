@@ -88,7 +88,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- periodically update world version and re-validate all TAs
         generateNewWorldVersion globalQueue = periodically revalidationInterval $ do 
-            oldWorldVersion <- getWorldVerion appState
+            oldWorldVersion <- getWorldVerionIO appState
             newWorldVersion <- updateWorldVerion appState
             logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
             validateTaTask globalQueue newWorldVersion
@@ -98,14 +98,14 @@ runWorkflow appContext@AppContext {..} tals = do
             -- wait a little so that GC doesn't start before the actual validation
             threadDelay 10_000_000
             periodically cacheCleanupInterval $ do
-                worldVersion <- getWorldVerion appState
+                worldVersion <- getWorldVerionIO appState
                 atomically $ writeCQueue globalQueue $ CacheGC worldVersion
 
         cleanOldVersions globalQueue = do 
             -- wait a little so that deleting old appState comes last in the queue of actions
             threadDelay 30_000_000
             periodically cacheCleanupInterval $ do
-                worldVersion <- getWorldVerion appState
+                worldVersion <- getWorldVerionIO appState
                 atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion        
 
         taskExecutor globalQueue = do
@@ -189,7 +189,7 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do 
                     (vrps, elapsed) <- timedMS $ do             
-                        -- TODO It take 350ms, which is pretty strange, profile it.           
+                        -- TODO It takes 350ms, which is pretty strange, profile it.           
                         !vrps <- getVrps tx database lastVersion
                         atomically $ do
                             writeTVar (appState ^. #world) lastVersion

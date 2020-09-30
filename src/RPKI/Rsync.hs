@@ -126,7 +126,7 @@ loadRsyncRepository :: Storage s =>
                         RpkiObjectStore s -> 
                         ValidatorT vc IO Integer
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
-    worldVersion  <- liftIO $ getWorldVerion appState
+    worldVersion  <- liftIO $ getWorldVerionIO appState
     doSaveObjects worldVersion
   where 
     doSaveObjects worldVersion = do 

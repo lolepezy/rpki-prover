@@ -13,7 +13,7 @@ import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Database
 
-import           RPKI.RTR.RtrContext
+import           RPKI.RTR.RtrState
 
 
 data AppBottleneck = AppBottleneck {
@@ -26,7 +26,6 @@ data AppContext s = AppContext {
         logger         :: AppLogger, 
         config         :: Config,
         appState       :: AppState,
-        rtrState       :: TVar RtrContext,
         database       :: DB s,
         appBottlenecks :: AppBottleneck,
         httpContext    :: HttpContext    

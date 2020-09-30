@@ -238,7 +238,7 @@ saveSnapshot :: Storage s =>
                 -> BS.ByteString 
                 -> ValidatorT vc IO ()
 saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do      
-    worldVersion <- liftIO $ getWorldVerion $ appContext ^. typed @AppState
+    worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
     doSaveObjects worldVersion 
   where
     doSaveObjects worldVersion = do
@@ -319,7 +319,7 @@ saveDelta :: Storage s =>
             -> BS.ByteString 
             -> ValidatorT conf IO ()
 saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent = do        
-    worldVersion  <- liftIO $ getWorldVerion $ appContext ^. typed @AppState
+    worldVersion  <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
     doSaveObjects worldVersion
   where
     doSaveObjects worldVersion = do

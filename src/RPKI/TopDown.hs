@@ -65,20 +65,20 @@ data Stats = Stats {
     validCount :: Int
 }
 
-data Triple a b c = Triple a b c
+data T3 a b c = T3 a b c
     deriving stock (Show, Eq, Ord, Generic)
     
-instance (Monoid a, Monoid b, Monoid c) => Monoid (Triple a b c) where
-    mempty = Triple mempty mempty mempty
+instance (Monoid a, Monoid b, Monoid c) => Monoid (T3 a b c) where
+    mempty = T3 mempty mempty mempty
 
-instance (Semigroup a, Semigroup b, Semigroup c) => Semigroup (Triple a b c) where
-    Triple a1 b1 c1 <> Triple a2 b2 c2 = Triple (a1 <> a2) (b1 <> b2) (c1 <> c2)
+instance (Semigroup a, Semigroup b, Semigroup c) => Semigroup (T3 a b c) where
+    T3 a1 b1 c1 <> T3 a2 b2 c2 = T3 (a1 <> a2) (b1 <> b2) (c1 <> c2)
 
 -- List of hashes of certificates, validation contexts and verified resource sets 
 -- that are waiting for a PP to be fetched. CA certificates, pointig to delegated 
 -- CAs are normally getting in this list.
 newtype WaitingList =  WaitingList { unWList :: 
-        Map RpkiURL (Set (Triple Hash VContext (Maybe (VerifiedRS PrefixesAndAsns))))
+        Map RpkiURL (Set (T3 Hash VContext (Maybe (VerifiedRS PrefixesAndAsns))))
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype Monoid
@@ -88,7 +88,7 @@ instance Semigroup WaitingList where
 
 toWaitingList :: RpkiURL -> Hash -> VContext -> Maybe (VerifiedRS PrefixesAndAsns) -> WaitingList
 toWaitingList rpkiUrl hash vc resources =     
-    WaitingList $ Map.singleton rpkiUrl (Set.singleton (Triple hash vc resources))
+    WaitingList $ Map.singleton rpkiUrl (Set.singleton (T3 hash vc resources))
 
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
@@ -381,7 +381,7 @@ validateCARecursively
     (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
     case r of
         Left _alreadyQueued -> pure $ fromValidations validations
-        Right (Triple discoveredPPs waitingList tdResult) -> do                    
+        Right (T3 discoveredPPs waitingList tdResult) -> do                    
             tdResults <- extractPPsAndValidateDown discoveredPPs waitingList
             pure $! mconcat tdResults <> tdResult <> fromValidations validations                
 
@@ -425,7 +425,7 @@ validateCARecursively
             -- try to recover the validation context
             let waitingVContext = case waitingListForThesePPs of
                                 []                -> vc
-                                Triple _ vc' _ : _ -> vc'
+                                T3 _ vc' _ : _ -> vc'
 
             fetchResult <- fetchRepository appContext waitingVContext now repo                                            
 
@@ -481,7 +481,7 @@ validateCARecursively
         validateWaitingList waitingList =
             parallelTasks 
                 (cpuBottleneck appBottlenecks) 
-                waitingList $ \(Triple hash certVContext verifiedResources') -> do                    
+                waitingList $ \(T3 hash certVContext verifiedResources') -> do                    
                     o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                     case o of 
                         Just (CerRO waitingCertificate) -> do
@@ -505,7 +505,7 @@ validateCaCertificate :: Storage s =>
                 AppContext s ->
                 TopDownContext s ->
                 CerObject ->                
-                ValidatorT VContext IO (Triple PublicationPoints WaitingList TopDownResult)
+                ValidatorT VContext IO (T3 PublicationPoints WaitingList TopDownResult)
 validateCaCertificate appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
@@ -519,7 +519,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             let stopDescend = do 
                     -- remember to come back to this certificate when the PP is fetched
                     vContext' <- asks getVC                    
-                    pure $! Triple 
+                    pure $! T3 
                                 (asIfItIsMerged `shrinkTo` (Set.singleton url)) 
                                 (toWaitingList
                                     (getRpkiURL discoveredPP) 
@@ -542,7 +542,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         else validateThisCertAndGoDown                    
     where
 
-        validateThisCertAndGoDown :: ValidatorT VContext IO (Triple PublicationPoints WaitingList TopDownResult)
+        validateThisCertAndGoDown :: ValidatorT VContext IO (T3 PublicationPoints WaitingList TopDownResult)
         validateThisCertAndGoDown = do            
             let (childrenAki, certLocations') = (toAKI $ getSKI certificate, getLocations certificate)        
 
@@ -599,8 +599,8 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
 
                         -- Combine PPs and their waiting lists. On top of it, fix the 
                         -- last successfull validation times for PPs based on their fetch statuses.
-                        let Triple pps waitingList vrps = mconcat childrenResults
-                        pure $! Triple (adjustLastSucceeded pps) waitingList vrps
+                        let T3 pps waitingList vrps = mconcat childrenResults
+                        pure $! T3 (adjustLastSucceeded pps) waitingList vrps
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
 
@@ -639,7 +639,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
         -- 
         validateChild :: Validated CrlObject -> 
                         RpkiObject -> 
-                        ValidatorT VContext IO (Triple PublicationPoints WaitingList TopDownResult)
+                        ValidatorT VContext IO (T3 PublicationPoints WaitingList TopDownResult)
         validateChild validCrl ro = do
             -- At the moment of writing RFC 6486-bis 
             -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-00#page-12) 
@@ -666,10 +666,10 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         -- TODO Think about: it probably should be 
                         -- Left e -> let 
                         --             childCaError = mError (vContext $ toText $ NonEmpty.head $ getLocations ro) e)
-                        --           in Triple emptyPublicationPoints mempty (fromValidations childCaError)
+                        --           in T3 emptyPublicationPoints mempty (fromValidations childCaError)
                         -- because we want to ignore all the errors down the tree when reporting up, they can be confusing.
-                        Left _                         -> Triple emptyPublicationPoints mempty (fromValidations validations)                        
-                        Right (Triple pps wl tdResult) -> Triple pps wl (tdResult <> fromValidations validations)
+                        Left _                         -> T3 emptyPublicationPoints mempty (fromValidations validations)                        
+                        Right (T3 pps wl tdResult) -> T3 pps wl (tdResult <> fromValidations validations)
 
                 RoaRO roa ->
                     forChild (toText $ NonEmpty.head $ getLocations ro) $ do
@@ -678,7 +678,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         incValidObject topDownContext
                             -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Vrp])}|]
                         let vrps = getCMSContent $ cmsPayload roa
-                        pure $! Triple emptyPublicationPoints mempty (TopDownResult (Set.fromList vrps) mempty)
+                        pure $! T3 emptyPublicationPoints mempty (TopDownResult (Set.fromList vrps) mempty)
 
                 GbrRO gbr -> withEmptyPPs $
                     forChild (toText $ NonEmpty.head $ getLocations ro) $ do
@@ -689,7 +689,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                 _ -> withEmptyPPs $ pure ()
 
             where                
-                withEmptyPPs f = f >> (pure $! Triple emptyPublicationPoints mempty mempty)
+                withEmptyPPs f = f >> (pure $! T3 emptyPublicationPoints mempty mempty)
         
 
         findMft childrenAki locations = do
