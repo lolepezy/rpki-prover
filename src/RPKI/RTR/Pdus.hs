@@ -80,9 +80,9 @@ pduToBytes pdu (Session protocolVersion)  =
                 put (0 :: Word16)
                 put pduLen
                 put flags
-                put $ ipv4PrefixLen prefix
+                put (ipv4PrefixLen prefix)
                 put (fromIntegral maxLength :: Word8)
-                put (0 :: Word16)
+                put (0 :: Word8)
                 put prefix
                 put asn                
 
@@ -90,9 +90,9 @@ pduToBytes pdu (Session protocolVersion)  =
                 put (0 :: Word16)
                 put pduLen
                 put flags
-                put $ ipv6PrefixLen prefix
+                put (ipv6PrefixLen prefix)
                 put (fromIntegral maxLength :: Word8)
-                put (0 :: Word16)
+                put (0 :: Word8)
                 put prefix
                 put asn                
 
@@ -125,15 +125,6 @@ pduToBytes pdu (Session protocolVersion)  =
                 put errorText
     
         pduLen = pduLength pdu protocolVersion :: Int32
-
-
-        ipvXPrefixPdu :: Binary prefix => Flags -> prefix -> Put
-        ipvXPrefixPdu flags prefix = do 
-            put (0 :: Word16)
-            put pduLen
-            put flags
-            put prefix    
-        
 
 
 -- 

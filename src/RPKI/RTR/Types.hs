@@ -73,7 +73,6 @@ instance Binary RtrSessionId
 instance Binary SerialNumber
 
 -- Orphans
-instance Binary ASN
 instance Binary SKI
 instance Binary KI
 
@@ -129,6 +128,10 @@ instance Binary Ipv6Prefix where
         put w3
         
     get = fail "Not implemented and should not be"
+
+instance Binary ASN where 
+    put (ASN a) = put a        
+    get = ASN <$> get
         
 
 errorCodes :: [(ErrorCode, Word8)]
