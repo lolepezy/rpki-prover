@@ -24,7 +24,7 @@ import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
 
 import           Network.Socket                   hiding (recv)
-import           Network.Socket.ByteString        (recv, sendAll)
+import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 
 import           RPKI.AppContext
 import           RPKI.Config
@@ -146,35 +146,40 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     -- TODO Make it only 2 threads, it should be possible to get rid of `updateFromAppState`
     -- and listen to the `perClientUpdateChan` in `sendToClient`.
     connectionProcessor connection peer perClientUpdateChan rtrState = do
+
+        -- TODO This is bad, first `recv` is called in this thread
+        -- and then inside of `serveLoop`, refactor it.
         firstPdu   <- recv connection 1024
         (rtrContext, currentVrps', sendQueue) <- 
             atomically $ (,,) <$> 
                     readTVar rtrState <*>
                     readTVar (currentVrps appState) <*>
-                    newCQueue 10_000_000
+                    newCQueue 10
 
         case processFirstPdu rtrContext currentVrps' firstPdu of
             Left (responsePdu, message) -> do 
                 logError_ logger message
                 atomically $ writeCQueue sendQueue [responsePdu]
             Right (responsePdus, session) -> do                
+                -- logDebug_ logger [i|responsePdus = #{take 10 responsePdus}|]
                 atomically $ writeCQueue sendQueue responsePdus
 
-                -- `concurrently` is used here because we want to 
-                -- make sure that all the PDUs that ended up in the 
-                -- `sendQueue` will be sent to the client
+                -- `concurrently` is used here instead of `race` because we want to 
+                -- make sure that all the PDUs that ended up in the `sendQueue` will 
+                -- be sent to the client.   
                 void $ concurrently 
                     (sendToClient session sendQueue)
                     $ race 
                         (serveLoop session sendQueue)                    
                         $ updateFromAppState sendQueue
         where
-            sendToClient session sendQueue =
-                atomically (readCQueue sendQueue)>>= \case 
-                    Nothing -> pure ()
-                    Just pdus -> 
-                        forM_ pdus $ \pdu -> 
-                            sendAll connection $ BSL.toStrict $ pduToBytes pdu session
+            sendToClient session sendQueue = do
+                logDebug_ logger [i|sendToClient|]
+                atomically (readCQueue sendQueue) >>= \case 
+                    Nothing   -> pure ()
+                    Just pdus ->                        
+                        sendMany connection 
+                            $ map (\pdu -> BSL.toStrict $ pduToBytes pdu session) pdus
 
             serveLoop session sendQueue = do
                 logDebug_ logger [i|Waiting data from the client #{peer}|]
@@ -216,7 +221,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                             serveLoop session sendQueue                                                
 
             -- send around PDUs that RTR cache initiates to all the clients            
-            updateFromAppState sendQueue = do 
+            updateFromAppState sendQueue = do
+                logDebug_ logger [i|updateFromAppState|]
                 localChan <- atomically $ dupTChan perClientUpdateChan
                 forever $ atomically $ do
                     pdu <- readTChan localChan
