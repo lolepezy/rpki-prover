@@ -97,33 +97,25 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     
     listenToAppStateUpdates rtrState updateChan = do
 
-        -- Wait till some VRPs are generated (or are read from the cache)
-        -- This also means that there's a world version in appState.
-        --
-        -- TODO Make it more strict and obvious if possible (but that will 
-        -- require some generic refactoring).
-        worldVersion <- atomically $ do 
-            hasVrps' <- hasVrps appState
-            if not hasVrps' 
-                then retry                
-                else getWorldVerion appState
+        -- Wait until a complete world version is generted (or are read from the cache)      
+        worldVersion <- atomically $ waitForCompleteVersion appState            
 
         -- Now we can initialise rtrState with a new RtrState.
         atomically . writeTVar rtrState . Just =<< newRtrState worldVersion      
             
         -- In loop
-        --  - wait for a new world version (`listenWorldVersion` does that)
+        --  - wait for a new world version (`waitForNewCompleteVersion` does that)
         --  - when a version update happens, update RtrState with calculated diff
         -- 
-        -- TODO Make sure there are no lazyness anywhere in the RtrState, so no space leaks
         forever $ do
             (rtrContext, previousVersion, newVersion, newVrps) 
                 <- atomically $ 
                     readTVar rtrState >>= \case 
+                        -- this shouldn't really happen
                         Nothing         -> retry
                         Just rtrContext -> do
                             let knownVersion = rtrContext ^. #lastKnownWorldVersion
-                            (newVersion, newVrps) <- listenWorldVersion appState knownVersion
+                            (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
                             pure (rtrContext, knownVersion, newVersion, newVrps)
 
             logDebug_ logger [i|(previousVersion, newVersion) = #{(previousVersion, newVersion)}|]
@@ -140,6 +132,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     if thereAreVrpUpdates
                         then updatedRtrState rtrContext newVersion vrpDiff
                         else rtrContext { lastKnownWorldVersion = newVersion }                        
+
+            logDebug_ logger [i|thereAreVrpUpdates = #{thereAreVrpUpdates}, diff: added #{Set.size (added vrpDiff)}, deleted #{Set.size (deleted vrpDiff)} |]
 
             atomically $ do                
                 writeTVar rtrState $ Just rtrContext'

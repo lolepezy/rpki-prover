@@ -233,12 +233,6 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
     liftIO $ M.delete tx results wv
                  
 
-completeWorldVersion :: Storage s => 
-                        Tx s 'RW -> DB s -> WorldVersion -> IO ()
-completeWorldVersion tx database worldVersion =    
-    putVersion tx database worldVersion FinishedVersion
-
-
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Set Vrp)
 getVrps tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $
@@ -257,15 +251,25 @@ putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion =
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
-putVersion tx DB { versionStore = VersionStore s } wv versionState = liftIO $ M.put tx s wv versionState
+putVersion tx DB { versionStore = VersionStore s } wv versionState = 
+    liftIO $ M.put tx s wv versionState
 
 allVersions :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> m [(WorldVersion, VersionState)]
-allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
+allVersions tx DB { versionStore = VersionStore s } = 
+    liftIO $ M.all tx s
 
 deleteVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
+deleteVersion tx DB { versionStore = VersionStore s } wv = 
+    liftIO $ M.delete tx s wv
+
+
+completeWorldVersion :: Storage s => 
+                        Tx s 'RW -> DB s -> WorldVersion -> IO ()
+completeWorldVersion tx database worldVersion =    
+    putVersion tx database worldVersion CompletedVersion
+
 
 
 -- More complicated operations
@@ -320,7 +324,7 @@ deleteOldVersions database tooOld =
 
     versions <- roTx database $ \tx -> allVersions tx database    
     let toDelete = 
-            case [ version | (version, FinishedVersion) <- versions ] of
+            case [ version | (version, CompletedVersion) <- versions ] of
                 []       -> 
                     case versions of 
                         []  -> []
@@ -343,11 +347,11 @@ deleteOldVersions database tooOld =
 
 -- | Find the latest completed world version 
 -- 
-getLastFinishedVersion :: (Storage s) => 
+getLastCompletedVersion :: (Storage s) => 
                         DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
-getLastFinishedVersion database tx = do 
+getLastCompletedVersion database tx = do 
         vs <- allVersions tx database
-        pure $ case [ v | (v, FinishedVersion) <- vs ] of         
+        pure $ case [ v | (v, CompletedVersion) <- vs ] of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
 

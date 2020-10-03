@@ -30,7 +30,7 @@ validatorServer AppContext {..} =
     where
         getVRPs = 
             roTx versionStore $ \tx ->
-                getLastFinishedVersion database tx >>= \case 
+                getLastCompletedVersion database tx >>= \case 
                     Nothing          -> pure []            
                     Just lastVersion -> do
                         vrps <- getVrps tx database lastVersion
@@ -39,7 +39,7 @@ validatorServer AppContext {..} =
         getVResults = 
             roTx versionStore $ \tx -> 
                 let txValidations = runMaybeT $ do
-                        lastVersion <- MaybeT $ getLastFinishedVersion database tx
+                        lastVersion <- MaybeT $ getLastCompletedVersion database tx
                         validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
                         pure $ map toVR $ validationsToList validations
                 in fromMaybe [] <$> txValidations

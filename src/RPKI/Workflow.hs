@@ -133,7 +133,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                 putVrps tx database vrps worldVersion
                                 completeWorldVersion tx database worldVersion
                                 atomically $ do 
-                                    writeTVar (appState ^. #world) worldVersion
+                                    completeCurrentVersion appState                                    
                                     writeTVar (appState ^. #currentVrps) vrps
 
                     Just (CacheGC worldVersion) -> do
@@ -180,7 +180,7 @@ loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant    
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
     roTx database $ \tx -> 
-        getLastFinishedVersion database tx >>= \case 
+        getLastCompletedVersion database tx >>= \case 
             Nothing          -> pure ()
 
             Just lastVersion             
@@ -192,7 +192,7 @@ loadStoredAppState AppContext {..} = do
                         -- TODO It takes 350ms, which is pretty strange, profile it.           
                         !vrps <- getVrps tx database lastVersion
                         atomically $ do
-                            writeTVar (appState ^. #world) lastVersion
+                            completeCurrentVersion appState                            
                             writeTVar (appState ^. #currentVrps) vrps                        
                         pure vrps
                     logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
