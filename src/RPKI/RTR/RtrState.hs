@@ -42,9 +42,12 @@ data RtrState = RtrState {
 newVrpDiff :: Diff a
 newVrpDiff = Diff Set.empty Set.empty
 
+isEmptyDiff :: Diff a -> Bool
+isEmptyDiff Diff {..} = Set.null added && Set.null deleted
 
-newRtrContext :: WorldVersion -> IO RtrState 
-newRtrContext worldVersion = do
+
+newRtrState :: WorldVersion -> IO RtrState 
+newRtrState worldVersion = do
     session' <- generateSessionId
     serial'  <- genarateSerial
     pure $ RtrState worldVersion session' serial' serial' 100 mempty
@@ -54,9 +57,8 @@ newRtrContext worldVersion = do
         genarateSerial    = pure initialSerial
 
 
-
-updateContext :: RtrState -> WorldVersion -> VrpDiff -> RtrState
-updateContext RtrState {..} worldVersion diff = 
+updatedRtrState :: RtrState -> WorldVersion -> VrpDiff -> RtrState
+updatedRtrState RtrState {..} worldVersion diff = 
     RtrState {        
         lastKnownWorldVersion = worldVersion,        
         diffs = diffs',

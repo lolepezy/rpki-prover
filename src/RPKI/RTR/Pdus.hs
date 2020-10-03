@@ -57,8 +57,8 @@ pduLength (ErrorPdu _ bs1 bs2) _ =
 -- 
 -- | Serialise PDU into bytes according to the RTR protocal 
 -- 
-pduToBytes :: Pdu -> Session -> BSL.ByteString
-pduToBytes pdu (Session protocolVersion)  = 
+pduToBytes :: Pdu -> ProtocolVersion -> BSL.ByteString
+pduToBytes pdu protocolVersion = 
     runPut $ pduHeader >> pduContent
     where
         pduHeader = put protocolVersion >> put (toPduCode pdu)            
@@ -140,12 +140,12 @@ bytesToVersionedPdu bs =
     where
         parsePdu = do 
             protocolVersion <- get
-            pdu <- parseVersionedPdu $ Session protocolVersion            
+            pdu <- parseVersionedPdu protocolVersion
             pure $ VersionedPdu pdu protocolVersion
 
 
 bytesToPduOfKnownVersion :: Session -> BS.ByteString -> Either (ErrorCode, Text) Pdu
-bytesToPduOfKnownVersion s@(Session protocolVersion) bs = 
+bytesToPduOfKnownVersion s@(Session protocolVersion _) bs = 
     case runGetOrFail parsePdu (BSL.fromStrict bs) of
         Left (bs, offset, errorMessage) -> 
             Left (InvalidRequest, Text.pack $ "Error parsing " <> show (hex bs) <> ": " <> errorMessage)
@@ -154,12 +154,12 @@ bytesToPduOfKnownVersion s@(Session protocolVersion) bs =
     where
         parsePdu = do 
             _ignore :: ProtocolVersion <- get
-            pdu <- parseVersionedPdu s
+            pdu <- parseVersionedPdu protocolVersion
             pure $ VersionedPdu pdu protocolVersion
 
 
-parseVersionedPdu :: Session -> Get Pdu
-parseVersionedPdu (Session protocolVersion) = do 
+parseVersionedPdu :: ProtocolVersion -> Get Pdu
+parseVersionedPdu protocolVersion = do 
     pduCode :: Word8 <- get
     case pduCode of 
         0  -> do
@@ -263,4 +263,4 @@ parseVersionedPdu (Session protocolVersion) = do
 
  
 toVersioned :: Session -> Pdu -> VersionedPdu
-toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion
+toVersioned (Session protocolVersion _) pdu = VersionedPdu pdu protocolVersion

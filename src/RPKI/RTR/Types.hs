@@ -60,7 +60,10 @@ data ErrorCode = CorruptData
     deriving  (Show, Eq, Ord, Generic)
 
 
-newtype Session = Session ProtocolVersion
+data SessionState = Init | Working
+    deriving  (Show, Eq, Ord, Generic)
+
+data Session = Session ProtocolVersion SessionState
     deriving stock (Show, Eq, Ord, Generic)
 
 data Intervals = Intervals {

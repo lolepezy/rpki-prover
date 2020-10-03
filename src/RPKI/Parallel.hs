@@ -1,14 +1,12 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Parallel where
 
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Numeric.Natural
-
-import           Data.List.NonEmpty               (NonEmpty (..))
-import qualified Data.List.NonEmpty               as NonEmpty
 
 import qualified Control.Concurrent.STM.TBQueue  as Q
 
@@ -18,9 +16,15 @@ import           Control.Monad.IO.Class          (MonadIO, liftIO)
 import           Control.Concurrent.Async.Lifted
 import           Control.Monad.Trans.Control
 
-import Streaming
-import qualified Streaming.Prelude as S
-import Data.IORef.Lifted
+import           Data.List.NonEmpty              (NonEmpty (..))
+import qualified Data.List.NonEmpty              as NonEmpty
+
+import           Data.IORef.Lifted
+
+import           Streaming
+import qualified Streaming.Prelude               as S
+
+
 
 
 atLeastOne :: Natural -> Natural
@@ -165,7 +169,7 @@ bracketChanClosable size produce consume kill = do
 data QState = QWorks | QClosed
 
 -- Simplest closeable queue  
-data ClosableQueue a = ClosableQueue !(TBQueue a) !(TVar QState)    
+data ClosableQueue a = ClosableQueue (TBQueue a) (TVar QState)    
 
 newCQueueIO :: Natural -> IO (ClosableQueue a)
 newCQueueIO = atomically . newCQueue
@@ -260,9 +264,9 @@ data BottleneckFullExecutor = Requestor | Submitter
 -- A task can be asyncronous, executed by the requestor (lazy)
 -- and executed by the submitter (strict).
 data Task m a
-    = AsyncTask !(Async (StM m a))
-    | RequestorTask !(m a)
-    | SubmitterTask !(Async (StM m a))
+    = AsyncTask (Async (StM m a))
+    | RequestorTask (m a)
+    | SubmitterTask (Async (StM m a))
 
 
 -- | If the bootleneck is full, `io` will be executed by the caller of `waitTask`
