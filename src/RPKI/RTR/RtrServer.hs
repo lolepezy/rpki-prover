@@ -110,15 +110,15 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     
         forever $ do
             --  wait for a new complete world version
-            (rtrContext, previousVersion, newVersion, newVrps) 
+            (rtrState', previousVersion, newVersion, newVrps) 
                 <- atomically $ 
                     readTVar rtrState >>= \case 
                         -- this shouldn't really happen
                         Nothing         -> retry
-                        Just rtrContext -> do
-                            let knownVersion = rtrContext ^. #lastKnownWorldVersion
+                        Just rtrState' -> do
+                            let knownVersion = rtrState' ^. #lastKnownWorldVersion
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
-                            pure (rtrContext, knownVersion, newVersion, newVrps)
+                            pure (rtrState', knownVersion, newVersion, newVrps)
         
             previousVRPs <- roTx database $ \tx -> getVrps tx database previousVersion
             let vrpDiff = Diff { 
@@ -129,19 +129,19 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
             -- force evaluation of the new RTR context so that the old ones could be GC-ed.
-            let !rtrContext' = 
+            let !nextRtrState = 
                     if thereAreVrpUpdates
-                        then updatedRtrState rtrContext newVersion vrpDiff
-                        else rtrContext { lastKnownWorldVersion = newVersion }                        
+                        then updatedRtrState rtrState' newVersion vrpDiff
+                        else rtrState' { lastKnownWorldVersion = newVersion }                        
 
             logDebug_ logger [i|Generated new diff in VRP set: added #{Set.size (added vrpDiff)}, deleted #{Set.size (deleted vrpDiff)}.|]
 
             atomically $ do                
-                writeTVar rtrState $ Just rtrContext'
+                writeTVar rtrState $ Just nextRtrState
                 --  TODO Do not send notify PDUs more often than 1 minute (RFC says so)                    
                 when thereAreVrpUpdates $ 
                     writeTChan updateBroadcastChan 
-                        [NotifyPdu (rtrContext' ^. #currentSessionId) (rtrContext' ^. #currentSerial)]
+                        [NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)]
 
 
     -- For every connection run 3 threads:
@@ -297,7 +297,7 @@ respondToPdu
                                             -- TODO Figure out how to instantiate intervals
                                             -- Should they be configurable?                                                                     
                                             <> [EndOfDataPdu sessionId currentSerial defIntervals]
-                                        
+
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $              
                             Right $ [CacheResponsePdu currentSessionId] 

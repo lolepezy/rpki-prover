@@ -38,8 +38,8 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
-import           RPKI.Store.Data
 import           RPKI.Errors
+import           RPKI.RTR.RtrState
 
 import           Time.Types
 
@@ -483,6 +483,12 @@ instance Arbitrary V6.IpNetMask where
     shrink = genericShrink
 
 instance Arbitrary PrefixesAndAsns where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+-- RTR
+
+instance (Arbitrary a, Ord a) => Arbitrary (Diff a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

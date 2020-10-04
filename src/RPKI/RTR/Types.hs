@@ -168,17 +168,3 @@ instance Binary Intervals where
 
     get = Intervals <$> get <*> get <*> get
     
-
--- 
--- Wrap around at 2^31 - 1
--- https://tools.ietf.org/html/rfc8210#page-5
--- 
-nextSerial :: SerialNumber -> SerialNumber 
-nextSerial (SerialNumber n) = 
-    SerialNumber $ 
-        if (fromIntegral n :: Integer) == (2 :: Integer)^(31 :: Integer) - 1
-            then 0
-            else n + 1    
-
-initialSerial :: SerialNumber
-initialSerial = SerialNumber 1337
