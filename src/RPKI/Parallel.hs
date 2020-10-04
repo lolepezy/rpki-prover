@@ -153,7 +153,7 @@ bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 m (b, c)
 bracketChanClosable size produce consume kill = do        
     queue <- liftIO $ atomically $ newCQueue size
-    let closeQ = liftIO $ atomically $ closeQueue queue
+    let closeQ = liftIO $ atomically $ closeCQueue queue
     concurrently 
             (produce queue `finally` closeQ) 
             (consume queue `finally` closeQ)
@@ -197,8 +197,8 @@ readQueueChunked cq chunkSize f = go
                 [] -> pure ()
                 chu -> f chu >> go              
 
-closeQueue :: ClosableQueue a -> STM ()
-closeQueue (ClosableQueue _ s) = writeTVar s QClosed
+closeCQueue :: ClosableQueue a -> STM ()
+closeCQueue (ClosableQueue _ s) = writeTVar s QClosed
 
 
 readChunk :: Natural -> ClosableQueue a -> STM [a]

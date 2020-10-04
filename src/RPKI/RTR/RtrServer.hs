@@ -47,6 +47,8 @@ import           RPKI.AppState
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
+import           System.Timeout                   (timeout)
+
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -56,15 +58,15 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     rtrState <- atomically $ newTVar Nothing
     -- re-initialise the rtrContext and create a broadcast 
     -- channel to publish update for all clients
-    perClientUpdateChan <- atomically newBroadcastTChan 
+    updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
-            (runSocketBusiness rtrState perClientUpdateChan)
-            (listenToAppStateUpdates rtrState perClientUpdateChan)
+            (runSocketBusiness rtrState updateBroadcastChan)
+            (listenToAppStateUpdates rtrState updateBroadcastChan)
   where    
 
     -- | Handling TCP conections happens here
-    runSocketBusiness rtrState perClientUpdateChan = 
+    runSocketBusiness rtrState updateBroadcastChan = 
         withSocketsDo $ do                 
             address <- resolve (show rtrPort)
             bracket (open address) close loop
@@ -90,24 +92,24 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             (conn, peer) <- accept sock
             logDebug_ logger [i|Connection from #{peer}|]
             void $ forkFinally 
-                (serveConnection conn peer perClientUpdateChan rtrState) 
+                (serveConnection conn peer updateBroadcastChan rtrState) 
                 (\_ -> do 
                     logDebug_ logger [i|Closing connection with #{peer}|]
                     close conn)
     
-    listenToAppStateUpdates rtrState updateChan = do
+    -- | Block on updates on `appState` and when these update happen
+    -- generate the diff, update diffs, increment serials, etc. in RtrState 
+    -- and send 'notify PDU' to all clients using `broadcastChan`.
+    listenToAppStateUpdates rtrState updateBroadcastChan = do
 
         -- Wait until a complete world version is generted (or are read from the cache)      
         worldVersion <- atomically $ waitForCompleteVersion appState            
 
         -- Now we can initialise rtrState with a new RtrState.
         atomically . writeTVar rtrState . Just =<< newRtrState worldVersion      
-            
-        -- In loop
-        --  - wait for a new world version (`waitForNewCompleteVersion` does that)
-        --  - when a version update happens, update RtrState with calculated diff
-        -- 
+                    
         forever $ do
+            --  wait for a new complete world version
             (rtrContext, previousVersion, newVersion, newVrps) 
                 <- atomically $ 
                     readTVar rtrState >>= \case 
@@ -117,40 +119,36 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             let knownVersion = rtrContext ^. #lastKnownWorldVersion
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
                             pure (rtrContext, knownVersion, newVersion, newVrps)
-
-            logDebug_ logger [i|(previousVersion, newVersion) = #{(previousVersion, newVersion)}|]
-
+        
             previousVRPs <- roTx database $ \tx -> getVrps tx database previousVersion
             let vrpDiff = Diff { 
                     added = Set.difference newVrps previousVRPs,
                     deleted = Set.difference previousVRPs newVrps
                 }
-             
-            -- force evaluation of the new RTR context so that the old ones could be GC-ed.
+                         
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
+
+            -- force evaluation of the new RTR context so that the old ones could be GC-ed.
             let !rtrContext' = 
                     if thereAreVrpUpdates
                         then updatedRtrState rtrContext newVersion vrpDiff
                         else rtrContext { lastKnownWorldVersion = newVersion }                        
 
-            logDebug_ logger [i|thereAreVrpUpdates = #{thereAreVrpUpdates}, diff: added #{Set.size (added vrpDiff)}, deleted #{Set.size (deleted vrpDiff)} |]
+            logDebug_ logger [i|Generated new diff in VRP set: added #{Set.size (added vrpDiff)}, deleted #{Set.size (deleted vrpDiff)}.|]
 
             atomically $ do                
                 writeTVar rtrState $ Just rtrContext'
                 --  TODO Do not send notify PDUs more often than 1 minute (RFC says so)                    
                 when thereAreVrpUpdates $ 
-                    writeTChan updateChan 
+                    writeTChan updateBroadcastChan 
                         [NotifyPdu (rtrContext' ^. #currentSessionId) (rtrContext' ^. #currentSerial)]
 
 
     -- For every connection run 3 threads:
     --      receiveFromClient blocks on `recv` and accepts client requests
-    --      updateFromAppState blocks on updates from the new data coming from the validation process
     --      sendToClient simply sends all PDU to the client
-    -- 
-    -- TODO Make it only 2 threads, it should be possible to get rid of `updateFromAppState`
-    -- and listen to the `perClientUpdateChan` in `sendToClient`.
-    serveConnection connection peer perClientUpdateChan rtrState = do
+    --
+    serveConnection connection peer updateBroadcastChan rtrState = do
 
         -- TODO This is bad, first `recv` is called in this thread
         -- and then inside of `serveLoop`, refactor it.
@@ -162,32 +160,33 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     newCQueue 10
 
         case processFirstPdu rtrContext currentVrps' firstPdu of
-            Left (responsePdu, message) -> do 
-                logError_ logger message
+            Left (errorPdu, message) -> do 
+                logError_ logger [i|First PDU from the #{peer} was wrong: #{message}|]
+                sendAll connection $ BSL.toStrict $ pduToBytes errorPdu V0
 
-                atomically $ do 
-                    writeCQueue outboxQueue [responsePdu]
-                    closeQueue outboxQueue
             Right (responsePdus, session) -> do                
                 -- logDebug_ logger [i|responsePdus = #{take 10 responsePdus}|]
                 atomically $ writeCQueue outboxQueue responsePdus
 
                 -- run `sendToClient` in parallel to the serveLoop
                 withAsync (sendToClient session outboxQueue) $ \sender -> do
-                    serveLoop session outboxQueue
-                    wait sender
+                    serveLoop session outboxQueue 
+                    `finally` do 
+                        atomically (closeCQueue outboxQueue)
+                        -- Wait before returning from this functions and thus getting the sender killed
+                        -- Let it first drain `outboxQueue` to the socket.
+                        timeout 30_000_000 $ wait sender
                         
         where
-            sendToClient session outboxQueue = do
-                localChan <- atomically $ dupTChan perClientUpdateChan
-                loop localChan
+            sendToClient session outboxQueue =
+                loop =<< atomically (dupTChan updateBroadcastChan)
                 where
-                    loop localChan = do 
+                    loop stateUpdateChan = do 
                         -- wait for queued PDUs or for state updates
                         r <- atomically $ 
-                                readCQueue outboxQueue 
-                                    `orElse` 
-                                (Just <$> readTChan localChan)
+                                    readCQueue outboxQueue 
+                                `orElse` 
+                                    (Just <$> readTChan stateUpdateChan)
 
                         case r of
                             Nothing   -> pure ()
@@ -196,8 +195,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                     (\pdu -> BSL.toStrict $ 
                                                 pduToBytes pdu (session ^. typed @ProtocolVersion)) 
                                     pdus
-                                loop localChan
+                                loop stateUpdateChan
 
+            -- Main loop of the client-server interaction: wait for a PDU from the client, 
+            -- 
             serveLoop session outboxQueue = do
                 logDebug_ logger [i|Waiting data from the client #{peer}|]
                 pduBytes <- recv connection 128
@@ -210,14 +211,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             Left (errorCode, errorMessage) -> do                                
                                 let errorPdu = ErrorPdu errorCode (convert pduBytes) (convert errorMessage)
                                 writeCQueue outboxQueue [errorPdu]
-                                closeQueue outboxQueue
                                 pure $ logError_ logger [i|Error parsing a PDU #{errorMessage}.|]
 
                             Right pdu -> do                                                                
-                                rtrContext  <- readTVar rtrState
+                                rtrState'   <- readTVar rtrState
                                 currentVrps <- readTVar $ currentVrps appState
                                 let response = respondToPdu 
-                                                    rtrContext
+                                                    rtrState'
                                                     currentVrps
                                                     (toVersioned session pdu)
                                                     pduBytes
@@ -225,16 +225,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
                                 case response of 
                                     Left (errorPdu, message) -> do
-                                        writeCQueue outboxQueue [errorPdu]
-                                        closeQueue outboxQueue
-                                        pure $ do                                             
-                                            logDebug_ logger [i|Parsed PDU: #{pdu}.|]
-                                            logError_ logger [i|Response: #{pdu}.|]
+                                        writeCQueue outboxQueue [errorPdu]                                        
+                                        pure $ logDebug_ logger 
+                                            [i|Parsed PDU: #{pdu}, error = #{message}, responding with #{errorPdu}.|]
                                     Right pdus -> do
-                                        writeCQueue outboxQueue pdus
-                                        closeQueue outboxQueue
+                                        writeCQueue outboxQueue pdus                                        
                                         pure $ do 
-                                            logDebug_ logger [i|Parsed PDU: #{pdu}.|]                                
+                                            logDebug_ logger [i|Parsed PDU: #{pdu}, responding with #{pdus}.|]
                                             serveLoop session outboxQueue                                                
                                
 -- 
@@ -253,12 +250,12 @@ processFirstPdu rtrContext currentVrps pduBytes =
         Right versionedPdu@(VersionedPdu pdu protocolVersion) -> 
             case pdu of 
                 SerialQueryPdu _ _ -> let 
-                    session' = Session protocolVersion Init
+                    session' = Session protocolVersion
                     r = respondToPdu rtrContext currentVrps versionedPdu pduBytes session'
                     in (, session') <$> r
 
                 ResetQueryPdu -> let
-                    session' = Session protocolVersion Init
+                    session' = Session protocolVersion
                     r = respondToPdu rtrContext currentVrps versionedPdu pduBytes session'
                     in (, session') <$> r
 
@@ -281,7 +278,7 @@ respondToPdu
     currentVrps 
     (VersionedPdu pdu pduProtocol) 
     pduBytes 
-    (Session sessionProtocol sessionState) =
+    (Session sessionProtocol) =
         case rtrContext of 
             Nothing -> let
                 text :: Text = "VRP set is empty, the RTR cache is not ready yet."
@@ -294,9 +291,9 @@ respondToPdu
                                 Nothing -> 
                                     -- we don't have the data, you are too far behind
                                     Right [CacheResetPdu]
-                                Just (squashDiffs -> diff) -> 
+                                Just diffs' -> 
                                     Right $ [CacheResponsePdu sessionId] 
-                                            <> diffPayloadPdus diff
+                                            <> diffPayloadPdus (squashDiffs diffs')
                                             -- TODO Figure out how to instantiate intervals
                                             -- Should they be configurable?                                                                     
                                             <> [EndOfDataPdu sessionId currentSerial defIntervals]
@@ -307,9 +304,10 @@ respondToPdu
                                     <> currentCachePayloadPdus currentVrps
                                     <> [EndOfDataPdu currentSessionId currentSerial defIntervals]
 
-                    RouterKeyPdu _ _ _ _  -> 
-                        Right []
-        
+                    other -> let
+                        text = "Unexpected PDU received from the client: " <> show other
+                        in Left (ErrorPdu NoDataAvailable (convert pduBytes) (convert text), convert text)
+                                
     where        
         withProtocolVersionCheck _ respond = 
             if sessionProtocol == pduProtocol

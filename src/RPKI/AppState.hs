@@ -77,11 +77,6 @@ versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
--- TODO Probably redifine it to have more explicit/stable criteria
-hasVrps :: AppState -> STM Bool
-hasVrps AppState {..} = 
-    not . Set.null <$> readTVar currentVrps
-
 -- Block on version updates
 waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Set Vrp)
 waitForNewCompleteVersion AppState {..} knownWorldVersion = do 

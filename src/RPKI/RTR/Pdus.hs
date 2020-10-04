@@ -145,7 +145,7 @@ bytesToVersionedPdu bs =
 
 
 bytesToPduOfKnownVersion :: Session -> BS.ByteString -> Either (ErrorCode, Text) Pdu
-bytesToPduOfKnownVersion s@(Session protocolVersion _) bs = 
+bytesToPduOfKnownVersion s@(Session protocolVersion) bs = 
     case runGetOrFail parsePdu (BSL.fromStrict bs) of
         Left (bs, offset, errorMessage) -> 
             Left (InvalidRequest, Text.pack $ "Error parsing " <> show (hex bs) <> ": " <> errorMessage)
@@ -263,4 +263,4 @@ parseVersionedPdu protocolVersion = do
 
  
 toVersioned :: Session -> Pdu -> VersionedPdu
-toVersioned (Session protocolVersion _) pdu = VersionedPdu pdu protocolVersion
+toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion

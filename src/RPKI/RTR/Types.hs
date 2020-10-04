@@ -60,16 +60,13 @@ data ErrorCode = CorruptData
     deriving  (Show, Eq, Ord, Generic)
 
 
-data SessionState = Init | Working
-    deriving  (Show, Eq, Ord, Generic)
-
-data Session = Session ProtocolVersion SessionState
+newtype Session = Session ProtocolVersion
     deriving stock (Show, Eq, Ord, Generic)
 
 data Intervals = Intervals {
     refreshInterval :: Int32,
-    retryInterval :: Int32,
-    expireInterval:: Int32
+    retryInterval   :: Int32,
+    expireInterval  :: Int32
 } deriving stock (Show, Eq, Ord)
 
 instance Binary RtrSessionId
