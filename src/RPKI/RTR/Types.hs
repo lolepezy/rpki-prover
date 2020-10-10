@@ -6,16 +6,19 @@
 
 module RPKI.RTR.Types where
 
-import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy     as BSL
 
-import Data.Binary
-import Data.Int
+import           Data.Binary
+import           Data.Int
+import           Data.Text                (Text)
 
-import RPKI.Domain (SKI(..), KI(..))
-import RPKI.Resources.Types
-import Data.Data
-import GHC.Generics (Generic)
-import RPKI.Resources.Resources
+import           Data.Data
+import           GHC.Generics             (Generic)
+import           RPKI.Domain              (KI (..), SKI (..))
+import           RPKI.Resources.Resources
+import           RPKI.Resources.Types
+
+
 
 data ProtocolVersion = 
     V0 -- | as defined by https://tools.ietf.org/rfc/rfc6810
@@ -33,7 +36,10 @@ data Pdu = NotifyPdu RtrSessionId SerialNumber
         | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
         | RouterKeyPdu ASN Flags SKI BSL.ByteString
-        | ErrorPdu ErrorCode BSL.ByteString BSL.ByteString
+        | ErrorPdu ErrorCode BSL.ByteString (Maybe Text)
+    deriving stock (Show, Eq, Ord, Generic)
+
+newtype PduCode = PduCode Word8 
     deriving stock (Show, Eq, Ord, Generic)
 
 data VersionedPdu = VersionedPdu Pdu ProtocolVersion
@@ -60,6 +66,14 @@ data ErrorCode = CorruptData
     deriving  (Show, Eq, Ord, Generic)
 
 
+data PduHeader = PduHeader ProtocolVersion PduCode
+    deriving stock (Show, Eq, Ord, Generic)
+
+data PduParseError = 
+      ParsedNothing ErrorCode Text 
+    | ParsedOnlyHeader ErrorCode Text PduHeader 
+    deriving stock (Show, Eq, Ord, Generic)
+
 newtype Session = Session ProtocolVersion
     deriving stock (Show, Eq, Ord, Generic)
 
@@ -69,8 +83,10 @@ data Intervals = Intervals {
     expireInterval  :: Int32
 } deriving stock (Show, Eq, Ord)
 
+
 instance Binary RtrSessionId
 instance Binary SerialNumber
+instance Binary PduCode
 
 -- Orphans
 instance Binary SKI
@@ -82,7 +98,7 @@ defIntervals = Intervals {
     refreshInterval = 3600,
     retryInterval   = 600,
     expireInterval  = 7200
-}
+}     
 
 instance Binary ProtocolVersion where
     put f = put $ case f of 
@@ -134,7 +150,7 @@ instance Binary ASN where
     get = ASN <$> get
         
 
-errorCodes :: [(ErrorCode, Word8)]
+errorCodes :: [(ErrorCode, Word16)]
 errorCodes = [
         (CorruptData,                   0),
         (PduInternalError,              1),  
@@ -151,13 +167,13 @@ instance Binary ErrorCode where
     put code =
         case lookup code errorCodes of
             Just n  -> put n
-            Nothing -> error $ "Oops, there's not code for " <> show code
+            Nothing -> fail $ "Oops, there's not code for " <> show code
 
     get = do
         numeric <- get
         case filter ((== numeric) . snd) errorCodes of 
             [(c, _)] -> pure c
-            _        -> error $ "No error code value for " <> show numeric
+            _        -> fail $ "No error code value for " <> show numeric
 
 
 instance Binary Intervals where         

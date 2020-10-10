@@ -34,7 +34,7 @@ validatorServer AppContext {..} =
                     Nothing          -> pure []            
                     Just lastVersion -> do
                         vrps <- getVrps tx database lastVersion
-                        pure $ map (\(Vrp a p len) -> VrpDto a p len) $ Set.toList vrps                    
+                        pure $ map (\(Vrp a p len) -> VrpDto a p len) vrps                    
 
         getVResults = 
             roTx versionStore $ \tx -> 

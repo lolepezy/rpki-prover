@@ -41,7 +41,7 @@ data WorldState = WorldState WorldVersion VersionState
 
 data AppState = AppState {
     world       :: TVar WorldState,
-    currentVrps :: TVar (Set Vrp)
+    currentVrps :: TVar [Vrp]
 } deriving stock (Generic)
 
 -- 
@@ -78,7 +78,7 @@ instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
 -- Block on version updates
-waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Set Vrp)
+waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, [Vrp])
 waitForNewCompleteVersion AppState {..} knownWorldVersion = do 
     readTVar world >>= \case 
         WorldState w CompletedVersion 

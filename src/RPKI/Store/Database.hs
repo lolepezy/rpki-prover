@@ -88,7 +88,7 @@ instance Storage s => WithStorage s (ValidationsStore s) where
 
 -- | VRP store
 newtype VRPStore s = VRPStore {    
-    vrps :: SMap "vrps" s WorldVersion (Set Vrp)
+    vrps :: SMap "vrps" s WorldVersion [Vrp]
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -234,10 +234,10 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
                  
 
 getVrps :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Set Vrp)
+            Tx s mode -> DB s -> WorldVersion -> m [Vrp]
 getVrps tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $
     M.get tx vrpMap wv >>= \case 
-        Nothing -> pure Set.empty
+        Nothing -> pure []
         Just v  -> pure v
 
 deleteVRPs :: (MonadIO m, Storage s) => 
@@ -245,7 +245,7 @@ deleteVRPs :: (MonadIO m, Storage s) =>
 deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap wv
 
 putVrps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set Vrp -> WorldVersion -> m ()
+            Tx s 'RW -> DB s -> [Vrp] -> WorldVersion -> m ()
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
     liftIO $ M.put tx vrpMap worldVersion vrps    
 

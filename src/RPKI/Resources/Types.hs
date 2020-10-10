@@ -3,7 +3,9 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
 
 module RPKI.Resources.Types where
 
@@ -37,7 +39,7 @@ newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-data IpPrefix = Ipv4P !Ipv4Prefix | Ipv6P !Ipv6Prefix
+data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
@@ -46,8 +48,8 @@ newtype ASN = ASN Word32
     deriving anyclass (NFData, Serialise)  
     deriving newtype Enum
 
-data AsResource = AS !ASN
-                | ASRange !ASN !ASN
+data AsResource = AS ASN
+                | ASRange ASN ASN
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
@@ -68,13 +70,13 @@ class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p), WithSetOps p) => Pref
 data ValidationRFC = Strict_ | Reconsidered_
     deriving stock (Show, Eq, Ord, Generic) 
 
-data RSet r = RS !r | Inherit
+data RSet r = RS r | Inherit
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data IpResourceSet = IpResourceSet
-    !(RSet (IntervalSet Ipv4Prefix))
-    !(RSet (IntervalSet Ipv6Prefix))
+        (RSet (IntervalSet Ipv4Prefix))
+        (RSet (IntervalSet Ipv6Prefix))
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
@@ -87,16 +89,16 @@ newtype AsResources = AsResources (RSet (IntervalSet AsResource))
     deriving anyclass Serialise
 
 data AllResources = AllResources 
-    !(RSet (IntervalSet Ipv4Prefix))
-    !(RSet (IntervalSet Ipv6Prefix))
-    !(RSet (IntervalSet AsResource))
+        (RSet (IntervalSet Ipv4Prefix))
+        (RSet (IntervalSet Ipv6Prefix))
+        (RSet (IntervalSet AsResource))
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 data PrefixesAndAsns = PrefixesAndAsns 
-    !(IntervalSet Ipv4Prefix)
-    !(IntervalSet Ipv6Prefix)
-    !(IntervalSet AsResource)
+        (IntervalSet Ipv4Prefix)
+        (IntervalSet Ipv6Prefix)
+        (IntervalSet AsResource)
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 

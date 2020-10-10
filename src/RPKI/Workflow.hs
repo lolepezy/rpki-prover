@@ -129,12 +129,13 @@ runWorkflow appContext@AppContext {..} tals = do
                                 pure r
 
                             saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
+                                let uniqueVrps = Set.toList $ Set.fromList vrps
                                 putValidations tx (validationsStore database) worldVersion tdValidations                                 
-                                putVrps tx database vrps worldVersion
+                                putVrps tx database uniqueVrps worldVersion
                                 completeWorldVersion tx database worldVersion
                                 atomically $ do 
                                     completeCurrentVersion appState                                    
-                                    writeTVar (appState ^. #currentVrps) vrps
+                                    writeTVar (appState ^. #currentVrps) uniqueVrps
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion
@@ -196,7 +197,7 @@ loadStoredAppState AppContext {..} = do
                             writeTVar (appState ^. #currentVrps) vrps                        
                         pure vrps
                     logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
-                                      [i|current state (#{Set.size vrps} VRPs), took #{elapsed}ms.|]
+                                      [i|current state (#{length vrps} VRPs), took #{elapsed}ms.|]
                 
 
 -- 
