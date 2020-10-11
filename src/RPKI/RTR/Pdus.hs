@@ -53,11 +53,11 @@ pduLength EndOfDataPdu {} V1    = 24
 pduLength CacheResetPdu _       = 8
 
 pduLength (RouterKeyPdu _ _ ski bs2) _ = 
-    fromIntegral $ 8 + 4 + (fromIntegral (skiLen ski) :: Int64) + BSL.length bs2
+    fromIntegral $ 12 + (fromIntegral (skiLen ski) :: Int64) + BSL.length bs2
 
 pduLength (ErrorPdu _ pduBytes errorMessage) _ = 
-    fromIntegral $ 8 + 4 + 4 + 
-                    BSL.length pduBytes + 
+    fromIntegral $ 16 + 
+                    maybe 0 BSL.length pduBytes + 
                     maybe 0 (fromIntegral . BS.length . encodeUtf8) errorMessage
 
 -- 
@@ -125,8 +125,11 @@ pduToBytes pdu protocolVersion =
             ErrorPdu errorCode causingPdu errorText -> do                
                 put errorCode
                 put pduLen
-                put (fromIntegral (BSL.length causingPdu) :: Word32)
-                put causingPdu 
+                case causingPdu of
+                    Nothing          -> put (0 :: Word32)
+                    Just causingPdu' -> do 
+                        put (fromIntegral (BSL.length causingPdu') :: Word32)
+                        put causingPdu 
                 case errorText of
                     Nothing         -> put (0 :: Word32)
                     Just errorText' -> do 
@@ -252,7 +255,7 @@ parseVersionedPdu protocolVersion pduType =
             textLen :: Int32 <- get
             encodedMessage <- getByteString $ fromIntegral textLen
             pure $ ErrorPdu errorCode 
-                    (BSL.fromStrict encapsulatedPdu) 
+                    (Just $ BSL.fromStrict encapsulatedPdu) 
                     (Just $ decodeUtf8 encodedMessage)
 
         PduCode n  -> fail $ "Invalid PDU type " <> show n

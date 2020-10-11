@@ -120,8 +120,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         executeOrDie
                             (mconcat <$> mapConcurrently processTAL tals)
                             (\tdResult@TopDownResult{..} elapsed -> do 
-                                saveTopDownResult tdResult                                
-                                logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
+                                uniqueVrps <- saveTopDownResult tdResult                                
+                                logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
                         where 
                             processTAL tal = do 
                                 (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
@@ -136,6 +136,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                 atomically $ do 
                                     completeCurrentVersion appState                                    
                                     writeTVar (appState ^. #currentVrps) uniqueVrps
+                                pure uniqueVrps
 
                     Just (CacheGC worldVersion) -> do
                         let now = versionToMoment worldVersion

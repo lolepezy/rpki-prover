@@ -36,7 +36,7 @@ data Pdu = NotifyPdu RtrSessionId SerialNumber
         | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
         | RouterKeyPdu ASN Flags SKI BSL.ByteString
-        | ErrorPdu ErrorCode BSL.ByteString (Maybe Text)
+        | ErrorPdu ErrorCode (Maybe BSL.ByteString) (Maybe Text)
     deriving stock (Show, Eq, Ord, Generic)
 
 newtype PduCode = PduCode Word8 
