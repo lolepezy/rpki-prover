@@ -216,10 +216,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             Nothing   -> pure ()
                             Just pdus -> do 
                                 logDebug_ logger [i|sendToClient loop, before send.|]
-                                sendMany connection $ map 
-                                    (\pdu -> BSL.toStrict $ 
-                                                pduToBytes pdu (session ^. typed @ProtocolVersion)) 
-                                    pdus
+                                forM_ pdus (\pdu -> 
+                                        sendAll connection $ BSL.toStrict $ 
+                                            pduToBytes pdu (session ^. typed @ProtocolVersion))
+                                    
                                 logDebug_ logger [i|sendToClient loop, after send.|]                                    
                                 loop stateUpdateChan
 
