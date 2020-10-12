@@ -4,17 +4,19 @@
 
 module RPKI.RRDP.Parse where
 
-import           Control.Monad.Trans.Except
+import           Control.Monad
 import           Control.Monad.Primitive
 import           Control.Monad.ST
 import           Control.Monad.Trans
+import           Control.Monad.Trans.Except
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Base64           as B64
-
-import           Data.Hex                         (unhex)
+import qualified Data.ByteString.Base16 as Hex
 import qualified Data.List                        as List
 import qualified Data.Text                        as Text
+
+
 
 import           Data.String.Interpolate.IsString
 
@@ -28,6 +30,7 @@ import           RPKI.Domain
 import           RPKI.Errors
 import           RPKI.RRDP.Types
 import           RPKI.Util
+
 
 
 -- | Parse RRDP notification file from a strict bytestring.
@@ -216,6 +219,7 @@ type Element = (BS.ByteString, [(BS.ByteString, BS.ByteString)])
 -- 
 -- We only care about tags, attributes and character data without taking into account nested 
 -- structure or anything of that sort.
+--
 parseXml :: (PrimMonad pm) =>
             BS.ByteString ->
             (Element -> ExceptT RrdpError pm ()) ->
@@ -223,22 +227,27 @@ parseXml :: (PrimMonad pm) =>
             ExceptT RrdpError pm ()
 parseXml bs onElement onText = do
     element <- lift $ stToPrim $ newSTRef (mempty, [])
-    Xeno.process
-        (\elemName -> lift $ stToPrim $ modifySTRef element (\(_, as) -> (elemName, as)))
-        (\name value -> lift $ stToPrim $ modifySTRef element (\(n, as) -> (n, (name, value) : as)))
-        (\elemName -> do
-            e@(existingElemName, _) <- lift $ stToPrim $ readSTRef element
-            if existingElemName /= elemName 
-                then throwE $ BrokenXml [i|Expected closing tag for #{existingElemName}, but got #{elemName}.|]
-                else lift $ stToPrim $ writeSTRef element (elemName, [])
-            onElement e)
-        onText
-        nothing
-        nothing
-        bs
-    where 
-        nothing _ = pure ()
+    Xeno.process (processor element) bs
+  where
+    processor element = Xeno.Process {
+        openF = \elemName -> 
+                    lift $ stToPrim $ modifySTRef element (\(_, as) -> (elemName, as)),    
+        attrF = \name value -> 
+                    lift $ stToPrim $ modifySTRef element (\(n, as) -> (n, (name, value) : as)),
 
+        endOpenF = \elemName -> do
+                    e@(existingElemName, _) <- lift $ stToPrim $ readSTRef element
+                    if existingElemName /= elemName 
+                        then throwE $ BrokenXml [i|Expected closing tag for #{existingElemName}, but got #{elemName}.|]
+                        else lift $ stToPrim $ writeSTRef element (elemName, [])
+                    onElement e,    
+
+        textF = onText,
+        closeF = nothing,
+        cdataF = nothing
+    }
+    nothing _ = pure ()
+    
 
 -- Utilities
 

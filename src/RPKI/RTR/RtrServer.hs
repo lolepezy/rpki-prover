@@ -20,7 +20,7 @@ import           Control.Monad
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as BSL
-import           Data.Hex
+import           Data.ByteString.Base16 as Hex
 
 import           Data.Text                        (Text)
 
@@ -41,7 +41,7 @@ import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 
 import           RPKI.Parallel
-import           RPKI.Util                        (convert)
+import           RPKI.Util                        (convert, hex, hexL)
 
 import           RPKI.AppState
 import           RPKI.Store.Base.Storage
@@ -84,8 +84,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             setSocketOption sock ReuseAddr 1
             bind sock (addrAddress addr)            
-            let fd = fdSocket sock
-            setCloseOnExecIfNeeded fd
+            withFdSocket sock setCloseOnExecIfNeeded
             listen sock 10
             pure sock
 
@@ -183,7 +182,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 Left (errorPdu, errorMessage) -> do
                     let errorBytes = pduToBytes errorPdu V0
                     logError_ logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
-                                       [i|error PDU: #{errorPdu}, errorBytes = #{hex errorBytes}, length = #{pduLength errorPdu V0}|]
+                                       [i|error PDU: #{errorPdu}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu V0}|]
                     sendAll connection $ BSL.toStrict $ pduToBytes errorPdu V0
 
                 Right (responsePdus, session) -> do
@@ -245,9 +244,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         let ifJust1 z def f = maybe def f z                            
                         let noop = pure $ pure ()                        
 
-                        let logError = ifJust1 message noop $ \m -> pure $ logError_ logger m
+                        logError <- ifJust1 message noop $ \m -> pure $ logError_ logger m
 
-                        let respond = ifJust1 versionedPdu noop $ \(VersionedPdu pdu _) -> do
+                        respond <- ifJust1 versionedPdu noop $ \(VersionedPdu pdu _) -> do
                             rtrState'   <- readTVar rtrState
                             currentVrps <- readTVar $ currentVrps appState
                             let response = respondToPdu 
@@ -266,11 +265,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                     pure $ do 
                                         logDebug_ logger [i|Parsed PDU: #{pdu}, responding with #{take 2 pdus}.. PDUs.|]
                                         serveLoop session outboxQueue           
-                                                                
+                                                                    
                         ifJust1 errorPdu (pure ()) $ \errorPdu' -> 
                             writeCQueue outboxQueue [errorPdu']                                        
 
-                        liftM2 (>>) logError respond
+                        pure $ logError >> respond
 
 
 -- | Helper function to reduce repeated code

@@ -6,7 +6,7 @@
 module RPKI.RRDP.ParseSpec where
 
 import           Data.ByteString.Short             as BSS
-import           Data.Hex                          (hex)
+import           Data.ByteString.Base16 as Hex
 
 import           RPKI.Domain
 import           RPKI.RRDP.Parse
@@ -19,7 +19,7 @@ import           Test.Tasty.QuickCheck             as QC
 
 import           Data.String.Interpolate
 
-import           RPKI.Util                         (convert)
+import           RPKI.Util                         (convert, hex)
 
 import           RPKI.Orphans
 

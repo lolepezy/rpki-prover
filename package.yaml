@@ -28,7 +28,7 @@ default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, Dat
                     TypeFamilies, TypeOperators
 
 dependencies:
-- base >= 4.7 && < 5
+- base
 - aeson
 - asn1-encoding
 - asn1-parse
@@ -56,8 +56,6 @@ dependencies:
 - file-embed-lzma
 - generic-lens
 - hashable
-- hex
-- hexpat
 - hourglass
 - hourglass-orphans
 - hw-ip
@@ -84,7 +82,6 @@ dependencies:
 - servant-swagger-ui
 - stm
 - stm-chans
-- stm-containers
 - streaming
 - streaming-bytestring
 - streaming-utils
@@ -112,8 +109,8 @@ dependencies:
 
 
 ghc-options:
-  # - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
-  - -j4 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
+  - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
+#   - -j4 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
 
 #   - -with-rtsopts=-N    
 #   - -O2

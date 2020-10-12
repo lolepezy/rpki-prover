@@ -17,7 +17,7 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 
 import           Codec.Serialise
-import           Data.Hex
+import           Data.ByteString.Base16 as Hex
 import           Data.Int
 
 import           Data.Hourglass
@@ -144,7 +144,7 @@ instance Show KI where
     show (KI b) = hexShow b
 
 hexShow :: BSS.ShortByteString -> String
-hexShow = show . hex . BSS.fromShort
+hexShow = show . Hex.encode . BSS.fromShort
 
 -- | Domain objects
 

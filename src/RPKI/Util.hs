@@ -7,20 +7,25 @@ module RPKI.Util where
 import           Control.Exception
 import           Numeric.Natural
 
-import qualified Crypto.Hash.SHA256      as S256
-import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Char8   as C
-import qualified Data.ByteString.Lazy    as LBS
-import qualified Data.ByteString.Short   as BSS
+import qualified Crypto.Hash.SHA256          as S256
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString.Base16      as Hex
+import qualified Data.ByteString.Base16.Lazy as HexLazy
+import qualified Data.ByteString.Char8       as C
+import qualified Data.ByteString.Lazy        as LBS
+import qualified Data.ByteString.Short       as BSS
 import           Data.Char
-import qualified Data.String.Conversions as SC
-import           Data.Text               (Text)
-import qualified Data.Text               as Text
+import qualified Data.String.Conversions     as SC
+import           Data.Text                   (Text)
+import qualified Data.Text                   as Text
 import           Data.Word
 import           RPKI.Domain
 
 import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
+
+
 
 
 sha256 :: LBS.ByteString -> Hash
@@ -31,6 +36,19 @@ sha256s = Hash . BSS.toShort . S256.hash
 
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
+
+unhex :: BS.ByteString -> Maybe BS.ByteString
+unhex hexed = 
+    let (h, problematic) = Hex.decode hexed
+    in if BS.null problematic
+        then Just h
+        else Nothing
+
+hex :: BS.ByteString -> BS.ByteString
+hex = Hex.encode    
+
+hexL :: BSL.ByteString -> BSL.ByteString
+hexL = HexLazy.encode    
 
 class ConvertibleAsSomethigString s1 s2 where
     convert :: s1 -> s2

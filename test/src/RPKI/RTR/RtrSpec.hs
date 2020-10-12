@@ -7,7 +7,7 @@ module RPKI.RTR.RtrSpec where
 
 import           Control.Monad
 import           Data.ByteString.Short             as BSS
-import           Data.Hex                          (hex)
+import           Data.ByteString.Base16 as Hex
 
 import qualified Data.Set                          as Set
 import           RPKI.Domain

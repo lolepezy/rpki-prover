@@ -7,40 +7,42 @@
 {-# LANGUAGE TypeOperators         #-}
 
 module RPKI.Http.Api where
-    
-import qualified Data.ByteString            as BS
-import qualified Data.ByteString.Lazy       as BSL
-import qualified Data.ByteString.Short      as BSS
+
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString.Short       as BSS
 
 import           Data.Int
-import           Data.Text                  (Text)
+import           Data.Text                   (Text)
+import qualified Data.Text                   as Text
 
-import           Data.ByteArray             (convert)
-import           Data.Text.Encoding         (decodeUtf8, encodeUtf8)
+import           Data.ByteArray              (convert)
+import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 
-import           GHC.Generics               (Generic)
+import           GHC.Generics                (Generic)
 
-import           Data.Aeson                 as Json
-import           Data.Csv                   (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord)
-import qualified Data.Csv                   as Csv
+import           Data.Aeson                  as Json
+import           Data.Csv                    (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord)
+import qualified Data.Csv                    as Csv
 
-import qualified Crypto.PubKey.Curve25519   as C25519
-import qualified Crypto.PubKey.Curve448     as C448
-import           Crypto.PubKey.DSA          (Params (..), PublicKey (..))
+import qualified Crypto.PubKey.Curve25519    as C25519
+import qualified Crypto.PubKey.Curve448      as C448
+import           Crypto.PubKey.DSA           (Params (..), PublicKey (..))
 import           Crypto.PubKey.ECC.Types
-import qualified Crypto.PubKey.Ed25519      as E25519
-import qualified Crypto.PubKey.Ed448        as E448
-import           Crypto.PubKey.RSA.Types    (PublicKey (..))
+import qualified Crypto.PubKey.Ed25519       as E25519
+import qualified Crypto.PubKey.Ed448         as E448
+import           Crypto.PubKey.RSA.Types     (PublicKey (..))
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
-import           Data.Hex
+import qualified Data.ByteString.Base16      as Hex
+import qualified Data.ByteString.Base16.Lazy as HexLazy
 import           Data.Hourglass
-import           Data.X509                  as X509
+import           Data.X509                   as X509
 
 import           Servant.API
 import           Servant.CSV.Cassava
 
-import           RPKI.Domain                as Domain
+import           RPKI.Domain                 as Domain
 import           RPKI.Errors
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
@@ -48,7 +50,9 @@ import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Database
 import           RPKI.Time
-import qualified RPKI.Util                  as U
+import qualified RPKI.Util                   as U
+
+
 
 
 
@@ -282,8 +286,10 @@ instance FromHttpApiData Hash where
 
 parseHash :: Text -> Either Text Hash
 parseHash hashText = do 
-    h <- unhex $ encodeUtf8 hashText
-    pure $ U.mkHash h
+    let (h, problematic) = Hex.decode $ encodeUtf8 hashText
+    if BS.null problematic
+        then Right $ U.mkHash h
+        else Left $ Text.pack $ "Broken hex: " <> show problematic
 
 
 -- Some utilities
@@ -291,7 +297,7 @@ shortBsJson :: BSS.ShortByteString -> Json.Value
 shortBsJson = toJSON . showHex . BSS.fromShort
 
 showHex :: BS.ByteString -> Text
-showHex = decodeUtf8 . hex
+showHex = decodeUtf8 . Hex.encode
 
 showHexL :: BSL.ByteString -> Text
-showHexL = decodeUtf8 . BSL.toStrict . hex
+showHexL = decodeUtf8 . BSL.toStrict . HexLazy.encode

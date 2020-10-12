@@ -164,10 +164,9 @@ errorCodes = [
     ]
 
 instance Binary ErrorCode where         
-    put code =
-        case lookup code errorCodes of
-            Just n  -> put n
-            Nothing -> fail $ "Oops, there's not code for " <> show code
+    put code = let 
+        Just n = lookup code errorCodes
+        in put n
 
     get = do
         numeric <- get
