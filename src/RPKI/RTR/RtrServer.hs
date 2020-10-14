@@ -263,7 +263,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                 Right pdus -> do
                                     writeCQueue outboxQueue pdus                                        
                                     pure $ do 
-                                        logDebug_ logger [i|Parsed PDU: #{pdu}, responding with #{take 2 pdus}.. PDUs.|]
+                                        logDebug_ logger [i|Parsed PDU: #{pdu}, responding with #{take 10 pdus}.. PDUs.|]
                                         serveLoop session outboxQueue           
                                                                     
                         ifJust1 errorPdu (pure ()) $ \errorPdu' -> 
@@ -341,12 +341,12 @@ respondToPdu :: Maybe RtrState
                 -> Session
                 -> Either (Pdu, Text) [Pdu]
 respondToPdu 
-    rtrContext
+    rtrState
     currentVrps 
     (VersionedPdu pdu pduProtocol) 
     pduBytes 
     (Session sessionProtocol) =
-        case rtrContext of 
+        case rtrState of 
             Nothing -> let
                 text :: Text = "VRP set is empty, the RTR cache is not ready yet."
                 in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
@@ -354,16 +354,20 @@ respondToPdu
                 case pdu of 
                     SerialQueryPdu sessionId serial -> 
                         withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
-                            case diffsFromSerial rtrState serial of
-                                Nothing -> 
-                                    -- we don't have the data, you are too far behind
-                                    Right [CacheResetPdu]
-                                Just diffs' -> 
-                                    Right $ [CacheResponsePdu sessionId] 
-                                            <> diffPayloadPdus (squashDiffs diffs')
-                                            -- TODO Figure out how to instantiate intervals
-                                            -- Should they be configurable?                                                                     
-                                            <> [EndOfDataPdu sessionId currentSerial defIntervals]
+                            if serial == currentSerial 
+                                then Right $ [CacheResponsePdu sessionId] 
+                                          <> [EndOfDataPdu sessionId currentSerial defIntervals]
+                                else 
+                                    case diffsFromSerial rtrState serial of
+                                        Nothing -> 
+                                            -- we don't have the data, you are too far behind
+                                            Right [CacheResetPdu]
+                                        Just diffs' -> 
+                                            Right $ [CacheResponsePdu sessionId] 
+                                                    <> diffPayloadPdus (squashDiffs diffs')
+                                                    -- TODO Figure out how to instantiate intervals
+                                                    -- Should they be configurable?                                                                     
+                                                    <> [EndOfDataPdu sessionId currentSerial defIntervals]
 
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $              
