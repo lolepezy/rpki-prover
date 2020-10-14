@@ -26,6 +26,7 @@ import           RPKI.AppState
 import           RPKI.Orphans
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
+import           RPKI.RTR.RtrServer
 import           RPKI.RTR.Types
 
 import qualified Test.Tasty.HUnit                  as HU
@@ -45,7 +46,9 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testOneDiff,
         testTwoIndependentDiffs,
         testTwoDependentDiffs,
-        testThreeDiffs
+        testThreeDiffs,
+        -- testRespond,
+        testParseErrorPdu
     ]
 
 rtrStateGroup :: TestTree
@@ -105,6 +108,39 @@ newDiff added deleted = Diff {
     }
 
 
+-- testRespond :: TestTree
+-- testRespond = HU.testCase "Should insert and get a repository" $ do    
+--     appState <- newAppState
+--     z <- newRtrState =<< getWorldVerionIO appState
+
+--     let rtrState = z
+    
+--     vrps :: [Vrp] <- replicateM 5 $ QC.generate arbitrary
+
+--     let pdu = SerialQueryPdu (currentSessionId rtrState) (currentSerial rtrState)
+
+--     let response = respondToPdu 
+--                         (Just rtrState) 
+--                         vrps 
+--                         (VersionedPdu pdu V1)
+--                         (pduToBytes pdu V1)
+--                         (Session V1)
+
+--     putStrLn $ "response = " <> show response 
+
+--     pure ()
+
+
+testParseErrorPdu :: TestTree
+testParseErrorPdu = HU.testCase "Should parse Error PDU from rtrclient program" $ do    
+    let bytes = "\SOH\n\NUL\ACK\NUL\NUL\NUL$\NUL\NUL\NUL\DC4\SOH\EOT\NUL\NUL\NUL\NUL\NUL\DC4\NUL\NAK\NAK\NUL\199\253\128\NUL\NUL\NUL\NUL\209\NUL\NUL\NUL\NUL"
+    HU.assertEqual 
+        "Couldn't parse Error PDU properly"
+        (Right (VersionedPdu (ErrorPdu WithdrawalOfUnknownRecord (Just "\SOH\EOT\NUL\NUL\NUL\NUL\NUL\DC4\NUL\NAK\NAK\NUL\199\253\128\NUL\NUL\NUL\NUL\209") Nothing) V1))
+        (bytesToVersionedPdu bytes)    
+
+
+
 -- testRtrStateUpdates :: TestTree
 -- testRtrStateUpdates = HU.testCase "Should insert and get a repository" $ do    
 --     appState <- newAppState
@@ -149,4 +185,3 @@ newDiff added deleted = Diff {
 --         <> ", lastKnownWorldVersion = " <> show lastKnownWorldVersion
 --         <> ", currentSessionId = " <> show currentSessionId
 --         <> ", maxSerialsPerSession = " <> show maxSerialsPerSession <> "]"
-    

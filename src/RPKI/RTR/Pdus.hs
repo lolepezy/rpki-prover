@@ -249,14 +249,22 @@ parseVersionedPdu protocolVersion pduType =
             pure $ RouterKeyPdu asn' flags (SKI (KI $ toShortBS ski)) spki
 
         PduCode 10 -> do 
-            errorCode <- get
-            encapsulatedPduLen :: Int32 <- get
-            encapsulatedPdu <- getByteString $ fromIntegral encapsulatedPduLen
+            errorCode                   <- get
+            _fullLength :: Int32        <- get
+            encapsulatedPduLen :: Int32 <- get            
+
+            encapsulatedPdu <- if encapsulatedPduLen == 0 
+                then pure Nothing
+                else Just <$> getByteString (fromIntegral encapsulatedPduLen)
+
             textLen :: Int32 <- get
-            encodedMessage <- getByteString $ fromIntegral textLen
+            encodedMessage <- if textLen == 0
+                then pure Nothing
+                else Just <$> getByteString (fromIntegral textLen)
+
             pure $ ErrorPdu errorCode 
-                    (Just $ BSL.fromStrict encapsulatedPdu) 
-                    (Just $ decodeUtf8 encodedMessage)
+                    (BSL.fromStrict <$> encapsulatedPdu) 
+                    (decodeUtf8 <$> encodedMessage)
 
         PduCode n  -> fail $ "Invalid PDU type " <> show n
 
