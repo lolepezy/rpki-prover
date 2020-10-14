@@ -184,15 +184,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     withAsync (sendToClient session outboxQueue) $ \sender -> do
                         serveLoop session outboxQueue 
                             `finally` do 
-                                logDebug_ logger [i|111111|]
                                 atomically (closeCQueue outboxQueue)
                                 -- Wait before returning from this functions and thus getting the sender killed
                                 -- Let it first drain `outboxQueue` to the socket.
                                 void $ timeout 30_000_000 $ wait sender
-                                logDebug_ logger [i|222222|]
-
-                    logDebug_ logger [i|33333|]
-
         where
             sendToClient session outboxQueue =
                 loop =<< atomically (dupTChan updateBroadcastChan)
@@ -208,12 +203,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         case r of
                             Nothing   -> pure ()
                             Just pdus -> do 
-                                logDebug_ logger [i|sendToClient loop, before send.|]
                                 forM_ pdus (\pdu -> 
                                         sendAll connection $ BSL.toStrict $ 
                                             pduToBytes pdu (session ^. typed @ProtocolVersion))
-                                    
-                                logDebug_ logger [i|sendToClient loop, after send.|]                                    
+
                                 loop stateUpdateChan
 
             -- Main loop of the client-server interaction: wait for a PDU from the client, 
