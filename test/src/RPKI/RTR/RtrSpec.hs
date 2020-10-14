@@ -47,7 +47,7 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoIndependentDiffs,
         testTwoDependentDiffs,
         testThreeDiffs,
-        -- testRespond,
+        testGenerateDiffs,
         testParseErrorPdu
     ]
 
@@ -130,6 +130,24 @@ newDiff added deleted = Diff {
 
 --     pure ()
 
+
+testGenerateDiffs :: TestTree
+testGenerateDiffs = HU.testCase "Should generate correct VRP diffs" $ do            
+    vrps1 :: [Vrp] <- replicateM 10 $ QC.generate arbitrary    
+    vrps2 :: [Vrp] <- replicateM 5 $ QC.generate arbitrary        
+    vrps3 :: [Vrp] <- replicateM 15 $ QC.generate arbitrary
+    vrps4 :: [Vrp] <- replicateM 20 $ QC.generate arbitrary
+
+    let diff1 = evalVrpDiff (vrps1 <> vrps2) vrps1
+
+    HU.assertEqual "Wrong deleted diff" (added diff1) Set.empty
+    HU.assertEqual "Wrong deleted diff 2" (deleted diff1) (Set.fromList vrps2)    
+
+    let diff2 = evalVrpDiff (vrps1 <> vrps2) (vrps1 <> vrps3)
+
+    HU.assertEqual "Wrong mixed diff" (added diff2) (Set.fromList vrps3)
+    HU.assertEqual "Wrong mixed diff 2" (deleted diff2) (Set.fromList vrps2)    
+    
 
 testParseErrorPdu :: TestTree
 testParseErrorPdu = HU.testCase "Should parse Error PDU from rtrclient program" $ do    

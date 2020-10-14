@@ -102,6 +102,15 @@ squashDiffs diffs =
              deleted = Set.difference (Set.union (deleted diff) (deleted resultDiff)) (added resultDiff)
          }
 
+evalVrpDiff :: [Vrp] -> [Vrp] -> VrpDiff
+evalVrpDiff previousVrps newVrps = let 
+    newVrpsSet      = Set.fromList newVrps
+    previousVrpsSet = Set.fromList previousVrps
+    in Diff { 
+        added = Set.difference newVrpsSet previousVrpsSet,
+        deleted = Set.difference previousVrpsSet newVrpsSet
+    }
+
 
 -- 
 -- Wrap around at 2^31 - 1

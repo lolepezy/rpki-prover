@@ -120,15 +120,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps)
         
-            previousVRPs <- roTx database $ \tx -> getVrps tx database previousVersion
-            let vrpDiff = let 
-                    newVrpsSet      = Set.fromList newVrps
-                    previousVrpsSet = Set.fromList previousVRPs
-                    in Diff { 
-                        added = Set.difference newVrpsSet previousVrpsSet,
-                        deleted = Set.difference previousVrpsSet newVrpsSet
-                    }
-                         
+            previousVrps <- roTx database $ \tx -> getVrps tx database previousVersion
+            let vrpDiff            = evalVrpDiff previousVrps newVrps                         
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
             -- force evaluation of the new RTR context so that the old ones could be GC-ed.
