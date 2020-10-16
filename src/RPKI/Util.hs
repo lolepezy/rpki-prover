@@ -27,7 +27,6 @@ import           Data.IORef.Lifted
 
 
 
-
 sha256 :: LBS.ByteString -> Hash
 sha256 = Hash . BSS.toShort . S256.hashlazy
 

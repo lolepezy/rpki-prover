@@ -52,6 +52,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.TAL
 import           RPKI.Time
+import           RPKI.StrictTuple
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
@@ -64,15 +65,6 @@ import           System.Timeout                   (timeout)
 data Stats = Stats {
     validCount :: Int
 }
-
-data T3 a b c = T3 a b c
-    deriving stock (Show, Eq, Ord, Generic)
-    
-instance (Monoid a, Monoid b, Monoid c) => Monoid (T3 a b c) where
-    mempty = T3 mempty mempty mempty
-
-instance (Semigroup a, Semigroup b, Semigroup c) => Semigroup (T3 a b c) where
-    T3 a1 b1 c1 <> T3 a2 b2 c2 = T3 (a1 <> a2) (b1 <> b2) (c1 <> c2)
 
 -- List of hashes of certificates, validation contexts and verified resource sets 
 -- that are waiting for a PP to be fetched. CA certificates, pointig to delegated 

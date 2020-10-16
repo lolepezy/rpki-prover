@@ -6,7 +6,7 @@
 module RPKI.RTR.RtrState where
 
 import           Data.Foldable          (toList)
-import           Data.Set               (Set)
+import           Data.Set               ((\\), Set)
 import qualified Data.Set               as Set
 
 import           GHC.Generics
@@ -22,8 +22,8 @@ import           RPKI.AppState
 
 
 data Diff a = Diff { 
-        added   :: Set a, 
-        deleted :: Set a
+        added   :: [a], 
+        deleted :: [a]
     } 
     deriving stock (Show, Eq, Ord, Generic)
 
@@ -39,10 +39,10 @@ data RtrState = RtrState {
     deriving stock (Show, Eq, Generic)
 
 newVrpDiff :: Diff a
-newVrpDiff = Diff Set.empty Set.empty
+newVrpDiff = Diff [] []
 
 isEmptyDiff :: Diff a -> Bool
-isEmptyDiff Diff {..} = Set.null added && Set.null deleted
+isEmptyDiff Diff {..} = List.null added && List.null deleted
 
 
 newRtrState :: WorldVersion -> IO RtrState 
@@ -82,12 +82,12 @@ diffsFromSerial RtrState {..} clientSerial =
     case laterSerials (toList diffs) of
         [] -> Nothing
         ds -> Just ds
-    where
-        nextClient = nextSerial clientSerial
-        laterSerials [] = []
-        laterSerials ((s, _) : ds)
-            | s == nextClient = ds
-            | otherwise       = laterSerials ds
+  where
+    nextClient = nextSerial clientSerial
+    laterSerials [] = []
+    laterSerials ((s, _) : ds)
+        | s == nextClient = ds
+        | otherwise       = laterSerials ds
 
 
 -- | Transform a list of diffs into one diff that doesn't contain duplicates
@@ -97,20 +97,31 @@ squashDiffs :: Ord a => [(SerialNumber, Diff a)] -> Diff a
 squashDiffs diffs = 
     List.foldr (squash . snd) newVrpDiff $ List.sortOn fst diffs
   where
-     squash diff resultDiff = Diff {
-             added   = Set.difference (Set.union (added diff)   (added resultDiff))   (deleted resultDiff),
-             deleted = Set.difference (Set.union (deleted diff) (deleted resultDiff)) (added resultDiff)
+     squash diff resultDiff = let
+         added'   = Set.fromList $ added diff   <> added resultDiff
+         deleted' = Set.fromList $ deleted diff <> deleted resultDiff
+         in Diff {
+             added   = Set.toList $ added'  \\ Set.fromList (deleted resultDiff),
+             deleted = Set.toList $ deleted' \\ Set.fromList (added resultDiff)
          }
 
 evalVrpDiff :: [Vrp] -> [Vrp] -> VrpDiff
-evalVrpDiff previousVrps newVrps = let 
-    newVrpsSet      = Set.fromList newVrps
-    previousVrpsSet = Set.fromList previousVrps
+evalVrpDiff [] [] = Diff [] []    
+evalVrpDiff [] n = Diff { 
+                    added   = n,
+                    deleted = []
+                }
+evalVrpDiff p [] = Diff { 
+                    added   = [],
+                    deleted = p
+                }
+evalVrpDiff p n = let
+    newVrpsSet      = Set.fromList n
+    previousVrpsSet = Set.fromList p
     in Diff { 
-        added = Set.difference newVrpsSet previousVrpsSet,
-        deleted = Set.difference previousVrpsSet newVrpsSet
+        added   = Set.toList $ newVrpsSet \\ previousVrpsSet,
+        deleted = Set.toList $ previousVrpsSet \\ newVrpsSet
     }
-
 
 -- 
 -- Wrap around at 2^31 - 1

@@ -103,8 +103,8 @@ squash diffs = squashDiffs $ map (\(i, d) -> (SerialNumber i, d)) $ zip [1..] di
 
 newDiff :: Ord a => [a] -> [a] -> Diff a
 newDiff added deleted = Diff { 
-        added = Set.fromList added, 
-        deleted = Set.fromList deleted
+        added = added, 
+        deleted = deleted
     }
 
 
@@ -136,17 +136,16 @@ testGenerateDiffs = HU.testCase "Should generate correct VRP diffs" $ do
     vrps1 :: [Vrp] <- replicateM 10 $ QC.generate arbitrary    
     vrps2 :: [Vrp] <- replicateM 5 $ QC.generate arbitrary        
     vrps3 :: [Vrp] <- replicateM 15 $ QC.generate arbitrary
-    vrps4 :: [Vrp] <- replicateM 20 $ QC.generate arbitrary
 
     let diff1 = evalVrpDiff (vrps1 <> vrps2) vrps1
 
-    HU.assertEqual "Wrong deleted diff" (added diff1) Set.empty
-    HU.assertEqual "Wrong deleted diff 2" (deleted diff1) (Set.fromList vrps2)    
+    HU.assertEqual "Wrong deleted diff" (Set.fromList $ added diff1) Set.empty
+    HU.assertEqual "Wrong deleted diff 2" (Set.fromList $ deleted diff1) (Set.fromList vrps2)    
 
     let diff2 = evalVrpDiff (vrps1 <> vrps2) (vrps1 <> vrps3)
 
-    HU.assertEqual "Wrong mixed diff" (added diff2) (Set.fromList vrps3)
-    HU.assertEqual "Wrong mixed diff 2" (deleted diff2) (Set.fromList vrps2)    
+    HU.assertEqual "Wrong mixed diff" (Set.fromList $ added diff2) (Set.fromList vrps3)
+    HU.assertEqual "Wrong mixed diff 2" (Set.fromList $ deleted diff2) (Set.fromList vrps2)    
     
 
 testParseErrorPdu :: TestTree

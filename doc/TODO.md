@@ -76,6 +76,7 @@
 ---------------------------------  In progress ----------------------------------------
 
 Implement RTR server.
+ - Store only as much VRPs in diff as in one full VRP set, avoid potential bloating
 
 --------------------------------------- TODOs -----------------------------------------
 
