@@ -8,25 +8,25 @@ module RPKI.RTR.RtrServer where
 import           Control.Concurrent               (forkFinally)
 
 import           Control.Lens                     ((^.))
-import           Data.Generics.Labels
-import           Data.Generics.Product.Typed
 
-import           Data.Foldable          (toList)
-
+import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
 
+import           Data.Generics.Labels
+import           Data.Generics.Product.Typed
+
+import           Data.Foldable                    (for_, toList)
+
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as BSL
-import           Data.ByteString.Base16 as Hex
 
-import           Data.Text                        (Text)
-
-import qualified Data.Set                         as Set
+import           Data.List.Split                  (chunksOf)
 
 import           Data.String.Interpolate.IsString
+import           Data.Text                        (Text)
 
 import           Network.Socket                   hiding (recv, recvFrom)
 import           Network.Socket.ByteString        (recv, sendAll, sendMany)
@@ -41,13 +41,15 @@ import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 
 import           RPKI.Parallel
-import           RPKI.Util                        (convert, hex, hexL)
+import           RPKI.Util                        (convert, hexL)
 
 import           RPKI.AppState
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
 import           System.Timeout                   (timeout)
+
+
 
 
 
@@ -192,6 +194,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                 -- Let it first drain `outboxQueue` to the socket.
                                 void $ timeout 30_000_000 $ wait sender
         where
+            -- | Wait for PDUs to appear in either broadcast chan or 
+            -- in this session's outbox and send them to the socket.
             sendToClient session outboxQueue =
                 loop =<< atomically (dupTChan updateBroadcastChan)
                 where
@@ -199,15 +203,15 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         -- wait for queued PDUs or for state updates
                         r <- atomically $ 
                                     readCQueue outboxQueue 
-                                `orElse` 
-                                    (Just <$> readTChan stateUpdateChan)
+                                <|>(Just <$> readTChan stateUpdateChan)
 
                         case r of
                             Nothing   -> pure ()
                             Just pdus -> do 
-                                forM_ pdus (\pdu -> 
-                                        sendAll connection $ BSL.toStrict $ 
-                                            pduToBytes pdu (session ^. typed @ProtocolVersion))
+                                for_ (chunksOf 1000 pdus) $ \chunk -> 
+                                        sendMany connection 
+                                            $ map (\pdu -> BSL.toStrict $ 
+                                                    pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
 
                                 loop stateUpdateChan
 
@@ -259,11 +263,11 @@ responseAction logger peer session rtrState currentVrps pduBytes =
                 
         response pdu = let 
             r = respondToPdu 
-                        rtrState
-                        currentVrps
-                        (toVersioned session pdu)
-                        pduBytesLazy
-                        session
+                    rtrState
+                    currentVrps
+                    (toVersioned session pdu)
+                    pduBytesLazy
+                    session
             in 
                 case r of 
                     Left (errorPdu, message) -> let
@@ -280,10 +284,10 @@ responseAction logger peer session rtrState currentVrps pduBytes =
         case versionedPdu of 
             Nothing                   -> Left errors
             Just (VersionedPdu pdu _) -> 
-                fmap (errors <> ) $ response pdu 
+                (errors <> ) <$> response pdu 
 
 
--- | Helper function to reduce repeated code
+-- | Helper function to reduce repeated code.
 -- 
 analyzePdu :: Show peer => 
                 peer 

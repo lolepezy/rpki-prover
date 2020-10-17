@@ -80,6 +80,7 @@ dependencies:
 - servant-cassava
 - servant-server
 - servant-swagger-ui
+- split
 - stm
 - stm-chans
 - streaming
