@@ -203,15 +203,15 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         -- wait for queued PDUs or for state updates
                         r <- atomically $ 
                                     readCQueue outboxQueue 
-                                <|>(Just <$> readTChan stateUpdateChan)
+                                <|> (Just <$> readTChan stateUpdateChan)
 
                         case r of
                             Nothing   -> pure ()
                             Just pdus -> do 
                                 for_ (chunksOf 1000 pdus) $ \chunk -> 
-                                        sendMany connection 
-                                            $ map (\pdu -> BSL.toStrict $ 
-                                                    pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
+                                    sendMany connection 
+                                        $ map (\pdu -> BSL.toStrict $ 
+                                                pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
 
                                 loop stateUpdateChan
 

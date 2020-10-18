@@ -25,6 +25,7 @@ import           GHC.Generics
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
+import           Data.List.Split                  (chunksOf)
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (fromMaybe)
@@ -580,16 +581,15 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                 visitObjects topDownContext $ map snd childrenHashes
                         
                         let processChildren = do 
-                                -- r <- parallelTasks 
-                                --     (cpuBottleneck appBottlenecks) 
-                                --     childrenHashes $ \(filename, hash') -> 
-                                --         validateManifestEntry filename hash' validCrl
-                                -- TODO Re-implement parallel execution, current version is extremely 
-                                -- memory-hungry.
-                                r <- forM childrenHashes $ \(filename, hash') -> 
-                                        validateManifestEntry filename hash' validCrl
+                                let hashesInChunks = chunksOf 200 childrenHashes
+                                r <- fmap mconcat $ parallelTasks 
+                                        (cpuBottleneck appBottlenecks) 
+                                        hashesInChunks 
+                                        $ \chunk -> 
+                                            forM chunk $ \(filename, hash') -> 
+                                                validateManifestEntry filename hash' validCrl                                
                                 markAllEntriesAsVisited
-                                pure r
+                                pure $! r
                         
                         childrenResults <- processChildren `catchError` 
                                         (\e -> markAllEntriesAsVisited >> throwError e)
