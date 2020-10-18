@@ -120,7 +120,7 @@ library:
   source-dirs: src
   
 executables:
-  rpki-prover-exe:
+  rpki-prover:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
@@ -129,8 +129,7 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - -with-rtsopts=-N 
-    - -with-rtsopts=-A32m 
+    - '"-with-rtsopts=-A24m -AL128m -N -qg"'
     # - -fPIC
     # cc-options: -static
     # ld-options: -static -pthread  
