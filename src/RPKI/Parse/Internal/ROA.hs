@@ -42,9 +42,9 @@ parseRoa bs = do
         getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
             getNextContainerMaybe Sequence >>= \case       
                 Just [BitString (BitArray nzBits bs')] -> 
-                    pure $ mkRoa bs' nzBits (fromIntegral nzBits) 
+                    pure $ mkRoa bs' nzBits (PrefixLength $ fromIntegral nzBits) 
                 Just [BitString (BitArray nzBits bs'), IntVal maxLength] -> 
-                    pure $ mkRoa bs' nzBits (fromInteger maxLength)           
+                    pure $ mkRoa bs' nzBits (PrefixLength $ fromInteger maxLength)           
                 Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
                 Nothing -> throwParseError "Unexpected ROA content"
             where 

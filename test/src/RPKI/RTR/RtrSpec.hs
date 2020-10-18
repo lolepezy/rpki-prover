@@ -48,7 +48,8 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoDependentDiffs,
         testThreeDiffs,
         testGenerateDiffs,
-        testParseErrorPdu
+        testParseErrorPdu,
+        testDiffFromSerial
     ]
 
 rtrStateGroup :: TestTree
@@ -146,6 +147,26 @@ testGenerateDiffs = HU.testCase "Should generate correct VRP diffs" $ do
 
     HU.assertEqual "Wrong mixed diff" (Set.fromList $ added diff2) (Set.fromList vrps3)
     HU.assertEqual "Wrong mixed diff 2" (Set.fromList $ deleted diff2) (Set.fromList vrps2)    
+    
+
+
+testDiffFromSerial :: TestTree
+testDiffFromSerial = HU.testCase "Should generate correct VRP diffs" $ do
+    appState <- newAppState
+    rtrState <- newRtrState =<< getWorldVerionIO appState
+    newVersion <- updateWorldVerion appState
+    diffs :: [VrpDiff] <- replicateM 3 $ QC.generate arbitrary
+    let rtrState1 = updatedRtrState rtrState newVersion (head diffs)
+
+    HU.assertEqual "Wrong diff 1" Nothing (diffsFromSerial rtrState initialSerial)
+
+    putStrLn $ "rtrState1 = " <> show rtrState1
+    putStrLn $ "diff1 = " <> show (diffsFromSerial rtrState initialSerial)
+
+    HU.assertEqual "Wrong diff 2" Nothing (diffsFromSerial rtrState (nextSerial initialSerial))
+
+    putStrLn $ "diff2 = " <> show (diffsFromSerial rtrState (nextSerial initialSerial))
+
     
 
 testParseErrorPdu :: TestTree

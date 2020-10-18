@@ -137,8 +137,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             logDebug_ logger [i|Generated new diff in VRP set: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
             when thereAreVrpUpdates $ do 
                 let RtrState {..} = nextRtrState
-                let diffs' = map fst $ toList diffs
-                logDebug_ logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffs'}.|]
+                let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{added d}, deleted = #{deleted d})|]) $ toList diffs
+                logDebug_ logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
 
             atomically $ do                
                 writeTVar rtrState $! let !z = Just nextRtrState in z
@@ -148,8 +148,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         [NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)]
 
 
-    -- For every connection run 3 threads:
-    --      receiveFromClient blocks on `recv` and accepts client requests
+    -- For every connection run 2 threads:
+    --      receiveFromClient blocks on `recv` and accepts zclient requests
     --      sendToClient simply sends all PDU to the client
     --
     serveConnection connection peer updateBroadcastChan rtrState = do
@@ -367,20 +367,20 @@ respondToPdu
                 in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
             Just rtrState@RtrState {..} ->             
                 case pdu of 
-                    SerialQueryPdu sessionId serial -> 
+                    SerialQueryPdu sessionId clientSerial -> 
                         withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
-                            if serial == currentSerial 
+                            if clientSerial == currentSerial 
                                 then let 
                                     pdus = [CacheResponsePdu sessionId] 
                                           <> [EndOfDataPdu sessionId currentSerial defIntervals]
                                     in Right (pdus, Nothing)
                                 else 
-                                    case diffsFromSerial rtrState serial of
+                                    case diffsFromSerial rtrState clientSerial of
                                         Nothing -> 
                                             -- we don't have the data, you are too far behind
                                             Right (
                                                 [CacheResetPdu], 
-                                                Just [i|Don't have data for serial #{serial}.|])
+                                                Just [i|No data for serial #{clientSerial}.|])
                                         Just diffs' -> let
                                             squashed = squashDiffs diffs'
                                             pdus = [CacheResponsePdu sessionId] 
@@ -388,7 +388,7 @@ respondToPdu
                                                     -- TODO Figure out how to instantiate intervals
                                                     -- Should they be configurable?                                                                     
                                                     <> [EndOfDataPdu sessionId currentSerial defIntervals]
-                                            in Right (pdus, Just [i|diffs' = #{diffs'}, squashed = #{squashed}|])
+                                            in Right (pdus, Just [i|clientSerial = #{clientSerial}, diffs' = #{diffs'}, squashed = #{squashed}|])
 
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $ let

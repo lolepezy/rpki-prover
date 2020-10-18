@@ -17,8 +17,9 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 
 import           Codec.Serialise
-import           Data.ByteString.Base16 as Hex
+import           Data.ByteString.Base16   as Hex
 import           Data.Int
+import           Data.Word                (Word8)
 
 import           Data.Hourglass
 import           Data.Kind                (Type)
@@ -31,11 +32,13 @@ import qualified Data.X509                as X509
 import           Data.ASN1.OID
 import           Data.ASN1.Types
 
-import           Data.Set             (Set)
+import           Data.Set                 (Set)
 
 import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
 import           RPKI.Time
+
+
 
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
@@ -298,7 +301,7 @@ newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
 data Vrp = Vrp 
     {-# UNPACK #-} !ASN 
     !IpPrefix 
-    {-# UNPACK #-} !Int16
+    {-# UNPACK #-} !PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

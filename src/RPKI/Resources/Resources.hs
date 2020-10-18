@@ -313,9 +313,8 @@ prefixV4ToBytes (Ipv4Prefix (V4.IpBlock p _)) = V4.ipAddressToWords p
 prefixV6ToBytes :: Ipv6Prefix -> (Word32, Word32, Word32, Word32)
 prefixV6ToBytes (Ipv6Prefix (V6.IpBlock (V6.IpAddress i) _)) = i
 
+ipv4PrefixLen :: Ipv4Prefix -> PrefixLength       
+ipv4PrefixLen (Ipv4Prefix (V4.IpBlock _ (V4.IpNetMask mask))) = PrefixLength mask
 
-ipv4PrefixLen :: Ipv4Prefix -> Word8      
-ipv4PrefixLen (Ipv4Prefix (V4.IpBlock _ (V4.IpNetMask mask))) = mask
-
-ipv6PrefixLen :: Ipv6Prefix -> Word8      
-ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = mask
+ipv6PrefixLen :: Ipv6Prefix -> PrefixLength      
+ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask

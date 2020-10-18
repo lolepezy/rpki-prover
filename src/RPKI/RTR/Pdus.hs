@@ -87,7 +87,7 @@ pduToBytes pdu protocolVersion =
                 put pduLen
                 put flags
                 put (ipv4PrefixLen prefix)
-                put (fromIntegral maxLength :: Word8)
+                put maxLength
                 put (0 :: Word8)
                 put prefix
                 put asn                
@@ -97,7 +97,7 @@ pduToBytes pdu protocolVersion =
                 put pduLen
                 put flags
                 put (ipv6PrefixLen prefix)
-                put (fromIntegral maxLength :: Word8)
+                put maxLength
                 put (0 :: Word8)
                 put prefix
                 put asn                
@@ -192,14 +192,20 @@ parseVersionedPdu protocolVersion pduType =
             pure $ CacheResponsePdu sessionId
 
         -- TODO Finish them
-        -- 4  -> do 
-        --     zero :: Word16 <- get 
-        --     unless (zero == 0) $ fail "Field must be zero for IPv4PrefixPdu"
-        --     len  :: Int32 <- get
-        --     assertLength len 20
-        --     flags <- get
-        --     rtrPrefix <- get
-        --     pure $ IPv4PrefixPdu flags rtrPrefix
+        PduCode 4  -> do 
+            zero :: Word16 <- get 
+            unless (zero == 0) $ fail "Field must be zero for IPv4PrefixPdu"
+            len  :: Int32 <- get
+            assertLength len 20
+            flags <- get
+            PrefixLength prefixLen <- get
+            maxLen :: PrefixLength <- get
+            zero1 :: Word8     <- get
+            unless (zero1 == 0) $ fail "Field must be zero for IPv4PrefixPdu"
+            w32 :: Word32 <- get            
+            asn :: ASN <- get
+            
+            pure $ IPv4PrefixPdu flags (mkIpv4Block w32 prefixLen) asn maxLen
 
         -- 6  -> do 
         --     zero :: Word16 <- get 

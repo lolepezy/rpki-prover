@@ -79,15 +79,9 @@ updatedRtrState RtrState {..} worldVersion diff =
 -- 
 diffsFromSerial :: RtrState -> SerialNumber -> Maybe [(SerialNumber, VrpDiff)] 
 diffsFromSerial RtrState {..} clientSerial = 
-    case laterSerials (toList diffs) of
+    case List.dropWhile ((<= clientSerial) . fst) (toList diffs) of
         [] -> Nothing
-        ds -> Just ds
-  where
-    nextClient = nextSerial clientSerial
-    laterSerials [] = []
-    laterSerials ((s, _) : ds)
-        | s == nextClient = ds
-        | otherwise       = laterSerials ds
+        z -> Just z
 
 
 -- | Transform a list of diffs into one diff that doesn't contain duplicates

@@ -177,6 +177,10 @@ instance Arbitrary Vrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary PrefixLength where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary Gbr where
     arbitrary = genericArbitrary
     shrink = genericShrink

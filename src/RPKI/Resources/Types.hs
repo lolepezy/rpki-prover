@@ -48,6 +48,10 @@ newtype ASN = ASN Word32
     deriving anyclass (NFData, Serialise)  
     deriving newtype Enum
 
+newtype PrefixLength = PrefixLength Word8
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
 data AsResource = AS ASN
                 | ASRange ASN ASN
     deriving stock (Show, Eq, Ord, Generic) 

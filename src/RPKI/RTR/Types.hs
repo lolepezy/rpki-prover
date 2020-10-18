@@ -31,8 +31,8 @@ data Pdu = NotifyPdu RtrSessionId SerialNumber
         | SerialQueryPdu RtrSessionId SerialNumber
         | ResetQueryPdu
         | CacheResponsePdu RtrSessionId
-        | IPv4PrefixPdu Flags Ipv4Prefix ASN Int16
-        | IPv6PrefixPdu Flags Ipv6Prefix ASN Int16    
+        | IPv4PrefixPdu Flags Ipv4Prefix ASN PrefixLength
+        | IPv6PrefixPdu Flags Ipv6Prefix ASN PrefixLength    
         | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
         | RouterKeyPdu ASN Flags SKI BSL.ByteString
@@ -133,7 +133,7 @@ instance Binary Ipv4Prefix where
         put w2
         put w3
         
-    get = fail "Not implemented and should not be"
+    get = fail "Not implemented"
 
 instance Binary Ipv6Prefix where 
     put prefix = do
@@ -143,11 +143,15 @@ instance Binary Ipv6Prefix where
         put w2
         put w3
         
-    get = fail "Not implemented and should not be"
+    get = fail "Not implemented"
 
 instance Binary ASN where 
     put (ASN a) = put a        
     get = ASN <$> get
+
+instance Binary PrefixLength where 
+    put (PrefixLength a) = put a        
+    get = PrefixLength <$> get
         
 
 errorCodes :: [(ErrorCode, Word16)]

@@ -13,6 +13,7 @@ import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Short       as BSS
 
 import           Data.Int
+import           Data.Word
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
@@ -80,7 +81,7 @@ data ValidationResult = ValidationResult {
 data VrpDto = VrpDto {
     asn :: !ASN,
     prefix :: !IpPrefix,
-    maxLength :: !Int16
+    maxLength :: !PrefixLength
 } deriving stock (Eq, Show, Generic)
 
 newtype RObject = RObject RpkiObject
@@ -94,6 +95,9 @@ instance ToNamedRecord VrpDto
 
 instance ToField ASN where
     toField (ASN as) = ("AS" :: Csv.Field) <> toField as
+
+instance ToField PrefixLength where
+    toField (PrefixLength z) = toField z
 
 instance ToField IpPrefix where
     toField (Ipv4P (Ipv4Prefix p)) = U.convert $ show p
@@ -199,6 +203,7 @@ instance ToJSON a => ToJSON (SignedObject a)
 instance ToJSON a => ToJSON (SignedData a)
 instance ToJSON a => ToJSON (EncapsulatedContentInfo a)
 
+instance ToJSON PrefixLength
 instance ToJSON Gbr
 instance ToJSON Vrp
 instance ToJSON Manifest
