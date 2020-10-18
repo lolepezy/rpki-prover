@@ -79,7 +79,7 @@ updatedRtrState RtrState {..} worldVersion diff =
 -- 
 diffsFromSerial :: RtrState -> SerialNumber -> Maybe [(SerialNumber, VrpDiff)] 
 diffsFromSerial RtrState {..} clientSerial = 
-    case List.dropWhile ((<= clientSerial) . fst) (toList diffs) of
+    case List.takeWhile ((> clientSerial) . fst) (toList diffs) of
         [] -> Nothing
         z -> Just z
 
