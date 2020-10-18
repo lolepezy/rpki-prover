@@ -27,7 +27,6 @@ import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.Maybe
-import           Data.Text                        (Text)
 
 import           Data.String.Interpolate.IsString
 
@@ -53,11 +52,9 @@ import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Util
 import           RPKI.TAL
-import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 import           RPKI.Workflow
-import           RPKI.RTR.RtrState
 
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
