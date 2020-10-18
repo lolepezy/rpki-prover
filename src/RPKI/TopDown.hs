@@ -10,6 +10,7 @@
 module RPKI.TopDown where
 
 import           Control.Concurrent.STM
+import           Control.Concurrent.Async.Lifted
 import           Control.Exception.Lifted
 import           Control.Monad.Except
 import           Control.Monad.Reader
@@ -512,13 +513,13 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     -- remember to come back to this certificate when the PP is fetched
                     vContext' <- asks getVC                    
                     pure $! T3 
-                                (asIfItIsMerged `shrinkTo` (Set.singleton url)) 
-                                (toWaitingList
-                                    (getRpkiURL discoveredPP) 
-                                    (getHash certificate) 
-                                    vContext' 
-                                    (verifiedResources topDownContext))
-                                mempty
+                            (asIfItIsMerged `shrinkTo` (Set.singleton url)) 
+                            (toWaitingList
+                                (getRpkiURL discoveredPP) 
+                                (getHash certificate) 
+                                vContext' 
+                                (verifiedResources topDownContext))
+                            mempty
 
             case findPublicationPointStatus url asIfItIsMerged of 
                 -- this publication point hasn't been seen at all, so stop here
@@ -579,9 +580,13 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                 visitObjects topDownContext $ map snd childrenHashes
                         
                         let processChildren = do 
-                                r <- parallelTasks 
-                                    (cpuBottleneck appBottlenecks) 
-                                    childrenHashes $ \(filename, hash') -> 
+                                -- r <- parallelTasks 
+                                --     (cpuBottleneck appBottlenecks) 
+                                --     childrenHashes $ \(filename, hash') -> 
+                                --         validateManifestEntry filename hash' validCrl
+                                -- TODO Re-implement parallel execution, current version is extremely 
+                                -- memory-hungry.
+                                r <- forM childrenHashes $ \(filename, hash') -> 
                                         validateManifestEntry filename hash' validCrl
                                 markAllEntriesAsVisited
                                 pure r
