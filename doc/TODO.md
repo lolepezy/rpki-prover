@@ -63,28 +63,27 @@
 + Fix ARIN broken CRL 
 + Fix Warnings "No object #{uri} with hash #{oldHash} to replace." or ignore it. 
 + Connect objects to repositories and implement a strict delta->snapshot fallback
++ Introduce shared state for "the latest discovered bunch of VRPs" to be used in 
+  * RTR responses to reset queuries and diffs
+  * /api/vrps.* responses
+  OR figure out an option to get the from LMDB with less CPU/allocations
++ Fix 'cpu-count' defaulting to 1 and defaul it to 'all CPUs present in the system'.
 
 
 ---------------------------------  In testing -----------------------------------------
 
-- Introduce shared state for "the latest discovered bunch of VRPs" to be used in 
-  * RTR responses to reset queuries and diffs
-  * /api/vrps.* responses
-  OR figure out an option to get the from LMDB with less CPU/allocations
+Implement RTR server.
+ - Store only as much VRPs in diff as in one full VRP set, avoid potential bloating
 
 
 ---------------------------------  In progress ----------------------------------------
 
-Implement RTR server.
- - Store only as much VRPs in diff as in one full VRP set, avoid potential bloating
+- Limit 'notify PDU' to one a minute.
 
 --------------------------------------- TODOs -----------------------------------------
 
-- Limit 'notify PDU' to one a minute.
+- Fix (if broken) sent Error PDUs
 - RTR keepalive should have a time interval
-- 
-
-- Fix 'cpu-count' defaulting to 1.
 
 - Check signature algorithms (
     http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
