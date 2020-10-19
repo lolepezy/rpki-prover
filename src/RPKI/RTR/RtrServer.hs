@@ -41,6 +41,7 @@ import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 
 import           RPKI.Parallel
+import           RPKI.Time
 import           RPKI.Util                        (convert, hexL)
 
 import           RPKI.AppState
@@ -48,7 +49,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
 import           System.Timeout                   (timeout)
-
+import Time.Types
 
 
 
@@ -85,9 +86,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             setSocketOption sock ReuseAddr 1
-            bind sock (addrAddress addr)            
-            withFdSocket sock setCloseOnExecIfNeeded
-            listen sock 10
+            withFdSocket sock $ setCloseOnExecIfNeeded
+            bind sock $ addrAddress addr
+            listen sock 1024
             pure sock
 
         loop sock = forever $ do
@@ -108,8 +109,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         worldVersion <- atomically $ waitForCompleteVersion appState            
 
         -- Now we can initialise rtrState with a new RtrState.
-        atomically . writeTVar rtrState . Just =<< newRtrState worldVersion      
-                    
+        atomically . writeTVar rtrState . Just =<< newRtrState worldVersion              
+
+        lastTimeNotified <- atomically $ newTVar Nothing
+
         forever $ do
             --  wait for a new complete world version
             (rtrState', previousVersion, newVersion, newVrps) 
@@ -140,12 +143,17 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{added d}, deleted = #{deleted d})|]) $ toList diffs
                 logDebug_ logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
 
+            Now now <- thisInstant            
+
             atomically $ do                
                 writeTVar rtrState $! let !z = Just nextRtrState in z
-                --  TODO Do not send notify PDUs more often than 1 minute (RFC says so)                    
-                when thereAreVrpUpdates $ 
-                    writeTChan updateBroadcastChan 
-                        [NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)]
+                sendNotify <- maybe True 
+                                    (\last -> not $ closeEnoughMoments last now (Seconds 60)) 
+                                <$> readTVar lastTimeNotified                 
+                when (sendNotify && thereAreVrpUpdates) $ do                    
+                    let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
+                    writeTChan updateBroadcastChan [notifyPdu]
+                    writeTVar lastTimeNotified $ Just now
 
 
     -- For every connection run 2 threads:
@@ -381,14 +389,13 @@ respondToPdu
                                             Right (
                                                 [CacheResetPdu], 
                                                 Just [i|No data for serial #{clientSerial}.|])
-                                        Just diffs' -> let
-                                            squashed = squashDiffs diffs'
+                                        Just diffs' -> let                                            
                                             pdus = [CacheResponsePdu sessionId] 
                                                     <> diffPayloadPdus (squashDiffs diffs')
                                                     -- TODO Figure out how to instantiate intervals
                                                     -- Should they be configurable?                                                                     
                                                     <> [EndOfDataPdu sessionId currentSerial defIntervals]
-                                            in Right (pdus, Just [i|clientSerial = #{clientSerial}, diffs' = #{diffs'}, squashed = #{squashed}|])
+                                            in Right (pdus, Nothing)
 
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $ let
