@@ -68,23 +68,22 @@
   * /api/vrps.* responses
   OR figure out an option to get the from LMDB with less CPU/allocations
 + Fix 'cpu-count' defaulting to 1 and defaul it to 'all CPUs present in the system'.
++ Limit 'notify PDU' to one a minute.
++ RTR keepalive should have a time interval (it's a system-wide setting)
++ Implement RTR server.
+ * Store only as much VRPs in diff as in one full VRP set, avoid potential bloating
+
 
 
 ---------------------------------  In testing -----------------------------------------
 
-Implement RTR server.
- - Store only as much VRPs in diff as in one full VRP set, avoid potential bloating
-
 
 ---------------------------------  In progress ----------------------------------------
 
-- Limit 'notify PDU' to one a minute.
+ - Fix (if broken) sent Error PDUs
 
 --------------------------------------- TODOs -----------------------------------------
-
-- Fix (if broken) sent Error PDUs
-- RTR keepalive should have a time interval
-
+ 
 - Check signature algorithms (
     http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
     https://www.arin.net/announcements/20200812/)
@@ -94,6 +93,8 @@ Implement RTR server.
 
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept, RRDP -> rsync fall-back).
 
+- Implement RRDP -> rsync fall-back.
+
 - Implement `--reset`, i.e. erase cache/tmp/rsync on the start (keep some metadata, i.e. "version" of the DB and refuse to work with an older incompatible version?)
 - Fix 'ctrl+c', it should stop the applications
 
@@ -102,8 +103,7 @@ Implement RTR server.
    * in any case SLURM data must not be stored in LMDB so that it would be possible to erase the cache. 
 
 - Refactor RPKI.Repository and RPKI.Store.Repository to be more ergonamic and easy to understand.
-
-
+- Optimise rsync/snapshot loading: check for hash presence _before_ parsing it.
 
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 
