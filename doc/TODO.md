@@ -123,7 +123,7 @@
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)
 
 
-- use co-log-concurrent
+- use co-log-concurrent (https://gist.github.com/qnikst/f38bbaee033aaa3df8a9d115c951182a)
 - refactor roTx/rwTx machinery so that rwTx accept both RO/RW handlers
 
 
