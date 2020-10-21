@@ -150,25 +150,6 @@ testGenerateDiffs = HU.testCase "Should generate correct VRP diffs" $ do
     
 
 
-testDiffFromSerial :: TestTree
-testDiffFromSerial = HU.testCase "Should generate correct VRP diffs" $ do
-    appState <- newAppState
-    rtrState <- newRtrState =<< getWorldVerionIO appState
-    newVersion <- updateWorldVerion appState
-    diffs :: [VrpDiff] <- replicateM 3 $ QC.generate arbitrary
-    let rtrState1 = updatedRtrState rtrState newVersion (head diffs)
-
-    HU.assertEqual "Wrong diff 1" Nothing (diffsFromSerial rtrState initialSerial)
-
-    putStrLn $ "rtrState1 = " <> show rtrState1
-    putStrLn $ "diff1 = " <> show (diffsFromSerial rtrState initialSerial)
-
-    HU.assertEqual "Wrong diff 2" Nothing (diffsFromSerial rtrState (nextSerial initialSerial))
-
-    putStrLn $ "diff2 = " <> show (diffsFromSerial rtrState (nextSerial initialSerial))
-
-    
-
 testParseErrorPdu :: TestTree
 testParseErrorPdu = HU.testCase "Should parse Error PDU from rtrclient program" $ do    
     let bytes = "\SOH\n\NUL\ACK\NUL\NUL\NUL$\NUL\NUL\NUL\DC4\SOH\EOT\NUL\NUL\NUL\NUL\NUL\DC4\NUL\NAK\NAK\NUL\199\253\128\NUL\NUL\NUL\NUL\209\NUL\NUL\NUL\NUL"
