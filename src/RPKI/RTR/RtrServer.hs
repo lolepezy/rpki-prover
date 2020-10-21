@@ -355,7 +355,7 @@ processFirstPdu
                 in Left (ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
 
 
--- | Generate a PDU that would be a appropriate response the request PDU.
+-- | Generate PDUs that would be an appropriate response the request PDU.
 -- 
 respondToPdu :: Maybe RtrState
                 -> [Vrp]

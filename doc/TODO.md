@@ -81,6 +81,7 @@
 ---------------------------------  In progress ----------------------------------------
 
  - Fix (if broken) sent Error PDUs
+ - Limit total amoutn of VRPs in rtr diffs
 
 --------------------------------------- TODOs -----------------------------------------
  
@@ -122,12 +123,12 @@
 - Keep in LMDB only the necessary part of an object after checking it's signature.
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)
 
-
+- replace `streaming-utils` and `json-stream` with something more alive.
 - use co-log-concurrent (https://gist.github.com/qnikst/f38bbaee033aaa3df8a9d115c951182a)
 - refactor roTx/rwTx machinery so that rwTx accept both RO/RW handlers
 
 
 
-Features to implement:
-- Explain where broken stuff comes from
+
+
 - 
