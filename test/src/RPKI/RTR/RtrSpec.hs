@@ -48,8 +48,7 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoDependentDiffs,
         testThreeDiffs,
         testGenerateDiffs,
-        testParseErrorPdu,
-        testDiffFromSerial
+        testParseErrorPdu
     ]
 
 rtrStateGroup :: TestTree
