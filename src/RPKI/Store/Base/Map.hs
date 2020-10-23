@@ -27,7 +27,7 @@ get :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> k -> IO (Maybe v)
 get tx (SMap _ s) k = do
     msv <- S.get tx s (storableKey k)
-    pure $ fromStorable . (\(SValue z) -> z) <$> msv
+    pure $! fromStorable . unSValue <$> msv
 
 exists :: (Serialise k) =>
         Tx s m -> SMap name s k v -> k -> IO Bool

@@ -1,9 +1,11 @@
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE StrictData            #-}
 {-# LANGUAGE TypeOperators         #-}
 
 module RPKI.Http.Api where
@@ -11,20 +13,19 @@ module RPKI.Http.Api where
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Short       as BSS
+import qualified Data.ByteString.Builder     as Builder
 
-import           Data.Int
-import           Data.Word
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 
-import           GHC.Generics                (Generic)
-
-import           Data.Aeson                  as Json
-import           Data.Csv                    (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord)
+import           Data.Aeson                  hiding ((.=))
+import qualified Data.Aeson                  as Json
+import           Data.Csv                    (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord, (.=))
 import qualified Data.Csv                    as Csv
+import           GHC.Generics                (Generic)
 
 import qualified Crypto.PubKey.Curve25519    as C25519
 import qualified Crypto.PubKey.Curve448      as C448
@@ -56,8 +57,6 @@ import qualified RPKI.Util                   as U
 
 
 
-
-
 data CSVOptions = CSVOptions
 
 instance EncodeOpts CSVOptions where
@@ -74,14 +73,17 @@ type API = "api" :> (
         )
 
 data ValidationResult = ValidationResult {
-    problems :: ![VProblem],
-    context  :: ![Text]
+    problems :: [VProblem],
+    context  :: [Text]
 } deriving stock (Generic)
 
+newtype VrpList = VrpList [VrpDto]
+    deriving stock (Eq, Show, Generic)
+
 data VrpDto = VrpDto {
-    asn :: !ASN,
-    prefix :: !IpPrefix,
-    maxLength :: !PrefixLength
+    asn       :: ASN,
+    prefix    :: IpPrefix,
+    maxLength :: PrefixLength
 } deriving stock (Eq, Show, Generic)
 
 newtype RObject = RObject RpkiObject
@@ -89,19 +91,29 @@ newtype RObject = RObject RpkiObject
 
 
 -- CSV
-instance ToRecord VrpDto
+instance ToRecord VrpDto where
+    toRecord VrpDto {
+        asn = ASN as, 
+        maxLength = PrefixLength ml,
+        ..
+    } = Csv.record [ "AS" <> toField as, toField prefix, toField ml ]
+    
 instance DefaultOrdered VrpDto
-instance ToNamedRecord VrpDto
 
-instance ToField ASN where
-    toField (ASN as) = ("AS" :: Csv.Field) <> toField as
-
-instance ToField PrefixLength where
-    toField (PrefixLength z) = toField z
-
+instance ToNamedRecord VrpDto where
+    toNamedRecord VrpDto {
+        asn = ASN as, 
+        maxLength = PrefixLength ml,
+        ..
+    } = Csv.namedRecord [ 
+            "asn"       .= ("AS" <> toField as), 
+            "prefix"    .= toField prefix, 
+            "maxLength" .= toField ml 
+        ]
+    
 instance ToField IpPrefix where
-    toField (Ipv4P (Ipv4Prefix p)) = U.convert $ show p
-    toField (Ipv6P (Ipv6Prefix p)) = U.convert $ show p
+    toField (Ipv4P (Ipv4Prefix p)) = toField $ show p
+    toField (Ipv6P (Ipv6Prefix p)) = toField $ show p
 
 
 -- JSON

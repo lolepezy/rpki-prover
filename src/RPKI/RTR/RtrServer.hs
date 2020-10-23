@@ -25,6 +25,7 @@ import qualified Data.ByteString.Lazy             as BSL
 
 import           Data.List.Split                  (chunksOf)
 
+import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
@@ -49,7 +50,9 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
 import           System.Timeout                   (timeout)
-import Time.Types
+import           Time.Types
+import Data.Set (Set)
+
 
 
 
@@ -107,9 +110,14 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
         -- Wait until a complete world version is generted (or are read from the cache)      
         worldVersion <- atomically $ waitForCompleteVersion appState            
-
-        -- Now we can initialise rtrState with a new RtrState.
-        atomically . writeTVar rtrState . Just =<< newRtrState worldVersion              
+    
+        -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
+        -- It's totally heuristical way of avoiding memory bloat
+        vrps <- atomically $ readTVar (appState ^. #currentVrps)
+        let maxStoredDiffs = 3 * length vrps
+                
+        atomically $ writeTVar rtrState $ 
+                        Just $ newRtrState worldVersion maxStoredDiffs
 
         lastTimeNotified <- atomically $ newTVar Nothing
 
@@ -125,17 +133,18 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps)
                 
-            previousVrps <- roTx database $ \tx -> getVrps tx database previousVersion
+            previousVrps <- fmap Set.fromList $ 
+                                roTx database $ \tx -> getVrps tx database previousVersion
+
             let vrpDiff            = evalVrpDiff previousVrps newVrps                         
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
-            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRRs: #{length previousVrps} -> #{length newVrps}|]
+            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRRs: #{Set.size previousVrps} -> #{Set.size newVrps}|]
 
             -- force evaluation of the new RTR context so that the old ones could be GC-ed.
-            let !nextRtrState = 
-                    if thereAreVrpUpdates
-                        then updatedRtrState rtrState' newVersion vrpDiff
-                        else rtrState' { lastKnownWorldVersion = newVersion }                        
+            let !nextRtrState = if thereAreVrpUpdates
+                    then updatedRtrState rtrState' newVersion vrpDiff
+                    else rtrState' { lastKnownWorldVersion = newVersion }
 
             logDebug_ logger [i|Generated new diff in VRP set: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
             when thereAreVrpUpdates $ do 
@@ -146,10 +155,12 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             Now now <- thisInstant            
 
             atomically $ do                
+                -- TODO Some of these bangs are not needed?
                 writeTVar rtrState $! let !z = Just nextRtrState in z
-                sendNotify <- maybe True 
-                                    (\last -> not $ closeEnoughMoments last now (Seconds 60)) 
-                                <$> readTVar lastTimeNotified                 
+
+                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments lastTime now (Seconds 60)
+                sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
+
                 when (sendNotify && thereAreVrpUpdates) $ do                    
                     let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
                     writeTChan updateBroadcastChan [notifyPdu]
@@ -157,13 +168,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
 
     -- For every connection run 2 threads:
-    --      receiveFromClient blocks on `recv` and accepts zclient requests
+    --      serveLoop blocks on `recv` and accepts client's requests
     --      sendToClient simply sends all PDU to the client
-    --
-    serveConnection connection peer updateBroadcastChan rtrState = do
-
-        -- TODO This is bad, first `recv` is called in this thread
-        -- and then inside of `serveLoop`, refactor it.
+    -- They communicate using the outboxChan
+    serveConnection connection peer updateBroadcastChan rtrState = do        
         logDebug_ logger [i|Waiting first PDU from the client #{peer}|]
         firstPdu <- recv connection 1024
         (rtrState', currentVrps', outboxQueue) <- 
@@ -184,11 +192,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
         ifJust versionedPdu $ \versionedPdu' -> do
             case processFirstPdu rtrState' currentVrps' versionedPdu' firstPduLazy of 
-                Left (errorPdu, errorMessage) -> do
-                    let errorBytes = pduToBytes errorPdu V0
+                Left (errorPdu', errorMessage) -> do
+                    let errorBytes = pduToBytes errorPdu' V0
                     logError_ logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
-                                       [i|error PDU: #{errorPdu}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu V0}|]
-                    sendAll connection $ BSL.toStrict $ pduToBytes errorPdu V0
+                                       [i|error PDU: #{errorPdu'}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu' V0}|]
+                    sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
 
                 Right (responsePdus, session, warning) -> do
                     ifJust warning $ logWarn_ logger
@@ -255,7 +263,7 @@ responseAction :: (Show peer, Logger logger) =>
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 
-                -> [Vrp] 
+                -> Set Vrp
                 -> BS.ByteString 
                 -> Either ([Pdu], IO ()) ([Pdu], IO ())
 responseAction logger peer session rtrState currentVrps pduBytes = 
@@ -276,16 +284,15 @@ responseAction logger peer session rtrState currentVrps pduBytes =
                     (toVersioned session pdu)
                     pduBytesLazy
                     session
-            in 
-                case r of 
-                    Left (errorPdu, message) -> let
-                        ioAction = logDebug_ logger [i|Parsed PDU: #{pdu}, error = #{message}, responding with #{errorPdu}.|]
-                        in Left ([errorPdu], ioAction)                                     
-                    Right (pdus, warning) -> let
-                        ioAction = do 
-                            ifJust warning $ logWarn_ logger
-                            logDebug_ logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}.. PDUs.|]                            
-                        in Right (pdus, ioAction)                                     
+            in case r of 
+                Left (errorPdu, message) -> let
+                    ioAction = logDebug_ logger [i|Parsed PDU: #{pdu}, error = #{message}, responding with #{errorPdu}.|]
+                    in Left ([errorPdu], ioAction)                                     
+                Right (pdus, warning) -> let
+                    ioAction = do 
+                        ifJust warning $ logWarn_ logger
+                        logDebug_ logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}.. PDUs.|]                            
+                    in Right (pdus, ioAction)                                     
 
         errors = (mempty, logError) <> (errorResponse, mempty)
     in 
@@ -326,10 +333,10 @@ analyzePdu peer pduBytes = \case
 
 
 -- 
--- | Process the first PDU and do the protocol version negotiation
+-- | Process the first PDU and do the protocol version negotiation.
 -- 
 processFirstPdu :: Maybe RtrState 
-                -> [Vrp]
+                -> Set Vrp
                 -> VersionedPdu
                 -> BSL.ByteString 
                 -> Either (Pdu, Text) ([Pdu], Session, Maybe Text)
@@ -358,7 +365,7 @@ processFirstPdu
 -- | Generate PDUs that would be an appropriate response the request PDU.
 -- 
 respondToPdu :: Maybe RtrState
-                -> [Vrp]
+                -> Set Vrp
                 -> VersionedPdu 
                 -> BSL.ByteString 
                 -> Session
@@ -435,12 +442,12 @@ respondToPdu
 -- TODO Add router certificate PDU here.
 diffPayloadPdus :: VrpDiff -> [Pdu]
 diffPayloadPdus Diff {..} = 
-    map (toPdu Withdrawal) deleted <>
-    map (toPdu Announcement) added  
+    map (toPdu Withdrawal) (Set.toList deleted) <>
+    map (toPdu Announcement) (Set.toList added)  
     
-currentCachePayloadPdus :: [Vrp] -> [Pdu]
+currentCachePayloadPdus :: Set Vrp -> [Pdu]
 currentCachePayloadPdus vrps =
-    map (toPdu Announcement) vrps
+    map (toPdu Announcement) $ Set.toList vrps
 
 toPdu :: Flags -> Vrp -> Pdu
 toPdu flags (Vrp asn prefix maxLength) = 

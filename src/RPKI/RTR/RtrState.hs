@@ -5,25 +5,27 @@
 
 module RPKI.RTR.RtrState where
 
-import           Data.Foldable          (toList)
-import           Data.Set               ((\\), Set)
-import qualified Data.Set               as Set
+import           Data.Foldable  (toList)
+import           Data.Set       (Set, (\\))
+import qualified Data.Set       as Set
 
 import           GHC.Generics
 
-import qualified Data.List              as List
+import qualified Data.List      as List
 
-import           Deque.Strict           as Deq
+import           Deque.Strict   as Deq
 
 import           RPKI.Domain
 import           RPKI.RTR.Types
 
 import           RPKI.AppState
+import           RPKI.Time      (nanosPerSecond)
+
 
 
 data Diff a = Diff { 
-        added   :: [a], 
-        deleted :: [a]
+        added   :: Set a, 
+        deleted :: Set a
     } 
     deriving stock (Show, Eq, Ord, Generic)
 
@@ -34,45 +36,64 @@ data RtrState = RtrState {
         currentSessionId      :: RtrSessionId,
         currentSerial         :: SerialNumber,
         maxSerialsPerSession  :: Int,
-        diffs                 :: Deq.Deque (SerialNumber, VrpDiff)
+        diffs                 :: Deq.Deque (SerialNumber, VrpDiff),
+        totalDiffSize         :: Int,
+        maxTotalDiffSize      :: Int
     } 
     deriving stock (Show, Eq, Generic)
 
-newVrpDiff :: Diff a
-newVrpDiff = Diff [] []
+newVrpDiff :: Ord a => Diff a
+newVrpDiff = Diff mempty mempty
 
 isEmptyDiff :: Diff a -> Bool
-isEmptyDiff Diff {..} = List.null added && List.null deleted
+isEmptyDiff Diff {..} = Set.null added && Set.null deleted
 
 
-newRtrState :: WorldVersion -> IO RtrState 
-newRtrState worldVersion = do
-    session' <- generateSessionId
-    serial'  <- genarateSerial
-    pure $ RtrState worldVersion session' serial' 100 mempty
-    where
-        -- TODO Generate them according to the RFC
-        generateSessionId = pure $ RtrSessionId 133
-        genarateSerial    = pure initialSerial
+newRtrState :: WorldVersion -> Int -> RtrState 
+newRtrState worldVersion maxTotalVrps =
+    RtrState {
+        lastKnownWorldVersion = worldVersion,
+        currentSessionId      = worldVersionToRtrSessionId worldVersion,
+        currentSerial         = initialSerial,
+        maxSerialsPerSession  = 20,
+        diffs                 = mempty,
+        totalDiffSize         = 0,
+        maxTotalDiffSize      = maxTotalVrps
+    }    
 
-
+-- | Create a new RTR state based on the previous one and a new diff.
+-- 
 updatedRtrState :: RtrState -> WorldVersion -> VrpDiff -> RtrState
 updatedRtrState RtrState {..} worldVersion diff = 
     RtrState {        
         lastKnownWorldVersion = worldVersion,        
         diffs = diffs',
         currentSerial = newSerial,
+        totalDiffSize = newTotalSize,
         ..
     }
     where
-        newSerial = nextSerial currentSerial        
+        newSerial = nextSerial currentSerial
 
-        diffs' = let
-            -- strip off the oldest serial if the list of diffs is getting too long
-            newDiffs = let !z = (newSerial, diff) in Deq.cons z diffs
-            in if length newDiffs > maxSerialsPerSession
-                    then maybe newDiffs snd $ Deq.unsnoc newDiffs            
-                    else newDiffs
+        -- strip off the oldest serial if either
+        --   * the list of diffs is getting too long
+        --   * or the total amount of VRPs in all diffs is getting too big
+        --   * never remove the latest diff, regardless of its size
+        (diffs', newTotalSize) = 
+            shrinkUntilSizeFits 
+                (let !z = (newSerial, diff) in Deq.cons z diffs) 
+                (totalDiffSize + Set.size (added diff) + Set.size (deleted diff))
+            where 
+                shrinkUntilSizeFits newDiffs@[_] newSize = (newDiffs, newSize)
+                shrinkUntilSizeFits newDiffs newSize = 
+                    if length newDiffs > maxSerialsPerSession || newSize > maxTotalDiffSize
+                        then 
+                            case Deq.unsnoc newDiffs of 
+                                Nothing -> (newDiffs, newSize)
+                                Just ((_, removedDiff), restDiffs) ->
+                                    shrinkUntilSizeFits restDiffs $
+                                        newSize - Set.size (added removedDiff) - Set.size (deleted removedDiff)
+                        else (newDiffs, newSize)
 
 
 -- | Return all the diffs starting from some serial if we have this data.
@@ -92,32 +113,25 @@ squashDiffs diffs =
     List.foldr (squash . snd) newVrpDiff $ List.sortOn fst diffs
   where
      squash diff resultDiff = let
-         added'   = Set.fromList $ added diff   <> added resultDiff
-         deleted' = Set.fromList $ deleted diff <> deleted resultDiff
+         added'   = added diff   <> added resultDiff
+         deleted' = deleted diff <> deleted resultDiff
          in Diff {
-             added   = Set.toList $ added'  \\ Set.fromList (deleted resultDiff),
-             deleted = Set.toList $ deleted' \\ Set.fromList (added resultDiff)
+             added   = added'  \\ deleted resultDiff,
+             deleted = deleted' \\ added resultDiff
          }
 
-evalVrpDiff :: [Vrp] -> [Vrp] -> VrpDiff
-evalVrpDiff [] [] = Diff [] []    
-evalVrpDiff [] n = Diff { 
-                    added   = n,
-                    deleted = []
-                }
-evalVrpDiff p [] = Diff { 
-                    added   = [],
-                    deleted = p
-                }
-evalVrpDiff p n = let
-    newVrpsSet      = Set.fromList n
-    previousVrpsSet = Set.fromList p
-    in Diff { 
-        added   = Set.toList $ newVrpsSet \\ previousVrpsSet,
-        deleted = Set.toList $ previousVrpsSet \\ newVrpsSet
-    }
-
+-- | Create a diff, optimising typical corner-cases.
 -- 
+evalVrpDiff :: Set Vrp -> Set Vrp -> VrpDiff
+evalVrpDiff previous current
+    | Set.null previous       && Set.null current       = newVrpDiff
+    | Set.null previous       && not (Set.null current) = newVrpDiff { added = current }
+    | not (Set.null previous) && Set.null current       = newVrpDiff { deleted = previous }
+    | otherwise = Diff { 
+                added   = current \\ previous,
+                deleted = previous \\ current
+            }
+
 -- Wrap around at 2^31 - 1
 -- https://tools.ietf.org/html/rfc8210#page-5
 -- 
@@ -133,3 +147,10 @@ initialSerial = SerialNumber 1
 
 wrapAroundSerial :: Integer
 wrapAroundSerial = (2 :: Integer)^(31 :: Integer) - 1
+
+-- 1) strip everything except from seconds from the the version
+-- 2) Make it 2 bytes using `mod`    
+worldVersionToRtrSessionId :: WorldVersion -> RtrSessionId
+worldVersionToRtrSessionId (WorldVersion nanoseconds) =     
+    RtrSessionId $ fromIntegral $ 
+        (nanoseconds `div` nanosPerSecond) `mod` (256 * 256)  

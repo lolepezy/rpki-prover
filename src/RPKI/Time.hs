@@ -35,7 +35,7 @@ timed action = do
     z <- action
     Now (Instant end) <- thisInstant
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
-    pure (z, s * 1000_000_000 + ns)
+    pure (z, s * nanosPerSecond + ns)
 
 timedMS :: MonadIO m => m a -> m (a, Int64)
 timedMS action = do 

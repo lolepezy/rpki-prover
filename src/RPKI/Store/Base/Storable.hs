@@ -11,13 +11,13 @@ import Control.DeepSeq
 import Codec.Serialise
 import GHC.Generics
 
-newtype Storable = Storable BS.ByteString
+newtype Storable = Storable { unStorable :: BS.ByteString }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
-newtype SValue = SValue Storable
+newtype SValue = SValue { unSValue :: Storable }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
-newtype SKey = SKey Storable
+newtype SKey = SKey { unSKey :: Storable }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 -- Strictness here is important

@@ -41,16 +41,15 @@ data WorldState = WorldState WorldVersion VersionState
 
 data AppState = AppState {
     world       :: TVar WorldState,
-    currentVrps :: TVar [Vrp]
+    currentVrps :: TVar (Set Vrp)
 } deriving stock (Generic)
 
 -- 
 newAppState :: IO AppState
 newAppState = do
-    Now (Instant now) <- thisInstant
-    let NanoSeconds nano = timeGetNanoSeconds now
+    Now instant <- thisInstant        
     atomically $ AppState <$> 
-                    newTVar (WorldState (WorldVersion nano) NewVersion) <*>
+                    newTVar (WorldState (instantToVersion instant) NewVersion) <*>
                     newTVar mempty
 
 -- 
@@ -78,7 +77,7 @@ instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
 -- Block on version updates
-waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, [Vrp])
+waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Set Vrp)
 waitForNewCompleteVersion AppState {..} knownWorldVersion = do 
     readTVar world >>= \case 
         WorldState w CompletedVersion 

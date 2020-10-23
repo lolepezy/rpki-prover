@@ -26,7 +26,7 @@ import           RPKI.Parse.Parse
 import           RPKI.RRDP.HttpContext
 import qualified RPKI.Util                      as U
 
-import qualified Data.ByteString.Streaming      as Q
+import qualified Streaming.ByteString      as Q
 import           Data.ByteString.Streaming.HTTP
 
 import qualified Crypto.Hash.SHA256             as S256
