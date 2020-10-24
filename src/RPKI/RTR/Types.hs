@@ -48,7 +48,7 @@ data VersionedPdu = VersionedPdu Pdu ProtocolVersion
 newtype SerialNumber = SerialNumber Int32
     deriving stock (Show, Eq, Ord, Generic)
 
-newtype RtrSessionId = RtrSessionId Int16
+newtype RtrSessionId = RtrSessionId Word16
     deriving stock (Show, Eq, Ord, Generic)
 
 data Flags = Announcement | Withdrawal
