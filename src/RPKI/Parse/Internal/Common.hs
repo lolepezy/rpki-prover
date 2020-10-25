@@ -64,8 +64,8 @@ id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 
 id_sha256             = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 
-id_ce_cRLDistributionPoints, id_ce_certificatePolicies :: OID 
-id_ce_cRLDistributionPoints = [2, 5, 29, 31]
+id_ce_CRLDistributionPoints, id_ce_certificatePolicies :: OID 
+id_ce_CRLDistributionPoints = [2, 5, 29, 31]
 id_ce_certificatePolicies   = [2, 5, 29, 32]
 
 fmtErr :: String -> ParseError Text.Text
@@ -168,8 +168,7 @@ getSiaValue c oid = do
             Just [OID oid', Other Context 6 value] 
                 | oid' == oid -> pure $ Just value
                 | otherwise   -> pure Nothing
-            _ -> pure Nothing
-        toMaybe = either (const Nothing) Just
+            _ -> pure Nothing        
 
 getRrdpNotifyUri :: Certificate -> Maybe URI
 getRrdpNotifyUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_notify
@@ -179,3 +178,18 @@ getRepositoryUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_repository
 
 getManifestUri :: Certificate -> Maybe URI
 getManifestUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpkiManifest
+
+getCrlDistributionPoint :: Certificate -> Maybe URI
+getCrlDistributionPoint c = do
+    crlDP <- extVal (getExts c) id_ce_CRLDistributionPoints
+    asns  <- toMaybe $ decodeASN1' BER crlDP
+    join $ toMaybe $ flip runParseASN1 asns $ 
+        onNextContainer Sequence $ 
+            onNextContainer Sequence $ 
+                onNextContainer (Container Context 0) $ 
+                    getNextContainer (Container Context 0) >>= \case 
+                            [Other Context 6 value] -> pure $ Just $ URI $ decodeUtf8 value
+                            _                       -> pure Nothing
+
+toMaybe :: Either b a -> Maybe a
+toMaybe = either (const Nothing) Just

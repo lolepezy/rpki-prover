@@ -10,7 +10,6 @@
 module RPKI.TopDown where
 
 import           Control.Concurrent.STM
-import           Control.Concurrent.Async.Lifted
 import           Control.Exception.Lifted
 import           Control.Monad.Except
 import           Control.Monad.Reader
@@ -18,8 +17,8 @@ import           Control.Monad.Reader
 import           Control.Lens
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
+import           Data.Generics.Product.Fields
 
--- import           Data.Generics.Product.Fields
 import           GHC.Generics
 
 import           Data.Foldable
@@ -545,7 +544,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             visitObject appContext topDownContext (CerRO certificate)
 
             mft <- findMft childrenAki certLocations'
-            checkMftLocation mft certificate            
+            checkMftLocation mft certificate
                     
             manifestResult <- forChild (toText $ NonEmpty.head $ getLocations mft) $ do
                 -- find CRL on the manifest
@@ -562,7 +561,9 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         -- validate CRL and MFT together
                         validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ do
                             vHoist $ do          
+                                -- checkCrlLocation crl certificate
                                 crl' <- validateCrl (now topDownContext) crl certificate
+                                -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
                                 void $ validateMft (now topDownContext) mft certificate crl'
                                 pure crl'                                        
 
@@ -698,21 +699,35 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     visitObject appContext topDownContext mft
                     pure mft
 
-        -- TODO Is there a more reliable way to find it? Compare it with SIA?
+        -- TODO Is there a more reliable way to find it?
         findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $ 
             mftEntries $ getCMSContent $ cmsPayload mft
 
         -- Check that manifest URL in the certificate is the same as the one 
         -- the manifest was actually fetched from.
-        checkMftLocation mft certficate = do
+        checkMftLocation mft certficate = 
             case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of
                 Nothing     -> vError $ NoMFTSIA $ getLocations certficate
-                Just mftSIA -> 
-                    let 
-                        mftLocations = getLocations mft
-                        in case NonEmpty.filter ((mftSIA ==) . getURL) mftLocations of 
-                            [] -> vWarn $ MFTOnDifferentLocation mftSIA mftLocations
-                            _ ->  pure ()
+                Just mftSIA -> let 
+                    mftLocations = getLocations mft
+                    in case NonEmpty.filter ((mftSIA ==) . getURL) mftLocations of 
+                        [] -> vWarn $ MFTOnDifferentLocation mftSIA mftLocations
+                        _ ->  pure ()
+
+        -- Check that CRL URL in the certificate is the same as the one 
+        -- the CRL was actually fetched from. 
+        -- 
+        -- TODO Figure out if it's even needeed -- it generates a lot of useless warnings.
+        -- checkCrlLocation crl certficate = 
+        --     case getCrlDistributionPoint $ cwsX509certificate $ getCertWithSignature certficate of
+        --         -- TODO TA certificate don't have CRL DP so don't emit errors/warnings here.
+        --         -- But if CRL DP does present it needs to be equal to (one of) the CRL locations.
+        --         Nothing    -> pure ()
+        --         Just crlDP -> let 
+        --             crlLocations = getLocations crl
+        --             in case NonEmpty.filter ((crlDP ==) . getURL) crlLocations of 
+        --                 [] -> vWarn $ CRLOnDifferentLocation crlDP crlLocations
+        --                 _ ->  pure ()
 
 
 -- Check if an URL need to be re-fetched, based on fetch status and current time.

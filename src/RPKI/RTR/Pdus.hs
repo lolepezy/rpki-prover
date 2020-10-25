@@ -258,7 +258,7 @@ parseVersionedPdu protocolVersion pduType =
             assertLength len $ 12 + 
                     (fromIntegral (BS.length ski) :: Word32) + 
                     (fromIntegral (BS.length spki) :: Word32)
-            
+             
             pure $ RouterKeyPdu asn' flags 
                     (SKI (KI $ toShortBS ski)) 
                     (BSL.fromStrict spki)

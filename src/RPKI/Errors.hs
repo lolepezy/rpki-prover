@@ -56,6 +56,7 @@ data ValidationError = InvalidCert Text |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
                         NoCRLExists AKI Locations |
+                        CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |
                         NextUpdateTimeIsInThePast Instant |

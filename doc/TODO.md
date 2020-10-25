@@ -74,25 +74,23 @@
  * Store only as much VRPs in diff as in one full VRP set, avoid potential bloating
  * Limit total amoutn of VRPs in rtr diffs
  * generation seesion based on current time or so (https://tools.ietf.org/html/rfc8210#section-5.1)
+ * Fix (if broken) sent Error PDUs
 
 
 ---------------------------------  In testing -----------------------------------------
 
+- Check cRLDistributionPoints == CRL location on the MFT
 
 ---------------------------------  In progress ----------------------------------------
 
- - Fix (if broken) sent Error PDUs
+- Check signature algorithms (
+    http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
+    https://www.arin.net/announcements/20200812/)
  
 --------------------------------------- TODOs -----------------------------------------
  
 RTR:
  
-- Check signature algorithms (
-    http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
-    https://www.arin.net/announcements/20200812/)
-
-- Check CRL SIA == CRL location and CRL location on the MFT
-- Make sure that CRL/MFT relation is handled properly (loops, chicken-egg, etc.)
 
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept).
 
