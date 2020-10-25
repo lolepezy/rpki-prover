@@ -14,20 +14,21 @@ Currently implemented features are
 - Output of VRPs in CSV and JSON formats
 - Output of found problems
 - Cache cleanup, scheduled revalidation
+- Support for RTR protocol
 
 Current and future work
+- Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
 - Static binaries (at least for linux), packaging and a Docker image
-- Support for RTR protocol
 - SLURM support
 - Fancy UI
 
 The only option to use it at the moment is to build from sources:
 
-The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested)
+The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
-   - Install libraries for: `lmdb`, `lzma` and `expat1`
-      - On linux using apt-get, that will be : `sudo apt-get install liblmdb-dev liblzma-dev libexpat1-dev`
-      - On MacOS using brew, that will be: `brew install lmdb xz expat` 
+   - Install libraries for: `lmdb`, `lzma`
+      - On linux using apt-get, that will be : `sudo apt-get install liblmdb-dev liblzma-dev`
+      - On MacOS using brew, that will be: `brew install lmdb xz` 
       - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers
    - Install `stack` as described here `https://docs.haskellstack.org/en/stable/install_and_upgrade/`
    - Clone https://github.com/lolepezy/rpki-prover/
