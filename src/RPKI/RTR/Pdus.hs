@@ -259,11 +259,13 @@ parseVersionedPdu protocolVersion pduType =
                     (fromIntegral (BS.length ski) :: Word32) + 
                     (fromIntegral (BS.length spki) :: Word32)
             
-            pure $ RouterKeyPdu asn' flags (SKI (KI $ toShortBS ski)) (BSL.fromStrict spki)
+            pure $ RouterKeyPdu asn' flags 
+                    (SKI (KI $ toShortBS ski)) 
+                    (BSL.fromStrict spki)
 
         PduCode 10 -> do 
             errorCode                    <- get
-            _fullLength :: Word32        <- get
+            fullLength :: Word32         <- get
             encapsulatedPduLen :: Word32 <- get                        
 
             encapsulatedPdu <- if encapsulatedPduLen == 0 
@@ -274,6 +276,8 @@ parseVersionedPdu protocolVersion pduType =
             encodedMessage <- if textLen == 0
                 then pure Nothing
                 else Just <$> getByteString (fromIntegral textLen)
+
+            assertLength fullLength $ 16 + textLen + encapsulatedPduLen                    
 
             pure $ ErrorPdu errorCode 
                     (BSL.fromStrict <$> encapsulatedPdu) 
