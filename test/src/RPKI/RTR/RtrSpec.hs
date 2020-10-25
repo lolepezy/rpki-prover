@@ -7,14 +7,17 @@ module RPKI.RTR.RtrSpec where
 
 import           Control.Monad
 
+import qualified Data.ByteString.Lazy     as BSL
+
 import qualified Data.List                         as List
+import           Data.Set                          (Set)
 import qualified Data.Set                          as Set
+import qualified Data.Text                         as Text
 
 import           RPKI.Domain
 
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.Tasty
-
 
 import           RPKI.AppState
 import           RPKI.Orphans
@@ -22,14 +25,18 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 
+import           RPKI.Resources.Types
+
+import           Test.QuickCheck.Monadic
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
-import Data.Set (Set)
+
 
 
 
 rtrGroup :: TestTree
 rtrGroup = testGroup "RTR tests" [
+        rtrPduParseGroup,
         rtrDiffsGroup,
         rtrStateGroup
     ]
@@ -42,14 +49,61 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoIndependentDiffs,
         testTwoDependentDiffs,
         testThreeDiffs,
-        testGenerateDiffs,
-        testParseErrorPdu,
-        testRtrStateUpdates
+        testGenerateDiffs                
     ]
+
+rtrPduParseGroup :: TestTree 
+rtrPduParseGroup = testGroup "RTR diff unit tests" [
+        testParseErrorPdu,
+        
+        QC.testProperty "Should create, serialise and parse back SerialQueryPdu" 
+            $ \session serial protocol -> serialiseAndParseBack protocol 
+                $ SerialQueryPdu session serial,
+    
+        QC.testProperty "Should create, serialise and parse back NotifyPdu" 
+            $ \session serial protocol -> serialiseAndParseBack protocol 
+                $ NotifyPdu session serial,
+
+        QC.testProperty "Should create, serialise and parse back ResetQueryPdu" 
+            $ \protocol -> serialiseAndParseBack protocol ResetQueryPdu,
+
+        QC.testProperty "Should create, serialise and parse back CacheResponsePdu" 
+            $ \session protocol -> serialiseAndParseBack protocol $ CacheResponsePdu session,
+
+        QC.testProperty "Should create, serialise and parse back IPv4PrefixPdu" 
+            $ \flags prefix asn prefixLength protocol -> serialiseAndParseBack protocol
+                $ IPv4PrefixPdu flags prefix asn prefixLength,
+
+        QC.testProperty "Should create, serialise and parse back IPv6PrefixPdu" 
+            $ \flags prefix asn prefixLength protocol -> serialiseAndParseBack protocol
+                $ IPv6PrefixPdu flags prefix asn prefixLength,
+
+        QC.testProperty "Should create, serialise and parse back EndOfDataPdu in V0" 
+            $ \session serial -> serialiseAndParseBack V0
+                $ EndOfDataPdu session serial defIntervals,
+
+        QC.testProperty "Should create, serialise and parse back EndOfDataPdu in V1" 
+            $ \session serial intervals -> serialiseAndParseBack V1
+                $ EndOfDataPdu session serial intervals,
+
+        QC.testProperty "Should create, serialise and parse back CacheResetPdu" 
+            $ \protocol -> serialiseAndParseBack protocol CacheResetPdu,                
+
+        QC.testProperty "Should create, serialise and parse back RouterKeyPdu" 
+            $ \asn flags ski bs -> serialiseAndParseBack V1
+                $ RouterKeyPdu asn flags ski bs,
+
+        QC.testProperty "Should create, serialise and parse back ErrorPdu" 
+            $ \code message brokenPdu protocol -> let 
+                message' = if Text.null message then Nothing else Just message
+                errorPdu = ErrorPdu code (Just $ pduToBytes brokenPdu protocol) message'
+                in serialiseAndParseBack protocol errorPdu
+    ]
+
 
 rtrStateGroup :: TestTree
 rtrStateGroup = testGroup "RTR state unit tests" [
-        
+        testRtrStateUpdates
     ]
 
 testEmptyDiff :: TestTree
@@ -152,6 +206,13 @@ testParseErrorPdu = HU.testCase "Should parse Error PDU from rtrclient program" 
         "Couldn't parse Error PDU properly"
         (Right (VersionedPdu (ErrorPdu WithdrawalOfUnknownRecord (Just "\SOH\EOT\NUL\NUL\NUL\NUL\NUL\DC4\NUL\NAK\NAK\NUL\199\253\128\NUL\NUL\NUL\NUL\209") Nothing) V1))
         (bytesToVersionedPdu bytes)    
+
+
+serialiseAndParseBack :: ProtocolVersion -> Pdu -> Bool
+serialiseAndParseBack protocolVersion pdu =     
+    let bytes = pduToBytes pdu protocolVersion
+        parsed = bytesToVersionedPdu bytes
+        in parsed == Right (VersionedPdu pdu protocolVersion)
 
 
 testRtrStateUpdates :: TestTree

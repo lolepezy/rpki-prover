@@ -6,7 +6,6 @@
 module RPKI.RRDP.ParseSpec where
 
 import           Data.ByteString.Short             as BSS
-import           Data.ByteString.Base16 as Hex
 
 import           RPKI.Domain
 import           RPKI.RRDP.Parse

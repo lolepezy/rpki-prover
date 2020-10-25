@@ -40,6 +40,7 @@ import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
 import           RPKI.Errors
 import           RPKI.RTR.RtrState
+import           RPKI.RTR.Types
 
 import           Time.Types
 
@@ -496,7 +497,33 @@ instance (Arbitrary a, Ord a) => Arbitrary (Diff a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RtrSessionId where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
+instance Arbitrary SerialNumber where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ErrorCode where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ProtocolVersion where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Flags where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Intervals where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Pdu where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 
 --- Crypto stuff

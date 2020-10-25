@@ -12,12 +12,12 @@ import           Data.Binary
 import           Data.Binary.Get          (getByteString,
                                            getRemainingLazyByteString,
                                            runGetOrFail)
-import           Data.Binary.Put          (runPut)
+import           Data.Binary.Put          (runPut, putLazyByteString, putByteString)
 
 import           Data.Int
 
 import           Control.Monad            (unless)
-import           RPKI.Domain              (KI (..), SKI (..), skiLen, toShortBS)
+import           RPKI.Domain              (toNormalBS, KI (..), SKI (..), skiLen, toShortBS)
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
@@ -118,9 +118,9 @@ pduToBytes pdu protocolVersion =
                 put flags
                 put (0 :: Word8)
                 put pduLen
-                put ski
+                putByteString $ toNormalBS ski
                 put asn'
-                put spki
+                putLazyByteString spki                
 
             ErrorPdu errorCode causingPdu errorText -> do                
                 put errorCode
@@ -129,13 +129,13 @@ pduToBytes pdu protocolVersion =
                     Nothing          -> put (0 :: Word32)
                     Just causingPdu' -> do 
                         put (fromIntegral (BSL.length causingPdu') :: Word32)
-                        put causingPdu 
+                        putLazyByteString causingPdu' 
                 case errorText of
                     Nothing         -> put (0 :: Word32)
                     Just errorText' -> do 
                         let encodedError = encodeUtf8 errorText'
                         put (fromIntegral (BS.length encodedError) :: Word32)
-                        put encodedError
+                        putByteString encodedError
     
         pduLen = pduLength pdu protocolVersion :: Word32
 
@@ -157,10 +157,12 @@ bytesToVersionedPdu bs =
                             header
                 Right (_, _, pdu) -> 
                     Right $ VersionedPdu pdu version            
+    where
+        parsePduHeader = PduHeader <$> get <*> get
 
-parsePduHeader :: Get PduHeader
-parsePduHeader = PduHeader <$> get <*> get
 
+-- | Parse the body of a PDU after header is parsed.
+-- 
 parseVersionedPdu :: ProtocolVersion -> PduCode -> Get Pdu
 parseVersionedPdu protocolVersion pduType = 
     case pduType of 
@@ -183,7 +185,7 @@ parseVersionedPdu protocolVersion pduType =
             unless (zero == 0) $ fail "Field must be zero for ResetQueryPdu"
             len  :: Int32 <- get
             assertLength len 8                    
-            pure $ ResetQueryPdu
+            pure ResetQueryPdu
 
         PduCode 3  -> do 
             sessionId :: RtrSessionId <- get
@@ -191,7 +193,6 @@ parseVersionedPdu protocolVersion pduType =
             assertLength len 8
             pure $ CacheResponsePdu sessionId
 
-        -- TODO Finish them
         PduCode 4  -> do 
             zero :: Word16 <- get 
             unless (zero == 0) $ fail "Field must be zero for IPv4PrefixPdu"
@@ -200,26 +201,31 @@ parseVersionedPdu protocolVersion pduType =
             flags <- get
             PrefixLength prefixLen <- get
             maxLen :: PrefixLength <- get
-            zero1 :: Word8     <- get
+            zero1 :: Word8         <- get
             unless (zero1 == 0) $ fail "Field must be zero for IPv4PrefixPdu"
             w32 :: Word32 <- get            
-            asn :: ASN <- get
-            
+            asn :: ASN    <- get            
             pure $ IPv4PrefixPdu flags (mkIpv4Block w32 prefixLen) asn maxLen
 
-        -- 6  -> do 
-        --     zero :: Word16 <- get 
-        --     unless (zero == 0) $ fail "Field must be zero for IPv6PrefixPdu"
-        --     len  :: Int32 <- get
-        --     assertLength len 32
-        --     flags     <- get
-        --     rtrPrefix <- get
-        --     pure $ IPv6PrefixPdu flags rtrPrefix
+        PduCode 6 -> do 
+            zero :: Word16 <- get 
+            unless (zero == 0) $ fail "Field must be zero for IPv6PrefixPdu"
+            len  :: Int32 <- get
+            assertLength len 32
+            flags <- get
+            PrefixLength prefixLen <- get
+            maxLen :: PrefixLength <- get
+            zero1 :: Word8     <- get
+            unless (zero1 == 0) $ fail "Field must be zero for IPv6PrefixPdu"
+            words <- (,,,) <$> get <*> get <*> get <*> get
+            asn :: ASN <- get            
+            pure $ IPv6PrefixPdu flags (mkIpv6Block words prefixLen) asn maxLen
+            
 
-        PduCode 7  -> do
-            sessionId     <- get
-            len  :: Int32 <- get                    
-            serial        <- get 
+        PduCode 7 -> do
+            sessionId      <- get
+            len  :: Word32 <- get                    
+            serial         <- get 
             case protocolVersion of 
                 V0 -> do 
                     assertLength len 12
@@ -232,38 +238,39 @@ parseVersionedPdu protocolVersion pduType =
                     assertLength len 24
                     pure $ EndOfDataPdu sessionId serial intervals
 
-        PduCode 8  -> do 
+        PduCode 8 -> do 
             zero :: Word16 <- get 
             unless (zero == 0) $ fail "Field must be zero for ResetQueryPdu"
-            len  :: Int32 <- get
+            len  :: Word32 <- get
             assertLength len 8
             pure CacheResetPdu
 
-        PduCode 9  -> do 
+        PduCode 9 -> do 
             flags         <- get
             zero :: Word8 <- get
-            unless (zero == 0) $ fail "Field must be zero for RouterKeyPduV1"
-            len  :: Int32 <- get
+            unless (zero == 0) $ fail "Field must be zero for RouterKeyPdu"
+            len  :: Word32 <- get
             ski <- getByteString 20
             asn' <- get
-            spki <- getRemainingLazyByteString
+            let remainingBytes = len - 32
+            spki <- getByteString $ fromIntegral remainingBytes
 
-            assertLength len $ 8 + 4 + 
-                    (fromIntegral (BS.length ski) :: Int32) + 
-                    (fromIntegral (BSL.length spki) :: Int32)
-
-            pure $ RouterKeyPdu asn' flags (SKI (KI $ toShortBS ski)) spki
+            assertLength len $ 12 + 
+                    (fromIntegral (BS.length ski) :: Word32) + 
+                    (fromIntegral (BS.length spki) :: Word32)
+            
+            pure $ RouterKeyPdu asn' flags (SKI (KI $ toShortBS ski)) (BSL.fromStrict spki)
 
         PduCode 10 -> do 
-            errorCode                   <- get
-            _fullLength :: Int32        <- get
-            encapsulatedPduLen :: Int32 <- get            
+            errorCode                    <- get
+            _fullLength :: Word32        <- get
+            encapsulatedPduLen :: Word32 <- get                        
 
             encapsulatedPdu <- if encapsulatedPduLen == 0 
                 then pure Nothing
-                else Just <$> getByteString (fromIntegral encapsulatedPduLen)
+                else Just <$> getByteString (fromIntegral encapsulatedPduLen)            
 
-            textLen :: Int32 <- get
+            textLen :: Word32 <- get
             encodedMessage <- if textLen == 0
                 then pure Nothing
                 else Just <$> getByteString (fromIntegral textLen)

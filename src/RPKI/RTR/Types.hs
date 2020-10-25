@@ -12,7 +12,6 @@ import           Data.Binary
 import           Data.Int
 import           Data.Text                (Text)
 
-import           Data.Data
 import           GHC.Generics             (Generic)
 import           RPKI.Domain              (KI (..), SKI (..))
 import           RPKI.Resources.Resources
@@ -23,7 +22,7 @@ import           RPKI.Resources.Types
 data ProtocolVersion = 
     V0 -- | as defined by https://tools.ietf.org/rfc/rfc6810
   | V1 -- | as defined by https://tools.ietf.org/rfc/rfc8210
-  deriving stock (Show, Eq, Ord, Typeable, Generic)
+  deriving stock (Show, Eq, Ord, Generic)
 
 
 -- | PDUs cover both V0 and V1 versions
@@ -78,10 +77,11 @@ newtype Session = Session ProtocolVersion
     deriving stock (Show, Eq, Ord, Generic)
 
 data Intervals = Intervals {
-    refreshInterval :: Int32,
-    retryInterval   :: Int32,
-    expireInterval  :: Int32
-} deriving stock (Show, Eq, Ord)
+        refreshInterval :: Word32,
+        retryInterval   :: Word32,
+        expireInterval  :: Word32
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
 
 
 instance Binary RtrSessionId
@@ -91,6 +91,9 @@ instance Binary PduCode
 -- Orphans
 instance Binary SKI
 instance Binary KI
+
+instance Binary ASN
+instance Binary PrefixLength
 
 
 defIntervals :: Intervals
@@ -143,16 +146,7 @@ instance Binary Ipv6Prefix where
         put w2
         put w3
         
-    get = fail "Not implemented"
-
-instance Binary ASN where 
-    put (ASN a) = put a        
-    get = ASN <$> get
-
-instance Binary PrefixLength where 
-    put (PrefixLength a) = put a        
-    get = PrefixLength <$> get
-        
+    get = fail "Not implemented"        
 
 errorCodes :: [(ErrorCode, Word16)]
 errorCodes = [

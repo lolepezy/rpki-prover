@@ -149,7 +149,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             logDebug_ logger [i|Generated new diff in VRP set: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
             when thereAreVrpUpdates $ do 
                 let RtrState {..} = nextRtrState
-                let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{added d}, deleted = #{deleted d})|]) $ toList diffs
+                let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{Set.size $ added d}, deleted = #{Set.size $ deleted d})|]) $ toList diffs
                 logDebug_ logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
 
             Now now <- thisInstant            
