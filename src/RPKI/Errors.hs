@@ -45,7 +45,8 @@ data ValidationError = InvalidCert Text |
                         ObjectIsTooSmall Integer |
                         ObjectIsTooBig Integer |
                         TACertificateLocalIsNewer Serial Serial |
-                        InvalidSignature Text |                        
+                        InvalidSignature Text |  
+                        CMSSignatureAlgorithmMismatch Text Text |                      
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension BS.ByteString |
@@ -58,7 +59,7 @@ data ValidationError = InvalidCert Text |
                         NoCRLExists AKI Locations |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
-                        NextUpdateTimeNotSet |
+                        NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast Instant |
                         ThisUpdateTimeIsInTheFuture Instant |
                         RevokedEECertificate |

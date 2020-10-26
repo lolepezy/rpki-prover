@@ -1,14 +1,21 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE OverloadedLabels           #-}
 
 module RPKI.Validation.ObjectValidation where
     
 import           Control.Monad
+
+import           Control.Lens
+import           Data.Generics.Labels
+import           Data.Generics.Product.Typed
+
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as LBS
+import qualified Data.Text                          as Text
 
 import qualified Data.Set                           as Set
 
@@ -26,6 +33,7 @@ import           RPKI.Time
 import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
+
 
 
 newtype Validated a = Validated a
@@ -197,8 +205,21 @@ validateCms ::
   (CMS a -> PureValidatorT conf (CMS a)) ->
   PureValidatorT conf (Validated (CMS a))
 validateCms now cms parentCert crl extraValidation = do
-  signatureCheck $ validateCMSSignature cms
-  let eeCert = getEEResourceCert $ unCMS cms
+  -- Signature algorithm in the EE certificate has to be 
+  -- exactly the same as in the signed attributes
+  let eeCert = getEEResourceCert $ unCMS cms  
+  let certWSign = getCertWithSignature eeCert
+  let eeCertSigAlg    = certWSign ^. #cwsSignatureAlgorithm
+  let attributeSigAlg = certWSign ^. #cwsX509certificate . #certSignatureAlg  
+
+  -- That can be a problem:
+  -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
+  -- Correct behaviour is to request exact match here.
+  unless (eeCertSigAlg == SignatureAlgorithmIdentifier attributeSigAlg) $ 
+    vPureError $ CMSSignatureAlgorithmMismatch 
+                    (Text.pack $ show eeCertSigAlg) (Text.pack $ show attributeSigAlg)
+    
+  signatureCheck $ validateCMSSignature cms  
   void $ validateResourceCert now eeCert parentCert crl
   Validated <$> extraValidation cms
 

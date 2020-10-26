@@ -559,13 +559,13 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     Nothing          -> vError $ NoCRLExists childrenAki certLocations'    
                     Just (CrlRO crl) -> do      
                         -- validate CRL and MFT together
-                        validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ do
-                            vHoist $ do          
-                                -- checkCrlLocation crl certificate
-                                crl' <- validateCrl (now topDownContext) crl certificate
-                                -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
-                                void $ validateMft (now topDownContext) mft certificate crl'
-                                pure crl'                                        
+                        validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ 
+                                        vHoist $ do          
+                                            -- checkCrlLocation crl certificate
+                                            validateCrl (now topDownContext) crl certificate
+
+                        -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
+                        void $ vHoist $ validateMft (now topDownContext) mft certificate validCrl
 
                         -- this for the CRL
                         incValidObject topDownContext          
