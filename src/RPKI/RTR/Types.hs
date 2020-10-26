@@ -179,5 +179,8 @@ instance Binary Intervals where
         put retryInterval
         put expireInterval        
 
-    get = Intervals <$> get <*> get <*> get
-    
+    get = do 
+        refreshInterval <- get
+        retryInterval   <- get
+        expireInterval  <- get
+        pure Intervals {..}
