@@ -125,13 +125,13 @@ should_insert_and_get_all_back_from_object_store io = do
             where 
                 sameMftNumber ro1 ro2 = 
                     case (ro1, ro2) of
-                        (MftRO mft1, MftRO mft2) -> getMftNumber mft1 == getMftNumber mft2
+                        (MftRO mft1, MftRO mft2) -> getMftMonotonousNumber mft1 == getMftMonotonousNumber mft2
                         _ -> False
 
         compareLatestMfts objectStore ros a = do
             mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a         
             
-            let mftLatest' = listToMaybe $ sortOn (negate . getMftNumber)
+            let mftLatest' = listToMaybe $ reverse $ sortOn getMftMonotonousNumber
                     [ mft | MftRO mft <- ros, getAKI mft == Just a ]
                 
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'

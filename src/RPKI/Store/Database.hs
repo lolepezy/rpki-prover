@@ -18,8 +18,6 @@ import           Data.IORef.Lifted
 
 import qualified Data.List                as List
 import           Data.Maybe               (fromMaybe)
-import           Data.Set                 (Set)
-import qualified Data.Set                 as Set
 
 import           GHC.Generics
 
@@ -37,12 +35,12 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
+import           RPKI.Time                (toNanoseconds)
 import           RPKI.Util                (fmtEx, increment)
 
 import           RPKI.AppMonad
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-
 
 
 
@@ -53,12 +51,16 @@ data ROMeta = ROMeta {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (Serialise)
 
+newtype MftMonotonousNumber = MftMonotonousNumber Int64 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
+
 -- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
     keys        :: Sequence s,
     objects     :: SMap "objects" s ArtificialKey SValue,
     hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
-    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, Int),
+    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, MftMonotonousNumber),
     objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
 
@@ -136,10 +138,8 @@ putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
             M.put tx objectMetas key (ROMeta wv Nothing)  
             ifJust (getAKI ro) $ \aki' ->
                 case ro of
-                    MftRO mft -> MM.put tx mftByAKI aki' (key, getMftNumber mft)
+                    MftRO mft -> MM.put tx mftByAKI aki' (key, getMftMonotonousNumber mft)
                     _         -> pure ()
-        
-                
 
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
@@ -155,7 +155,7 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
         M.delete tx hashToKey h
         ifJust (getAKI ro) $ \aki' ->
             case ro of
-                MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftNumber mft)
+                MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftMonotonousNumber mft)
                 _         -> pure ()        
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
@@ -205,6 +205,12 @@ markValidated tx RpkiObjectStore {..} hash wv = liftIO $ do
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
 getAll tx store = map (fromSValue . snd) <$> liftIO (M.all tx (objects store))
+
+
+-- | Get something from the manifest that would allow us to judge 
+-- which MFT is newer/older.
+getMftMonotonousNumber :: MftObject -> MftMonotonousNumber
+getMftMonotonousNumber = MftMonotonousNumber . toNanoseconds . thisTime . getCMSContent . cmsPayload
 
 
 -- TA store functions

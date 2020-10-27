@@ -558,6 +558,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                 case crlObject of 
                     Nothing          -> vError $ NoCRLExists childrenAki certLocations'    
                     Just (CrlRO crl) -> do      
+                        -- logDebugM logger [i|mft = #{NonEmpty.head $ getLocations mft}, n = #{getMftNumber mft}|]
                         -- validate CRL and MFT together
                         validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ 
                                         vHoist $ do          
@@ -586,9 +587,8 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                 r <- fmap mconcat $ parallelTasks 
                                         (cpuBottleneck appBottlenecks) 
                                         hashesInChunks 
-                                        $ \chunk -> 
-                                            forM chunk $ \(filename, hash') -> 
-                                                validateManifestEntry filename hash' validCrl                                
+                                        $ mapM $ \(filename, hash') -> 
+                                                  validateManifestEntry filename hash' validCrl                                
                                 markAllEntriesAsVisited
                                 pure $! r
                         
@@ -666,7 +666,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         --             childCaError = mError (vContext $ toText $ NonEmpty.head $ getLocations ro) e)
                         --           in T3 emptyPublicationPoints mempty (fromValidations childCaError)
                         -- because we want to ignore all the errors down the tree when reporting up, they can be confusing.
-                        Left _                         -> T3 emptyPublicationPoints mempty (fromValidations validations)                        
+                        Left _                     -> T3 emptyPublicationPoints mempty (fromValidations validations)                        
                         Right (T3 pps wl tdResult) -> T3 pps wl (tdResult <> fromValidations validations)
 
                 RoaRO roa ->

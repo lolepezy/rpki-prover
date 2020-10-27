@@ -60,8 +60,8 @@ data ValidationError = InvalidCert Text |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |                        
-                        NextUpdateTimeIsInThePast Instant |
-                        ThisUpdateTimeIsInTheFuture Instant |
+                        NextUpdateTimeIsInThePast Instant Instant |
+                        ThisUpdateTimeIsInTheFuture Instant Instant |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |

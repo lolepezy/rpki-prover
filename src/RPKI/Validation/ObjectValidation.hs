@@ -152,8 +152,8 @@ validateCrl ::
     PureValidatorT conf (Validated CrlObject)
 validateCrl now crlObject parentCert = do
     signatureCheck $ validateCRLSignature crlObject parentCert
-    void $ validateNextUpdate now nextUpdateTime
     void $ validateThisUpdate now thisUpdateTime
+    void $ validateNextUpdate now nextUpdateTime    
     pure $ Validated crlObject
     where
         SignCRL {..} = signCrl crlObject
@@ -168,8 +168,8 @@ validateMft ::
 validateMft now mft parentCert crl = do
     void $ validateCms now (cmsPayload mft) parentCert crl $ \mftCMS -> do
         let cmsContent = getCMSContent mftCMS
-        void $ validateNextUpdate now $ Just $ nextTime cmsContent
         void $ validateThisUpdate now $ thisTime cmsContent
+        void $ validateNextUpdate now $ Just $ nextTime cmsContent
         pure mftCMS
     pure $ Validated mft
 
@@ -209,13 +209,13 @@ validateCms now cms parentCert crl extraValidation = do
   -- exactly the same as in the signed attributes
   let eeCert = getEEResourceCert $ unCMS cms  
   let certWSign = getCertWithSignature eeCert
-  let eeCertSigAlg    = certWSign ^. #cwsSignatureAlgorithm
-  let attributeSigAlg = certWSign ^. #cwsX509certificate . #certSignatureAlg  
+  let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
+  let attributeSigAlg                           = certWSign ^. #cwsX509certificate . #certSignatureAlg  
 
   -- That can be a problem:
   -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
   -- Correct behaviour is to request exact match here.
-  unless (eeCertSigAlg == SignatureAlgorithmIdentifier attributeSigAlg) $ 
+  unless (eeCertSigAlg == attributeSigAlg) $ 
     vPureError $ CMSSignatureAlgorithmMismatch 
                     (Text.pack $ show eeCertSigAlg) (Text.pack $ show attributeSigAlg)
     
@@ -229,13 +229,13 @@ validateNextUpdate (Now now) nextUpdateTime =
   case nextUpdateTime of
     Nothing -> vPureError NextUpdateTimeNotSet
     Just nextUpdate
-      | nextUpdate < now -> vPureError $ NextUpdateTimeIsInThePast nextUpdate
-      | otherwise -> pure nextUpdate
+      | nextUpdate < now -> vPureError $ NextUpdateTimeIsInThePast nextUpdate now
+      | otherwise        -> pure nextUpdate
 
 -- | Validate the thisUpdateTeim for objects that have it (MFT, CRLs)
 validateThisUpdate :: Now -> Instant -> PureValidatorT conf Instant
 validateThisUpdate (Now now) thisUpdateTime
-      | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime
+      | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime now
       | otherwise             = pure thisUpdateTime
 
 -- | Check if CMS is on the revocation list
