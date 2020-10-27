@@ -18,8 +18,7 @@ import           Data.Text                (Text)
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
-import           Data.Int
-import           Data.Word                (Word8)
+import           Data.Int                 (Int16)
 
 import           Data.Hourglass
 import           Data.Kind                (Type)
@@ -40,15 +39,14 @@ import           RPKI.Time
 
 
 
-
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
-data WithRFC_ s r = WithStrict_       !s 
-                  | WithReconsidered_ !r
+data WithRFC_ s r = WithStrict_       s 
+                  | WithReconsidered_ r
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -183,16 +181,16 @@ data CrlObject = CrlObject {
 data CerObject = CerObject {
         hash      :: {-# UNPACK #-} Hash,
         locations :: {-# UNPACK #-} Locations,
-        ski :: SKI,
-        aki :: Maybe AKI,
+        ski       :: SKI,
+        aki       :: Maybe AKI,
         certificate :: ResourceCertificate
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
 data CMSBasedObject a = CMSBasedObject {
-        hash      :: {-# UNPACK #-} Hash,
-        locations :: {-# UNPACK #-} Locations,
+        hash       :: {-# UNPACK #-} Hash,
+        locations  :: {-# UNPACK #-} Locations,
         cmsPayload :: CMS a
     }
     deriving stock (Show, Eq, Generic)
@@ -203,8 +201,8 @@ type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
 
 data EECerObject = EECerObject {
-        ski :: {-# UNPACK #-} SKI,
-        aki :: {-# UNPACK #-} AKI,
+        ski         :: {-# UNPACK #-} SKI,
+        aki         :: {-# UNPACK #-} AKI,
         certificate :: ResourceCertificate
     }
     deriving stock (Show, Eq, Generic)
@@ -302,10 +300,6 @@ data Vrp = Vrp
     {-# UNPACK #-} !ASN 
     !IpPrefix 
     {-# UNPACK #-} !PrefixLength
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-
-data PrefixWithLength = PrefixWithLength !IpPrefix !Int16
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

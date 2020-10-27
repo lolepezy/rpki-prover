@@ -42,7 +42,6 @@ import           RPKI.Time
 import           RPKI.RepositorySpec
 
 
-
 storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [

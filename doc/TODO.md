@@ -83,9 +83,7 @@
 
 ---------------------------------  In progress ----------------------------------------
 
-- Check signature algorithms (
-    http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
-    https://www.arin.net/announcements/20200812/)
+
  
 --------------------------------------- TODOs -----------------------------------------
  
@@ -95,9 +93,9 @@ RTR:
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept).
 
 - Implement RRDP -> rsync fall-back.
+- 
 
 - Implement `--reset`, i.e. erase cache/tmp/rsync on the start (keep some metadata, i.e. "version" of the DB and refuse to work with an older incompatible version?)
-- Fix 'ctrl+c', it should stop the applications
 
 - Implement SLURM support (https://tools.ietf.org/html/rfc8416) 
    * store a json file? it's not very effient in case of AS0 in SLURM, so think about something more scalable, binary serialisation, etc.
@@ -109,12 +107,16 @@ RTR:
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 
 
+- Check signature algorithms (
+    http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt,
+    https://www.arin.net/announcements/20200812/)
+  This needs modifying hs-certificate or implementing another custom parser for signature algorithm.  
+
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
 - Implement UI
 
-- Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
-  choices when to download one or another.
+- Fix 'ctrl+c', it should stop the applications
 
 - ???? Figure out how to classify "successful" validation and unsuccessful one to update the VRPs
 
@@ -122,6 +124,9 @@ RTR:
 
 - Keep in LMDB only the necessary part of an object after checking it's signature.
 - Review the validation and check if everything is according to the RFCs (time, digests, etc.)
+
+- Gather stats on how much objects are updated/deleted in delta/snapshot updates to make better 
+  choices when to download one or another.
 
 - replace `streaming-utils` and `json-stream` with something more alive.
 - use co-log-concurrent (https://gist.github.com/qnikst/f38bbaee033aaa3df8a9d115c951182a)
