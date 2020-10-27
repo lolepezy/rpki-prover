@@ -11,12 +11,11 @@ module RPKI.Store.DatabaseSpec where
 import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.IO.Class
-import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import           Data.List                         as List
 import qualified Data.Map.Strict                   as Map
 import           Data.Maybe
-import qualified Data.Text                         as Text
+import           Data.Ord
 
 import           System.Directory
 import           System.IO.Temp
@@ -27,26 +26,20 @@ import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.AppMonad
+import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Errors
-import           RPKI.Orphans
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
-import           RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
-import           RPKI.Time
-import           RPKI.AppState
-
-import           RPKI.Store.Base.LMDB              (LmdbEnv)
 import           RPKI.Store.Util
+import           RPKI.Time
 
 import           RPKI.RepositorySpec
-
 
 
 
@@ -131,7 +124,7 @@ should_insert_and_get_all_back_from_object_store io = do
         compareLatestMfts objectStore ros a = do
             mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a         
             
-            let mftLatest' = listToMaybe $ reverse $ sortOn getMftMonotonousNumber
+            let mftLatest' = listToMaybe $ sortOn (Down . getMftMonotonousNumber)
                     [ mft | MftRO mft <- ros, getAKI mft == Just a ]
                 
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'
