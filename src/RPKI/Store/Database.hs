@@ -1,15 +1,16 @@
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE StrictData            #-}
 
 module RPKI.Store.Database where
 
 import           Codec.Serialise
 import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
-import           Control.Monad            (forM_, void)
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Reader     (ask)
 
@@ -35,13 +36,12 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
-import           RPKI.Time                (toNanoseconds)
+import           RPKI.Time                (Instant, toNanoseconds)
 import           RPKI.Util                (fmtEx, increment)
 
 import           RPKI.AppMonad
 import           RPKI.Store.Data
 import           RPKI.Store.Repository
-
 
 
 data ROMeta = ROMeta {
@@ -55,12 +55,16 @@ newtype MftMonotonousNumber = MftMonotonousNumber Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
 
+data MftTimingMark = MftTimingMark Instant Instant 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
+
 -- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
     keys        :: Sequence s,
     objects     :: SMap "objects" s ArtificialKey SValue,
     hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
-    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, MftMonotonousNumber),
+    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, MftTimingMark),
     objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
 
@@ -126,20 +130,18 @@ putObject :: (MonadIO m, Storage s) =>
             Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> WorldVersion -> m ()
 putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
     let h = getHash ro
-    
-    M.get tx hashToKey h >>= \case
-        -- check if this object is already there, don't insert it twice
-        Just _  -> pure ()
-        Nothing -> do 
-            SequenceValue k <- nextValue tx keys
-            let key = ArtificialKey k
-            M.put tx hashToKey h key
-            M.put tx objects key sv   
-            M.put tx objectMetas key (ROMeta wv Nothing)  
-            ifJust (getAKI ro) $ \aki' ->
-                case ro of
-                    MftRO mft -> MM.put tx mftByAKI aki' (key, getMftMonotonousNumber mft)
-                    _         -> pure ()
+    exists <- M.exists tx hashToKey h
+    -- check if this object is already there, don't insert it twice
+    unless exists $ do     
+        SequenceValue k <- nextValue tx keys
+        let key = ArtificialKey k
+        M.put tx hashToKey h key
+        M.put tx objects key sv   
+        M.put tx objectMetas key (ROMeta wv Nothing)  
+        ifJust (getAKI ro) $ \aki' ->
+            case ro of
+                MftRO mft -> MM.put tx mftByAKI aki' (key, getMftTimingMark mft)
+                _         -> pure ()
 
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
@@ -155,26 +157,47 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
         M.delete tx hashToKey h
         ifJust (getAKI ro) $ \aki' ->
             case ro of
-                MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftMonotonousNumber mft)
+                MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftTimingMark mft)
                 _         -> pure ()        
+
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
 findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
-    MM.foldS tx mftByAKI aki' f Nothing >>= \case
+    MM.foldS tx mftByAKI aki' chooseMaxNum Nothing >>= \case
         Nothing     -> pure Nothing
         Just (k, _) -> do 
             o <- (fromSValue <$>) <$> M.get tx objects k
-            pure $ case o of 
+            pure $! case o of 
                 Just (MftRO mft) -> Just mft
                 _                -> Nothing
     where
-        f latest _ (hash, mftNum) = 
-            pure $ case latest of 
-            Nothing -> Just (hash, mftNum)
-            Just (_, latestNum) 
-                | mftNum > latestNum -> Just (hash, mftNum)
-                | otherwise          -> latest
+        chooseMaxNum latest _ (hash, orderingNum) = 
+            pure $! case latest of 
+                Nothing                       -> Just (hash, orderingNum)
+                Just (_, latestNum) 
+                    | orderingNum > latestNum -> Just (hash, orderingNum)
+                    | otherwise               -> latest
+
+
+-- findLatestMftByAKI :: (MonadIO m, Storage s) => 
+--                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
+-- findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $ do 
+--     z <- MM.allForKey tx mftByAKI aki'
+--     case List.sortOn (Down . snd) z of
+--         []                  -> pure Nothing
+--         (latestKey, _) : _ -> do 
+--             o <- (fromSValue <$>) <$> M.get tx objects latestKey
+--             pure $! case o of 
+--                 Just (MftRO mft) -> Just mft
+--                 _                -> Nothing
+
+
+-- getSortedMftTimingsByAKI :: (MonadIO m, Storage s) => 
+--                               Tx s mode -> RpkiObjectStore s -> AKI -> m [MftTiming]
+-- getSortedMftTimingsByAKI tx RpkiObjectStore {..} aki' = 
+--     liftIO $ List.sortOn Down . map snd <$> MM.allForKey tx mftByAKI aki'    
+
 
 findMftsByAKI :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
@@ -183,11 +206,11 @@ findMftsByAKI tx RpkiObjectStore {..} aki' = liftIO $
     where
         f mfts _ (k, _) = do 
             o <- (fromSValue <$>) <$> M.get tx objects k
-            pure $ accumulate o            
+            pure $! accumulate o            
             where 
                 accumulate (Just (MftRO mft)) = mft : mfts
                 accumulate _                  = mfts            
-
+    
 
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
@@ -209,8 +232,10 @@ getAll tx store = map (fromSValue . snd) <$> liftIO (M.all tx (objects store))
 
 -- | Get something from the manifest that would allow us to judge 
 -- which MFT is newer/older.
-getMftMonotonousNumber :: MftObject -> MftMonotonousNumber
-getMftMonotonousNumber = MftMonotonousNumber . toNanoseconds . thisTime . getCMSContent . cmsPayload
+getMftTimingMark :: MftObject -> MftTimingMark
+getMftTimingMark mft = let 
+    m = getCMSContent $ cmsPayload mft 
+    in MftTimingMark (thisTime m) (nextTime m)
 
 
 -- TA store functions
