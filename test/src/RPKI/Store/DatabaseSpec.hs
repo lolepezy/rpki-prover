@@ -11,11 +11,13 @@ module RPKI.Store.DatabaseSpec where
 import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.IO.Class
+import qualified Data.ByteString                   as BS
 import           Data.Foldable
-import           Data.List                         as List
+import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
 import           Data.Maybe
 import           Data.Ord
+import qualified Data.Text                         as Text
 
 import           System.Directory
 import           System.IO.Temp
@@ -24,6 +26,7 @@ import           Test.QuickCheck.Arbitrary.Generic
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
+
 
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -40,6 +43,7 @@ import           RPKI.Store.Util
 import           RPKI.Time
 
 import           RPKI.RepositorySpec
+import RPKI.Parse.Parse
 
 
 storeGroup :: TestTree
@@ -54,7 +58,8 @@ storeGroup = testGroup "LMDB storage tests"
 objectStoreGroup :: TestTree
 objectStoreGroup = withDB $ \io -> testGroup "Object storage test"
     [
-        HU.testCase "Should insert and get back" (should_insert_and_get_all_back_from_object_store io)        
+        HU.testCase "Should insert and get back" (should_insert_and_get_all_back_from_object_store io),        
+        HU.testCase "Should order manifests accoring to their dates" (should_order_manifests_properly io)
     ]
 
 validationResultStoreGroup :: TestTree
@@ -97,8 +102,11 @@ should_insert_and_get_all_back_from_object_store io = do
         for_ ros' $ \ro -> 
             putObject tx objectStore (toStorableObject ro) (instantToVersion now)
 
-    extracted <- roTx objectStore $ \tx -> getAll tx objectStore
-    HU.assertEqual "Not the same objects" (sortOn getHash extracted) (sortOn getHash ros')
+    allObjects <- roTx objectStore $ \tx -> getAll tx objectStore
+    HU.assertEqual 
+        "Not the same objects" 
+        (List.sortOn getHash allObjects) 
+        (List.sortOn getHash ros')
     
     compareLatestMfts objectStore ros1 aki1
     compareLatestMfts objectStore ros2 aki2  
@@ -107,7 +115,7 @@ should_insert_and_get_all_back_from_object_store io = do
 
     rwTx objectStore $ \tx -> 
         forM_ toDelete $ \ro -> 
-        deleteObject tx objectStore (getHash ro)
+            deleteObject tx objectStore (getHash ro)
 
     compareLatestMfts objectStore toKeep aki1
     compareLatestMfts objectStore ros2 aki2  
@@ -117,16 +125,36 @@ should_insert_and_get_all_back_from_object_store io = do
             where 
                 sameMftNumber ro1 ro2 = 
                     case (ro1, ro2) of
-                        (MftRO mft1, MftRO mft2) -> getMftMonotonousNumber mft1 == getMftMonotonousNumber mft2
+                        (MftRO mft1, MftRO mft2) -> getMftTimingMark mft1 == getMftTimingMark mft2
                         _ -> False
 
         compareLatestMfts objectStore ros a = do
             mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a         
             
-            let mftLatest' = listToMaybe $ sortOn (Down . getMftMonotonousNumber)
+            let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
                     [ mft | MftRO mft <- ros, getAKI mft == Just a ]
                 
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'
+
+
+should_order_manifests_properly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+should_order_manifests_properly io = do  
+    (_, DB {..}) <- io
+    Right mft1 <- readObjectFromFile "./test/data/afrinic_mft1.mft"
+    Right mft2 <- readObjectFromFile "./test/data/afrinic_mft2.mft"
+
+    Now now <- thisInstant 
+    let worldVersion = instantToVersion now
+
+    rwTx objectStore $ \tx -> do        
+            putObject tx objectStore (toStorableObject mft1) worldVersion
+            putObject tx objectStore (toStorableObject mft2) worldVersion
+
+    -- they have the same AKIs
+    let Just aki1 = getAKI mft1
+    Just mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki1
+
+    HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
 
 should_insert_and_get_all_back_from_validation_result_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
@@ -242,6 +270,10 @@ releaseLmdb ((dir, LmdbEnv{..}), _) = do
     closeLmdb nativeEnv
     removeDirectoryRecursive dir
 
+readObjectFromFile :: FilePath -> IO (ParseResult RpkiObject)
+readObjectFromFile path = do 
+    bs <- BS.readFile path
+    pure $! readObject (RsyncU $ RsyncURL $ URI $ Text.pack path) bs
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = go 
