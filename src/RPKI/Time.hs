@@ -40,18 +40,21 @@ timed action = do
 timedMS :: MonadIO m => m a -> m (a, Int64)
 timedMS action = do 
     (z, ns) <- timed action   
-    pure (z, fromIntegral (ns `div` 1000_000))
+    pure (z, fromIntegral $ ns `div` microsecondsPerSecond)
 
 nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
 {-# INLINE nanosPerSecond #-}
+
+microsecondsPerSecond :: Num p => p
+microsecondsPerSecond = 1000_000
+{-# INLINE microsecondsPerSecond #-}
 
 toNanoseconds :: Instant -> Int64
 toNanoseconds (Instant instant) = 
     nanosPerSecond * seconds + nanos
     where 
         ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP instant
-{-# INLINE toNanoseconds #-}
 
 fromNanoseconds :: Int64 -> Instant
 fromNanoseconds totalNanos =    
@@ -59,9 +62,7 @@ fromNanoseconds totalNanos =
     where 
         elapsed = ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos)
         (seconds, nanos) = totalNanos `divMod` nanosPerSecond     
-{-# INLINE fromNanoseconds #-}
 
 closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
 closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds = 
     timeDiff secondMoment firstMoment < intervalSeconds
-{-# INLINE closeEnoughMoments #-}    
