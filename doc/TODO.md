@@ -93,8 +93,7 @@ RTR:
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept).
 
 - Implement RRDP -> rsync fall-back.
-- 
-
+- make sure that manifest entries only contain characters that belong to "DER printable string"
 - Implement `--reset`, i.e. erase cache/tmp/rsync on the start (keep some metadata, i.e. "version" of the DB and refuse to work with an older incompatible version?)
 
 - Implement SLURM support (https://tools.ietf.org/html/rfc8416) 
@@ -131,9 +130,6 @@ RTR:
 - replace `streaming-utils` and `json-stream` with something more alive.
 - use co-log-concurrent (https://gist.github.com/qnikst/f38bbaee033aaa3df8a9d115c951182a)
 - refactor roTx/rwTx machinery so that rwTx accept both RO/RW handlers
-
-
-
 
 
 - 
