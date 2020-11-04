@@ -1,6 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
-
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Store.Base.Storable where
 
@@ -21,9 +21,9 @@ newtype SKey = SKey { unSKey :: Storable }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 -- Strictness here is important
-data StorableUnit a e = SObject {-# UNPACK #-} !(StorableObject a) | SError !e
+data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
 
-data StorableObject a = StorableObject !a !SValue
+data StorableObject a = StorableObject a SValue
     deriving (Show, Eq, Generic)
 
 toStorableObject :: Serialise a => a -> StorableObject a 
@@ -55,9 +55,9 @@ fromSValue (SValue b) = fromStorable b
 
 
 data SStats = SStats {
-    statSize       :: !Int,
-    statKeyBytes   :: !Int,
-    statValueBytes :: !Int
+    statSize       :: Int,
+    statKeyBytes   :: Int,
+    statValueBytes :: Int
 } deriving stock (Show, Eq, Generic)
 
 
