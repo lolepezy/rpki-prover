@@ -174,7 +174,7 @@ createAppContext CLIOptions{..} logger = do
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
                 rsyncRepositoryRefreshInterval = Seconds $ rrdpRefreshInterval `orDefault` (11 * 660)
             },
-            httpApiConf = HttpApiConfing {
+            httpApiConf = HttpApiConfig {
                 port = httpApiPort `orDefault` 9999
             },
             rtrConfig = rtrConfig,

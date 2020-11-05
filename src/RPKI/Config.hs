@@ -26,7 +26,7 @@ data Config = Config {
     rsyncConf            :: RsyncConf,
     rrdpConf             :: RrdpConf,
     validationConfig     :: ValidationConfig,
-    httpApiConf          :: HttpApiConfing,
+    httpApiConf          :: HttpApiConfig,
     rtrConfig            :: Maybe RtrConfig,
     cacheCleanupInterval :: Seconds,
     cacheLifeTime        :: Seconds,
@@ -55,7 +55,7 @@ data ValidationConfig = ValidationConfig {
     repositoryGracePeriod          :: Maybe Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
-data HttpApiConfing = HttpApiConfing {
+data HttpApiConfig = HttpApiConfig {
     port :: Int16    
 } deriving stock (Show, Eq, Ord, Generic)
 
