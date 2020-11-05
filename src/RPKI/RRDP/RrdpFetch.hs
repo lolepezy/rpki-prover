@@ -290,8 +290,7 @@ saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do
                                     -- anything, just skip it. We are not afraid of possible 
                                     -- race-conditions here, it's not a problem to double-insert
                                     -- an object and delete-insert race will never happen in practice.
-                                        then 
-                                            Nothing
+                                        then Nothing
                                         else
                                             case first ParseE $ readObject rpkiURL decoded of 
                                                 Left e    -> Just $! SError $ VErr e

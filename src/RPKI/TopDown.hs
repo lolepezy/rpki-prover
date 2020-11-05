@@ -22,6 +22,7 @@ import           Data.Generics.Product.Fields
 import           GHC.Generics
 
 import           Data.Foldable
+import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.List.Split                  (chunksOf)
@@ -60,6 +61,7 @@ import           RPKI.AppState
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
+import Data.Ord
 
 
 
@@ -557,8 +559,9 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                 crlObject <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
                 case crlObject of 
                     Nothing          -> vError $ NoCRLExists childrenAki certLocations'    
-                    Just (CrlRO crl) -> do      
-                        -- logDebugM logger [i|mft = #{NonEmpty.head $ getLocations mft}, n = #{getMftNumber mft}|]
+                    Just foundCrl@(CrlRO crl) -> do      
+                        visitObject appContext topDownContext foundCrl
+                        -- logDebugM logger [i|crl = #{NonEmpty.head $ getLocations crl} (#{thisUpdateTime $ signCrl crl}, #{nextUpdateTime $ signCrl crl})|]
                         -- validate CRL and MFT together
                         validCrl <- forChild (toText $ NonEmpty.head $ getLocations crl) $ 
                                         vHoist $ do          
@@ -570,7 +573,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
 
                         -- this for the CRL
                         incValidObject topDownContext          
-                        visitObject appContext topDownContext (CrlRO crl)
+                        
 
                         let childrenHashes = filter ((/= getHash crl) . snd) $ -- filter out CRL itself
                                                 mftEntries $ getCMSContent $ cmsPayload mft                                                
