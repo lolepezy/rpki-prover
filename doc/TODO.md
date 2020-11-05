@@ -83,7 +83,7 @@
 
 ---------------------------------  In progress ----------------------------------------
 
-
+- Optimise rsync/snapshot loading: check for hash presence _before_ parsing it.
  
 --------------------------------------- TODOs -----------------------------------------
  
@@ -101,7 +101,6 @@ RTR:
    * in any case SLURM data must not be stored in LMDB so that it would be possible to erase the cache. 
 
 - Refactor RPKI.Repository and RPKI.Store.Repository to be more ergonamic and easy to understand.
-- Optimise rsync/snapshot loading: check for hash presence _before_ parsing it.
 
 - Relate objects to the repositories they are downloaded from and clean up them before saving snapshots
 
