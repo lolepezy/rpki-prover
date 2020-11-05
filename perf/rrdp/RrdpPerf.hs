@@ -43,7 +43,7 @@ import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Config
 import           RPKI.Errors
-import           RPKI.Http.Server
+import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext
@@ -62,6 +62,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.Base.LMDB hiding (getEnv)
 
 import qualified System.IO.Posix.MMap.Lazy        as MmapLazy
+import qualified System.IO.Posix.MMap        as Mmap
 import RPKI.RRDP.Types
 
 
@@ -76,7 +77,7 @@ testSnapshotLoad :: IO ()
 testSnapshotLoad = do
     logger <- createLogger
     (Right appContext, _) <- runValidatorT (vContext "configuration") $ createAppContext logger    
-    snapshotContent <- MmapLazy.unsafeMMapFile "../tmp/test-data/snapshot.xml"
+    snapshotContent <- Mmap.unsafeMMapFile "../tmp/test-data/snapshot.xml"
     logDebug_ logger [i|Starting |]    
     stats <- newRrdpStat
     let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (Serial 673)
@@ -147,6 +148,7 @@ createAppContext logger = do
         pure $ AppBottleneck cpuBottleneck ioBottleneck
 
     httpContext <- liftIO newHttpContext
+    appState <- liftIO newAppState    
 
     let appContext = AppContext {        
         logger = logger,
@@ -166,16 +168,17 @@ createAppContext logger = do
                 rrdpRepositoryRefreshInterval  = Seconds $  120,
                 rsyncRepositoryRefreshInterval = Seconds $ (11 * 660)
             },
-            httpApiConf = HttpApiConf {
+            httpApiConf = HttpApiConfig {
                 port = 9999
             },
+            rtrConfig = Nothing,
             cacheCleanupInterval = 30 * 60,
             cacheLifeTime = Seconds $ 60 * 60 * ( 72),
 
             -- TODO Think about it, it should be in lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
         },
-        versions = versions,
+        appState = appState,
         database = database,
         appBottlenecks = appBottlenecks,
         httpContext = httpContext
