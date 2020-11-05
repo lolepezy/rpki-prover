@@ -16,6 +16,7 @@ import Data.Coerce (coerce)
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
+import RPKI.Util
 
 import Data.IORef
 
@@ -29,6 +30,7 @@ import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
 
 import Pipes
+import Data.Foldable (forM_)
 
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
@@ -67,11 +69,10 @@ instance WithLmdb LmdbStorage where
 instance WithTx LmdbStorage where    
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
 
-    readOnlyTx lmdb f = 
-        withSemaphore (txSem env) $ 
-            withROTransaction (nativeEnv env) (f . LmdbTx)
-        where
-            env = getEnv lmdb
+    readOnlyTx lmdb f = let
+        LmdbEnv {..} = getEnv lmdb
+        in withSemaphore txSem $ 
+                withROTransaction nativeEnv (f . LmdbTx)        
 
     readWriteTx lmdb f = withTransaction (nativeEnv $ getEnv lmdb) (f . LmdbTx)
 
@@ -120,8 +121,8 @@ instance Storage LmdbStorage where
         foldGeneric tx db f a0 withMultiCursor LMMap.firstForward
 
 -- TODO Add some nice type signature here
-foldGeneric tx db f a0 withC makeProducer =
-    withC tx db $ \c -> do
+foldGeneric tx db f a0 withCurs makeProducer =
+    withCurs tx db $ \c -> do
         z <- newIORef a0
         void $ runEffect $ makeProducer c >-> do
             forever $ do
@@ -174,3 +175,38 @@ withSemaphore (Semaphore maxCounter current) f =
                 then retry
                 else writeTVar current (c + 1)
         decrement _ = atomically $ modifyTVar' current $ \c -> c - 1
+
+
+-- | Copy all databases from the from LMDB environment to the other
+-- This is a low-level operation to be used for de-fragmentation.
+-- `dest` is supposed to be completely empty
+copyEnv :: LmdbEnv -> LmdbEnv -> IO ()
+copyEnv src dest = do
+    let srcN = nativeEnv src
+    let dstN = nativeEnv dest
+    srcDb <- withTransaction srcN $ \tx -> openDatabase tx Nothing dbSettings     
+    withTransaction dstN $ \dstTx -> do     
+        withROTransaction srcN $ \srcTx -> do                
+            mapNames <- getMapNames srcTx srcDb
+            putStrLn $ "mapNames = " <> show mapNames
+
+            forM_ mapNames $ \mapName -> do 
+                srcMap <- openDatabase srcTx (Just $ convert mapName) dbSettings             
+                dstMap <- openDatabase dstTx (Just $ convert mapName) dbSettings             
+                pure ()
+
+            pure ()
+    pure ()
+    where   
+        dbSettings = makeSettings 
+            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+            byteString byteString
+
+        getMapNames tx db = do 
+            withCursor tx db $ \c -> do 
+                maps <- newIORef []
+                void $ runEffect $ LMap.firstForward c >-> do
+                    forever $ do
+                        Lmdb.KeyValue name _ <- await
+                        lift $ modifyIORef' maps (<> [name])
+                readIORef maps                

@@ -248,6 +248,11 @@ shouldRollbackAppTx io = do
          v3 <- M.get tx z 3  
          HU.assertEqual "Must be rolled back by exception" v3 Nothing
     
+-- should_report_multi_or_not_properly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+-- should_report_multi_or_not_properly io = do  
+--     (_, DB {..}) <- io
+--     roTx objects objectStore
+--     pure ()
 
 
 
