@@ -75,7 +75,8 @@
  * Limit total amoutn of VRPs in rtr diffs
  * generation seesion based on current time or so (https://tools.ietf.org/html/rfc8210#section-5.1)
  * Fix (if broken) sent Error PDUs
-
++ Optimise rsync/snapshot loading: check for hash presence _before_ parsing it.
++ ".cer", ".mft", ... must be compared case-insensitively to decide of the object type.
 
 ---------------------------------  In testing -----------------------------------------
 
@@ -83,13 +84,11 @@
 
 ---------------------------------  In progress ----------------------------------------
 
-- Optimise rsync/snapshot loading: check for hash presence _before_ parsing it.
  
 --------------------------------------- TODOs -----------------------------------------
  
 RTR:
  
-
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept).
 
 - Implement RRDP -> rsync fall-back.
