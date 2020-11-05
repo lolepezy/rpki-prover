@@ -266,10 +266,8 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
 
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m [Vrp]
-getVrps tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $
-    M.get tx vrpMap wv >>= \case 
-        Nothing -> pure []
-        Just v  -> pure v
+getVrps tx DB { vrpStore = VRPStore vrpMap } wv = 
+    liftIO $ fromMaybe [] <$> M.get tx vrpMap wv    
 
 deleteVRPs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -373,7 +371,7 @@ deleteOldVersions database tooOld =
             deleteVRPs tx database worldVersion
             deleteVersion tx database worldVersion
     
-    pure $ List.length toDelete
+    pure $! List.length toDelete
 
 
 -- | Find the latest completed world version 
@@ -382,7 +380,7 @@ getLastCompletedVersion :: (Storage s) =>
                         DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
 getLastCompletedVersion database tx = do 
         vs <- allVersions tx database
-        pure $ case [ v | (v, CompletedVersion) <- vs ] of         
+        pure $! case [ v | (v, CompletedVersion) <- vs ] of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
 
@@ -527,14 +525,15 @@ appTxEx ws err f txF = do
         ]       
     where
         transaction env = txF (storage ws) $ \tx -> do 
-            (r, vs) <- runValidatorT env $ f tx
+            z@(r, vs) <- runValidatorT env $ f tx
             case r of
                 -- abort transaction on ExceptT error
                 Left e  -> throwIO $ TxRollbackException e vs
-                Right _ -> pure (r, vs)
+                Right _ -> pure z
 
 
 data TxRollbackException = TxRollbackException AppError Validations
     deriving stock (Show, Eq, Ord, Generic)
 
 instance Exception TxRollbackException
+

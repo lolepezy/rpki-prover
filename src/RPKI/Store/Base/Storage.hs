@@ -7,7 +7,6 @@ module RPKI.Store.Base.Storage where
 import Data.Kind
 import GHC.TypeLits
 import RPKI.Store.Base.Storable
-import GHC.Generics (Generic)
 
 data TxMode = RO | RW
 
