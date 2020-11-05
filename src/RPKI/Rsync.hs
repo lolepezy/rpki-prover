@@ -162,20 +162,27 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                             task <- (readAndParseObject path (RsyncU uri)) `strictTask` threads                                                                      
                             liftIO $ atomically $ writeCQueue queue (uri, task)
             where                
-                readAndParseObject :: FilePath -> RpkiURL -> ValidatorT vc IO (StorableUnit RpkiObject AppError)
-                readAndParseObject filePath uri = liftIO $ do                                         
-                    getSizeAndContent1 filePath >>= \case                    
-                        Left e        -> pure $! SError e
-                        Right (_, bs) ->                            
-                            case first ParseE $ readObject uri bs of
-                                Left e   -> pure $! SError e
-                                -- All these bangs here make sense because
-                                -- 
-                                -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                                -- force computation of the serialised object and gain some parallelism
-                                -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                -- a slow CPU-intensive transaction (verify that it's the case)
-                                Right ro -> pure $! SObject $ toStorableObject ro
+                readAndParseObject :: FilePath -> RpkiURL -> ValidatorT vc IO (Maybe (StorableUnit RpkiObject AppError))
+                readAndParseObject filePath uri = 
+                    liftIO (getSizeAndContent1 filePath) >>= \case                    
+                        Left e        -> pure $! Just $! SError e
+                        Right (_, bs) -> 
+                            roAppTx database $ \tx -> do
+                                -- Check if the object is already in the storage
+                                -- before parsing ASN1 and serialising it.
+                                exists <- hashExists tx objectStore (U.sha256s bs)
+                                pure $! if exists 
+                                    then Nothing
+                                    else 
+                                        case first ParseE $ readObject uri bs of
+                                            Left e -> Just $! SError e
+                                            -- All these bangs here make sense because
+                                            -- 
+                                            -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
+                                            -- force computation of the serialised object and gain some parallelism
+                                            -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
+                                            -- a slow CPU-intensive transaction (verify that it's the case)
+                                            Right ro -> Just $! SObject $ toStorableObject ro
         
         saveObjects counter queue = do            
             mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
@@ -193,11 +200,12 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     Left (e :: SomeException) -> 
                         throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
 
-                    Right (SError e) -> do
+                    Right Nothing           -> pure ()
+                    Right (Just (SError e)) -> do
                         logErrorM logger [i|An error parsing or serialising the object: #{e}|]
                         appWarn e
 
-                    Right (SObject so@(StorableObject ro _)) -> do                        
+                    Right (Just (SObject so@(StorableObject ro _))) -> do                        
                         alreadyThere <- hashExists tx objectStore (getHash ro)
                         unless alreadyThere $ do 
                             putObject tx objectStore so worldVersion

@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE StrictData        #-}
 
 
 module RPKI.RRDP.RrdpFetch where
@@ -35,7 +36,7 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database              (rwAppTx)
+import           RPKI.Store.Database              (roAppTx, rwAppTx)
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
@@ -271,26 +272,44 @@ saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do
         newStorable (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
-                    task <- readBlob `pureTask` bottleneck
+                    task <- readBlob `strictTask` bottleneck
                     pure $ Right (uri, task)
                 else
                     pure $ Left (RrdpE UnsupportedObjectType, uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
-                    Left e        -> SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
-                    Right rpkiURL -> parseAndProcess rpkiURL encodedb64
+                    Left e        -> pure $! Just $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                    Right rpkiURL ->
+                        case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                            Left e -> pure $! Just $ SError $ VErr e
+                            Right (DecodedBase64 decoded) -> 
+                                roAppTx database $ \tx -> do
+                                    exists <- DB.hashExists tx objectStore (U.sha256s decoded)
+                                    pure $! if exists 
+                                    -- The object is already in cache. Do not parse-serialise
+                                    -- anything, just skip it. We are not afraid of possible 
+                                    -- race-conditions here, it's not a problem to double-insert
+                                    -- an object and delete-insert race will never happen in practice.
+                                        then 
+                                            Nothing
+                                        else
+                                            case first ParseE $ readObject rpkiURL decoded of 
+                                                Left e    -> Just $! SError $ VErr e
+                                                Right !ro -> Just $! SObject $ toStorableObject ro
                                         
-        saveStorable _ (Left (e, uri)) _             = forChild (unURI uri) $ appWarn e             
+        saveStorable _ (Left (e, uri)) _ = 
+            forChild (unURI uri) $ appWarn e             
 
-        saveStorable tx (Right (uri, a)) _ = do            
-            waitTask a >>= \case                        
-                SError (VWarn (VWarning e)) -> do                    
+        saveStorable tx (Right (uri, a)) _ =           
+            waitTask a >>= \case     
+                Nothing -> pure ()                   
+                Just (SError (VWarn (VWarning e))) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
                     forChild (unURI uri) $ appWarn e 
-                SError (VErr e) -> do                    
+                Just (SError (VErr e)) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appError e 
-                SObject so -> do 
+                    forChild (unURI uri) $ appError e                 
+                Just (SObject so) -> do 
                     DB.putObject tx objectStore so worldVersion
                     addedOne rrdpStats                    
 
@@ -341,7 +360,7 @@ saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent =
 
         -- Propagate exceptions from here, anything that can happen here 
         -- (storage failure, mmap failure) should stop the validation and 
-        -- probably stop the whole process.
+        -- probably stop the whole program.
         txFoldPipeline 
                 cpuParallelism
                 (S.mapM newStorable deltaItemS)
@@ -440,13 +459,13 @@ parseAndProcess u b64 =
             first ParseE $ readObject u b    
 
 
-data DeltaOp m a = Delete !URI !Hash 
-                | Add !URI !(Task m a) 
-                | Replace !URI !(Task m a) !Hash
+data DeltaOp m a = Delete URI Hash 
+                | Add URI (Task m a) 
+                | Replace URI (Task m a) Hash
 
 data RrdpStat = RrdpStat {
-    added   :: !Int,
-    removed :: !Int
+    added   :: Int,
+    removed :: Int
 }
 
 data RrdpStatWork = RrdpStatWork {
