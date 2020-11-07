@@ -35,8 +35,10 @@ import Data.Foldable (forM_)
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 
+data NativeEnv = ROEnv Env | RWEnv Env | Disabled
+
 data LmdbEnv = LmdbEnv {
-    nativeEnv :: Env,
+    nativeEnv :: TVar NativeEnv,
     txSem :: Semaphore
 }
 
@@ -65,16 +67,25 @@ newtype LmdbStorage = LmdbStorage { unEnv :: LmdbEnv }
 instance WithLmdb LmdbStorage where
     getEnv = unEnv
 
-
 instance WithTx LmdbStorage where    
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
 
     readOnlyTx lmdb f = let
-        LmdbEnv {..} = getEnv lmdb
-        in withSemaphore txSem $ 
-                withROTransaction nativeEnv (f . LmdbTx)        
+        e@LmdbEnv {..} = getEnv lmdb
+        in withSemaphore txSem $ do 
+                nEnv <- getNativeEnv e
+                withROTransaction nEnv (f . LmdbTx)        
 
-    readWriteTx lmdb f = withTransaction (nativeEnv $ getEnv lmdb) (f . LmdbTx)
+    readWriteTx lmdb f = withTransaction1 (getEnv lmdb) (f . LmdbTx)        
+
+withTransaction1 LmdbEnv {..} f = do        
+        nEnv <- atomically $ do 
+            readTVar nativeEnv >>= \case         
+                Disabled     -> retry           
+                ROEnv _      -> retry
+                RWEnv native -> pure native
+        withTransaction nEnv f
+
 
 -- | Basic storage implemented using LMDB
 instance Storage LmdbStorage where    
@@ -138,7 +149,7 @@ createLmdbStore :: forall name . KnownSymbol name =>
                     LmdbEnv -> IO (LmdbStore name)
 createLmdbStore env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransaction nativeEnv $ \tx -> openDatabase tx (Just name') dbSettings     
+    db <- withTransaction1 env $ \tx -> openDatabase tx (Just name') dbSettings     
     pure $ LmdbStore db env
     where
         dbSettings = makeSettings 
@@ -149,7 +160,7 @@ createLmdbMultiStore :: forall name . KnownSymbol name =>
                         LmdbEnv -> IO (LmdbMultiStore name)
 createLmdbMultiStore env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransaction nativeEnv $ \tx -> openMultiDatabase tx (Just name') dbSettings 
+    db <- withTransaction1 env $ \tx -> openMultiDatabase tx (Just name') dbSettings 
     pure $ LmdbMultiStore db env
     where
         dbSettings :: Lmdb.MultiDatabaseSettings BS.ByteString BS.ByteString
@@ -177,22 +188,28 @@ withSemaphore (Semaphore maxCounter current) f =
         decrement _ = atomically $ modifyTVar' current $ \c -> c - 1
 
 
+getNativeEnv :: LmdbEnv -> IO Env 
+getNativeEnv LmdbEnv {..} = atomically $ do 
+    readTVar nativeEnv >>= \case        
+        Disabled     -> retry            
+        ROEnv native -> pure native
+        RWEnv native -> pure native
+
 -- | Copy all databases from the from LMDB environment to the other
 -- This is a low-level operation to be used for de-fragmentation.
 -- `dest` is supposed to be completely empty
 copyEnv :: LmdbEnv -> LmdbEnv -> IO ()
-copyEnv src dest = do
-    let srcN = nativeEnv src
-    let dstN = nativeEnv dest
-    srcDb <- withTransaction srcN $ \tx -> openDatabase tx Nothing dbSettings     
+copyEnv src dst = do
+    srcN <- getNativeEnv src
+    dstN <- getNativeEnv dst
+    srcDb <- withTransaction srcN $ \tx -> openDatabase tx Nothing dbSettings
     withTransaction dstN $ \dstTx -> do     
         withROTransaction srcN $ \srcTx -> do                
             mapNames <- getMapNames srcTx srcDb        
             forM_ mapNames $ \mapName -> do 
                 -- first open it as is
-                srcMap <- openDatabase srcTx (Just $ convert mapName) dbSettings           
-                isMulti <- isMultiDatabase srcTx srcMap 
-                putStrLn $ "mapName = " <> show mapName <> ", isMulti = " <> show isMulti                
+                srcMap  <- openDatabase srcTx (Just $ convert mapName) dbSettings           
+                isMulti <- isMultiDatabase srcTx srcMap                            
                 if isMulti
                     then do 
                         -- close and reopen as multi map
@@ -227,7 +244,7 @@ copyEnv src dest = do
             withCursor srcTx srcMap $ \c ->                
                 void $ runEffect $ LMap.firstForward c >-> do
                     forever $ do
-                        Lmdb.KeyValue name value <- await                        
+                        Lmdb.KeyValue name value <- await
                         lift $ LMap.repsert' dstTx dstMap name value
 
         copyMultiMap srcMap dstMap srcTx dstTx =
@@ -235,5 +252,14 @@ copyEnv src dest = do
                 withMultiCursor srcTx srcMap $ \srcC ->                 
                     void $ runEffect $ LMMap.firstForward srcC >-> do
                         forever $ do
-                            Lmdb.KeyValue name value <- await        
+                            Lmdb.KeyValue name value <- await
                             lift $ LMMap.insert dstC name value
+
+
+{- 
+
+Klimhal Amsterdam B.V. - 1 pair
+B fabriek - mutiple
+
+
+-}

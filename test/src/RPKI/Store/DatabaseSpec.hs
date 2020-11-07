@@ -27,11 +27,11 @@ import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
-
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Errors
+import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
@@ -43,7 +43,7 @@ import           RPKI.Store.Util
 import           RPKI.Time
 
 import           RPKI.RepositorySpec
-import RPKI.Parse.Parse
+
 
 
 storeGroup :: TestTree
@@ -271,8 +271,8 @@ makeLmdbStuff mkStore = do
     pure ((dir, e), store)
 
 releaseLmdb :: ((FilePath, LmdbEnv), b) -> IO ()
-releaseLmdb ((dir, LmdbEnv{..}), _) = do   
-    closeLmdb nativeEnv
+releaseLmdb ((dir, e), _) = do    
+    closeLmdb =<< getNativeEnv e
     removeDirectoryRecursive dir
 
 readObjectFromFile :: FilePath -> IO (ParseResult RpkiObject)
@@ -295,4 +295,3 @@ replaceAKI a = go
                 ee = scCertificate sc
                 sc = soContent so
                 ee' :: EECerObject = ee { aki = a :: AKI }
-

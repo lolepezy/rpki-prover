@@ -36,7 +36,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
-import           RPKI.Time                (Instant, toNanoseconds)
+import           RPKI.Time                (Instant)
 import           RPKI.Util                (fmtEx, increment)
 
 import           RPKI.AppMonad

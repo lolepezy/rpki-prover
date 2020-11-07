@@ -15,6 +15,7 @@ import           Data.Int                 (Int64)
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
+import Control.Concurrent.STM
 
 
 
@@ -59,9 +60,10 @@ createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> crea
 
 
 mkLmdb :: FilePath -> Int64 -> Int -> IO LmdbEnv
-mkLmdb fileName maxSizeMb maxReaders = 
+mkLmdb fileName maxSizeMb maxReaders = do 
+    nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) maxReaders maxDatabases fileName    
     LmdbEnv <$> 
-        initializeReadWriteEnvironment (fromIntegral mapSize) maxReaders maxDatabases fileName <*>
+        newTVarIO (RWEnv nativeEnv) <*>
         createSemaphore maxReaders
     where
         mapSize = maxSizeMb * 1024 * 1024
@@ -82,3 +84,4 @@ createDatabase e = do
         createVRPStore e <*>
         createVersionStore e <*>
         pure seqMap
+

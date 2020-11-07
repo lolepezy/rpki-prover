@@ -21,16 +21,17 @@ data Parallelism = Parallelism {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data Config = Config {
-    talDirectory         :: FilePath,
-    parallelism          :: Parallelism,
-    rsyncConf            :: RsyncConf,
-    rrdpConf             :: RrdpConf,
-    validationConfig     :: ValidationConfig,
-    httpApiConf          :: HttpApiConfig,
-    rtrConfig            :: Maybe RtrConfig,
-    cacheCleanupInterval :: Seconds,
-    cacheLifeTime        :: Seconds,
-    oldVersionsLifetime  :: Seconds
+    talDirectory              :: FilePath,
+    parallelism               :: Parallelism,
+    rsyncConf                 :: RsyncConf,
+    rrdpConf                  :: RrdpConf,
+    validationConfig          :: ValidationConfig,
+    httpApiConf               :: HttpApiConfig,
+    rtrConfig                 :: Maybe RtrConfig,
+    cacheCleanupInterval      :: Seconds,
+    cacheLifeTime             :: Seconds,
+    oldVersionsLifetime       :: Seconds,
+    storageDefragmentInterval :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
 data RsyncConf = RsyncConf {

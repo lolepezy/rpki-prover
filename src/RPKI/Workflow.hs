@@ -47,7 +47,8 @@ type AppEnv = AppContext LmdbStorage
 data WorkflowTask = 
     ValidateTAs WorldVersion | 
     CacheGC WorldVersion |
-    CleanOldVersions WorldVersion
+    CleanOldVersions WorldVersion | 
+    Defragment WorldVersion
   deriving stock (Show, Eq, Ord, Generic)
 
 
@@ -74,9 +75,11 @@ runWorkflow appContext@AppContext {..} tals = do
             generateNewWorldVersion, 
             cacheGC,
             cleanOldVersions,
+            defragmentStorage,
             rtrServer   
         ]
     where
+        storageDefragmentInterval = config ^. #storageDefragmentInterval
         cacheCleanupInterval = config ^. #cacheCleanupInterval
         oldVersionsLifetime  = config ^. #oldVersionsLifetime
         cacheLifeTime        = config ^. #cacheLifeTime
@@ -107,6 +110,12 @@ runWorkflow appContext@AppContext {..} tals = do
             periodically cacheCleanupInterval $ do
                 worldVersion <- getWorldVerionIO appState
                 atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion        
+
+        defragmentStorage globalQueue = do             
+            threadDelay $ 24 * 3600_000_000
+            periodically storageDefragmentInterval $ do
+                worldVersion <- getWorldVerionIO appState
+                atomically $ writeCQueue globalQueue $ Defragment worldVersion        
 
         taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
@@ -151,6 +160,10 @@ runWorkflow appContext@AppContext {..} tals = do
                             (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
                             (\deleted elapsed -> 
                                 logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
+
+                    Just (Defragment worldVersion) -> do
+                        (_, elapsed) <- timedMS $ defragmentStorageWithTmpDir appContext
+                        logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 
@@ -207,7 +220,7 @@ versionIsOld now period (WorldVersion nanos) =
     let validatedAt = fromNanoseconds nanos
     in not $ closeEnoughMoments validatedAt now period
 
--- | Execute certain IO actiion every N seconds
+-- | Execute an IO action every N seconds
 -- 
 periodically :: Seconds -> IO () -> IO ()
 periodically (Seconds interval) action =
@@ -220,3 +233,14 @@ periodically (Seconds interval) action =
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
+
+
+defragmentStorageWithTmpDir :: AppContext s -> IO ()
+defragmentStorageWithTmpDir AppContext {..} = do 
+    -- create a temporary LMDB environment 
+    -- make current environment read-only
+    -- copy current environment to the new one
+    -- disable current environment 
+    -- atomically move new environment files to the place of the current one
+    -- re-create current environment
+    pure ()
