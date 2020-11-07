@@ -64,7 +64,7 @@ data RpkiObjectStore s = RpkiObjectStore {
     keys        :: Sequence s,
     objects     :: SMap "objects" s ArtificialKey SValue,
     hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
-    mftByAKI    :: SMultiMap "mftByAKI" s AKI (ArtificialKey, MftTimingMark),
+    mftByAKI    :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
     objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
 

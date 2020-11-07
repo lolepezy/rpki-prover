@@ -187,26 +187,53 @@ copyEnv src dest = do
     srcDb <- withTransaction srcN $ \tx -> openDatabase tx Nothing dbSettings     
     withTransaction dstN $ \dstTx -> do     
         withROTransaction srcN $ \srcTx -> do                
-            mapNames <- getMapNames srcTx srcDb
-            putStrLn $ "mapNames = " <> show mapNames
-
+            mapNames <- getMapNames srcTx srcDb        
             forM_ mapNames $ \mapName -> do 
-                srcMap <- openDatabase srcTx (Just $ convert mapName) dbSettings             
-                dstMap <- openDatabase dstTx (Just $ convert mapName) dbSettings             
-                pure ()
-
-            pure ()
-    pure ()
+                -- first open it as is
+                srcMap <- openDatabase srcTx (Just $ convert mapName) dbSettings           
+                isMulti <- isMultiDatabase srcTx srcMap 
+                putStrLn $ "mapName = " <> show mapName <> ", isMulti = " <> show isMulti                
+                if isMulti
+                    then do 
+                        -- close and reopen as multi map
+                        closeDatabase srcN srcMap
+                        srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) mutliDbSettings
+                        dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) mutliDbSettings
+                        copyMultiMap srcMap' dstMap srcTx dstTx                        
+                    else do 
+                        dstMap <- openDatabase dstTx (Just $ convert mapName) dbSettings
+                        copyMap srcMap dstMap srcTx dstTx
+                                      
     where   
         dbSettings = makeSettings 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 
             byteString byteString
 
-        getMapNames tx db = do 
+        mutliDbSettings = makeMultiSettings 
+            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+            byteString byteString            
+
+        getMapNames tx db =
             withCursor tx db $ \c -> do 
                 maps <- newIORef []
                 void $ runEffect $ LMap.firstForward c >-> do
                     forever $ do
                         Lmdb.KeyValue name _ <- await
                         lift $ modifyIORef' maps (<> [name])
-                readIORef maps                
+                readIORef maps          
+        
+        copyMap srcMap dstMap srcTx dstTx =
+            withCursor srcTx srcMap $ \c ->                
+                void $ runEffect $ LMap.firstForward c >-> do
+                    forever $ do
+                        Lmdb.KeyValue name value <- await                        
+                        lift $ LMap.repsert' dstTx dstMap name value
+
+        copyMultiMap srcMap dstMap srcTx dstTx =
+            withMultiCursor dstTx dstMap $ \dstC -> 
+                withMultiCursor srcTx srcMap $ \srcC ->                 
+                    void $ runEffect $ LMMap.firstForward srcC >-> do
+                        forever $ do
+                            Lmdb.KeyValue name value <- await        
+                            lift $ LMMap.insert dstC name value
