@@ -120,23 +120,33 @@ createAppContext CLIOptions{..} logger = do
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
     lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
 
+    let cleanDir d = fromTry (InitE . InitError . fmtEx) $ 
+                listDirectory d >>= mapM_ (removePathForcibly . (d </>))    
+
+    -- clean up LMDB if there's `--reset` options set
+    when reset $ cleanDir lmdb
+
     let maxLmdbReaderCount = 1024
     let maxLmdbFileSizeMb = lmdbSize `orDefault` 2048    
     lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb maxLmdbFileSizeMb maxLmdbReaderCount
     database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
 
     -- clean up tmp directory if it's not empty
-    fromTry (InitE . InitError . fmtEx) $ 
-        listDirectory tmpd >>= mapM_ (removePathForcibly . (tmpd </>))    
-    
+    cleanDir tmpd    
+
     let cpuCount' = fromMaybe getRtsCpuCount cpuCount
 
-    -- Create 2 times more threads than there're CPUs available.
-    -- In most tested cases it seems to be beneficial.    
+    -- Set capabilities to the values from the CLI or to all available CPUs,
+    -- (disregard the HT issue for now it needs more testing).
     liftIO $ setCpuCount cpuCount'
+        
+    -- BUT: create 2 times more asyncs/tasks than there're capabilities. In most 
+    -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
     let cpuParallelism = 2 * cpuCount'
+    
 
-    -- Hardcoded (not sure it makes sense to make it configurable)
+    -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
+    -- that much IO (http downloads, LMDB reads, etc.) operations at once.
     let ioParallelism = 64     
 
     appBottlenecks <- liftIO $ do 
@@ -160,6 +170,7 @@ createAppContext CLIOptions{..} logger = do
         logger = logger,
         config = Config {
             talDirectory = tald,
+            tmpDirectory = tmpd,
             parallelism  = Parallelism cpuParallelism ioParallelism,
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
@@ -183,7 +194,7 @@ createAppContext CLIOptions{..} logger = do
 
             -- TODO Think about it, it should be lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
-        },        
+        },
         appState = appState,
         database = database,
         appBottlenecks = appBottlenecks,

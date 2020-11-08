@@ -80,6 +80,7 @@
 
 ---------------------------------  In testing -----------------------------------------
 
+- Implement `--reset`
 - Check cRLDistributionPoints == CRL location on the MFT
 
 ---------------------------------  In progress ----------------------------------------

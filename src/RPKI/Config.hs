@@ -8,6 +8,7 @@ module RPKI.Config where
 import GHC.Conc
 import Numeric.Natural
 import Data.Int
+import Data.Word
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
@@ -22,6 +23,7 @@ data Parallelism = Parallelism {
 
 data Config = Config {
     talDirectory              :: FilePath,
+    tmpDirectory              :: FilePath,
     parallelism               :: Parallelism,
     rsyncConf                 :: RsyncConf,
     rrdpConf                  :: RrdpConf,
@@ -35,7 +37,7 @@ data Config = Config {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data RsyncConf = RsyncConf {
-    rsyncRoot :: FilePath,
+    rsyncRoot    :: FilePath,
     rsyncTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
@@ -44,8 +46,8 @@ newtype Size = Size Int64
     deriving newtype (Num)
 
 data RrdpConf = RrdpConf {
-    tmpRoot :: FilePath,
-    maxSize :: Size,
+    tmpRoot     :: FilePath,
+    maxSize     :: Size,
     rrdpTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
@@ -57,12 +59,12 @@ data ValidationConfig = ValidationConfig {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {
-    port :: Int16    
+    port :: Word16    
 } deriving stock (Show, Eq, Ord, Generic)
 
 data RtrConfig = RtrConfig {
     rtrAddress :: String,
-    rtrPort :: Int16
+    rtrPort    :: Int16
 } deriving stock (Show, Eq, Ord, Generic)
 
 getRtsCpuCount :: Natural 
