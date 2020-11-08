@@ -172,7 +172,7 @@ createAppContext CLIOptions{..} logger = do
                 repositoryGracePeriod          = Seconds <$> repositoryGracePeriod,
                 revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
-                rsyncRepositoryRefreshInterval = Seconds $ rrdpRefreshInterval `orDefault` (11 * 660)
+                rsyncRepositoryRefreshInterval = Seconds $ rsyncRefreshInterval `orDefault` (11 * 60)
             },
             httpApiConf = HttpApiConfig {
                 port = httpApiPort `orDefault` 9999
