@@ -39,7 +39,7 @@ data NativeEnv = ROEnv Env | RWEnv Env | Disabled
 
 data LmdbEnv = LmdbEnv {
     nativeEnv :: TVar NativeEnv,
-    txSem :: Semaphore
+    txSem     :: Semaphore
 }
 
 data LmdbStore (name :: Symbol) = LmdbStore {     

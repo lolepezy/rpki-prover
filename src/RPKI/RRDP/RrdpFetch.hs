@@ -60,20 +60,18 @@ import           System.Mem                       (performGC)
 -- 
 downloadAndUpdateRRDP :: WithVContext vc => 
                         AppContext s ->
-                        HttpContext ->
                         RrdpRepository ->                 
                         (RrdpURL -> Notification -> BS.ByteString -> ValidatorT vc IO ()) ->
                         (RrdpURL -> Notification -> Serial -> BS.ByteString -> ValidatorT vc IO ()) ->
                         ValidatorT vc IO RrdpRepository
 downloadAndUpdateRRDP 
-        appContext
-        httpContext
+        appContext@AppContext {..}
         repo@(RrdpRepository repoUri _ _)      
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
     do
     (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
-                                downloadToStrictBS httpContext rrdpConf (getURL repoUri)     
+                                downloadToStrictBS appContext (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
@@ -89,12 +87,8 @@ downloadAndUpdateRRDP
                     appWarn e
                     useSnapshot snapshotInfo notification            
     where        
-        hoistHere = vHoist . fromEither . first RrdpE
-                
-        rrdpConf = appContext ^. typed @Config . typed @RrdpConf
-        logger   = appContext ^. typed @AppLogger
-        ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck
-        
+        hoistHere = vHoist . fromEither . first RrdpE        
+        ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
         useSnapshot (SnapshotInfo uri hash) notification = 
             forChild (U.convert uri) $ do
@@ -106,7 +100,7 @@ downloadAndUpdateRRDP
                 downloadAndSave = do
                     ((rawContent, _), downloadedIn) <- timedMS $ 
                             fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                                    downloadHashedStrictBS httpContext rrdpConf uri hash                                    
+                                    downloadHashedStrictBS appContext uri hash                                    
                                         (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
                     (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent            
                     pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
@@ -145,7 +139,7 @@ downloadAndUpdateRRDP
                     (rawContent, _) <- 
                         forChild deltaUri $  
                             fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                                downloadHashedStrictBS httpContext rrdpConf uri hash
+                                downloadHashedStrictBS appContext uri hash
                                     (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                     pure (rawContent, serial, deltaUri)
 
@@ -217,7 +211,6 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
         stats <- liftIO newRrdpStat
         r <- downloadAndUpdateRRDP 
                 appContext 
-                httpContext
                 repository 
                 (saveSnapshot appContext stats)  
                 (saveDelta appContext stats)          

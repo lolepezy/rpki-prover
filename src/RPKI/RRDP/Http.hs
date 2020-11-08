@@ -2,6 +2,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedLabels   #-}
 
 module RPKI.RRDP.Http where
 
@@ -42,20 +43,18 @@ import           GHC.Generics                   (Generic)
 
 
 downloadToStrictBS :: MonadIO m => 
-                    HttpContext ->
-                    RrdpConf ->
+                    AppContext s ->
                     URI -> 
                     m (BS.ByteString, Size)
-downloadToStrictBS httpContext rrdp uri = 
-    downloadToBS httpContext rrdp uri Mmap.unsafeMMapFile    
+downloadToStrictBS appContext uri = 
+    downloadToBS appContext uri Mmap.unsafeMMapFile    
 
 downloadToLazyBS :: MonadIO m => 
-                    HttpContext ->
-                    RrdpConf ->
+                    AppContext s ->
                     URI ->
                     m (LBS.ByteString, Size)
-downloadToLazyBS httpContext rrdp uri = 
-    downloadToBS httpContext rrdp uri MmapLazy.unsafeMMapFile    
+downloadToLazyBS appContext uri = 
+    downloadToBS appContext uri MmapLazy.unsafeMMapFile    
 
 
 -- | Download HTTP content to a temporary file and return lazy/strict ByteString content 
@@ -66,18 +65,23 @@ downloadToLazyBS httpContext rrdp uri =
 -- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
 -- safe to use them after returning from this function.
 downloadToBS :: MonadIO m => 
-                HttpContext ->
-                RrdpConf ->
+                AppContext s ->
                 URI -> 
                 (FilePath -> IO bs) ->
                 m (bs, Size)
-downloadToBS httpContext RrdpConf {..} uri@(URI u) mmap = liftIO $ do
+downloadToBS appContext uri@(URI u) mmap = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
-    withTempFile tmpRoot tmpFileName $ \name fd -> do
-        (_, !size) <- streamHttpToFileWithActions httpContext uri DoNothing maxSize fd
+    let tmpDir = appContext ^. typed @Config . #tmpDirectory
+    withTempFile tmpDir tmpFileName $ \name fd -> do
+        (_, !size) <- streamHttpToFileWithActions 
+                            (appContext ^. #httpContext) 
+                            uri 
+                            DoNothing 
+                            (appContext ^. typed @Config . typed @RrdpConf . #maxSize) 
+                            fd
         hClose fd                    
         content <- mmap name
         pure (content, size)
@@ -85,45 +89,48 @@ downloadToBS httpContext RrdpConf {..} uri@(URI u) mmap = liftIO $ do
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
 downloadHashedLazyBS :: (MonadIO m) => 
-                        HttpContext ->
-                        RrdpConf ->
+                        AppContext s ->
                         URI -> 
                         Hash -> 
                         (Hash -> Either e (LBS.ByteString, Size)) ->
                         m (Either e (LBS.ByteString, Size))
-downloadHashedLazyBS httpContext rrdpConf uri hash hashMishmatch = 
-    downloadHashedBS httpContext rrdpConf uri hash hashMishmatch  MmapLazy.unsafeMMapFile
+downloadHashedLazyBS appContext uri hash hashMishmatch = 
+    downloadHashedBS appContext uri hash hashMishmatch  MmapLazy.unsafeMMapFile
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
 downloadHashedStrictBS :: (MonadIO m) => 
-                        HttpContext ->
-                        RrdpConf ->
+                        AppContext s ->
                         URI -> 
                         Hash -> 
                         (Hash -> Either e (BS.ByteString, Size)) ->
                         m (Either e (BS.ByteString, Size))
-downloadHashedStrictBS httpContext rrdpConf uri hash hashMishmatch = 
-    downloadHashedBS httpContext rrdpConf uri hash hashMishmatch  Mmap.unsafeMMapFile
+downloadHashedStrictBS appContext uri hash hashMishmatch = 
+    downloadHashedBS appContext uri hash hashMishmatch  Mmap.unsafeMMapFile
 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
 downloadHashedBS :: (MonadIO m) => 
-                        HttpContext ->
-                        RrdpConf ->
+                        AppContext s ->
                         URI -> 
                         Hash -> 
                         (Hash -> Either e (bs, Size)) ->
                         (FilePath -> IO bs) ->
                         m (Either e (bs, Size))
-downloadHashedBS httpContext RrdpConf {..} uri@(URI u) hash hashMishmatch mmap = liftIO $ do
+downloadHashedBS appContext uri@(URI u) hash hashMishmatch mmap = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
-    let tmpFileName = U.convert $ U.normalizeUri u    
-    withTempFile tmpRoot tmpFileName $ \name fd -> do
-        (actualHash, !size) <- streamHttpToFileWithActions httpContext uri DoHashing maxSize fd
+    let tmpFileName = U.convert $ U.normalizeUri u
+    let tmpDir = appContext ^. typed @Config . #tmpDirectory  
+    withTempFile tmpDir tmpFileName $ \name fd -> do
+        (actualHash, !size) <- streamHttpToFileWithActions 
+                                    (appContext ^. #httpContext)  
+                                    uri 
+                                    DoHashing 
+                                    (appContext ^. typed @Config . typed @RrdpConf . #maxSize) 
+                                    fd
         if actualHash /= hash 
             then pure $! hashMishmatch actualHash
             else do
@@ -192,12 +199,9 @@ streamHttpToFileWithActions
 fetchRpkiObject :: AppContext s ->
                 RrdpURL ->             
                 ValidatorT vc IO RpkiObject
-fetchRpkiObject appContext uri = withHttp $ \httpContext -> do
+fetchRpkiObject appContext uri = do
     (content, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
-                        downloadToStrictBS 
-                            httpContext
-                            (appContext ^. typed @Config . typed @RrdpConf)
-                            (getURL uri) 
+                                downloadToStrictBS appContext (getURL uri) 
                         
     fromEitherM $ pure $ first ParseE $ readObject (RrdpU uri) content
     

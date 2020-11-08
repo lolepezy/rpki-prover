@@ -1,7 +1,9 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE DerivingStrategies   #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE QuasiQuotes          #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Workflow where
 
@@ -38,11 +40,17 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 
+import           System.Directory                 (renameDirectory, removePathForcibly)
 import           System.Exit
-
+import           System.IO.Temp
+import RPKI.Store.Util (mkLmdb)
 
 
 type AppEnv = AppContext LmdbStorage
+
+class MaintainableStorage s where
+    runMaintenance :: AppContext s -> IO ()
+
 
 data WorkflowTask = 
     ValidateTAs WorldVersion | 
@@ -52,8 +60,8 @@ data WorkflowTask =
   deriving stock (Show, Eq, Ord, Generic)
 
 
-runWorkflow :: Storage s => 
-            AppContext s -> [TAL] -> IO ()
+runWorkflow :: (Storage s, MaintainableStorage s) => 
+                AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
     -- Use a command queue to avoid fully concurrent operations, i.e. cleaup 
     -- opearations and should not run at the same time with validation (not 
@@ -162,7 +170,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                 logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
                     Just (Defragment worldVersion) -> do
-                        (_, elapsed) <- timedMS $ defragmentStorageWithTmpDir appContext
+                        (_, elapsed) <- timedMS $ runMaintenance appContext 
                         logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
@@ -235,12 +243,53 @@ periodically (Seconds interval) action =
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
 
 
-defragmentStorageWithTmpDir :: AppContext s -> IO ()
+instance MaintainableStorage LmdbStorage where
+    runMaintenance = defragmentStorageWithTmpDir
+
+-- TODO Move it a more appropriate module 
+defragmentStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 defragmentStorageWithTmpDir AppContext {..} = do 
-    -- create a temporary LMDB environment 
-    -- make current environment read-only
-    -- copy current environment to the new one
-    -- disable current environment 
-    -- atomically move new environment files to the place of the current one
-    -- re-create current environment
-    pure ()
+    -- create a temporary LMDB environment     
+    let lmdbEnv = getEnv (storage database :: LmdbStorage)    
+
+    currentNativeEnv <- atomically $ readTVar $ nativeEnv lmdbEnv            
+    tmpDirName <- createTempDirectory (config ^. #tmpDirectory) "cache"
+
+    let cleanUp = do 
+            -- return Env back to what it was
+            atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
+            removePathForcibly tmpDirName    
+
+    let doStuff = do            
+            -- make current environment read-only
+            atomically $ do 
+                let n = nativeEnv lmdbEnv
+                curentEnv <- readTVar n
+                case curentEnv of
+                    -- normally we expect it to be in the `RWEnv` state
+                    RWEnv native -> writeTVar n (ROEnv native)                                
+                    -- this is weird, but lets just wait for it to change 
+                    -- and don't make things even more weird
+                    Disabled -> retry
+                    -- it shouldn't happes as well, but we can work with it in principle
+                    ROEnv _  -> pure ()
+
+            -- create new native LMDB environment in the temporary directory
+            newLmdb <- mkLmdb tmpDirName 1000_000 100
+
+            -- copy current environment to the new one
+            copyEnv lmdbEnv newLmdb
+
+            -- disable current environment 
+            atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
+
+            -- atomically move new environment files to the place of the current one
+            -- renameDirectory tmpDirName 
+
+            -- re-create current environment
+            pure ()
+
+    doStuff `onException` cleanUp    
+        
+
+    
