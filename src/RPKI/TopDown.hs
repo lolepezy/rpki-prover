@@ -15,14 +15,11 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 
 import           Control.Lens
-import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
-import           Data.Generics.Product.Fields
 
 import           GHC.Generics
 
 import           Data.Foldable
-import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.List.Split                  (chunksOf)
@@ -61,8 +58,6 @@ import           RPKI.AppState
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
-import Data.Ord
-
 
 
 data Stats = Stats {

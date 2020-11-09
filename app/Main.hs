@@ -12,12 +12,6 @@ import           Colog
 
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Control.Concurrent.STM
-
-import           Control.Lens                     ((^.))
-import           Data.Generics.Labels
-import           Data.Generics.Product.Fields
-import           Data.Generics.Product.Typed
 
 import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
@@ -25,8 +19,12 @@ import           Control.Exception.Lifted
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
+import           Data.Hourglass
+import           Data.Int                         (Int16, Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
+import           Data.Word                        (Word16)
+import           Numeric.Natural                  (Natural)
 
 import           Data.String.Interpolate.IsString
 
@@ -34,33 +32,32 @@ import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
-import           System.Directory                 (doesDirectoryExist, getDirectoryContents, listDirectory,
-                                                   removePathForcibly)
+import           System.Directory                 
 import           System.Environment
+import           System.Posix.Files
 import           System.FilePath                  ((</>))
-import           System.IO                        (BufferMode (..), hSetBuffering, stdout)
+import           System.IO               (BufferMode (..), hSetBuffering, stdout)
 
 import           Options.Generic
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Errors
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext
-import           RPKI.Store.Util
-import           RPKI.TAL
-import           RPKI.Util                        (convert, fmtEx)
-import           RPKI.AppState
-import           RPKI.Workflow
-
-import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)
-import           Numeric.Natural                  (Natural)
+import           RPKI.Store.Base.LMDB    (LmdbEnv)
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Store.Util
+import           RPKI.TAL
+import           RPKI.Time               (Now (Now), asSeconds, thisInstant)
+import           RPKI.Util               (convert, fmtEx)
+import           RPKI.Workflow
+
 
 
 
@@ -111,24 +108,17 @@ runHttpApi appContext = Warp.run 9999 $ httpApi appContext
     
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT vc IO AppEnv
-createAppContext CLIOptions{..} logger = do        
+createAppContext cliOoptions@CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
     
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
-    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
-    lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
-
-    let cleanDir d = fromTry (InitE . InitError . fmtEx) $ 
-                listDirectory d >>= mapM_ (removePathForcibly . (d </>))    
-
-    -- clean up LMDB if there's `--reset` options set
-    when reset $ cleanDir lmdb
-
+    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir    
+    
     let maxLmdbReaderCount = 1024
     let maxLmdbFileSizeMb = lmdbSize `orDefault` 2048    
-    lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdb maxLmdbFileSizeMb maxLmdbReaderCount
+    lmdbEnv  <- setupLmdbCache cliOoptions logger rootDir
     database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
 
     -- clean up tmp directory if it's not empty
@@ -144,7 +134,6 @@ createAppContext CLIOptions{..} logger = do
     -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
     let cpuParallelism = 2 * cpuCount'
     
-
     -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
     -- that much IO (http downloads, LMDB reads, etc.) operations at once.
     let ioParallelism = 64     
@@ -193,7 +182,9 @@ createAppContext CLIOptions{..} logger = do
             cacheLifeTime = Seconds $ 60 * 60 * (cacheLifetimeHours `orDefault` 72),
 
             -- TODO Think about it, it should be lifetime or we should store N last versions
-            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours
+            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
+
+            storageDefragmentInterval = Seconds $ 60 * 60 * 12
         },
         appState = appState,
         database = database,
@@ -202,10 +193,11 @@ createAppContext CLIOptions{..} logger = do
     }    
 
     logDebugM logger [i|Created application context: #{config appContext}|]
-    pure appContext
-    where
-        m `orDefault` d = fromMaybe d m
+    pure appContext    
 
+
+orDefault :: Maybe a -> a -> a
+m `orDefault` d = fromMaybe d m
 
 createLogger :: IO AppLogger
 createLogger = do 
@@ -224,6 +216,55 @@ listTALFiles talDirectory = do
             filter (".tal" `List.isSuffixOf`) $ 
             filter (`notElem` [".", ".."]) names
 
+
+setupLmdbCache :: CLIOptions Unwrapped -> AppLogger -> FilePath -> ValidatorT vc IO LmdbEnv
+setupLmdbCache CLIOptions{..} logger root = do
+    let cacheDir = root </> "cache"
+
+    -- delete everything in `cache` if `reset` is present
+    when reset $ do 
+        logInfoM logger [i|The option `reset` is present: cleaning up #{cacheDir}.|] 
+        cleanDir cacheDir
+
+    let currentCache = cacheDir </> "current"
+    currentExists <- liftIO $ doesPathExist currentCache
+    if currentExists 
+        then do
+            actualDir <- liftIO $ readSymbolicLink currentCache
+            itExists  <- liftIO $ doesPathExist $ cacheDir </> actualDir
+            if itExists 
+                then do 
+                    -- There could still be other directories left from interrupted 
+                    -- de-fragmentations or stuff like that -- delete them all.
+                    removePossibleOtherLMDBCaches cacheDir actualDir
+                    logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
+                    createLmdb currentCache
+                else do 
+                    -- link is broken so clean it up and re-create
+                    logErrorM logger [i|#{currentCache} doesn point to an existing directory, resetting LMDB.|] 
+                    resetCacheDir cacheDir  
+        else 
+            resetCacheDir cacheDir
+    where
+        resetCacheDir cacheDir = do 
+            cleanDir cacheDir
+            Now now <- thisInstant
+            let newLmdbDir = cacheDir </> "lmdb." </> show (asSeconds now)
+            liftIO $ createDirectory newLmdbDir
+            liftIO $ createSymbolicLink newLmdbDir $ cacheDir </> "current" 
+            createLmdb $ cacheDir </> "current"
+
+        createLmdb lmdbDir = do 
+            let maxLmdbReaderCount = 128
+            let maxLmdbFileSizeMb = lmdbSize `orDefault` 2048    
+            fromTry (InitE . InitError . fmtEx) $ 
+                mkLmdb lmdbDir maxLmdbFileSizeMb maxLmdbReaderCount    
+
+        removePossibleOtherLMDBCaches cacheDir actualDir = let
+            toKeep f = f /= "current" && f /= actualDir
+            in cleanDirFiltered cacheDir toKeep
+            
+
 talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
 rsyncDir root = checkSubDirectory root "rsync"
@@ -235,8 +276,15 @@ checkSubDirectory root sub = do
     let talDirectory = root </> sub
     doesDirectoryExist talDirectory >>= \case
         False -> pure $ Left [i| Directory #{talDirectory} doesn't exist.|]
-        True ->  pure $ Right talDirectory
+        True  -> pure $ Right talDirectory
 
+
+cleanDirFiltered :: FilePath -> (FilePath -> Bool) -> ValidatorT env IO ()
+cleanDirFiltered d f = fromTry (InitE . InitError . fmtEx) $ 
+                            listDirectory d >>= mapM_ (removePathForcibly . (d </>)) . filter f
+
+cleanDir :: FilePath -> ValidatorT env IO ()
+cleanDir d = cleanDirFiltered d (const True)
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
@@ -279,7 +327,7 @@ data CLIOptions wrapped = CLIOptions {
         `AppendSymbol` "The default is zero, so repository objects are ignored immediately "
         `AppendSymbol` "after the repository could not be successfully downloaded."),
 
-    httpApiPort :: wrapped ::: Maybe Int16 <?> 
+    httpApiPort :: wrapped ::: Maybe Word16 <?> 
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 

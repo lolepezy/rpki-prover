@@ -35,15 +35,17 @@ import           RPKI.TopDown
 import           RPKI.AppContext
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Util                  (mkLmdb)
 import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 
-import           System.Directory                 (renameDirectory, removePathForcibly)
+import           System.Directory                 (removePathForcibly, renameDirectory)
 import           System.Exit
 import           System.IO.Temp
-import RPKI.Store.Util (mkLmdb)
+
+
 
 
 type AppEnv = AppContext LmdbStorage
@@ -244,7 +246,7 @@ periodically (Seconds interval) action =
 
 
 instance MaintainableStorage LmdbStorage where
-    runMaintenance = defragmentStorageWithTmpDir
+    runMaintenance _ = pure () -- defragmentStorageWithTmpDir
 
 -- TODO Move it a more appropriate module 
 defragmentStorageWithTmpDir :: AppContext LmdbStorage -> IO ()

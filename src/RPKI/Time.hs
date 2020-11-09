@@ -56,6 +56,11 @@ toNanoseconds (Instant instant) =
     where 
         ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP instant
 
+asSeconds :: Instant -> Int64
+asSeconds (Instant instant) = seconds
+    where 
+        ElapsedP (Elapsed (Seconds seconds)) _ = timeGetElapsedP instant
+
 fromNanoseconds :: Int64 -> Instant
 fromNanoseconds totalNanos =    
     Instant $ timeConvert elapsed
