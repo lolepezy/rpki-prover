@@ -12,13 +12,7 @@ import           Control.Lens                ((^.))
 
 import           Data.Generics.Product.Typed
 import           Data.Int
-import qualified Data.Set                    as Set
-
-import           Data.Hourglass              (timeGetNanoSeconds)
-
 import           GHC.Generics
-
-import           Time.Types
 
 import           Data.Set
 import           RPKI.Domain

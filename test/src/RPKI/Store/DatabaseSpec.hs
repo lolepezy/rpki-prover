@@ -272,7 +272,7 @@ makeLmdbStuff mkStore = do
 
 releaseLmdb :: ((FilePath, LmdbEnv), b) -> IO ()
 releaseLmdb ((dir, e), _) = do    
-    closeLmdb =<< getNativeEnv e
+    closeLmdb e
     removeDirectoryRecursive dir
 
 readObjectFromFile :: FilePath -> IO (ParseResult RpkiObject)

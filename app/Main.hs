@@ -52,6 +52,7 @@ import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Base.LMDB    (LmdbEnv)
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Store.AppStorage
 import           RPKI.Store.Util
 import           RPKI.TAL
 import           RPKI.Time               (Now (Now), asSeconds, thisInstant)
@@ -114,12 +115,15 @@ createAppContext cliOoptions@CLIOptions{..} logger = do
     
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
-    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir    
-    
-    let maxLmdbReaderCount = 1024
-    let maxLmdbFileSizeMb = lmdbSize `orDefault` 2048    
-    lmdbEnv  <- setupLmdbCache cliOoptions logger rootDir
-    database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv
+    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
+
+    (lmdbEnv, cacheDir) <- setupLmdbCache 
+                                (if reset then Reset else UseExisting) 
+                                logger 
+                                rootDir
+                                (lmdbSize `orDefault` 2048)
+                                
+    database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv                
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd    
@@ -160,6 +164,7 @@ createAppContext cliOoptions@CLIOptions{..} logger = do
         config = Config {
             talDirectory = tald,
             tmpDirectory = tmpd,
+            cacheDirectory = cacheDir,
             parallelism  = Parallelism cpuParallelism ioParallelism,
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
@@ -216,53 +221,6 @@ listTALFiles talDirectory = do
             filter (".tal" `List.isSuffixOf`) $ 
             filter (`notElem` [".", ".."]) names
 
-
-setupLmdbCache :: CLIOptions Unwrapped -> AppLogger -> FilePath -> ValidatorT vc IO LmdbEnv
-setupLmdbCache CLIOptions{..} logger root = do
-    let cacheDir = root </> "cache"
-
-    -- delete everything in `cache` if `reset` is present
-    when reset $ do 
-        logInfoM logger [i|The option `reset` is present: cleaning up #{cacheDir}.|] 
-        cleanDir cacheDir
-
-    let currentCache = cacheDir </> "current"
-    currentExists <- liftIO $ doesPathExist currentCache
-    if currentExists 
-        then do
-            actualDir <- liftIO $ readSymbolicLink currentCache
-            itExists  <- liftIO $ doesPathExist $ cacheDir </> actualDir
-            if itExists 
-                then do 
-                    -- There could still be other directories left from interrupted 
-                    -- de-fragmentations or stuff like that -- delete them all.
-                    removePossibleOtherLMDBCaches cacheDir actualDir
-                    logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
-                    createLmdb currentCache
-                else do 
-                    -- link is broken so clean it up and re-create
-                    logErrorM logger [i|#{currentCache} doesn point to an existing directory, resetting LMDB.|] 
-                    resetCacheDir cacheDir  
-        else 
-            resetCacheDir cacheDir
-    where
-        resetCacheDir cacheDir = do 
-            cleanDir cacheDir
-            Now now <- thisInstant
-            let newLmdbDir = cacheDir </> "lmdb." </> show (asSeconds now)
-            liftIO $ createDirectory newLmdbDir
-            liftIO $ createSymbolicLink newLmdbDir $ cacheDir </> "current" 
-            createLmdb $ cacheDir </> "current"
-
-        createLmdb lmdbDir = do 
-            let maxLmdbReaderCount = 128
-            let maxLmdbFileSizeMb = lmdbSize `orDefault` 2048    
-            fromTry (InitE . InitError . fmtEx) $ 
-                mkLmdb lmdbDir maxLmdbFileSizeMb maxLmdbReaderCount    
-
-        removePossibleOtherLMDBCaches cacheDir actualDir = let
-            toKeep f = f /= "current" && f /= actualDir
-            in cleanDirFiltered cacheDir toKeep
             
 
 talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
@@ -278,13 +236,6 @@ checkSubDirectory root sub = do
         False -> pure $ Left [i| Directory #{talDirectory} doesn't exist.|]
         True  -> pure $ Right talDirectory
 
-
-cleanDirFiltered :: FilePath -> (FilePath -> Bool) -> ValidatorT env IO ()
-cleanDirFiltered d f = fromTry (InitE . InitError . fmtEx) $ 
-                            listDirectory d >>= mapM_ (removePathForcibly . (d </>)) . filter f
-
-cleanDir :: FilePath -> ValidatorT env IO ()
-cleanDir d = cleanDirFiltered d (const True)
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {

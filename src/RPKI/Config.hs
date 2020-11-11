@@ -24,6 +24,7 @@ data Parallelism = Parallelism {
 data Config = Config {
     talDirectory              :: FilePath,
     tmpDirectory              :: FilePath,
+    cacheDirectory            :: FilePath,
     parallelism               :: Parallelism,
     rsyncConf                 :: RsyncConf,
     rrdpConf                  :: RrdpConf,

@@ -40,19 +40,13 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
+import           RPKI.Store.AppStorage
 
-import           System.Directory                 (removePathForcibly, renameDirectory)
+import           System.Directory                 (removePathForcibly)
 import           System.Exit
 import           System.IO.Temp
 
-
-
-
 type AppEnv = AppContext LmdbStorage
-
-class MaintainableStorage s where
-    runMaintenance :: AppContext s -> IO ()
-
 
 data WorkflowTask = 
     ValidateTAs WorldVersion | 
@@ -243,55 +237,6 @@ periodically (Seconds interval) action =
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
-
-
-instance MaintainableStorage LmdbStorage where
-    runMaintenance _ = pure () -- defragmentStorageWithTmpDir
-
--- TODO Move it a more appropriate module 
-defragmentStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
-defragmentStorageWithTmpDir AppContext {..} = do 
-    -- create a temporary LMDB environment     
-    let lmdbEnv = getEnv (storage database :: LmdbStorage)    
-
-    currentNativeEnv <- atomically $ readTVar $ nativeEnv lmdbEnv            
-    tmpDirName <- createTempDirectory (config ^. #tmpDirectory) "cache"
-
-    let cleanUp = do 
-            -- return Env back to what it was
-            atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
-            removePathForcibly tmpDirName    
-
-    let doStuff = do            
-            -- make current environment read-only
-            atomically $ do 
-                let n = nativeEnv lmdbEnv
-                curentEnv <- readTVar n
-                case curentEnv of
-                    -- normally we expect it to be in the `RWEnv` state
-                    RWEnv native -> writeTVar n (ROEnv native)                                
-                    -- this is weird, but lets just wait for it to change 
-                    -- and don't make things even more weird
-                    Disabled -> retry
-                    -- it shouldn't happes as well, but we can work with it in principle
-                    ROEnv _  -> pure ()
-
-            -- create new native LMDB environment in the temporary directory
-            newLmdb <- mkLmdb tmpDirName 1000_000 100
-
-            -- copy current environment to the new one
-            copyEnv lmdbEnv newLmdb
-
-            -- disable current environment 
-            atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
-
-            -- atomically move new environment files to the place of the current one
-            -- renameDirectory tmpDirName 
-
-            -- re-create current environment
-            pure ()
-
-    doStuff `onException` cleanUp    
         
 
     

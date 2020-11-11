@@ -69,8 +69,8 @@ mkLmdb fileName maxSizeMb maxReaders = do
         mapSize = maxSizeMb * 1024 * 1024
         maxDatabases = 120
 
-closeLmdb :: Environment e -> IO ()
-closeLmdb = closeEnvironment
+closeLmdb :: LmdbEnv -> IO ()
+closeLmdb e = closeEnvironment =<< getNativeEnv e
 
 
 createDatabase :: LmdbEnv -> IO (DB LmdbStorage)

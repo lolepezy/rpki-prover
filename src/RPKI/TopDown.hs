@@ -46,7 +46,6 @@ import           RPKI.RRDP.Http
 import           RPKI.RRDP.RrdpFetch
 import           RPKI.Rsync
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Data
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.TAL

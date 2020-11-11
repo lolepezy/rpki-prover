@@ -255,11 +255,3 @@ copyEnv src dst = do
                             Lmdb.KeyValue name value <- await
                             lift $ LMMap.insert dstC name value
 
-
-{- 
-
-Klimhal Amsterdam B.V. - 1 pair
-B fabriek - mutiple
-
-
--}

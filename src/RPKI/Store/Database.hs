@@ -18,6 +18,7 @@ import           Data.Int
 import           Data.IORef.Lifted
 
 import qualified Data.List                as List
+import           Data.List.NonEmpty       (NonEmpty)
 import           Data.Maybe               (fromMaybe)
 
 import           GHC.Generics
@@ -40,9 +41,16 @@ import           RPKI.Time                (Instant)
 import           RPKI.Util                (fmtEx, increment)
 
 import           RPKI.AppMonad
-import           RPKI.Store.Data
+import           RPKI.Repository
 import           RPKI.Store.Repository
 
+
+data StorableTA = StorableTA {
+    tal                 :: TAL,
+    taCert              :: CerObject,
+    fetchStatus         :: FetchStatus,
+    initialRepositories :: NonEmpty Repository
+} deriving (Show, Eq, Generic, Serialise)
 
 data ROMeta = ROMeta {
         insertedBy :: WorldVersion,
@@ -179,26 +187,6 @@ findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $
                     | orderingNum > latestNum -> Just (hash, orderingNum)
                     | otherwise               -> latest
 
-
--- findLatestMftByAKI :: (MonadIO m, Storage s) => 
---                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
--- findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $ do 
---     z <- MM.allForKey tx mftByAKI aki'
---     case List.sortOn (Down . snd) z of
---         []                  -> pure Nothing
---         (latestKey, _) : _ -> do 
---             o <- (fromSValue <$>) <$> M.get tx objects latestKey
---             pure $! case o of 
---                 Just (MftRO mft) -> Just mft
---                 _                -> Nothing
-
-
--- getSortedMftTimingsByAKI :: (MonadIO m, Storage s) => 
---                               Tx s mode -> RpkiObjectStore s -> AKI -> m [MftTiming]
--- getSortedMftTimingsByAKI tx RpkiObjectStore {..} aki' = 
---     liftIO $ List.sortOn Down . map snd <$> MM.allForKey tx mftByAKI aki'    
-
-
 findMftsByAKI :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
 findMftsByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
@@ -216,18 +204,16 @@ markValidated :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
 markValidated tx RpkiObjectStore {..} hash wv = liftIO $ do
     k <- M.get tx hashToKey hash
-    ifJust k $ \key ->
-        M.get tx objectMetas key >>= \case
-            Nothing ->
-                -- Normally that should never happen
-                pure ()
-            Just meta -> do 
-                let m = meta { validatedBy = Just wv }
-                M.put tx objectMetas key m                        
+    ifJust k $ \key -> do 
+        z <- M.get tx objectMetas key
+        ifJust z $ \meta -> let 
+            m = meta { validatedBy = Just wv }
+            in M.put tx objectMetas key m                        
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [RpkiObject]
-getAll tx store = map (fromSValue . snd) <$> liftIO (M.all tx (objects store))
+getAll tx store = map (fromSValue . snd) <$> 
+    liftIO (M.all tx (objects store))
 
 
 -- | Get something from the manifest that would allow us to judge 
@@ -313,7 +299,7 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
     kept    <- newIORef (0 :: Int)
     deleted <- newIORef (0 :: Int)
     
-    let queueForDeltionOrKeep worldVersion queue hash = 
+    let queueToDeletOrKeep worldVersion queue hash = 
             if tooOld worldVersion
                 then increment deleted >> atomically (writeCQueue queue hash)
                 else increment kept
@@ -324,7 +310,7 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
                     r <- M.get tx (objectMetas objectStore) key
                     ifJust r $ \ROMeta {..} -> do
                         let cutoffVersion = fromMaybe insertedBy validatedBy
-                        queueForDeltionOrKeep cutoffVersion queue hash                        
+                        queueToDeletOrKeep cutoffVersion queue hash                        
 
     -- Don't lock the DB for potentially too long, use big but finite chunks
     let deleteObjects queue =
