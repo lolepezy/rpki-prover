@@ -34,7 +34,6 @@ import qualified Network.Wai.Handler.Warp         as Warp
 
 import           System.Directory                 
 import           System.Environment
-import           System.Posix.Files
 import           System.FilePath                  ((</>))
 import           System.IO               (BufferMode (..), hSetBuffering, stdout)
 
@@ -49,17 +48,13 @@ import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.RRDP.HttpContext
-import           RPKI.Store.Base.LMDB    (LmdbEnv)
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Util
 import           RPKI.TAL
-import           RPKI.Time               (Now (Now), asSeconds, thisInstant)
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Workflow
-
-
 
 
 main :: IO ()
@@ -67,7 +62,7 @@ main = do
     -- load config file and apply command line options    
     logger <- createLogger
 
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relyiing party software"
+    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
     (appContext, validations) <- runValidatorT (vContext "configuration") $ createAppContext cliOptions logger
     case appContext of
@@ -301,3 +296,14 @@ instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
 
 deriving instance Show (CLIOptions Unwrapped)
+
+
+-- TODO delete it when done testing.
+testDefrag :: IO ()
+testDefrag = do 
+    logger <- createLogger
+
+    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
+
+    (Right appContext, _) <- runValidatorT (vContext "configuration") $ createAppContext cliOptions logger
+    defragmentStorageWithTmpDir appContext

@@ -95,18 +95,35 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
                 f /= "current" && (cacheDir </> f) /= linkTarget    
 
 
--- TODO Move it a more appropriate module 
+-- | De-fragment LMDB cache.
+-- 
+-- Since we add and delete a lot of data, LMDB files get bigger and bigger over time.
+-- It is hard to say why exactly, but the most logical explanation is that it fails
+-- to reuse pages in the file and the file gets highly fragmented.
+--
+-- In order to mitigate the problem, we do the following
+--  * create a new empty environment
+--  * copy every entry of every key-value map into the new environment
+--  * start using new environment
+--  * delete old environment
+-- 
+-- The rest of the code here is fiddling with the environment handles to prevent 
+-- DB writes during de-fragmentation and making sure that the change happens atomically.
+-- 
 defragmentStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
-defragmentStorageWithTmpDir AppContext {..} = do 
-    -- create a temporary LMDB environment     
+defragmentStorageWithTmpDir AppContext {..} = do  
     let lmdbEnv = getEnv (storage database :: LmdbStorage)    
     let cacheDir = config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
+
+    logInfo_ logger [i|De-fragmenting LMDB storage.|]
 
     currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 
     newLmdbDir <- createLmdbDir cacheDir
     createDirectory newLmdbDir
+
+    logDebug_ logger [i|Created #{newLmdbDir} for storage copy.|]
 
     let cleanUp = do 
             -- return Env back to what it was
@@ -130,8 +147,11 @@ defragmentStorageWithTmpDir AppContext {..} = do
             -- create new native LMDB environment in the temporary directory
             newLmdb <- mkLmdb newLmdbDir 1000_000 100
 
+            logDebug_ logger [i|Created LMDB environment in #{newLmdbDir}.|]
+
             -- copy current environment to the new one
             copyEnv lmdbEnv newLmdb
+            logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
             
             -- disable current environment, i.e. stop all DB operations
             atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
@@ -142,6 +162,8 @@ defragmentStorageWithTmpDir AppContext {..} = do
             createSymbolicLink newLmdbDir $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
+            logDebug_ logger [i|Set current cache to #{newLmdbDir}.|]
+
             -- set new native LMDB environment as the current DB
             newNative <- getNativeEnv newLmdb
             atomically $ writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)
@@ -151,6 +173,8 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
             -- delete old environment files
             removePathForcibly currentLinkTarget
+
+            logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
             
     copyToNewEnvironmentAndSwap `onException` cleanUp    
         
