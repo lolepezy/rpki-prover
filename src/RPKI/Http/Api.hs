@@ -13,7 +13,6 @@ module RPKI.Http.Api where
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Short       as BSS
-import qualified Data.ByteString.Builder     as Builder
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
@@ -53,6 +52,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database
 import           RPKI.Time
 import qualified RPKI.Util                   as U
+import RPKI.Config
 
 
 
@@ -196,6 +196,9 @@ instance ToJSON AsResource where
     toJSON = toJSON . show
 
 
+instance ToJSON Size where 
+    toJSON (Size s) = toJSON s
+    
 instance ToJSON SStats
 instance ToJSON RpkiObjectStats
 instance ToJSON VResultStats

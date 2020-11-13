@@ -1,6 +1,8 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
+
 
 module RPKI.Store.Base.Storable where
 
@@ -10,6 +12,10 @@ import qualified Data.ByteString.Lazy as LBS
 import Control.DeepSeq
 import Codec.Serialise
 import GHC.Generics
+
+import Data.Monoid.Generic
+
+import RPKI.Config
 
 newtype Storable = Storable { unStorable :: BS.ByteString }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
@@ -55,16 +61,20 @@ fromSValue (SValue b) = fromStorable b
 
 
 data SStats = SStats {
-    statSize       :: Int,
-    statKeyBytes   :: Int,
-    statValueBytes :: Int
-} deriving stock (Show, Eq, Generic)
+        statSize       :: Size,
+        statKeyBytes   :: Size,
+        statValueBytes :: Size
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving Semigroup via GenericSemigroup SStats
+    deriving Monoid    via GenericMonoid SStats
+
 
 
 incrementStats :: SStats -> SKey -> SValue -> SStats
 incrementStats stat (SKey (Storable k)) (SValue (Storable v)) = 
     SStats { 
         statSize = statSize stat + 1, 
-        statKeyBytes = statKeyBytes stat + BS.length k,
-        statValueBytes = statValueBytes stat + BS.length v
+        statKeyBytes = statKeyBytes stat + fromIntegral (BS.length k),
+        statValueBytes = statValueBytes stat + fromIntegral (BS.length v)
     }  

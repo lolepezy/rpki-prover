@@ -55,6 +55,7 @@ dependencies:
 - filepath
 - file-embed-lzma
 - generic-lens
+- generic-monoid
 - hashable
 - hourglass
 - hourglass-orphans

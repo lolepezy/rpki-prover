@@ -1,5 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StrictData #-}
 
@@ -12,6 +12,7 @@ import Data.Word
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
+import Data.Monoid
 
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
@@ -45,6 +46,8 @@ data RsyncConf = RsyncConf {
 newtype Size = Size Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
+    deriving Semigroup via Sum Size
+    deriving Monoid via Sum Size
 
 data RrdpConf = RrdpConf {
     tmpRoot     :: FilePath,

@@ -20,6 +20,7 @@ import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import qualified RPKI.Store.Database as DB
 import           RPKI.Errors
 import           RPKI.Logging
 import           RPKI.Store.Base.LMDB
@@ -30,18 +31,33 @@ import           RPKI.Util
 
 import           System.Directory
 import           System.FilePath                  ((</>))
-import           System.IO.Temp
 import           System.Posix.Files
+import RPKI.Config
+import Control.Monad (when)
+import Data.Traversable (forM)
 
 class MaintainableStorage s where
     runMaintenance :: AppContext s -> IO ()
 
 instance MaintainableStorage LmdbStorage where
-    runMaintenance _ = pure () -- defragmentStorageWithTmpDir
+    runMaintenance = defragmentStorageWithTmpDir
 
 
 data LmdbFlow = UseExisting | Reset
 
+
+-- | Verify that the cache directory is consistent and use it as LMDB cache.
+-- 
+-- It case something is wrong with it, wipe the whole cache out and start from scratch,
+-- By "consistent" we mean the following:
+--  * there's "cache" directory inside of the root directory
+--  * there's structure inside of the "cache" directory similar to this exmaple:
+-- 
+--      ... ${root}/cache/current -> ${root}/cache/lmdb.1605220697
+--      ... lmdb.1605220697
+-- 
+--  In this case `lmdb.1605220697` contains LMDB files.
+--
 setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Int64 -> ValidatorT vc IO (LmdbEnv, FilePath)
 setupLmdbCache lmdbFlow logger root lmdbSize = do
     
@@ -107,8 +123,8 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
 --  * start using new environment
 --  * delete old environment
 -- 
--- The rest of the code here is fiddling with the environment handles to prevent 
--- DB writes during de-fragmentation and making sure that the change happens atomically.
+-- On the FS level, it will create another `lmdb.N` directory inside `cache` 
+-- and point the `cache/current` symlink to it.
 -- 
 defragmentStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 defragmentStorageWithTmpDir AppContext {..} = do  
@@ -125,8 +141,8 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     logDebug_ logger [i|Created #{newLmdbDir} for storage copy.|]
 
-    let cleanUp = do 
-            -- return Env back to what it was
+    let cleanUpAfterException = do 
+            -- return Env back to what it was in case of failure
             atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
             removePathForcibly newLmdbDir    
 
@@ -176,9 +192,25 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
             logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
             
-    copyToNewEnvironmentAndSwap `onException` cleanUp    
-        
+    
+    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+    
+    fileSize <- do 
+            lmdbFiles <- listDirectory currentLinkTarget
+            sizes <- forM lmdbFiles $ \f -> getFileSize $ currentCache </> f
+            pure $! sum sizes
 
+    Size dataSize <- DB.totalSpace <$> DB.stats database
+
+    let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
+    let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
+    if fileSizeMb > (3 * dataSizeMb)
+        then do 
+            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
+            copyToNewEnvironmentAndSwap `onException` cleanUpAfterException    
+        else 
+            logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
+        
         
 createLmdbDir :: MonadIO m => FilePath -> m FilePath
 createLmdbDir cacheDir = do 

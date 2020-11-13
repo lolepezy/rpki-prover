@@ -43,6 +43,7 @@ import           RPKI.Util                (fmtEx, increment)
 import           RPKI.AppMonad
 import           RPKI.Repository
 import           RPKI.Store.Repository
+import RPKI.Config (Size)
 
 
 data StorableTA = StorableTA {
@@ -372,31 +373,31 @@ getLastCompletedVersion database tx = do
 
 
 data RpkiObjectStats = RpkiObjectStats {
-    objectsStats    :: !SStats,
-    mftByAKIStats   :: !SStats,
-    objectMetaStats :: !SStats,
-    hashToKeyStats  :: !SStats
+    objectsStats    :: SStats,
+    mftByAKIStats   :: SStats,
+    objectMetaStats :: SStats,
+    hashToKeyStats  :: SStats
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
-    resultsStats :: !SStats    
+    resultsStats :: SStats    
 } deriving  (Show, Eq, Generic)
 
 data RepositoryStats = RepositoryStats {
-    rrdpStats  :: !SStats,
-    rsyncStats :: !SStats,
-    lastSStats :: !SStats,
-    perTAStats :: !SStats    
+    rrdpStats  :: SStats,
+    rsyncStats :: SStats,
+    lastSStats :: SStats,
+    perTAStats :: SStats    
 } deriving stock (Show, Eq, Generic)
 
 data DBStats = DBStats {
-    taStats         :: !SStats,
-    repositoryStats :: !RepositoryStats,
-    rpkiObjectStats :: !RpkiObjectStats,    
-    vResultStats    :: !VResultStats,    
-    vrpStats        :: !SStats,    
-    versionStats    :: !SStats,
-    sequenceStats   :: !SStats
+    taStats         :: SStats,
+    repositoryStats :: RepositoryStats,
+    rpkiObjectStats :: RpkiObjectStats,    
+    vResultStats    :: VResultStats,    
+    vrpStats        :: SStats,    
+    versionStats    :: SStats,
+    sequenceStats   :: SStats
 } deriving stock (Show, Eq, Generic)
 
 
@@ -432,7 +433,27 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
         vResultStats tx = 
             let ValidationsStore results = validationsStore
             in VResultStats <$> M.stats tx results
+   
                        
+-- | Return total amount of bytes taken by the data in the DB
+-- 
+totalSpace :: DBStats -> Size
+totalSpace DBStats {..} = 
+    let fullStat = taStats 
+                <> (rrdpStats repositoryStats 
+                    <> rsyncStats repositoryStats 
+                    <> lastSStats repositoryStats 
+                    <> perTAStats repositoryStats) 
+                <> (objectsStats rpkiObjectStats 
+                    <> mftByAKIStats rpkiObjectStats 
+                    <> objectMetaStats rpkiObjectStats 
+                    <> hashToKeyStats rpkiObjectStats)
+                <> resultsStats vResultStats 
+                <> vrpStats 
+                <> versionStats 
+                <> sequenceStats
+        in statKeyBytes fullStat + statValueBytes fullStat
+
 
 
 -- All of the stores of the application in one place
