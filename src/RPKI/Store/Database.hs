@@ -440,14 +440,10 @@ stats db@DB {..} = liftIO $ roTx db $ \tx ->
 totalSpace :: DBStats -> Size
 totalSpace DBStats {..} = 
     let fullStat = taStats 
-                <> (rrdpStats repositoryStats 
-                    <> rsyncStats repositoryStats 
-                    <> lastSStats repositoryStats 
-                    <> perTAStats repositoryStats) 
-                <> (objectsStats rpkiObjectStats 
-                    <> mftByAKIStats rpkiObjectStats 
-                    <> objectMetaStats rpkiObjectStats 
-                    <> hashToKeyStats rpkiObjectStats)
+                <> (let RepositoryStats{..} = repositoryStats 
+                    in rrdpStats <> rsyncStats<> lastSStats <> perTAStats) 
+                <> (let RpkiObjectStats {..} = rpkiObjectStats
+                    in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats)
                 <> resultsStats vResultStats 
                 <> vrpStats 
                 <> versionStats 

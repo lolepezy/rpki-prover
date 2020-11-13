@@ -125,49 +125,49 @@ runWorkflow appContext@AppContext {..} tals = do
             logDebug_ logger [i|Starting task executor.|]
             forever $ do 
                 task <- atomically $ readCQueue globalQueue 
-                case task of 
-                    Nothing -> pure ()
+                ifJust task $ executeTask
 
-                    Just (ValidateTAs worldVersion) -> do
-                        logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
-                        executeOrDie
-                            (mconcat <$> mapConcurrently processTAL tals)
-                            (\tdResult@TopDownResult{..} elapsed -> do 
-                                uniqueVrps <- saveTopDownResult tdResult                                
-                                logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
-                        where 
-                            processTAL tal = do 
-                                (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
-                                logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-                                pure r
+        executeTask = \case 
+            ValidateTAs worldVersion -> do
+                logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
+                executeOrDie
+                    (mconcat <$> mapConcurrently processTAL tals)
+                    (\tdResult@TopDownResult{..} elapsed -> do 
+                        uniqueVrps <- saveTopDownResult tdResult                                
+                        logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
+                where 
+                    processTAL tal = do 
+                        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
+                        logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+                        pure r
 
-                            saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
-                                let uniqueVrps = Set.fromList vrps
-                                putValidations tx (validationsStore database) worldVersion tdValidations                                 
-                                putVrps tx database (Set.toList uniqueVrps) worldVersion
-                                completeWorldVersion tx database worldVersion
-                                atomically $ do 
-                                    completeCurrentVersion appState                                    
-                                    writeTVar (appState ^. #currentVrps) uniqueVrps
-                                pure uniqueVrps
+                    saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
+                        let uniqueVrps = Set.fromList vrps
+                        putValidations tx (validationsStore database) worldVersion tdValidations                                 
+                        putVrps tx database (Set.toList uniqueVrps) worldVersion
+                        completeWorldVersion tx database worldVersion
+                        atomically $ do 
+                            completeCurrentVersion appState                                    
+                            writeTVar (appState ^. #currentVrps) uniqueVrps
+                        pure uniqueVrps
 
-                    Just (CacheGC worldVersion) -> do
-                        let now = versionToMoment worldVersion
-                        executeOrDie 
-                            (cleanObjectCache database $ versionIsOld now cacheLifeTime)
-                            (\(deleted, kept) elapsed -> 
-                                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
+            CacheGC worldVersion -> do
+                let now = versionToMoment worldVersion
+                executeOrDie 
+                    (cleanObjectCache database $ versionIsOld now cacheLifeTime)
+                    (\(deleted, kept) elapsed -> 
+                        logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
 
-                    Just (CleanOldVersions worldVersion) -> do
-                        let now = versionToMoment worldVersion
-                        executeOrDie 
-                            (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
-                            (\deleted elapsed -> 
-                                logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
+            CleanOldVersions worldVersion -> do
+                let now = versionToMoment worldVersion
+                executeOrDie 
+                    (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
+                    (\deleted elapsed -> 
+                        logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
-                    Just (Defragment worldVersion) -> do
-                        (_, elapsed) <- timedMS $ runMaintenance appContext 
-                        logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
+            Defragment worldVersion -> do
+                (_, elapsed) <- timedMS $ runMaintenance appContext 
+                logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 
