@@ -223,15 +223,15 @@ shouldRollbackAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx -> do
+    void $ runValidatorT (newValidatorContext "bla") $ rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
         appError $ UnspecifiedE "Test" "Test problem"
 
-    void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx ->
+    void $ runValidatorT (newValidatorContext "bla") $ rwAppTx storage' $ \tx ->
         liftIO $ M.put tx z 2 "bb"        
 
     let throwFromTx =
-            void $ runValidatorT (vContext "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
+            void $ runValidatorT (newValidatorContext "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
                     M.put tx z 3 "cc"        
                     throwIO RatioZeroDenominator
 
@@ -240,7 +240,7 @@ shouldRollbackAppTx io = do
             (fromException (toException e)) 
             (Just RatioZeroDenominator)
 
-    void $ runValidatorT (vContext "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
+    void $ runValidatorT (newValidatorContext "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
          v1 <- M.get tx z 1  
          HU.assertEqual "Must not be there" v1 Nothing
          v2 <- M.get tx z 2  

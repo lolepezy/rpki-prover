@@ -76,17 +76,17 @@ main = do
 testSnapshotLoad :: IO ()
 testSnapshotLoad = do
     logger <- createLogger
-    (Right appContext, _) <- runValidatorT (vContext "configuration") $ createAppContext logger    
+    (Right appContext, _) <- runValidatorT (newValidatorContext "configuration") $ createAppContext logger    
     snapshotContent <- Mmap.unsafeMMapFile "../tmp/test-data/snapshot.xml"
     logDebug_ logger [i|Starting |]    
     stats <- newRrdpStat
     let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (Serial 673)
-    void $ runValidatorT (vContext "snapshot") $ saveSnapshot appContext stats (RrdpURL $ URI "bla.xml") notification snapshotContent    
+    void $ runValidatorT (newValidatorContext "snapshot") $ saveSnapshot appContext stats (RrdpURL $ URI "bla.xml") notification snapshotContent    
 
 testDeltaLoad :: IO ()
 testDeltaLoad = do
     logger <- createLogger
-    (Right appContext, _) <- runValidatorT (vContext "configuration") $ createAppContext logger    
+    (Right appContext, _) <- runValidatorT (newValidatorContext "configuration") $ createAppContext logger    
     deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
     deltaContents <- forM deltas $ \d -> MmapLazy.unsafeMMapFile $ "../tmp/test-data/" </> d
     logDebug_ logger [i|Starting |]    
