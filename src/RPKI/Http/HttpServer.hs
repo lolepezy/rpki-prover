@@ -23,7 +23,7 @@ import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Time
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
@@ -62,7 +62,7 @@ validatorServer AppContext {..} =
                         pure $ map toVR $ validationsToList validations
                 in fromMaybe [] <$> txValidations
             
-        toVR (VContext path, problems) = 
+        toVR (Context path, problems) = 
             ValidationResult (Set.toList problems) (NonEmpty.toList path)    
 
         getStats = stats database

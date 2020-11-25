@@ -27,7 +27,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -55,8 +55,8 @@ import           System.Mem                       (performGC)
 -- | 
 -- | This function doesn't throw exceptions.
 rsyncRpkiObject :: AppContext s -> 
-                    RsyncURL -> 
-                    ValidatorT vc IO RpkiObject
+                RsyncURL -> 
+                ValidatorT IO RpkiObject
 rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
     let destination = rsyncDestination rsyncRoot uri
@@ -79,9 +79,9 @@ rsyncRpkiObject AppContext{..} uri = do
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: Storage s => 
-                AppContext s ->
-                RsyncRepository ->     
-                ValidatorT vc IO RsyncRepository
+                                  AppContext s ->
+                                  RsyncRepository ->     
+                                  ValidatorT IO RsyncRepository
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = do     
@@ -119,12 +119,12 @@ updateObjectForRsyncRepository
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions, only report errors through Either.
-loadRsyncRepository :: Storage s => 
+loadRsyncRepository :: Storage s =>                         
                         AppContext s ->
                         RsyncURL -> 
                         FilePath -> 
                         RpkiObjectStore s -> 
-                        ValidatorT vc IO Integer
+                        ValidatorT IO Integer
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
     worldVersion  <- liftIO $ getWorldVerionIO appState
     doSaveObjects worldVersion
@@ -162,7 +162,9 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                             task <- (readAndParseObject path (RsyncU uri)) `strictTask` threads                                                                      
                             liftIO $ atomically $ writeCQueue queue (uri, task)
             where                
-                readAndParseObject :: FilePath -> RpkiURL -> ValidatorT vc IO (Maybe (StorableUnit RpkiObject AppError))
+                readAndParseObject :: FilePath 
+                                    -> RpkiURL 
+                                    -> ValidatorT IO (Maybe (StorableUnit RpkiObject AppError))
                 readAndParseObject filePath uri = 
                     liftIO (getSizeAndContent1 filePath) >>= \case                    
                         Left e        -> pure $! Just $! SError e

@@ -25,7 +25,7 @@ import           GHC.Generics
 
 import           RPKI.AppMonad
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
 import           RPKI.TAL
@@ -39,7 +39,8 @@ import           RPKI.Validation.ResourceValidation
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
 
-validateResourceCertExtensions :: WithResourceCertificate c => c -> PureValidatorT conf c
+validateResourceCertExtensions :: WithResourceCertificate c => 
+                                    c -> PureValidatorT c
 validateResourceCertExtensions cert =
   validateHasCriticalExtensions $ cwsX509certificate $ getCertWithSignature cert
   where
@@ -75,7 +76,7 @@ validateResourceCertExtensions cert =
               _ -> vPureError $ CertWrongPolicyExtension bs
 
 -- |
-validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT conf CerObject
+validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CerObject
 validateTACert tal u (CerRO taCert) = do
   let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
   pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki
@@ -111,7 +112,7 @@ validateResourceCert ::
   c ->
   parent ->
   Validated CrlObject ->
-  PureValidatorT conf (Validated c)
+  PureValidatorT (Validated c)
 validateResourceCert (Now now) cert parentCert vcrl = do
     let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
     signatureCheck $ validateCertSignature cert parentCert
@@ -130,7 +131,7 @@ validateResources :: (WithResourceCertificate c, WithResourceCertificate parent)
                     Maybe (VerifiedRS PrefixesAndAsns) ->
                     c ->
                     parent ->
-                    PureValidatorT conf (VerifiedRS PrefixesAndAsns)
+                    PureValidatorT (VerifiedRS PrefixesAndAsns)
 validateResources
   verifiedResources
   (getRC -> ResourceCertificate cert)
@@ -144,12 +145,12 @@ validateResources
         validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
 
 -- | Validate CRL object with the parent certificate
-validateCrl ::
+validateCrl ::    
     WithResourceCertificate c =>
     Now ->
     CrlObject ->
     c ->
-    PureValidatorT conf (Validated CrlObject)
+    PureValidatorT (Validated CrlObject)
 validateCrl now crlObject parentCert = do
     signatureCheck $ validateCRLSignature crlObject parentCert
     void $ validateThisUpdate now thisUpdateTime
@@ -164,7 +165,7 @@ validateMft ::
   MftObject ->
   c ->
   Validated CrlObject ->
-  PureValidatorT conf (Validated MftObject)
+  PureValidatorT (Validated MftObject)
 validateMft now mft parentCert crl = do
     void $ validateCms now (cmsPayload mft) parentCert crl $ \mftCMS -> do
         let cmsContent = getCMSContent mftCMS
@@ -179,7 +180,7 @@ validateRoa ::
   RoaObject ->
   c ->
   Validated CrlObject ->
-  PureValidatorT conf (Validated RoaObject)
+  PureValidatorT (Validated RoaObject)
 validateRoa now roa parentCert crl = do
   void $ validateCms now (cmsPayload roa) parentCert crl pure
   pure $ Validated roa
@@ -190,7 +191,7 @@ validateGbr ::
   GbrObject ->
   c ->
   Validated CrlObject ->
-  PureValidatorT conf (Validated GbrObject)
+  PureValidatorT (Validated GbrObject)
 validateGbr now gbr parentCert crl = do
   void $ validateCms now (cmsPayload gbr) parentCert crl pure
   -- TODO Implement it
@@ -202,8 +203,8 @@ validateCms ::
   CMS a ->
   c ->
   Validated CrlObject ->
-  (CMS a -> PureValidatorT conf (CMS a)) ->
-  PureValidatorT conf (Validated (CMS a))
+  (CMS a -> PureValidatorT (CMS a)) ->
+  PureValidatorT (Validated (CMS a))
 validateCms now cms parentCert crl extraValidation = do
   -- Signature algorithm in the EE certificate has to be 
   -- exactly the same as in the signed attributes
@@ -224,7 +225,7 @@ validateCms now cms parentCert crl extraValidation = do
   Validated <$> extraValidation cms
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
-validateNextUpdate :: Now -> Maybe Instant -> PureValidatorT conf Instant
+validateNextUpdate :: Now -> Maybe Instant -> PureValidatorT Instant
 validateNextUpdate (Now now) nextUpdateTime =
   case nextUpdateTime of
     Nothing -> vPureError NextUpdateTimeNotSet
@@ -233,7 +234,7 @@ validateNextUpdate (Now now) nextUpdateTime =
       | otherwise        -> pure nextUpdate
 
 -- | Validate the thisUpdateTeim for objects that have it (MFT, CRLs)
-validateThisUpdate :: Now -> Instant -> PureValidatorT conf Instant
+validateThisUpdate :: Now -> Instant -> PureValidatorT Instant
 validateThisUpdate (Now now) thisUpdateTime
       | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime now
       | otherwise             = pure thisUpdateTime
@@ -246,15 +247,15 @@ isRevoked cert (Validated crlObject) =
     SignCRL {..} = signCrl crlObject
     serial = getSerial cert
 
-signatureCheck :: SignatureVerification -> PureValidatorT conf ()
+signatureCheck :: SignatureVerification -> PureValidatorT ()
 signatureCheck sv = case sv of
   SignatureFailed e -> vPureError $ InvalidSignature $ convert $ show e
   SignaturePass     -> pure ()
 
-validateSizeOfBS :: BS.ByteString -> PureValidatorT c BS.ByteString
+validateSizeOfBS :: BS.ByteString -> PureValidatorT BS.ByteString
 validateSizeOfBS bs = validateSizeM (toInteger $ BS.length bs) >> pure bs
 
-validateSizeM :: Integer -> PureValidatorT c Integer
+validateSizeM :: Integer -> PureValidatorT Integer
 validateSizeM s = vFromEither $ validateSize s
 
 validateSize :: Integer -> Either ValidationError Integer

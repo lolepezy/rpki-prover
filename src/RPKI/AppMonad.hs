@@ -4,33 +4,40 @@
 
 module RPKI.AppMonad where
 
+import           Control.Lens                ((.~), (&), (%~))
+import           Data.Generics.Labels
+import           Data.Generics.Product.Typed
+
+import           GHC.Generics (Generic)
+
 import           Control.Exception.Lifted
 import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
-import           Control.Monad.Trans.Except
+import           Control.Monad.Trans.Except (throwE)
 
-import           Data.Bifunctor
-import           Data.Text                  (Text)
-import           RPKI.Errors
+import           Data.Bifunctor             (Bifunctor (first))
+
+import           Data.Text                   (Text)
+import           RPKI.Reporting
 
 
 -- Application monad stack
-type ValidatorT env m r = WithVContext env => 
-        ReaderT env (ExceptT AppError (StateT Validations m)) r
+type ValidatorT m r = 
+        ReaderT ValidatorContext (ExceptT AppError (StateT ValidationState m)) r
 
-type PureValidatorT env r = WithVContext env =>
-        ReaderT env (ExceptT AppError (State Validations)) r
+type PureValidatorT r = 
+        ReaderT ValidatorContext (ExceptT AppError (State ValidationState)) r
 
-vHoist :: Monad m => PureValidatorT env r -> ValidatorT env m r
+vHoist :: Monad m => PureValidatorT r -> ValidatorT m r
 vHoist = hoist $ hoist $ hoist generalize
 
-fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT env m r
+fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT m r
 fromEitherM = lift . ExceptT . lift 
 
 -- TODO Make it not so ugly
-validatorT :: Monad m => m (Either AppError r, Validations) -> ValidatorT env m r
+validatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
 validatorT s = lift $ ExceptT $ do
                 (v, w) <- lift s
                 put w
@@ -40,7 +47,7 @@ validatorT s = lift $ ExceptT $ do
 fromTry :: Exception exc => 
             (exc -> AppError) -> 
             IO r -> 
-            ValidatorT env IO r
+            ValidatorT IO r
 fromTry mapErr t =
     fromEitherM $ (Right <$> t) `catch` recoverOrRethrow        
     where
@@ -49,10 +56,11 @@ fromTry mapErr t =
                 Just (SomeAsyncException _) -> throwIO e
                 Nothing                     -> pure $ Left $ mapErr e
 
-fromTryM :: Exception exc => 
+
+fromTryM :: Exception exc =>              
             (exc -> AppError) -> 
-            ValidatorT env IO r -> 
-            ValidatorT env IO r
+            ValidatorT IO r -> 
+            ValidatorT IO r
 fromTryM mapErr t =
     t `catch` recoverOrRethrow        
     where
@@ -62,7 +70,8 @@ fromTryM mapErr t =
                 Nothing                     -> appError $ mapErr e
 
 fromTryEither :: Exception exc =>
-                (exc -> AppError) -> IO (Either AppError r) -> ValidatorT env IO r
+                (exc -> AppError) -> 
+                IO (Either AppError r) -> ValidatorT IO r
 fromTryEither mapErr t = do 
     z <- fromTry mapErr t
     fromEitherM $ pure z
@@ -70,61 +79,83 @@ fromTryEither mapErr t = do
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runPureValidator :: WithVContext env =>
-                env -> PureValidatorT env r -> (Either AppError r, Validations)
-runPureValidator env v = (runState $ runExceptT $ runReaderT v env) mempty
+runPureValidator :: ValidatorContext -> PureValidatorT r -> (Either AppError r, ValidationState)
+runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 
-runValidatorT :: WithVContext env =>
-                env -> ValidatorT env m r -> m (Either AppError r, Validations)
-runValidatorT env v = (runStateT $ runExceptT $ runReaderT v env) mempty
+runValidatorT :: ValidatorContext -> ValidatorT m r -> m (Either AppError r, ValidationState)
+runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
-validatorWarning :: Monad m => VWarning -> ValidatorT env m ()
+validatorWarning :: Monad m => VWarning -> ValidatorT m ()
 validatorWarning = vHoist . pureWarning
 
-vError :: Monad m => ValidationError -> ValidatorT env m r
+vError :: Monad m => ValidationError -> ValidatorT m r
 vError = vHoist . vPureError
 
-appError :: Monad m => AppError -> ValidatorT env m r
+appError :: Monad m => AppError -> ValidatorT m r
 appError = vHoist . pureError
 
-pureWarning :: WithVContext env => VWarning -> PureValidatorT env ()
+pureWarning :: VWarning -> PureValidatorT ()
 pureWarning w = do 
-    vc <- asks getVC 
-    lift $ modify' (mWarning vc w <>)
+    vc :: VTrail <- asks getContext 
+    lift $ modify' (typed %~ (mWarning vc w <>))
 
-vPureError :: ValidationError -> PureValidatorT env r
+vPureError :: ValidationError -> PureValidatorT r
 vPureError e = pureError $ ValidationE e    
 
-pureError :: AppError -> PureValidatorT env r
+pureError :: AppError -> PureValidatorT r
 pureError e = do
-    vc <- asks getVC     
+    vc <- asks getContext
     lift $ do 
-        modify' (mError vc e <>)
+        modify' (typed %~ (mError vc e <>))
         throwE e
 
-pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT env ()
+pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
 pureErrorIfNot b e = if b then pure () else vPureError e
 
-fromEither :: Either AppError r -> PureValidatorT env r
+fromEither :: Either AppError r -> PureValidatorT r
 fromEither (Left e) = pureError e
 fromEither (Right r) = pure r
 
-vFromEither :: Either ValidationError r -> PureValidatorT env r
+vFromEither :: Either ValidationError r -> PureValidatorT r
 vFromEither e = fromEither $ first ValidationE e
 
 valid :: Applicative m =>
         m (Either AppError (), Validations)
 valid = pure (Right (), mempty)
 
-vWarn :: (Monad m, WithVContext env) =>
-            ValidationError -> ValidatorT env m ()
+vWarn :: Monad m =>
+            ValidationError -> ValidatorT m ()
 vWarn = validatorWarning . VWarning . ValidationE
 
-appWarn :: (Monad m, WithVContext env) =>
-            AppError -> ValidatorT env m ()
+appWarn :: Monad m =>
+            AppError -> ValidatorT m ()
 appWarn = validatorWarning . VWarning
 
 
-forChild :: (Monad m, WithVContext env) => 
-            Text -> ValidatorT env m r -> ValidatorT env m r
-forChild = local . childVC
+inSubVContext :: Monad m => 
+                Text -> ValidatorT m r -> ValidatorT m r
+inSubVContext t = local (& typed @VTrail %~ (trail t <>))
+
+inSubMetricContext :: Monad m => 
+                    Text -> ValidatorT m r -> ValidatorT m r
+inSubMetricContext t = local (& typed @MetricTrail %~ (trail t <>))
+
+inSubContext :: Monad m => 
+                Text -> ValidatorT m r -> ValidatorT m r
+inSubContext t va = inSubVContext t $ inSubMetricContext t va    
+
+
+-- appMetric :: (Monad m, WithContext Metric env) => AppMetric -> ValidatorT m ()
+-- appMetric = vHoist . pureMetric
+
+-- pureMetric :: WithContext Metric env => AppMetric -> PureValidatorT env ()
+-- pureMetric z = do 
+--     mc <- asks getContext
+--     lift $ modify' (typed %~ (validationMetric metric <>))
+
+-- modifyMetric :: Monad m => MetricTrail -> (AMetric -> Maybe AMetric) -> ValidatorT m ()
+-- modifyMetric key f = vHoist $ modifyPureMetric key f 
+
+-- modifyPureMetric :: MetricKey -> (AMetric -> Maybe AMetric) -> PureValidatorT env ()
+-- modifyPureMetric key f = 
+--     lift $ modify' $ typed %~ (\am -> modifyAMetric am key f)

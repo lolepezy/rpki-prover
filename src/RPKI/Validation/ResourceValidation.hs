@@ -1,7 +1,7 @@
 module RPKI.Validation.ResourceValidation where
 
 import           RPKI.AppMonad
-import           RPKI.Errors
+import           RPKI.Reporting
 import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Resources.Types
 
@@ -15,11 +15,11 @@ import           RPKI.Resources.Types
 -- resources are nested into verifiedResources that are, in general case, a 
 -- subset of parent resources.
 -- 
-validateChildParentResources :: ValidationRFC -> 
-                                AllResources -> 
-                                AllResources -> 
-                                Maybe (VerifiedRS PrefixesAndAsns) -> 
-                                PureValidatorT conf (VerifiedRS PrefixesAndAsns)
+validateChildParentResources :: ValidationRFC 
+                            -> AllResources 
+                            -> AllResources 
+                            -> Maybe (VerifiedRS PrefixesAndAsns) 
+                            -> PureValidatorT (VerifiedRS PrefixesAndAsns)
 validateChildParentResources validationRFC childResources parentResources verifiedResources =                                 
   case validationRFC of 
     Strict_       -> verify strict
@@ -31,11 +31,11 @@ validateChildParentResources validationRFC childResources parentResources verifi
       ca <- check childAsns parentAsns (\(VerifiedRS (PrefixesAndAsns _ _ r)) -> r)
       f c4 c6 ca
 
-    check :: Interval a => 
+    check :: Interval a =>               
             RSet (IntervalSet a) -> 
             RSet (IntervalSet a) -> 
             (VerifiedRS PrefixesAndAsns -> IntervalSet a) -> 
-            PureValidatorT conf (IS.ResourceCheckResult a)
+            PureValidatorT (IS.ResourceCheckResult a)
     check c p verifiedSub = 
       case verifiedResources of 
         Nothing -> 

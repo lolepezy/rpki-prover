@@ -20,7 +20,7 @@ import qualified Data.Text                        as Text
 import           GHC.Generics
 
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 
 import           RPKI.Util                        
 

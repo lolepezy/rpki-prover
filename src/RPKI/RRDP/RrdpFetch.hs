@@ -25,7 +25,7 @@ import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -58,12 +58,11 @@ import           System.Mem                       (performGC)
 --    - download snapshot or deltas
 --    - do something appropriate with either of them
 -- 
-downloadAndUpdateRRDP :: WithVContext vc => 
-                        AppContext s ->
+downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository ->                 
-                        (RrdpURL -> Notification -> BS.ByteString -> ValidatorT vc IO ()) ->
-                        (RrdpURL -> Notification -> Serial -> BS.ByteString -> ValidatorT vc IO ()) ->
-                        ValidatorT vc IO RrdpRepository
+                        (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) ->
+                        (RrdpURL -> Notification -> Serial -> BS.ByteString -> ValidatorT IO ()) ->
+                        ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
         repo@(RrdpRepository repoUri _ _)      
@@ -91,7 +90,7 @@ downloadAndUpdateRRDP
         ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
         useSnapshot (SnapshotInfo uri hash) notification = 
-            forChild (U.convert uri) $ do
+            inSubVContext (U.convert uri) $ do
                 logDebugM logger [i|#{uri}: downloading snapshot.|]
                 (r, downloadedIn, savedIn) <- downloadAndSave
                 logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot in #{savedIn}ms.|]                        
@@ -128,7 +127,7 @@ downloadAndUpdateRRDP
                                 (S.each sortedDeltas)
                                 downloadDelta
                                 (\(rawContent, serial, deltaUri) _ -> 
-                                    forChild deltaUri $ 
+                                    inSubVContext deltaUri $ 
                                         handleDeltaBS repoUri notification serial rawContent)
                                 (mempty :: ())
             
@@ -137,7 +136,7 @@ downloadAndUpdateRRDP
                 downloadDelta (DeltaInfo uri hash serial) = do
                     let deltaUri = U.convert uri 
                     (rawContent, _) <- 
-                        forChild deltaUri $  
+                        inSubVContext deltaUri $  
                             fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                                 downloadHashedStrictBS appContext uri hash
                                     (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
@@ -163,7 +162,7 @@ data Step
 
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
-rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT env Step
+rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT Step
 rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} = 
     pure $ UseSnapshot snapshotInfo
 rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notification{..} =
@@ -204,9 +203,9 @@ nextSerial (Serial s) = Serial $ s + 1
 -- in the same transaction it stores the data in.
 -- 
 updateObjectForRrdpRepository :: Storage s => 
-                                AppContext s ->
-                                RrdpRepository ->
-                                ValidatorT vc IO RrdpRepository
+                                AppContext s 
+                            -> RrdpRepository 
+                            -> ValidatorT IO RrdpRepository
 updateObjectForRrdpRepository appContext@AppContext {..} repository = do        
         stats <- liftIO newRrdpStat
         r <- downloadAndUpdateRRDP 
@@ -230,7 +229,7 @@ saveSnapshot :: Storage s =>
                 -> RrdpURL
                 -> Notification 
                 -> BS.ByteString 
-                -> ValidatorT vc IO ()
+                -> ValidatorT IO ()
 saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do      
     worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
     doSaveObjects worldVersion 
@@ -290,17 +289,17 @@ saveSnapshot appContext rrdpStats repoUri notification snapshotContent = do
                                                 Right !ro -> Just $! SObject $ toStorableObject ro
                                         
         saveStorable _ (Left (e, uri)) _ = 
-            forChild (unURI uri) $ appWarn e             
+            inSubVContext (unURI uri) $ appWarn e             
 
         saveStorable tx (Right (uri, a)) _ =           
             waitTask a >>= \case     
                 Nothing -> pure ()                   
                 Just (SError (VWarn (VWarning e))) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appWarn e 
+                    inSubVContext (unURI uri) $ appWarn e 
                 Just (SError (VErr e)) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appError e                 
+                    inSubVContext (unURI uri) $ appError e                 
                 Just (SObject so) -> do 
                     DB.putObject tx objectStore so worldVersion
                     addedOne rrdpStats                    
@@ -328,7 +327,7 @@ saveDelta :: Storage s =>
             -> Notification 
             -> Serial             
             -> BS.ByteString 
-            -> ValidatorT conf IO ()
+            -> ValidatorT IO ()
 saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent = do        
     worldVersion  <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
     doSaveObjects worldVersion
@@ -380,7 +379,7 @@ saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent =
         newStorable (DW (DeltaWithdraw uri hash)) = 
             pure $ Right $ Delete uri hash
         
-        saveStorable _ (Left (e, uri)) _             = forChild (unURI uri) $ appWarn e             
+        saveStorable _ (Left (e, uri)) _             = inSubVContext (unURI uri) $ appWarn e             
 
         saveStorable tx (Right op) _ =
             case op of
@@ -397,10 +396,10 @@ saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent =
             waitTask a >>= \case
                 SError (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appWarn e 
+                    inSubVContext (unURI uri) $ appWarn e 
                 SError (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appError e 
+                    inSubVContext (unURI uri) $ appError e 
                 SObject so@(StorableObject ro _) -> liftIO $ do
                     alreadyThere <- DB.hashExists tx objectStore (getHash ro)
                     unless alreadyThere $ do
@@ -411,10 +410,10 @@ saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent =
             waitTask a >>= \case
                 SError (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appWarn e 
+                    inSubVContext (unURI uri) $ appWarn e 
                 SError (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    forChild (unURI uri) $ appError e 
+                    inSubVContext (unURI uri) $ appError e 
                 SObject so@(StorableObject ro _) -> do        
                     oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
                     if oldOneIsAlreadyThere 
@@ -423,7 +422,7 @@ saveDelta appContext rrdpStats repoUri notification currentSerial deltaContent =
                             liftIO $ removedOne rrdpStats
                         else do 
                             logWarnM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                            forChild (unURI uri) $ 
+                            inSubVContext (unURI uri) $ 
                                 appError (RrdpE $ NoObjectToReplace uri oldHash) 
 
                     newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)

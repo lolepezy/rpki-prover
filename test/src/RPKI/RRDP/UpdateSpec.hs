@@ -7,7 +7,7 @@ import qualified Data.Text               as Text
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Repository
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.RrdpFetch
 

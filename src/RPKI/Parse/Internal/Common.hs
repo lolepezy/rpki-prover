@@ -23,7 +23,7 @@ import Data.X509 as X509
 
 import RPKI.Resources.Types
 import RPKI.Domain
-import RPKI.Errors
+import RPKI.Reporting (ParseError(..))
 
 type ParseResult a = Either (ParseError Text.Text) a
 
@@ -34,7 +34,7 @@ id_pe_sia, id_ad_rpki_notify, id_ad_rpki_repository :: OID
 id_ad_rpkiManifest :: OID
 
 
-oid_pkix = [1, 3, 6, 1, 5, 5, 7]
+oid_pkix                  = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
 id_pe_sia                 = oid_pe <> [ 11 ]
 id_pe_ipAddrBlocks        = oid_pe <> [ 7 ]

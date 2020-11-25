@@ -10,12 +10,15 @@ module Main where
     
 import           Colog
 
+import           Control.Lens ((^.))
 import           Control.Monad
 import           Control.Monad.IO.Class
 
 import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
 import           Control.Exception.Lifted
+
+import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
@@ -43,7 +46,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -64,7 +67,9 @@ main = do
 
     cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
-    (appContext, validations) <- runValidatorT (vContext "configuration") $ createAppContext cliOptions logger
+    (appContext, validations) <- 
+        runValidatorT (newValidatorContext "configuration") 
+        $ createAppContext cliOptions logger
     case appContext of
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
@@ -79,13 +84,13 @@ runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- updateWorldVerion appState
     talFileNames <- listTALFiles $ talDirectory config
-    let validationContext = vContext "validation-root"
-    (tals, validations) <- runValidatorT validationContext $ 
+    let validationContext = newValidatorContext "validation-root"
+    (tals, validationState) <- runValidatorT validationContext $ 
         forM talFileNames $ \talFileName -> 
-            forChild (convert talFileName) $ parseTALFromFile talFileName
+            inSubVContext (convert talFileName) $ parseTALFromFile talFileName
 
     logInfo_ logger [i|Successfully loaded #{length talFileNames} TALs.|]    
-    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion validations    
+    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion (validationState ^. typed)    
     case tals of 
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    
@@ -103,7 +108,7 @@ runHttpApi :: AppEnv -> IO ()
 runHttpApi appContext = Warp.run 9999 $ httpApi appContext
     
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT vc IO AppEnv
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppEnv
 createAppContext cliOoptions@CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
@@ -296,14 +301,3 @@ instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
 
 deriving instance Show (CLIOptions Unwrapped)
-
-
--- TODO delete it when done testing.
-testDefrag :: IO ()
-testDefrag = do 
-    logger <- createLogger
-
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
-
-    (Right appContext, _) <- runValidatorT (vContext "configuration") $ createAppContext cliOptions logger
-    defragmentStorageWithTmpDir appContext

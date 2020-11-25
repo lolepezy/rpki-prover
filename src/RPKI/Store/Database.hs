@@ -24,8 +24,9 @@ import           Data.Maybe               (fromMaybe)
 import           GHC.Generics
 
 import           RPKI.AppState
+import           RPKI.Config              (Size)
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
@@ -43,7 +44,7 @@ import           RPKI.Util                (fmtEx, increment)
 import           RPKI.AppMonad
 import           RPKI.Repository
 import           RPKI.Store.Repository
-import RPKI.Config (Size)
+
 
 
 data StorableTA = StorableTA {
@@ -475,19 +476,19 @@ storageError = StorageE . StorageError . fmtEx
 -- Utilities to have storage transaction in ValidatorT monad.
 
 roAppTx :: (Storage s, WithStorage s ws) => 
-            ws -> (Tx s 'RO -> ValidatorT env IO a) -> ValidatorT env IO a 
+            ws -> (Tx s 'RO -> ValidatorT IO a) -> ValidatorT IO a 
 roAppTx s f = appTx s f roTx    
 
 rwAppTx :: (Storage s, WithStorage s ws) => 
-            ws -> (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+            ws -> (Tx s 'RW -> ValidatorT IO a) -> ValidatorT IO a
 rwAppTx s f = appTx s f rwTx
 
 
 appTx :: (Storage s, WithStorage s ws) => 
-        ws -> (Tx s mode -> ValidatorT env IO a) -> 
-        (ws -> (Tx s mode -> IO (Either AppError a, Validations))
-            -> IO (Either AppError a, Validations)) -> 
-        ValidatorT env IO a
+        ws -> (Tx s mode -> ValidatorT IO a) -> 
+        (ws -> (Tx s mode -> IO (Either AppError a, ValidationState))
+            -> IO (Either AppError a, ValidationState)) -> 
+        ValidatorT IO a
 appTx s f txF = do
     env <- ask    
     validatorT $ transaction env `catch` 
@@ -504,22 +505,22 @@ appTx s f txF = do
 roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> 
             (exc -> AppError) -> 
-            (Tx s 'RO -> ValidatorT env IO a) -> 
-            ValidatorT env IO a 
+            (Tx s 'RO -> ValidatorT IO a) -> 
+            ValidatorT IO a 
 roAppTxEx ws err f = appTxEx ws err f roTx
 
 rwAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> (exc -> AppError) -> 
-            (Tx s 'RW -> ValidatorT env IO a) -> ValidatorT env IO a
+            (Tx s 'RW -> ValidatorT IO a) -> ValidatorT IO a
 rwAppTxEx s err f = appTxEx s err f rwTx
 
 
 appTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
             ws -> (exc -> AppError) -> 
-            (Tx s mode -> ValidatorT env IO a) -> 
-            (s -> (Tx s mode -> IO (Either AppError a, Validations))
-               -> IO (Either AppError a, Validations)) -> 
-            ValidatorT env IO a
+            (Tx s mode -> ValidatorT IO a) -> 
+            (s -> (Tx s mode -> IO (Either AppError a, ValidationState))
+               -> IO (Either AppError a, ValidationState)) -> 
+            ValidatorT IO a
 appTxEx ws err f txF = do
     env <- ask
     validatorT $ transaction env `catches` [
@@ -535,7 +536,7 @@ appTxEx ws err f txF = do
                 Right _ -> pure z
 
 
-data TxRollbackException = TxRollbackException AppError Validations
+data TxRollbackException = TxRollbackException AppError ValidationState
     deriving stock (Show, Eq, Ord, Generic)
 
 instance Exception TxRollbackException

@@ -27,7 +27,7 @@ import           Text.Read                        (readMaybe)
 import qualified Xeno.SAX                         as Xeno
 
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.Util
 

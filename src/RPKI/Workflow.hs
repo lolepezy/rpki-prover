@@ -26,7 +26,7 @@ import           GHC.Generics
 
 import           RPKI.AppState
 import           RPKI.Config
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
@@ -116,7 +116,8 @@ runWorkflow appContext@AppContext {..} tals = do
                 atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion        
 
         defragmentStorage globalQueue = do             
-            threadDelay $ 24 * 3600_000_000
+            -- try the first defragmentation in 24hours
+            threadDelay $ 24 * 60 * 60 * 1_000_000
             periodically storageDefragmentInterval $ do
                 worldVersion <- getWorldVerionIO appState
                 atomically $ writeCQueue globalQueue $ Defragment worldVersion        
@@ -143,7 +144,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
                         let uniqueVrps = Set.fromList vrps
-                        putValidations tx (validationsStore database) worldVersion tdValidations                                 
+                        putValidations tx (validationsStore database) worldVersion (tdValidations ^. typed)
                         putVrps tx database (Set.toList uniqueVrps) worldVersion
                         completeWorldVersion tx database worldVersion
                         atomically $ do 

@@ -42,7 +42,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Config
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -114,7 +114,7 @@ newtype HexString = HexString BS.ByteString
 
 type AppEnv = AppContext LmdbStorage
 
-createAppContext :: AppLogger -> ValidatorT vc IO AppEnv
+createAppContext :: AppLogger -> ValidatorT IO AppEnv
 createAppContext logger = do
 
     -- TODO Make it configurable?

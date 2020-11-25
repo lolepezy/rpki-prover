@@ -178,9 +178,9 @@ createSemaphore n = Semaphore n <$> atomically (newTVar 0)
 
 withSemaphore :: Semaphore -> IO a -> IO a
 withSemaphore (Semaphore maxCounter current) f = 
-    bracket increment decrement (const f)
+    bracket incr decrement (const f)
     where 
-        increment = atomically $ do 
+        incr = atomically $ do 
             c <- readTVar current
             if c >= maxCounter 
                 then retry

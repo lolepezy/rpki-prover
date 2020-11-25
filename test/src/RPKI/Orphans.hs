@@ -38,7 +38,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 
@@ -417,7 +417,7 @@ instance Arbitrary VProblem where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary VContext where
+instance Arbitrary VTrail where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

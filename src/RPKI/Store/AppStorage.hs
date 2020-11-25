@@ -7,7 +7,6 @@
 
 module RPKI.Store.AppStorage where
 
-
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad.IO.Class
@@ -20,21 +19,22 @@ import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
-import qualified RPKI.Store.Database as DB
-import           RPKI.Errors
 import           RPKI.Logging
+import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Storage
+import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Util
 import           RPKI.Time
 import           RPKI.Util
 
+import           Data.Traversable                 (forM)
+import           RPKI.Config
 import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.Posix.Files
-import RPKI.Config
-import Control.Monad (when)
-import Data.Traversable (forM)
+
+
 
 class MaintainableStorage s where
     runMaintenance :: AppContext s -> IO ()
@@ -58,7 +58,7 @@ data LmdbFlow = UseExisting | Reset
 -- 
 --  In this case `lmdb.1605220697` contains LMDB files.
 --
-setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Int64 -> ValidatorT vc IO (LmdbEnv, FilePath)
+setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Int64 -> ValidatorT IO (LmdbEnv, FilePath)
 setupLmdbCache lmdbFlow logger root lmdbSize = do
     
     -- delete everything in `cache` if `reset` is present
@@ -218,9 +218,9 @@ createLmdbDir cacheDir = do
     pure $ cacheDir </> ("lmdb." <> show (asSeconds now))        
 
 
-cleanDirFiltered :: FilePath -> (FilePath -> Bool) -> ValidatorT env IO ()
+cleanDirFiltered :: FilePath -> (FilePath -> Bool) -> ValidatorT IO ()
 cleanDirFiltered d f = fromTry (InitE . InitError . fmtEx) $ 
                             listDirectory d >>= mapM_ (removePathForcibly . (d </>)) . filter f
 
-cleanDir :: FilePath -> ValidatorT env IO ()
+cleanDir :: FilePath -> ValidatorT IO ()
 cleanDir d = cleanDirFiltered d (const True)

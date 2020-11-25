@@ -28,7 +28,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
 

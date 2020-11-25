@@ -22,7 +22,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.RRDP.HttpContext
 import qualified RPKI.Util                      as U
@@ -198,7 +198,7 @@ streamHttpToFileWithActions
 -- | Fetch arbitrary file using the streaming implementation
 fetchRpkiObject :: AppContext s ->
                 RrdpURL ->             
-                ValidatorT vc IO RpkiObject
+                ValidatorT IO RpkiObject
 fetchRpkiObject appContext uri = do
     (content, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                                 downloadToStrictBS appContext (getURL uri) 

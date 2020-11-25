@@ -44,7 +44,7 @@ import           Servant.API
 import           Servant.CSV.Cassava
 
 import           RPKI.Domain                 as Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable

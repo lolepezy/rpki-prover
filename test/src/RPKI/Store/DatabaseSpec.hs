@@ -30,7 +30,7 @@ import qualified Test.Tasty.QuickCheck             as QC
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Errors
+import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
