@@ -580,19 +580,24 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                     $ mftEntries $ getCMSContent $ cmsPayload mft
                     
                         -- Mark all manifest entries as visited to avoid the situation
-                        -- when some of the objects are deleted from the cache and some
+                        -- when some of the children are deleted from the cache and some
                         -- are still there. Do it both in case of successful validation
                         -- or a validation error.
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map snd childrenHashes
                         
                         let processChildren = do 
-                                let hashesInChunks = chunksOf 200 childrenHashes
-                                r <- fmap mconcat $ parallelTasks 
+                                -- let hashesInChunks = chunksOf 200 childrenHashes
+                                -- r <- fmap mconcat $ parallelTasks 
+                                --         (cpuBottleneck appBottlenecks) 
+                                --         hashesInChunks 
+                                --         $ mapM $ \(filename, hash') -> 
+                                --                   validateManifestEntry filename hash' validCrl
+                                r <- parallelTasks 
                                         (cpuBottleneck appBottlenecks) 
-                                        hashesInChunks 
-                                        $ mapM $ \(filename, hash') -> 
-                                                  validateManifestEntry filename hash' validCrl                                
+                                        childrenHashes
+                                        $ \(filename, hash') -> 
+                                                  validateManifestEntry filename hash' validCrl
                                 markAllEntriesAsVisited
                                 pure $! r
                         

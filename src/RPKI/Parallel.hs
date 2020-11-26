@@ -11,7 +11,6 @@ import           Numeric.Natural
 import qualified Control.Concurrent.STM.TBQueue  as Q
 
 import           Control.Exception.Lifted
-import           Control.Monad.IO.Class          (MonadIO, liftIO)
 
 import           Control.Concurrent.Async.Lifted
 import           Control.Monad.Trans.Control
@@ -23,8 +22,6 @@ import           Data.IORef.Lifted
 
 import           Streaming
 import qualified Streaming.Prelude               as S
-
-
 
 
 atLeastOne :: Natural -> Natural
@@ -44,13 +41,11 @@ foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
             m r
 foldPipeline bottleneck stream mapStream consume accum0 =
     snd <$> bracketChanClosable
-                (chanSize bottleneck)
+                (maxBottleneckSize bottleneck)
                 writeAll 
                 readAll 
                 cancel
-    where
-        chanSize (Bottleneck bottlenecks) = atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
-
+    where        
         writeAll queue = S.mapM_ toQueue stream
             where 
                 toQueue s = do
@@ -224,12 +219,12 @@ readCQueue (ClosableQueue q queueState) = do
                 QWorks  -> retry
 
 
--- | Similar to mapConcurrently but uses the `Bottleneck` value
--- to limit the parallelism.
--- 
-parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
+
+-- TODO It doesn't actually do what it's supposed to do.
+-- It creates a huge list of asyncs.
+parallelTasksOld :: (MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck -> [a] -> (a -> m b) -> m [b]
-parallelTasks bottleneck as f = do    
+parallelTasksOld bottleneck as f = do    
     tasks <- newIORef []
 
     let makeTasks = 
@@ -243,6 +238,30 @@ parallelTasks bottleneck as f = do
     (makeTasks >> readIORef tasks >>= mapM waitTask) 
         `onException` 
         (readIORef tasks >>= mapM cancelTask)
+
+parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
+                Bottleneck -> [a] -> (a -> m b) -> m [b]
+parallelTasks bottleneck as f =     
+    snd <$> bracketChanClosable
+                (maxBottleneckSize bottleneck)
+                writeAll
+                readAll
+                cancelTask
+    where        
+        writeAll queue = 
+            forM as $ \s -> do
+                t <- f s `strictTask` bottleneck
+                liftIO $ atomically $ writeCQueue queue t
+
+        readAll queue = go             
+            where
+                go = liftIO (atomically $ readCQueue queue) >>= \case
+                        Nothing -> pure []
+                        Just t  -> do 
+                            r    <- waitTask t
+                            rest <- go 
+                            pure $! r : rest
+
 
 
 -- | Simple straioghtforward implementation of a "thread pool".
@@ -260,6 +279,10 @@ newBottleneckIO = atomically . newBottleneck
 
 -- Who is going to execute a task when the bottleneck is busy
 data BottleneckFullExecutor = Requestor | Submitter
+
+maxBottleneckSize :: Bottleneck -> Natural
+maxBottleneckSize (Bottleneck bottlenecks) = 
+            atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
 
 -- A task can be asyncronous, executed by the requestor (lazy)
 -- and executed by the submitter (strict).
