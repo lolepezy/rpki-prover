@@ -538,7 +538,16 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         then stopDescend 
                         else validateThisCertAndGoDown                    
     where
-        
+        -- Here we do the detailed algorithm
+        --  * get manifest
+        --  * find CRL on it
+        --  * make sure they both are valid
+        --  * go through the manifest children and either 
+        --     + validate them as signed objects
+        --     + or valdiate them recursively as CAcertificates
+        -- 
+        -- Everything else is either extra checks or metrics.
+        -- 
         validateThisCertAndGoDown = do            
             let (childrenAki, certLocations') = (toAKI $ getSKI certificate, getLocations certificate)        
 
@@ -549,7 +558,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             mft <- findMft childrenAki certLocations'
             checkMftLocation mft certificate
                     
-            manifestResult <- inSubVContext (toText $ NonEmpty.head $ getLocations mft) $ do
+            inSubVContext (toText $ NonEmpty.head $ getLocations mft) $ do
                 -- find CRL on the manifest
                 (_, crlHash) <- case findCrlOnMft mft of 
                     []    -> vError $ NoCRLOnMFT childrenAki certLocations'
@@ -614,7 +623,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             -- this for the valid manifest
             -- incValidObject (topDownContext ^. typed)
 
-            pure manifestResult
+            -- pure manifestResult
 
         --
         -- | Validate an entry of the manifest, i.e. a pair of filename and hash

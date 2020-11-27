@@ -133,15 +133,15 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         counter <- newIORef (0 :: Integer)                
 
         void $ bracketChanClosable 
-                    cpuParallelism
+                    -- it makes sense to run slightly more tasks because
+                    -- they will spend some time waiting for IO to finish.
+                    (2 * cpuParallelism)
                     traverseFS
                     (saveObjects counter)
-                    kill
+                    (cancelTask . snd)
 
         readIORef counter
-      where
-        kill = cancelTask . snd
-
+      where    
         threads = cpuBottleneck appBottlenecks
         cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
 
@@ -159,7 +159,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     False -> 
                         when (supportedExtension path) $ do         
                             let uri = pathToUri repositoryUrl rootPath path
-                            task <- (readAndParseObject path (RsyncU uri)) `strictTask` threads                                                                      
+                            task <- readAndParseObject path (RsyncU uri) `strictTask` threads                                                                      
                             liftIO $ atomically $ writeCQueue queue (uri, task)
             where                
                 readAndParseObject :: FilePath 
@@ -188,7 +188,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         
         saveObjects counter queue = do            
             mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
-                (rwAppTx objectStore go)
+                rwAppTx objectStore go
             where
                 go tx = 
                     liftIO (atomically (readCQueue queue)) >>= \case 
@@ -212,6 +212,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         unless alreadyThere $ do 
                             putObject tx objectStore so worldVersion
                             U.increment counter
+                            -- modifyRsyncMetric $ & #processed += 1
                                 
                     
 

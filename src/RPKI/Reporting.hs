@@ -254,24 +254,20 @@ validatorSubContext t vc =
 class MetricC m where
     metricKey :: m -> MetricTrail 
 
-data RepoMetric = RepoMetric {
+data RrdpMetric = RrdpMetric {
         repoUrl     :: RpkiURL,
         added       :: Int,
         deleted     :: Int,
-        timeTakenMs :: Int
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-
-data RrdpMetric = RrdpMetric {
-        repoMetric :: RepoMetric,
-        usedDetla :: Bool
+        timeTakenMs :: Int ,   
+        usedDetla   :: Bool
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncMetric = RsyncMetric {
-        repoMetric :: RepoMetric
+        repoUrl     :: RpkiURL,
+        processed   :: Int,        
+        timeTakenMs :: Int
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -289,10 +285,10 @@ data ValidationMetric = ValidationMetric {
     deriving anyclass Serialise
 
 instance MetricC RrdpMetric where
-    metricKey RrdpMetric { repoMetric = RepoMetric {..}} = trail $ toText repoUrl
+    metricKey RrdpMetric {..} = trail $ toText repoUrl
 
 instance MetricC RsyncMetric where
-    metricKey RsyncMetric { repoMetric = RepoMetric {..}} = trail $ toText repoUrl
+    metricKey RsyncMetric { ..} = trail $ toText repoUrl
 
 instance MetricC ValidationMetric where
     metricKey ValidationMetric {..} = trail $ unTaName taName
