@@ -10,7 +10,7 @@
 
 module RPKI.Reporting where
 
-import           Control.Lens                ((.~), (&), (%~))
+import           Control.Lens                (Lens', (^.), (.~), (&), (%~))
 import           Control.Exception.Lifted
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
@@ -34,6 +34,8 @@ import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Time
 import Control.Lens.Setter (ASetter)
+import Control.Monad.Reader.Class
+import Data.Int (Int64)
 
 
 newtype ParseError s = ParseError s
@@ -167,13 +169,13 @@ data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-mError :: VTrail -> AppError -> Validations
+mError :: VPath -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
 
-mWarning :: VTrail -> VWarning -> Validations
+mWarning :: VPath -> VWarning -> Validations
 mWarning vc w = mProblem vc (VWarn w)
 
-mProblem :: VTrail -> VProblem -> Validations
+mProblem :: VPath -> VProblem -> Validations
 mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
 
 emptyValidations :: Validations -> Bool 
@@ -189,7 +191,7 @@ newtype AppException = AppException AppError
 
 instance Exception AppException
 
-newtype Validations = Validations (Map VTrail (Set VProblem))
+newtype Validations = Validations (Map VPath (Set VProblem))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Monoid
@@ -197,52 +199,49 @@ newtype Validations = Validations (Map VTrail (Set VProblem))
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
-
-data Validation
-data Metric
-
-newtype Context a = Context (NonEmpty Text) 
+newtype Path a = Path (NonEmpty Text) 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
 
+data Validation
+data Metric
 
-type VTrail      = Context Validation    
-type MetricTrail = Context Metric
+type VPath      = Path Validation    
+type MetricPath = Path Metric
     
-trail :: Text -> Context c
-trail u = Context $ u :| []
+trail :: Text -> Path c
+trail u = Path $ u :| []
 
-childContext :: Context c -> Text -> Context c
-childContext (Context ts) t = Context $ t <| ts
+childPath :: Path c -> Text -> Path c
+childPath (Path ts) t = Path $ t <| ts
 
 
-getContext :: HasType a s => s -> a
-getContext = getTyped
+getPath :: HasType a s => s -> a
+getPath = getTyped
 
--- TODO Fix it
-subTrail :: Text -> Context c -> Context c
-subTrail t parent = trail t <> parent
+subPath :: Text -> Path c -> Path c
+subPath t parent = trail t <> parent
 
-data ValidatorContext = ValidatorContext {
-        validationContext :: VTrail,
-        metricContext     :: MetricTrail
+data ValidatorPath = ValidatorPath {
+        validationPath :: VPath,
+        metricPath     :: MetricPath
     }
     deriving stock (Show, Eq, Ord, Generic)
     -- deriving anyclass Serialise
 
-newValidatorContext :: Text -> ValidatorContext
-newValidatorContext t = ValidatorContext {
-        validationContext = trail t,
-        metricContext     = trail t
+newValidatorPath :: Text -> ValidatorPath
+newValidatorPath t = ValidatorPath {
+        validationPath = trail t,
+        metricPath     = trail t
     }
 
 
 -- | Step down     
-validatorSubContext :: Text -> ValidatorContext -> ValidatorContext
-validatorSubContext t vc = 
-    vc & typed @VTrail      %~ subTrail t
-       & typed @MetricTrail %~ subTrail t
+validatorSubPath :: Text -> ValidatorPath -> ValidatorPath
+validatorSubPath t vc = 
+    vc & typed @VPath      %~ subPath t
+       & typed @MetricPath %~ subPath t
 
 
 
@@ -251,52 +250,60 @@ validatorSubContext t vc =
 ------------ Metrics
 ------------------------------------------------
 
-class MetricC m where
-    metricKey :: m -> MetricTrail 
+class MetricC metric where
+    newMetric  :: metric        
+    -- newMetric  :: MonadReader ValidatorPath z => z metric        
+    -- lens to access the specific metric map in the total metric record    
+    metricLens :: Lens' AppMetric (Map MetricPath metric)
+
+newtype TimeTakenMs = TimeTakenMs Int64
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
 
 data RrdpMetric = RrdpMetric {
-        repoUrl     :: RpkiURL,
         added       :: Int,
-        deleted     :: Int,
-        timeTakenMs :: Int ,   
-        usedDetla   :: Bool
+        deleted     :: Int,        
+        usedDetla   :: Bool,
+        timeTakenMs :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncMetric = RsyncMetric {
-        repoUrl     :: RpkiURL,
         processed   :: Int,        
-        timeTakenMs :: Int
+        timeTakenMs :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data ValidationMetric = ValidationMetric {
-        taName          :: TaName,
         vrpNumber       :: Int,        
         validCertNumber :: Int,
         validRoaNumber  :: Int,
         validMftNumber  :: Int,
         validCrlNumber  :: Int,
-        timeTakenMs     :: Int
+        timeTakenMs     :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 instance MetricC RrdpMetric where
-    metricKey RrdpMetric {..} = trail $ toText repoUrl
+    newMetric  = RrdpMetric 0 0 False (TimeTakenMs 0)    
+    metricLens = #rrdpMetrics
 
 instance MetricC RsyncMetric where
-    metricKey RsyncMetric { ..} = trail $ toText repoUrl
+    newMetric  = RsyncMetric 0 (TimeTakenMs 0)
+    metricLens = #rsyncMetrics
 
-instance MetricC ValidationMetric where
-    metricKey ValidationMetric {..} = trail $ unTaName taName
+instance MetricC ValidationMetric where 
+    newMetric  = ValidationMetric 0 0 0 0 0 (TimeTakenMs 0)
+    metricLens = #validationMetrics
+
 
 data AppMetric = AppMetric {
-        rsyncMetrics      :: Map MetricTrail RsyncMetric,
-        rrdpMetrics       :: Map MetricTrail RrdpMetric,
-        validationMetrics :: Map MetricTrail ValidationMetric
+        rsyncMetrics      :: Map MetricPath RsyncMetric,
+        rrdpMetrics       :: Map MetricPath RrdpMetric,
+        validationMetrics :: Map MetricPath ValidationMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -315,25 +322,25 @@ data ValidationState = ValidationState {
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty
 
-newVMetric :: TaName -> ValidationMetric
-newVMetric taName = ValidationMetric taName 0 0 0 0 0 0
+-- newVMetric :: TaName -> ValidationMetric
+-- newVMetric taName = ValidationMetric 0 0 0 0 0 (TimeTakenMs 0)
 
 
-appValidationMetric :: ValidationMetric -> AppMetric
-appValidationMetric = setMetric #validationMetrics
+-- appValidationMetric :: ValidationMetric -> AppMetric
+-- appValidationMetric = setMetric #validationMetrics
 
-appRsyncMetric :: RsyncMetric -> AppMetric
-appRsyncMetric = setMetric #rsyncMetrics
+-- appRsyncMetric :: RsyncMetric -> AppMetric
+-- appRsyncMetric = setMetric #rsyncMetrics
 
-appRrdpMetric :: RrdpMetric -> AppMetric
-appRrdpMetric = setMetric #rrdpMetrics
-
-
-setMetric :: (Monoid s, MetricC a1) => ASetter s b a2 (Map MetricTrail a1) -> a1 -> b
-setMetric theLens metric = mempty & theLens .~ Map.singleton (metricKey metric) metric
+-- appRrdpMetric :: RrdpMetric -> AppMetric
+-- appRrdpMetric = setMetric #rrdpMetrics
 
 
--- modifyAMetric :: AppMetric -> MetricTrail -> (AMetric -> Maybe AMetric) -> AppMetric
+-- setMetric :: (Monoid s, MetricC a1) => ASetter s b a2 (Map MetricPath a1) -> a1 -> b
+-- setMetric theLens metric = mempty & theLens .~ Map.singleton (metricKey metric) metric
+
+
+-- modifyAMetric :: AppMetric -> MetricPath -> (AMetric -> Maybe AMetric) -> AppMetric
 -- modifyAMetric am@(AppMetric ms) key f =
 --     case Map.lookup key ms of 
 --         Nothing -> am 
@@ -343,7 +350,7 @@ setMetric theLens metric = mempty & theLens .~ Map.singleton (metricKey metric) 
 --                 Just fm -> mMetric fm <> am
 
 
-validationsToList :: Validations -> [(VTrail, Set VProblem)]
+validationsToList :: Validations -> [(VPath, Set VProblem)]
 validationsToList (Validations vMap) = Map.toList vMap 
 
 

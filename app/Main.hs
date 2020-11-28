@@ -68,7 +68,7 @@ main = do
     cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
     (appContext, validations) <- 
-        runValidatorT (newValidatorContext "configuration") 
+        runValidatorT (newValidatorPath "configuration") 
         $ createAppContext cliOptions logger
     case appContext of
         Left e ->
@@ -84,7 +84,7 @@ runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- updateWorldVerion appState
     talFileNames <- listTALFiles $ talDirectory config
-    let validationContext = newValidatorContext "validation-root"
+    let validationContext = newValidatorPath "validation-root"
     (tals, validationState) <- runValidatorT validationContext $ 
         forM talFileNames $ \talFileName -> 
             inSubVContext (convert talFileName) $ parseTALFromFile talFileName

@@ -8,7 +8,7 @@ module RPKI.AppState where
 import           Control.Concurrent.STM
 
 import           Codec.Serialise
-import           Control.Lens                ((^.))
+import           Control.Lens
 
 import           Data.Generics.Product.Typed
 import           Data.Int
@@ -56,7 +56,7 @@ updateWorldVerion AppState {..} = do
 
 completeCurrentVersion :: AppState -> STM ()
 completeCurrentVersion AppState {..} = 
-    modifyTVar' world $ \(WorldState v _) -> WorldState v CompletedVersion
+    modifyTVar' world (& typed @VersionState .~ CompletedVersion)
 
 getWorldVerionIO :: AppState -> IO WorldVersion
 getWorldVerionIO = atomically . getWorldVerion

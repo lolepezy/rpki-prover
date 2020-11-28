@@ -417,7 +417,7 @@ instance Arbitrary VProblem where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary VTrail where
+instance Arbitrary VPath where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

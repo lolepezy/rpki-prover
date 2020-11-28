@@ -1,10 +1,11 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.AppMonad where
 
-import           Control.Lens                ((.~), (&), (%~))
+import           Control.Lens
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
@@ -21,14 +22,19 @@ import           Data.Bifunctor             (Bifunctor (first))
 
 import           Data.Text                   (Text)
 import           RPKI.Reporting
+import           RPKI.Time
+
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Int (Int64)
 
 
 -- Application monad stack
 type ValidatorT m r = 
-        ReaderT ValidatorContext (ExceptT AppError (StateT ValidationState m)) r
+        ReaderT ValidatorPath (ExceptT AppError (StateT ValidationState m)) r
 
 type PureValidatorT r = 
-        ReaderT ValidatorContext (ExceptT AppError (State ValidationState)) r
+        ReaderT ValidatorPath (ExceptT AppError (State ValidationState)) r
 
 vHoist :: Monad m => PureValidatorT r -> ValidatorT m r
 vHoist = hoist $ hoist $ hoist generalize
@@ -79,10 +85,10 @@ fromTryEither mapErr t = do
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runPureValidator :: ValidatorContext -> PureValidatorT r -> (Either AppError r, ValidationState)
+runPureValidator :: ValidatorPath -> PureValidatorT r -> (Either AppError r, ValidationState)
 runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 
-runValidatorT :: ValidatorContext -> ValidatorT m r -> m (Either AppError r, ValidationState)
+runValidatorT :: ValidatorPath -> ValidatorT m r -> m (Either AppError r, ValidationState)
 runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
 validatorWarning :: Monad m => VWarning -> ValidatorT m ()
@@ -96,7 +102,7 @@ appError = vHoist . pureError
 
 pureWarning :: VWarning -> PureValidatorT ()
 pureWarning w = do 
-    vc :: VTrail <- asks getContext 
+    vc :: VPath <- asks (^. typed)
     lift $ modify' (typed %~ (mWarning vc w <>))
 
 vPureError :: ValidationError -> PureValidatorT r
@@ -104,9 +110,9 @@ vPureError e = pureError $ ValidationE e
 
 pureError :: AppError -> PureValidatorT r
 pureError e = do
-    vc <- asks getContext
+    vc :: VPath <- asks (^. typed)
     lift $ do 
-        modify' (typed %~ (mError vc e <>))
+        modify' $ typed %~ (mError vc e <>)
         throwE e
 
 pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
@@ -134,15 +140,27 @@ appWarn = validatorWarning . VWarning
 
 inSubVContext :: Monad m => 
                 Text -> ValidatorT m r -> ValidatorT m r
-inSubVContext t = local (& typed @VTrail %~ (trail t <>))
+inSubVContext t = local (& typed @VPath %~ (trail t <>))
 
-inSubMetricContext :: Monad m => 
+subMetricPath :: Monad m => 
                     Text -> ValidatorT m r -> ValidatorT m r
-inSubMetricContext t = local (& typed @MetricTrail %~ (trail t <>))
+subMetricPath t = local (& typed @MetricPath %~ (trail t <>))
 
 inSubContext :: Monad m => 
                 Text -> ValidatorT m r -> ValidatorT m r
-inSubContext t va = inSubVContext t $ inSubMetricContext t va    
+inSubContext t va = inSubVContext t $ subMetricPath t va    
+
+
+initMetric :: forall m metric . Monad m => 
+            MetricC metric => 
+            metric -> ValidatorT m ()
+initMetric = vHoist . initPureMetric
+
+initPureMetric :: forall metric . MetricC metric => 
+                metric -> PureValidatorT ()
+initPureMetric metric = do 
+    mp :: MetricPath <- asks (^. typed)
+    lift $ modify' (& typed @AppMetric . metricLens %~ Map.insert mp metric)    
 
 
 -- appMetric :: (Monad m, WithContext Metric env) => AppMetric -> ValidatorT m ()
@@ -153,9 +171,25 @@ inSubContext t va = inSubVContext t $ inSubMetricContext t va
 --     mc <- asks getContext
 --     lift $ modify' (typed %~ (validationMetric metric <>))
 
--- modifyMetric :: Monad m => MetricTrail -> (AMetric -> Maybe AMetric) -> ValidatorT m ()
--- modifyMetric key f = vHoist $ modifyPureMetric key f 
+modifyMetric :: forall metric m . 
+                (Monad m, MetricC metric) => 
+                (metric -> metric) -> ValidatorT m ()
+modifyMetric = vHoist . modifyPureMetric
 
--- modifyPureMetric :: MetricKey -> (AMetric -> Maybe AMetric) -> PureValidatorT env ()
--- modifyPureMetric key f = 
---     lift $ modify' $ typed %~ (\am -> modifyAMetric am key f)
+modifyPureMetric :: forall metric . MetricC metric => 
+                    (metric -> metric) -> PureValidatorT ()
+modifyPureMetric f = do 
+    mp :: MetricPath <- asks (^. typed)
+    lift $ modify' (& typed @AppMetric . metricLens %~ updateMetric mp)
+    where 
+        updateMetric mp metricMap = Map.update (Just . f) mp metricMap
+
+
+timedMetric :: forall m metric r . 
+                (MonadIO m, MetricC metric, HasType TimeTakenMs metric) =>                 
+                metric -> ValidatorT m r -> ValidatorT m r
+timedMetric initial v = do     
+    initMetric initial 
+    (r, elapsed) <- timedMS v          
+    modifyMetric ((& typed .~ TimeTakenMs elapsed) :: metric -> metric)
+    pure r        

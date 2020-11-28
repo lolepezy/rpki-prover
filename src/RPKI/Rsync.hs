@@ -6,7 +6,7 @@
 
 module RPKI.Rsync where
     
-import           Control.Lens                     ((^.))
+import           Control.Lens                     ((%~), (&), (+=), (^.))
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
@@ -127,17 +127,20 @@ loadRsyncRepository :: Storage s =>
                         ValidatorT IO Integer
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
     worldVersion  <- liftIO $ getWorldVerionIO appState
-    doSaveObjects worldVersion
-  where 
+    subMetricPath (unURI $ getURL repositoryUrl) $ 
+        doSaveObjects worldVersion
+  where     
     doSaveObjects worldVersion = do 
+        initMetric $ newMetric @RsyncMetric
+
         counter <- newIORef (0 :: Integer)                
 
         void $ bracketChanClosable 
-                    -- it makes sense to run slightly more tasks because
-                    -- they will spend some time waiting for IO to finish.
+                    -- it makes sense to run slightly more tasks because they 
+                    -- will spend some time waiting for the file IO to finish.
                     (2 * cpuParallelism)
                     traverseFS
-                    (saveObjects counter)
+                    saveObjects
                     (cancelTask . snd)
 
         readIORef counter
@@ -186,7 +189,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                                             -- a slow CPU-intensive transaction (verify that it's the case)
                                             Right ro -> Just $! SObject $ toStorableObject ro
         
-        saveObjects counter queue = do            
+        saveObjects queue = do            
             mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
                 rwAppTx objectStore go
             where
@@ -211,8 +214,9 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         alreadyThere <- hashExists tx objectStore (getHash ro)
                         unless alreadyThere $ do 
                             putObject tx objectStore so worldVersion
-                            U.increment counter
-                            -- modifyRsyncMetric $ & #processed += 1
+                            -- U.increment counter
+                            -- modifyMetric (\rm@RsyncMetric {..} -> rm { processed = processed + 1 })
+                            modifyMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     
 

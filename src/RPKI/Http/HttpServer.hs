@@ -62,7 +62,7 @@ validatorServer AppContext {..} =
                         pure $ map toVR $ validationsToList validations
                 in fromMaybe [] <$> txValidations
             
-        toVR (Context path, problems) = 
+        toVR (Path path, problems) = 
             ValidationResult (Set.toList problems) (NonEmpty.toList path)    
 
         getStats = stats database

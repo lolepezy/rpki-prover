@@ -152,7 +152,7 @@ validateTA appContext@AppContext {..} tal worldVersion = do
     
     pure $! flatten r    
     where                            
-        taContext = newValidatorContext taNameText
+        taContext = newValidatorPath taNameText
         TaName taNameText = getTaName tal
 
 
@@ -222,7 +222,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
     -- this will be used as the "now" in all subsequent time and period validations 
     let now = Now $ versionToMoment worldVersion
 
-    let taURIContext = newValidatorContext $ toText $ NonEmpty.head $ getLocations taCert
+    let taURIContext = newValidatorPath $ toText $ NonEmpty.head $ getLocations taCert
 
     storedPubPoints <- roAppTxEx database storageError $ \tx -> 
                     getTaPublicationPoints tx (repositoryStore database) taName'
@@ -295,7 +295,7 @@ data FetchResult =
 
 -- | Download repository, either rsync or RRDP.
 fetchRepository :: (MonadIO m, Storage s) => 
-                AppContext s -> ValidatorContext -> Now -> Repository -> m FetchResult
+                AppContext s -> ValidatorPath -> Now -> Repository -> m FetchResult
 fetchRepository 
     appContext@AppContext { database = DB {..}, ..} 
     parentContext 
@@ -313,8 +313,8 @@ fetchRepository
             Just z -> pure z        
     where 
         repoURL      = getRpkiURL repo
-        childContext = validatorSubContext (toText repoURL) parentContext
-        vContext'    = childContext ^. typed @VTrail
+        childContext = validatorSubPath (toText repoURL) parentContext
+        vContext'    = childContext ^. typed @VPath
 
         fetchIt = do
             logDebugM logger [i|Fetching #{repoURL} |]
@@ -355,7 +355,7 @@ partitionFailedSuccess = go
 -- | Validate CA starting from its certificate.
 -- 
 validateCA :: Storage s =>
-            AppContext s -> ValidatorContext -> TopDownContext s -> CerObject -> IO TopDownResult
+            AppContext s -> ValidatorPath -> TopDownContext s -> CerObject -> IO TopDownResult
 validateCA appContext caVContext topDownContext certificate =
     validateCARecursively appContext caVContext topDownContext certificate
         `finally` 
@@ -365,7 +365,7 @@ validateCA appContext caVContext topDownContext certificate =
 -- 
 validateCARecursively :: Storage s => 
                         AppContext s 
-                    -> ValidatorContext 
+                    -> ValidatorPath 
                     -> TopDownContext s
                     -> CerObject 
                     -> IO TopDownResult
@@ -502,7 +502,7 @@ validateCaCertificate :: Storage s =>
                         AppContext s ->
                         TopDownContext s ->
                         CerObject ->                
-                        ValidatorT IO (T3 PublicationPoints (WaitingList ValidatorContext) TopDownResult)
+                        ValidatorT IO (T3 PublicationPoints (WaitingList ValidatorPath) TopDownResult)
 validateCaCertificate appContext@AppContext {..} topDownContext certificate = do          
     globalPPs <- liftIO $ readTVarIO (topDownContext ^. #publicationPoints)
 
