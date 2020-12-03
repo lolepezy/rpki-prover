@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
+{-# LANGUAGE OverloadedStrings     #-}
 
 module RPKI.Store.Database where
 
@@ -14,6 +15,7 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Reader     (ask)
 import qualified Control.Monad.State as St
+import           Control.Monad.Trans.Control
 
 import           Data.Int
 import           Data.IORef.Lifted
@@ -311,11 +313,11 @@ metricsForVersion tx MetricsStore {..} wv =
 
 -- Delete all the objects from the objectStore if they were 
 -- visited longer than certain time ago.
-cleanObjectCache :: (MonadIO m, Storage s) => 
+cleanObjectCache :: Storage s => 
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that decides if the object is too old to stay in cache
-                    m (Int, Int)
-cleanObjectCache DB {..} tooOld = liftIO $ do
+                    IO (Int, Int)
+cleanObjectCache DB {..} tooOld = do
     kept    <- newIORef (0 :: Int)
     deleted <- newIORef (0 :: Int)
     
@@ -338,13 +340,14 @@ cleanObjectCache DB {..} tooOld = liftIO $ do
                 rwTx objectStore $ \tx ->
                     forM_ quuElems $ deleteObject tx objectStore
 
-    void $ mapException (AppException . storageError) <$> 
-                bracketChanClosable 
-                    50_000
-                    readOldObjects
-                    deleteObjects
-                    (const $ pure ())    
-    
+    mapException (AppException . storageError) 
+        $ voidRun "cleanObjectCache" 
+        $ bracketChanClosable 
+                50_000
+                (liftIO . readOldObjects)
+                (liftIO . deleteObjects)
+                (const $ pure ())    
+                    
     (,) <$> readIORef deleted <*> readIORef kept
 
 

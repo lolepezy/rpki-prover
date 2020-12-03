@@ -35,11 +35,11 @@ atLeastOne n = if n < 2 then 1 else n
 -- Read the queue and consume asyncs on the other end.
 foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
             Bottleneck ->
-            Stream (Of s) m () ->
-            (s -> m p) ->          -- ^ producer
-            (p -> r -> m r) ->     -- ^ consumer, called for every item of the traversed argument
+            Stream (Of s) (ValidatorTCurried m) () ->
+            (s -> ValidatorT m p) ->          -- ^ producer
+            (p -> r -> ValidatorT m r) ->     -- ^ consumer, called for every item of the traversed argument
             r ->                   -- ^ fold initial value
-            m r
+            ValidatorT m r
 foldPipeline bottleneck stream mapStream consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne $ maxBottleneckSize bottleneck)
@@ -68,11 +68,11 @@ foldPipeline bottleneck stream mapStream consume accum0 =
 --  
 txFoldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
             Natural ->
-            Stream (Of q) m () ->
-            ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
-            (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
+            Stream (Of q) (ValidatorTCurried m) () ->
+            ((tx -> ValidatorT m r) -> ValidatorT m r) ->     -- ^ transaction in which all consumerers are wrapped
+            (tx -> q -> r -> ValidatorT m r) ->    -- ^ consumer, called for every item of the traversed argument
             r ->                        -- ^ fold initial value
-            m r
+            ValidatorT m r
 txFoldPipeline poolSize stream withTx consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne poolSize)
@@ -97,13 +97,13 @@ txFoldPipeline poolSize stream withTx consume accum0 =
 -- | The same as `txFoldPipeline` but transaction is divided into chunks.
 --
 txFoldPipelineChunked :: (MonadBaseControl IO m, MonadIO m) =>
-            Natural ->                  -- ^ Amount of queue element to be processed within one transaction
-            Stream (Of q) m () ->
-            ((tx -> m r) -> m r) ->     -- ^ transaction in which all consumerers are wrapped
+            Natural ->                                     -- ^ Amount of queue element to be processed within one transaction
+            Stream (Of q) (ValidatorTCurried m) () ->
+            ((tx -> ValidatorT m r) -> ValidatorT m r) ->  -- ^ transaction in which all consumerers are wrapped
             Natural -> 
-            (tx -> q -> r -> m r) ->    -- ^ consumer, called for every item of the traversed argument
-            r ->                        -- ^ fold initial value
-            m r
+            (tx -> q -> r -> ValidatorT m r) ->    -- ^ consumer, called for every item of the traversed argument
+            r ->                                   -- ^ fold initial value
+            ValidatorT m r
 txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne poolSize)
@@ -144,14 +144,14 @@ txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
 --
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 Natural ->
-                (ClosableQueue t -> m b) ->
-                (ClosableQueue t -> m c) ->
-                (t -> m w) ->
-                m (b, c)
+                (ClosableQueue t -> ValidatorT m b) ->
+                (ClosableQueue t -> ValidatorT m c) ->
+                (t -> ValidatorT m w) ->
+                ValidatorT m (b, c)
 bracketChanClosable size produce consume kill = do        
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
-    concurrently 
+    concurrentTasks
             (produce queue `finally` closeQ) 
             (consume queue `finally` closeQ)
         `finally`
@@ -242,7 +242,7 @@ parallelTasksOld bottleneck as f = do
         (readIORef tasks >>= mapM cancelTask)
 
 parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
-                Bottleneck -> [a] -> (a -> m b) -> m [b]
+                Bottleneck -> [a] -> (a -> ValidatorT m b) -> ValidatorT m [b]
 parallelTasks bottleneck as f =     
     snd <$> bracketChanClosable
                 (maxBottleneckSize bottleneck)

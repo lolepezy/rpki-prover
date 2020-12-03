@@ -28,6 +28,9 @@ import           RPKI.Time
 type ValidatorT m r = 
         ReaderT ValidatorPath (ExceptT AppError (StateT ValidationState m)) r
 
+type ValidatorTCurried m = 
+        ReaderT ValidatorPath (ExceptT AppError (StateT ValidationState m))
+
 type PureValidatorT r = 
         ReaderT ValidatorPath (ExceptT AppError (State ValidationState)) r
 
@@ -89,6 +92,11 @@ runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
 runValidatorStateT :: ValidatorPath -> ValidationState -> ValidatorT m r -> m (Either AppError r, ValidationState)
 runValidatorStateT vc state v = (runStateT $ runExceptT $ runReaderT v vc) state
+
+-- | Shorthand version for cases when we need to actually 
+-- run IO or something similar like that
+voidRun :: Functor m => Text -> ValidatorT m r -> m ()
+voidRun t = void <$> runValidatorT (newValidatorPath t)
 
 validatorWarning :: Monad m => VWarning -> ValidatorT m ()
 validatorWarning = vHoist . pureWarning

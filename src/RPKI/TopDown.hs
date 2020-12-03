@@ -373,19 +373,29 @@ validateCARecursively
         topDownContext@TopDownContext{..} 
         certificate = do     
 
-    (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
-    case r of
-        Left _alreadyQueued -> pure $ fromValidations validations
-        Right (T3 discoveredPPs waitingList tdResult) -> do                    
-            tdResults <- extractPPsAndValidateDown discoveredPPs waitingList
-            pure $! mconcat tdResults <> tdResult <> fromValidations validations                
+    -- (r, validations) <- runValidatorT vc $ validateCaCertificate appContext topDownContext certificate
+    -- case r of
+    --     Left _alreadyQueued -> pure $ fromValidations validations
+    --     Right (T3 discoveredPPs waitingList tdResult) -> do                    
+    --         tdResults <- extractPPsAndValidateDown discoveredPPs waitingList
+    --         pure $! mconcat tdResults <> tdResult <> fromValidations validations                
+
+    (r, validationState) <- runValidatorT vc $ do 
+        T3 discoveredPPs waitingList tdResult <- 
+                validateCaCertificate appContext topDownContext certificate
+        tdResults <- extractPPsAndValidateDown discoveredPPs waitingList
+        pure $! mconcat tdResults <> tdResult                
+        
+    pure $! case r of
+        Left _  -> fromValidations validationState
+        Right r -> r <> fromValidations validationState
 
     where
         -- From the set of discovered PPs figure out which ones must be fetched, 
         -- fetch them and validate, starting from the cerfificates in their 
         -- waiting lists.        
         extractPPsAndValidateDown ppsToFetch waitingList = do            
-            ppsToFetch' <- atomically $ do 
+            ppsToFetch' <- liftIO $ atomically $ do 
                     globalPPs           <- readTVar publicationPoints                    
                     alreadyTakenCareOf  <- readTVar takenCareOf
 
@@ -422,12 +432,12 @@ validateCARecursively
                                 []             -> vc
                                 T3 _ vc' _ : _ -> vc'
 
-            fetchResult <- fetchRepository appContext waitingPath now repo                                            
+            fetchResult <- liftIO $ fetchRepository appContext waitingPath now repo                                            
 
             let statusUpdate = case fetchResult of
                             FetchFailure r t _ -> (r, FailedAt t)
                             FetchSuccess r t _ -> (r, FetchedAt t)                      
-            pps <- atomically $ do                     
+            pps <- liftIO $ atomically $ do                     
                     modifyTVar' publicationPoints $ \pubPoints -> updateStatuses pubPoints [statusUpdate]
                     readTVar publicationPoints
             
@@ -476,7 +486,7 @@ validateCARecursively
         validateWaitingList waitingList =
             parallelTasks 
                 (cpuBottleneck appBottlenecks) 
-                waitingList $ \(T3 hash certVContext verifiedResources') -> do                    
+                waitingList $ \(T3 hash certVContext verifiedResources') -> liftIO $ do                    
                     o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                     case o of 
                         Just (CerRO waitingCertificate) -> do
