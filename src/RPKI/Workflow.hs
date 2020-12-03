@@ -35,16 +35,13 @@ import           RPKI.TopDown
 import           RPKI.AppContext
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Util                  (mkLmdb)
 import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 
-import           System.Directory                 (removePathForcibly)
 import           System.Exit
-import           System.IO.Temp
 
 type AppEnv = AppContext LmdbStorage
 
@@ -59,17 +56,18 @@ data WorkflowTask =
 runWorkflow :: (Storage s, MaintainableStorage s) => 
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
-    -- Use a command queue to avoid fully concurrent operations, i.e. cleaup 
-    -- opearations and should not run at the same time with validation (not 
-    -- only for consistency reasons, but we want to avoid locking the DB for 
-    -- long time).
+    -- Use a command queue to avoid fully concurrent operations, i.e. cleanup 
+    -- opearations and such should not run at the same time with validation 
+    -- (not only for consistency reasons, but we want to avoid locking the 
+    -- DB for long time by the cleanup process).
     globalQueue <- newCQueueIO 10
 
-    -- Run RTR server thread when rtrConfig is present in the AppConfig.    
+    -- Run RTR server thread when rtrConfig is present in the AppConfig.  
+    -- If not needed it will the an noop.  
     rtrServer <- initRtrIfNeeded
 
     -- Fill in the current state if it's not too old.
-    -- It may be useful in case of restarts.        
+    -- It is useful in case of restarts.        
     loadStoredAppState appContext
 
     -- Run threads that periodicallly generate tasks and put them 
@@ -77,9 +75,9 @@ runWorkflow appContext@AppContext {..} tals = do
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion, 
-            cacheGC,
-            cleanOldVersions,
-            defragmentStorage,
+            generatePeriodicTask 10_000_000 cacheCleanupInterval CacheGC,
+            generatePeriodicTask 30_000_000 cacheCleanupInterval CleanOldVersions,
+            generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval Defragment,
             rtrServer   
         ]
     where
@@ -93,82 +91,71 @@ runWorkflow appContext@AppContext {..} tals = do
         validateTaTask globalQueue worldVersion = 
             atomically $ writeCQueue globalQueue $ ValidateTAs worldVersion             
 
-        -- periodically update world version and re-validate all TAs
+        -- periodically update world version and generate command 
+        -- to re-validate all TAs
         generateNewWorldVersion globalQueue = periodically revalidationInterval $ do 
             oldWorldVersion <- getWorldVerionIO appState
             newWorldVersion <- updateWorldVerion appState
             logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
             validateTaTask globalQueue newWorldVersion
 
-        -- remove old objects from the cache
-        cacheGC globalQueue = do 
-            -- wait a little so that GC doesn't start before the actual validation
-            threadDelay 10_000_000
-            periodically cacheCleanupInterval $ do
+        generatePeriodicTask delay interval constructor globalQueue = do
+            threadDelay delay
+            periodically interval $ do
                 worldVersion <- getWorldVerionIO appState
-                atomically $ writeCQueue globalQueue $ CacheGC worldVersion
-
-        cleanOldVersions globalQueue = do 
-            -- wait a little so that deleting old appState comes last in the queue of actions
-            threadDelay 30_000_000
-            periodically cacheCleanupInterval $ do
-                worldVersion <- getWorldVerionIO appState
-                atomically $ writeCQueue globalQueue $ CleanOldVersions worldVersion        
-
-        defragmentStorage globalQueue = do             
-            -- try the first defragmentation in 24hours
-            threadDelay $ 24 * 60 * 60 * 1_000_000
-            periodically storageDefragmentInterval $ do
-                worldVersion <- getWorldVerionIO appState
-                atomically $ writeCQueue globalQueue $ Defragment worldVersion        
+                atomically $ writeCQueue globalQueue $ constructor worldVersion                    
 
         taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
             forever $ do 
                 task <- atomically $ readCQueue globalQueue 
-                ifJust task $ executeTask
+                ifJust task $ \case 
+                    ValidateTAs worldVersion      -> validateTAs worldVersion
+                    CacheGC worldVersion          -> cacheGC worldVersion
+                    CleanOldVersions worldVersion -> cleanOldVersions worldVersion
+                    Defragment worldVersion       -> defragment worldVersion
 
-        executeTask = \case 
-            ValidateTAs worldVersion -> do
-                logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
-                executeOrDie
-                    (mconcat <$> mapConcurrently processTAL tals)
-                    (\tdResult@TopDownResult{..} elapsed -> do 
-                        uniqueVrps <- saveTopDownResult tdResult                                
-                        logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
-                where 
-                    processTAL tal = do 
-                        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
-                        logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-                        pure r
+        validateTAs worldVersion = do
+            logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
+            executeOrDie
+                (mconcat <$> mapConcurrently processTAL tals)
+                (\tdResult@TopDownResult{..} elapsed -> do 
+                    uniqueVrps <- saveTopDownResult tdResult                                
+                    logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
+            where 
+                processTAL tal = do 
+                    (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
+                    logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+                    pure r
 
-                    saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
-                        let uniqueVrps = Set.fromList vrps
-                        putValidations tx (validationsStore database) worldVersion (tdValidations ^. typed)
-                        putVrps tx database (Set.toList uniqueVrps) worldVersion
-                        completeWorldVersion tx database worldVersion
-                        atomically $ do 
-                            completeCurrentVersion appState                                    
-                            writeTVar (appState ^. #currentVrps) uniqueVrps
-                        pure uniqueVrps
+                saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
+                    let uniqueVrps = Set.fromList vrps
+                    putValidations tx (validationsStore database) worldVersion (tdValidations ^. typed)
+                    putMetrics tx (metricStore database) worldVersion (tdValidations ^. typed)
+                    putVrps tx database (Set.toList uniqueVrps) worldVersion
+                    completeWorldVersion tx database worldVersion
+                    atomically $ do 
+                        completeCurrentVersion appState                                    
+                        writeTVar (appState ^. #currentVrps) uniqueVrps
+                    pure uniqueVrps
 
-            CacheGC worldVersion -> do
-                let now = versionToMoment worldVersion
-                executeOrDie 
-                    (cleanObjectCache database $ versionIsOld now cacheLifeTime)
-                    (\(deleted, kept) elapsed -> 
-                        logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
+        cacheGC worldVersion = do
+            let now = versionToMoment worldVersion
+            executeOrDie 
+                (cleanObjectCache database $ versionIsOld now cacheLifeTime)
+                (\(deleted, kept) elapsed -> 
+                    logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
 
-            CleanOldVersions worldVersion -> do
-                let now = versionToMoment worldVersion
-                executeOrDie 
-                    (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
-                    (\deleted elapsed -> 
-                        logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
+        cleanOldVersions worldVersion = do
+            let now = versionToMoment worldVersion
+            executeOrDie 
+                (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
+                (\deleted elapsed -> 
+                    logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
-            Defragment worldVersion -> do
-                (_, elapsed) <- timedMS $ runMaintenance appContext 
-                logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
+        defragment worldVersion = do
+            (_, elapsed) <- timedMS $ runMaintenance appContext 
+            logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 

@@ -108,12 +108,16 @@ newtype LastSuccededMap = LastSuccededMap (Map RpkiURL FetchLastSuccess)
     deriving newtype (Monoid)
 
 instance WithRpkiURL PublicationPoint where
-    getRpkiURL (RrdpPP (RrdpRepository {..}))        = RrdpU uri
+    getRpkiURL (RrdpPP RrdpRepository {..})        = RrdpU uri
     getRpkiURL (RsyncPP (RsyncPublicationPoint uri)) = RsyncU uri    
 
 instance WithRpkiURL Repository where
-    getRpkiURL (RrdpR (RrdpRepository {..})) = RrdpU uri
-    getRpkiURL (RsyncR (RsyncRepository { repoPP = RsyncPublicationPoint {..} })) = RsyncU uri
+    getRpkiURL (RrdpR RrdpRepository {..}) = RrdpU uri
+    getRpkiURL (RsyncR RsyncRepository { repoPP = RsyncPublicationPoint {..} }) = RsyncU uri
+
+instance WithURL RrdpRepository where
+    getURL RrdpRepository { uri = RrdpURL u } = u
+    
 
 instance Semigroup RrdpRepository where
     RrdpRepository { uri = u1, rrdpMeta = m1, status = s1 } <> 

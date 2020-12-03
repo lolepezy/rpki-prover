@@ -22,6 +22,7 @@ import           Data.IORef.Lifted
 
 import           Streaming
 import qualified Streaming.Prelude               as S
+import RPKI.AppMonad
 
 
 atLeastOne :: Natural -> Natural
@@ -41,7 +42,7 @@ foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
             m r
 foldPipeline bottleneck stream mapStream consume accum0 =
     snd <$> bracketChanClosable
-                (maxBottleneckSize bottleneck)
+                (atLeastOne $ maxBottleneckSize bottleneck)
                 writeAll 
                 readAll 
                 cancel
@@ -79,10 +80,11 @@ txFoldPipeline poolSize stream withTx consume accum0 =
                 readAll 
                 (\_ -> pure ())
     where
-        writeAll queue = S.mapM_ toQueue stream
-            where 
-                toQueue = liftIO . atomically . writeCQueue queue
-
+        writeAll queue = 
+            S.mapM_ 
+                (liftIO . atomically . writeCQueue queue) 
+                stream
+            
         readAll queue = withTx $ \tx -> go tx accum0
             where
                 go tx accum = do                
@@ -352,3 +354,15 @@ cancelTask (RequestorTask _) = pure ()
 cancelTask (SubmitterTask a) = cancel a
 cancelTask (AsyncTask a)     = cancel a
 
+concurrentTasks :: (MonadBaseControl IO m, MonadIO m) =>  
+                    ValidatorT m a -> ValidatorT m b -> ValidatorT m (a, b)
+concurrentTasks v1 v2 = do
+    env <- askEnv
+    validatorT $ do 
+        ((r1, vs1), (r2, vs2)) <- 
+            concurrently 
+                (runValidatorT env v1) 
+                (runValidatorT env v2)        
+        pure ((,) <$> r1 <*> r2, vs1 <> vs2)
+
+    

@@ -200,7 +200,7 @@ defragmentStorageWithTmpDir AppContext {..} = do
             sizes <- forM lmdbFiles $ \f -> getFileSize $ currentCache </> f
             pure $! sum sizes
 
-    Size dataSize <- DB.totalSpace <$> DB.stats database
+    Size dataSize <- DB.totalSpace <$> DB.dbStats database
 
     let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)

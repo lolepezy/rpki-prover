@@ -35,12 +35,13 @@ validatorServer AppContext {..} =
     liftIO getVRPs
     :<|> liftIO getVRPs
     :<|> liftIO getVResults
+    :<|> getMetrics
     :<|> getStats
     :<|> getRpkiObject
     where
         getVRPs = do 
             vrps <- do 
-                vrps <- atomically $ readTVar (appState ^. #currentVrps)
+                vrps <- readTVarIO $ appState ^. #currentVrps
                 if Set.null vrps
                     then do 
                         roTx versionStore $ \tx ->
@@ -61,11 +62,20 @@ validatorServer AppContext {..} =
                         validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
                         pure $ map toVR $ validationsToList validations
                 in fromMaybe [] <$> txValidations
+                
+        getMetrics = do
+            metrics <- liftIO $ roTx versionStore $ \tx -> do
+                runMaybeT $ do
+                        lastVersion <- MaybeT $ getLastCompletedVersion database tx
+                        MaybeT $ metricsForVersion tx metricStore lastVersion                        
+            case metrics of 
+                Nothing -> throwError err404
+                Just m  -> pure m
             
         toVR (Path path, problems) = 
             ValidationResult (Set.toList problems) (NonEmpty.toList path)    
 
-        getStats = stats database
+        getStats = dbStats database
 
         getRpkiObject hash = 
             liftIO $ roTx objectStore $ \tx -> 

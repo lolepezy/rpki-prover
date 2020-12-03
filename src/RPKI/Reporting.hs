@@ -204,14 +204,15 @@ newtype Path a = Path (NonEmpty Text)
     deriving anyclass Serialise
     deriving newtype Semigroup
 
-data Validation
-data Metric
+data PathKind = Validation | Metric
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
 
-type VPath      = Path Validation    
-type MetricPath = Path Metric
+type VPath      = Path 'Validation    
+type MetricPath = Path 'Metric
     
-trail :: Text -> Path c
-trail u = Path $ u :| []
+newPath :: Text -> Path c
+newPath u = Path $ u :| []
 
 childPath :: Path c -> Text -> Path c
 childPath (Path ts) t = Path $ t <| ts
@@ -221,7 +222,7 @@ getPath :: HasType a s => s -> a
 getPath = getTyped
 
 subPath :: Text -> Path c -> Path c
-subPath t parent = trail t <> parent
+subPath t parent = newPath t <> parent
 
 data ValidatorPath = ValidatorPath {
         validationPath :: VPath,
@@ -232,8 +233,8 @@ data ValidatorPath = ValidatorPath {
 
 newValidatorPath :: Text -> ValidatorPath
 newValidatorPath t = ValidatorPath {
-        validationPath = trail t,
-        metricPath     = trail t
+        validationPath = newPath t,
+        metricPath     = newPath t
     }
 
 
@@ -252,18 +253,24 @@ validatorSubPath t vc =
 
 class MetricC metric where
     newMetric  :: metric        
-    -- newMetric  :: MonadReader ValidatorPath z => z metric        
     -- lens to access the specific metric map in the total metric record    
-    metricLens :: Lens' AppMetric (Map MetricPath metric)
+    metricLens :: Lens' AppMetric (MetricMap metric)
 
 newtype TimeTakenMs = TimeTakenMs Int64
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise    
+
+instance Show TimeTakenMs where 
+    show (TimeTakenMs ms) = show ms
+
+data RrdpSource = RrdpDelta | RrdpSnapshot
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data RrdpMetric = RrdpMetric {
         added       :: Int,
         deleted     :: Int,        
-        usedDetla   :: Bool,
+        rrdpSource  :: RrdpSource,
         timeTakenMs :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -288,7 +295,7 @@ data ValidationMetric = ValidationMetric {
     deriving anyclass Serialise
 
 instance MetricC RrdpMetric where
-    newMetric  = RrdpMetric 0 0 False (TimeTakenMs 0)    
+    newMetric  = RrdpMetric 0 0 RrdpSnapshot (TimeTakenMs 0)    
     metricLens = #rrdpMetrics
 
 instance MetricC RsyncMetric where
@@ -300,10 +307,16 @@ instance MetricC ValidationMetric where
     metricLens = #validationMetrics
 
 
+newtype MetricMap a = MetricMap (Map MetricPath a)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+    deriving newtype Monoid
+    deriving newtype Semigroup
+
 data AppMetric = AppMetric {
-        rsyncMetrics      :: Map MetricPath RsyncMetric,
-        rrdpMetrics       :: Map MetricPath RrdpMetric,
-        validationMetrics :: Map MetricPath ValidationMetric
+        rsyncMetrics      :: MetricMap RsyncMetric,
+        rrdpMetrics       :: MetricMap RrdpMetric,
+        validationMetrics :: MetricMap ValidationMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -322,37 +335,21 @@ data ValidationState = ValidationState {
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty
 
--- newVMetric :: TaName -> ValidationMetric
--- newVMetric taName = ValidationMetric 0 0 0 0 0 (TimeTakenMs 0)
-
-
--- appValidationMetric :: ValidationMetric -> AppMetric
--- appValidationMetric = setMetric #validationMetrics
-
--- appRsyncMetric :: RsyncMetric -> AppMetric
--- appRsyncMetric = setMetric #rsyncMetrics
-
--- appRrdpMetric :: RrdpMetric -> AppMetric
--- appRrdpMetric = setMetric #rrdpMetrics
-
-
--- setMetric :: (Monoid s, MetricC a1) => ASetter s b a2 (Map MetricPath a1) -> a1 -> b
--- setMetric theLens metric = mempty & theLens .~ Map.singleton (metricKey metric) metric
-
-
--- modifyAMetric :: AppMetric -> MetricPath -> (AMetric -> Maybe AMetric) -> AppMetric
--- modifyAMetric am@(AppMetric ms) key f =
---     case Map.lookup key ms of 
---         Nothing -> am 
---         Just m  -> 
---             case f m of 
---                 Nothing -> am
---                 Just fm -> mMetric fm <> am
-
 
 validationsToList :: Validations -> [(VPath, Set VProblem)]
 validationsToList (Validations vMap) = Map.toList vMap 
 
+
+addMetric :: MetricPath -> a -> MetricMap a -> MetricMap a
+addMetric metricPath metric (MetricMap mm) = 
+    MetricMap $ Map.insert metricPath metric mm
+
+updateMetric :: MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
+updateMetric metricPath f (MetricMap mm) = 
+    MetricMap $ Map.update (Just . f) metricPath mm
+
+lookupMetric :: MetricPath -> MetricMap a -> Maybe a
+lookupMetric metricPath (MetricMap mm) = Map.lookup metricPath mm
 
 -- Experimental more economical version of Validations
 

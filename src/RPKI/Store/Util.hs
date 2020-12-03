@@ -21,8 +21,8 @@ import Control.Concurrent.STM
 
 createObjectStore :: LmdbEnv -> SequenceMap LmdbStorage -> IO (RpkiObjectStore LmdbStorage)
 createObjectStore e seqMap =
-    RpkiObjectStore <$>
-        pure (Sequence "object-key" seqMap) <*>
+    RpkiObjectStore 
+        (Sequence "object-key" seqMap) <$>
         (SMap lmdb <$> createLmdbStore e) <*>        
         (SMap lmdb <$> createLmdbStore e) <*>
         (SMultiMap lmdb <$> createLmdbMultiStore e) <*>
@@ -55,6 +55,9 @@ createTAStore e = TAStore . SMap (LmdbStorage e) <$> createLmdbStore e
 createVersionStore :: LmdbEnv -> IO (VersionStore LmdbStorage)
 createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
+createMetricsStore :: LmdbEnv -> IO (MetricsStore LmdbStorage)
+createMetricsStore e = MetricsStore . SMap (LmdbStorage e) <$> createLmdbStore e    
+
 createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
 createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
 
@@ -83,5 +86,6 @@ createDatabase e = do
         createResultStore e <*>
         createVRPStore e <*>
         createVersionStore e <*>
+        createMetricsStore e <*>
         pure seqMap
 

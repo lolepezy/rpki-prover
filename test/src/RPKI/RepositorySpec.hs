@@ -10,8 +10,6 @@ import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Orphans
 
-import           RPKI.Orphans
-
 
 repositoryGroup :: TestTree
 repositoryGroup = testGroup "PublicationPoints" [

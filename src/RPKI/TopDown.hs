@@ -16,14 +16,12 @@ import           Control.Monad.Reader
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
-import           Data.Generics.Sum
+import           GHC.Generics (Generic)
 
-import           GHC.Generics
 
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.List.Split                  (chunksOf)
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (fromMaybe)
@@ -145,7 +143,7 @@ validateTA :: Storage s =>
             AppContext s -> TAL -> WorldVersion -> IO TopDownResult
 validateTA appContext@AppContext {..} tal worldVersion = do    
     r <- runValidatorT taContext $
-            inSubVContext (toText $ getTaCertURL tal) $ do
+            subVPath (toText $ getTaCertURL tal) $ do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
@@ -420,11 +418,11 @@ validateCARecursively
                     Set.map (\pp -> getRpkiURL pp `Map.lookup` waitingList) ppsForTheRepo
             
             -- try to recover the validation context
-            let waitingVContext = case waitingListForThesePPs of
+            let waitingPath = case waitingListForThesePPs of
                                 []             -> vc
                                 T3 _ vc' _ : _ -> vc'
 
-            fetchResult <- fetchRepository appContext waitingVContext now repo                                            
+            fetchResult <- fetchRepository appContext waitingPath now repo                                            
 
             let statusUpdate = case fetchResult of
                             FetchFailure r t _ -> (r, FailedAt t)
@@ -558,7 +556,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             mft <- findMft childrenAki certLocations'
             checkMftLocation mft certificate
                     
-            inSubVContext (toText $ NonEmpty.head $ getLocations mft) $ do
+            subVPath (toText $ NonEmpty.head $ getLocations mft) $ do
                 -- find CRL on the manifest
                 (_, crlHash) <- case findCrlOnMft mft of 
                     []    -> vError $ NoCRLOnMFT childrenAki certLocations'
@@ -573,7 +571,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         visitObject appContext topDownContext foundCrl
                         -- logDebugM logger [i|crl = #{NonEmpty.head $ getLocations crl} (#{thisUpdateTime $ signCrl crl}, #{nextUpdateTime $ signCrl crl})|]
                         -- validate CRL and MFT together
-                        validCrl <- inSubVContext (toText $ NonEmpty.head $ getLocations crl) $ 
+                        validCrl <- subVPath (toText $ NonEmpty.head $ getLocations crl) $ 
                                         vHoist $ do          
                                             -- checkCrlLocation crl certificate
                                             validateCrl (now topDownContext) crl certificate
@@ -677,7 +675,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                 CerRO childCert -> do 
                     let TopDownContext{..} = topDownContext
                     (r, validationState) <- liftIO $ runValidatorT parentContext $                     
-                            inSubVContext (toText $ NonEmpty.head $ getLocations ro) $ do
+                            subVPath (toText $ NonEmpty.head $ getLocations ro) $ do
                                 childVerifiedResources <- vHoist $ do                 
                                         Validated validCert <- validateResourceCert now childCert certificate validCrl
                                         validateResources verifiedResources childCert validCert 
@@ -694,7 +692,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         Right (T3 pps wl tdResult) -> T3 pps wl (tdResult <> fromValidations validationState)
 
                 RoaRO roa ->
-                    inSubVContext (toText $ NonEmpty.head $ getLocations ro) $ do
+                    subVPath (toText $ NonEmpty.head $ getLocations ro) $ do
                         void $ vHoist $ validateRoa (now topDownContext) roa certificate validCrl
                                             
                         -- incValidObject (topDownContext ^. typed)
@@ -703,7 +701,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         pure $! T3 emptyPublicationPoints mempty (TopDownResult vrps mempty)
 
                 GbrRO gbr -> withEmptyPPs $
-                    inSubVContext (toText $ NonEmpty.head $ getLocations ro) $ do
+                    subVPath (toText $ NonEmpty.head $ getLocations ro) $ do
                         void $ vHoist $ validateGbr (now topDownContext) gbr certificate validCrl                    
                         -- incValidObject (topDownContext ^. typed)                    
 

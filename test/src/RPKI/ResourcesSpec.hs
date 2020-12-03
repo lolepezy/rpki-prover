@@ -75,8 +75,8 @@ resourcesUnitTests = testGroup "AS resource unit tests" [
             asParent = IS.fromList [ASRange (ASN 15) (ASN 30)]
             (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals asChild asParent
             in do
-            n @?= IS.fromList [ASRange (ASN 15) (ASN 20)]
-            o @?= (IS.fromList $ normalise [ASRange (ASN 10) (ASN 14)])
+                n @?= IS.fromList [ASRange (ASN 15) (ASN 20)]
+                o @?= (IS.fromList $ normalise [ASRange (ASN 10) (ASN 14)])
         let
             asChild  = IS.fromList [
                     ASRange (ASN 10) (ASN 20), 

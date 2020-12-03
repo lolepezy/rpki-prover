@@ -103,6 +103,8 @@ updateObjectForRsyncRepository
         ExitSuccess -> do 
             -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
             -- they will hold too much files open.
+            --
+            -- TODO Remove it, use just the metric
             count <- loadRsyncRepository appContext uri destination objectStore
                         `finally` liftIO performGC
             logInfoM logger [i|Finished loading #{count} objects into local storage.|]
@@ -124,26 +126,25 @@ loadRsyncRepository :: Storage s =>
                         RsyncURL -> 
                         FilePath -> 
                         RpkiObjectStore s -> 
-                        ValidatorT IO Integer
+                        ValidatorT IO ()
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
     worldVersion  <- liftIO $ getWorldVerionIO appState
     subMetricPath (unURI $ getURL repositoryUrl) $ 
         doSaveObjects worldVersion
   where     
-    doSaveObjects worldVersion = do 
-        initMetric $ newMetric @RsyncMetric
+    doSaveObjects worldVersion = 
+        timedMetric (newMetric @RsyncMetric) $ do         
+            -- counter <- newIORef (0 :: Integer)                
 
-        counter <- newIORef (0 :: Integer)                
+            void $ bracketChanClosable 
+                        -- it makes sense to run slightly more tasks because they 
+                        -- will spend some time waiting for the file IO to finish.
+                        (2 * cpuParallelism)
+                        traverseFS
+                        saveObjects
+                        (cancelTask . snd)
 
-        void $ bracketChanClosable 
-                    -- it makes sense to run slightly more tasks because they 
-                    -- will spend some time waiting for the file IO to finish.
-                    (2 * cpuParallelism)
-                    traverseFS
-                    saveObjects
-                    (cancelTask . snd)
-
-        readIORef counter
+            -- readIORef counter
       where    
         threads = cpuBottleneck appBottlenecks
         cpuParallelism = config ^. typed @Parallelism . #cpuParallelism

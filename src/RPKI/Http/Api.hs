@@ -68,14 +68,16 @@ type API = "api" :> (
                 "vrps.csv"  :> Get '[CSVType] [VrpDto]
             :<|> "vrps.json" :> Get '[JSON] [VrpDto]
             :<|> "validation-results" :> Get '[JSON] [ValidationResult]
+            :<|> "metrics" :> Get '[JSON] AppMetric
             :<|> "lmdb-stats" :> Get '[JSON] DBStats
-            :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)
+            :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)            
         )
 
 data ValidationResult = ValidationResult {
     problems :: [VProblem],
     context  :: [Text]
 } deriving stock (Generic)
+
 
 newtype VrpList = VrpList [VrpDto]
     deriving stock (Eq, Show, Generic)
@@ -204,6 +206,17 @@ instance ToJSON RpkiObjectStats
 instance ToJSON VResultStats
 instance ToJSON RepositoryStats
 instance ToJSON DBStats
+instance ToJSON AppMetric
+instance ToJSON a => ToJSON (MetricMap a)
+instance ToJSON ValidationMetric
+instance ToJSON RsyncMetric
+instance ToJSON RrdpMetric
+instance ToJSON PathKind
+instance ToJSON RrdpSource
+instance ToJSONKey (Path 'Metric)
+instance ToJSON (Path 'Metric)
+instance ToJSON TimeTakenMs where 
+    toJSON (TimeTakenMs s) = toJSON $ show s <> "ms"
 
 
 -- RPKI Object

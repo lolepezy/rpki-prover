@@ -91,8 +91,9 @@
 
 --------------------------------------- TODOs -----------------------------------------
  
-RTR:
- 
+- FIX:
+  Some repositories are shared between multiple TAs, make sure they are not updated multiple times.
+
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept).
 - Implement MFT filename check
 

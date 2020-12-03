@@ -1,15 +1,22 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedLabels          #-}
 {-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RecordWildCards           #-}
+
 
 module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
-import           Control.Monad
+
+import           Control.Lens                     ((.~), (%~), (&), (^.))
+import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Data.Generics.Product.Typed
+
 import           Control.Monad.IO.Class
 import qualified Data.ByteString                   as BS
 import           Data.Foldable
@@ -43,6 +50,7 @@ import           RPKI.Store.Util
 import           RPKI.Time
 
 import           RPKI.RepositorySpec
+import qualified Data.Set as Set
 
 
 
@@ -58,33 +66,34 @@ storeGroup = testGroup "LMDB storage tests"
 objectStoreGroup :: TestTree
 objectStoreGroup = withDB $ \io -> testGroup "Object storage test"
     [
-        HU.testCase "Should insert and get back" (should_insert_and_get_all_back_from_object_store io),        
-        HU.testCase "Should order manifests accoring to their dates" (should_order_manifests_properly io)
+        HU.testCase "Should insert and get back" (shouldInsertAndGetAllBackFromObjectStore io),        
+        HU.testCase "Should order manifests accoring to their dates" (shouldOrderManifests io)
     ]
 
 validationResultStoreGroup :: TestTree
 validationResultStoreGroup = withDB $ \io -> testGroup "Validation result storage test"
     [
-        HU.testCase "Should insert and get back" (should_insert_and_get_all_back_from_validation_result_store io)        
+        HU.testCase "Should insert and get back" (shouldInsertAndGetAllBackFromValidationResultStore io)        
     ]
 
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
     [
-        HU.testCase "Should insert and get a repository" (should_insert_and_get_all_back_from_repository_store io)
+        HU.testCase "Should insert and get a repository" (shouldInsertAndGetAllBackFromRepositoryStore io)
         -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
     ]
 
 txGroup :: TestTree
 txGroup = withDB $ \io -> testGroup "App transaction test"
     [
-        HU.testCase "Should rollback App transactions properly" (shouldRollbackAppTx io)        
+        HU.testCase "Should rollback App transactions properly" (shouldRollbackAppTx io),        
+        HU.testCase "Should preserve state from StateT in transactions" (shouldPreserveStateInAppTx io)        
     ]
 
 
 
-should_insert_and_get_all_back_from_object_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-should_insert_and_get_all_back_from_object_store io = do  
+shouldInsertAndGetAllBackFromObjectStore :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldInsertAndGetAllBackFromObjectStore io = do  
     (_, DB {..}) <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
@@ -137,8 +146,8 @@ should_insert_and_get_all_back_from_object_store io = do
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'
 
 
-should_order_manifests_properly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-should_order_manifests_properly io = do  
+shouldOrderManifests :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldOrderManifests io = do  
     (_, DB {..}) <- io
     Right mft1 <- readObjectFromFile "./test/data/afrinic_mft1.mft"
     Right mft2 <- readObjectFromFile "./test/data/afrinic_mft2.mft"
@@ -157,8 +166,8 @@ should_order_manifests_properly io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
 
-should_insert_and_get_all_back_from_validation_result_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-should_insert_and_get_all_back_from_validation_result_store io = do  
+shouldInsertAndGetAllBackFromValidationResultStore :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldInsertAndGetAllBackFromValidationResultStore io = do  
     (_, DB {..}) <- io
     vrs :: Validations <- QC.generate arbitrary      
 
@@ -170,8 +179,8 @@ should_insert_and_get_all_back_from_validation_result_store io = do
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
 
-should_insert_and_get_all_back_from_repository_store :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-should_insert_and_get_all_back_from_repository_store io = do  
+shouldInsertAndGetAllBackFromRepositoryStore :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldInsertAndGetAllBackFromRepositoryStore io = do  
     (_, DB {..}) <- io
 
     taName1 <- TaName <$> QC.generate arbitrary
@@ -248,12 +257,54 @@ shouldRollbackAppTx io = do
          v3 <- M.get tx z 3  
          HU.assertEqual "Must be rolled back by exception" v3 Nothing
     
--- should_report_multi_or_not_properly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
--- should_report_multi_or_not_properly io = do  
---     (_, DB {..}) <- io
---     roTx objects objectStore
---     pure ()
 
+shouldPreserveStateInAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldPreserveStateInAppTx io = do  
+    ((_, env), DB {..}) <- io
+
+    let storage' = LmdbStorage env
+    z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
+
+    let addedObject   = modifyMetric @RrdpMetric @_ (& #added %~ (+1))    
+
+    (_, ValidationState { validations = Validations validationMap, .. }) 
+        <- runValidatorT (newValidatorPath "root") $ 
+            timedMetric (newMetric @RrdpMetric) $ do                 
+                appWarn $ UnspecifiedE "Error0" "text 0"
+                rwAppTx storage' $ \tx -> do                             
+                    addedObject        
+                    appWarn $ UnspecifiedE "Error1" "text 1"
+                    subVPath "nested-1" $ 
+                        appWarn $ UnspecifiedE "Error2" "text 2"
+                    -- just to have a transaction
+                    liftIO $ M.get tx z 0
+                    subMetricPath "metric-nested-1" $ do 
+                        timedMetric (newMetric @RrdpMetric) $ do                 
+                            appWarn $ UnspecifiedE "Error3" "text 3"
+                            addedObject
+
+                appWarn $ UnspecifiedE "Error4" "text 4"
+                addedObject
+
+    HU.assertEqual "Root metric should count 2 objects" 
+        (lookupMetric (newPath "root") (rrdpMetrics topDownMetric))
+        (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpSnapshot, timeTakenMs = TimeTakenMs 0 })
+
+    HU.assertEqual "Nested metric should count 1 object" 
+        (lookupMetric (newPath "metric-nested-1" <> newPath "root") (rrdpMetrics topDownMetric))
+        (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpSnapshot, timeTakenMs = TimeTakenMs 0 })
+
+    HU.assertEqual "Root validations should have 1 warning"     
+        (Map.lookup (newPath "root") validationMap)
+        (Just $ Set.fromList [
+            VWarn (VWarning (UnspecifiedE "Error0" "text 0")),
+            VWarn (VWarning (UnspecifiedE "Error1" "text 1")),
+            VWarn (VWarning (UnspecifiedE "Error3" "text 3")),
+            VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
+
+    HU.assertEqual "Nested validations should have 1 warning" 
+        (Map.lookup (newPath "nested-1" <> newPath "root") validationMap)
+        (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
 generateSome :: Arbitrary a => IO [a]

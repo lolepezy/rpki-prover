@@ -87,7 +87,7 @@ runValidatorApp appContext@AppContext {..} = do
     let validationContext = newValidatorPath "validation-root"
     (tals, validationState) <- runValidatorT validationContext $ 
         forM talFileNames $ \talFileName -> 
-            inSubVContext (convert talFileName) $ parseTALFromFile talFileName
+            subVPath (convert talFileName) $ parseTALFromFile talFileName
 
     logInfo_ logger [i|Successfully loaded #{length talFileNames} TALs.|]    
     rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion (validationState ^. typed)    
@@ -183,7 +183,7 @@ createAppContext cliOoptions@CLIOptions{..} logger = do
                 port = httpApiPort `orDefault` 9999
             },
             rtrConfig = rtrConfig,
-            cacheCleanupInterval = 30 * 60,
+            cacheCleanupInterval = 120 * 60,
             cacheLifeTime = Seconds $ 60 * 60 * (cacheLifetimeHours `orDefault` 72),
 
             -- TODO Think about it, it should be lifetime or we should store N last versions

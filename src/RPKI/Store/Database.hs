@@ -13,6 +13,7 @@ import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Reader     (ask)
+import qualified Control.Monad.State as St
 
 import           Data.Int
 import           Data.IORef.Lifted
@@ -44,6 +45,7 @@ import           RPKI.Util                (fmtEx, increment)
 import           RPKI.AppMonad
 import           RPKI.Repository
 import           RPKI.Store.Repository
+import Control.Monad.Trans
 
 
 
@@ -93,13 +95,19 @@ instance Storage s => WithStorage s (TAStore s) where
 newtype ArtificialKey = ArtificialKey Int64
     deriving (Show, Eq, Generic, Serialise)
 
--- | Validation result store
 newtype ValidationsStore s = ValidationsStore {
     results :: SMap "validations" s WorldVersion Validations    
 }
 
 instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
+
+newtype MetricsStore s = MetricsStore {
+    metrics :: SMap "metrics" s WorldVersion AppMetric    
+}
+
+instance Storage s => WithStorage s (MetricsStore s) where
+    storage (MetricsStore s) = storage s
 
 
 -- | VRP store
@@ -288,6 +296,16 @@ completeWorldVersion tx database worldVersion =
     putVersion tx database worldVersion CompletedVersion
 
 
+putMetrics :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> MetricsStore s -> WorldVersion -> AppMetric -> m ()
+putMetrics tx MetricsStore {..} wv appMetric = 
+    liftIO $ M.put tx metrics wv appMetric
+
+metricsForVersion :: (MonadIO m, Storage s) => 
+                    Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe AppMetric)
+metricsForVersion tx MetricsStore {..} wv = 
+    liftIO $ M.get tx metrics wv    
+
 
 -- More complicated operations
 
@@ -295,7 +313,7 @@ completeWorldVersion tx database worldVersion =
 -- visited longer than certain time ago.
 cleanObjectCache :: (MonadIO m, Storage s) => 
                     DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
+                    (WorldVersion -> Bool) -> -- ^ function that decides if the object is too old to stay in cache
                     m (Int, Int)
 cleanObjectCache DB {..} tooOld = liftIO $ do
     kept    <- newIORef (0 :: Int)
@@ -403,9 +421,9 @@ data DBStats = DBStats {
 
 
 -- Compute database stats
-stats :: (MonadIO m, Storage s) => 
+dbStats :: (MonadIO m, Storage s) => 
         DB s -> m DBStats
-stats db@DB {..} = liftIO $ roTx db $ \tx ->    
+dbStats db@DB {..} = liftIO $ roTx db $ \tx ->    
     DBStats <$>
         (let TAStore sm = taStore in M.stats tx sm) <*>
         repositoryStats tx <*>
@@ -458,9 +476,10 @@ data DB s = DB {
     taStore          :: TAStore s, 
     repositoryStore  :: RepositoryStore s, 
     objectStore      :: RpkiObjectStore s,
-    validationsStore :: ValidationsStore s,
+    validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     versionStore     :: VersionStore s,
+    metricStore      :: MetricsStore s,
     sequences        :: SequenceMap s
 } deriving stock (Generic)
 
@@ -485,21 +504,24 @@ rwAppTx s f = appTx s f rwTx
 
 
 appTx :: (Storage s, WithStorage s ws) => 
-        ws -> (Tx s mode -> ValidatorT IO a) -> 
-        (ws -> (Tx s mode -> IO (Either AppError a, ValidationState))
-            -> IO (Either AppError a, ValidationState)) -> 
-        ValidatorT IO a
+        ws 
+        -> (Tx s mode -> ValidatorT IO a) 
+        -> (ws 
+            -> (Tx s mode -> IO (Either AppError a, ValidationState))
+            -> IO (Either AppError a, ValidationState)) 
+        -> ValidatorT IO a
 appTx s f txF = do
-    env <- ask    
-    validatorT $ transaction env `catch` 
-                (\(TxRollbackException e vs) -> pure (Left e, vs))
+    env   <- ask    
+    state <- St.get
+    validatorT $ transaction env state `catch` 
+                    (\(TxRollbackException e vs) -> pure (Left e, vs))
   where
-    transaction env = txF s $ \tx -> do 
-        (r, vs) <- runValidatorT env $ f tx
+    transaction env state = txF s $ \tx -> do 
+        z@(r, vs) <- runValidatorStateT env state (f tx)
         case r of
             -- abort transaction on ExceptT error
             Left e  -> throwIO $ TxRollbackException e vs
-            Right _ -> pure (r, vs)
+            Right _ -> pure z
          
 
 roAppTxEx :: (Storage s, WithStorage s ws, Exception exc) => 
@@ -523,13 +545,14 @@ appTxEx :: (Storage s, WithStorage s ws, Exception exc) =>
             ValidatorT IO a
 appTxEx ws err f txF = do
     env <- ask
-    validatorT $ transaction env `catches` [
+    state <- St.get
+    validatorT $ transaction env state `catches` [
             Handler $ \(TxRollbackException e vs) -> pure (Left e, vs),
             Handler $ \e -> pure (Left (err e), mempty)
         ]       
     where
-        transaction env = txF (storage ws) $ \tx -> do 
-            z@(r, vs) <- runValidatorT env $ f tx
+        transaction env state = txF (storage ws) $ \tx -> do 
+            z@(r, vs) <- runValidatorStateT env state (f tx)
             case r of
                 -- abort transaction on ExceptT error
                 Left e  -> throwIO $ TxRollbackException e vs

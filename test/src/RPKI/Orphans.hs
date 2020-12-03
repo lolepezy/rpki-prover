@@ -57,6 +57,7 @@ import qualified Crypto.PubKey.RSA                    as RSA
 
 import           RPKI.Util                            (convert, mkHash)
 import qualified Data.Map.Strict as Map
+import Data.Map (Map)
 
 
 
@@ -421,10 +422,53 @@ instance Arbitrary VPath where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary Validations where
+instance Arbitrary MetricPath where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary Validations where
+    -- Implement it to prevent hige generated structures and 
+    -- save some time
+    arbitrary = generateMap Validations 
+    shrink = genericShrink
+
+instance Arbitrary ValidationState where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary AppMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RsyncMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+    
+instance Arbitrary ValidationMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary a => Arbitrary (MetricMap a) where
+    arbitrary = generateMap MetricMap
+    shrink = genericShrink
+
+generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b
+generateMap constructor = do 
+    size :: Int <- choose (0, 10)
+    validations <- replicateM size arbitrary
+    pure $ constructor $ Map.fromList validations
+
+instance Arbitrary TimeTakenMs where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpSource where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 -- IPs
 
