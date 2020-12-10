@@ -60,6 +60,20 @@ concurrentTasksPreservesState = monadicIO $ do
   assert $ snd q == snd z1 <> snd z2
   assert $ fst q == ((,) <$> fst z1 <*> fst z2)
 
+
+parallelTasksPreservesState :: QC.Property
+parallelTasksPreservesState = monadicIO $ do  
+  zs :: [(Either AppError Int, ValidationState)] <- pick arbitrary 
+  b <- run $ newBottleneckIO 2  
+
+  q <- run $ 
+        runValidatorT (newValidatorPath "zzz") $
+            parallelTasks b zs $ validatorT . pure
+  
+  assert $ snd q == mconcat (map snd zs)
+  assert $ fst q == mapM fst zs
+
+
 appMonadSpec :: TestTree
 appMonadSpec = testGroup "AppMonad" [
         QC.testProperty 
@@ -73,6 +87,10 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty
             "concurrentTasks keeps the state and validity"
             concurrentTasksPreservesState,
+
+        QC.testProperty
+            "parallelTasks keeps the state and validity"
+            parallelTasksPreservesState,
             
         HU.testCase
             "forM saves state"

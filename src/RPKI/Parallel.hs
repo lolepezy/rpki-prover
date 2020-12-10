@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module RPKI.Parallel where
 
@@ -23,6 +24,8 @@ import           Data.IORef.Lifted
 import           Streaming
 import qualified Streaming.Prelude               as S
 import RPKI.AppMonad
+import Control.Monad.Reader
+import RPKI.Reporting
 
 
 atLeastOne :: Natural -> Natural
@@ -221,51 +224,6 @@ readCQueue (ClosableQueue q queueState) = do
                 QWorks  -> retry
 
 
-
--- TODO It doesn't actually do what it's supposed to do.
--- It creates a huge list of asyncs.
-parallelTasksOld :: (MonadBaseControl IO m, MonadIO m) =>
-                Bottleneck -> [a] -> (a -> m b) -> m [b]
-parallelTasksOld bottleneck as f = do    
-    tasks <- newIORef []
-
-    let makeTasks = 
-            forM_ as $ \a -> do 
-                t <- strictTask (f a) bottleneck
-                modifyIORef' tasks (t:)
-    
-    -- TODO There's still a chance that a task is created and starts to run
-    -- but an exception kills this thread before the task gets to `tasks` list.
-    -- Fix it
-    (makeTasks >> readIORef tasks >>= mapM waitTask) 
-        `onException` 
-        (readIORef tasks >>= mapM cancelTask)
-
-parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
-                Bottleneck -> [a] -> (a -> ValidatorT m b) -> ValidatorT m [b]
-parallelTasks bottleneck as f =     
-    snd <$> bracketChanClosable
-                (maxBottleneckSize bottleneck)
-                writeAll
-                readAll
-                cancelTask
-    where        
-        writeAll queue = 
-            forM as $ \s -> do
-                t <- f s `strictTask` bottleneck
-                liftIO $ atomically $ writeCQueue queue t
-
-        readAll queue = go             
-            where
-                go = liftIO (atomically $ readCQueue queue) >>= \case
-                        Nothing -> pure []
-                        Just t  -> do 
-                            r    <- waitTask t
-                            rest <- go 
-                            pure $! r : rest
-
-
-
 -- | Simple straioghtforward implementation of a "thread pool".
 -- 
 newtype Bottleneck = Bottleneck (NonEmpty (TVar Natural, Natural))
@@ -280,46 +238,53 @@ newBottleneckIO :: Natural -> IO Bottleneck
 newBottleneckIO = atomically . newBottleneck
 
 -- Who is going to execute a task when the bottleneck is busy
-data BottleneckFullExecutor = Requestor | Submitter
+data BottleneckExecutor = Requestor | Submitter
 
 maxBottleneckSize :: Bottleneck -> Natural
 maxBottleneckSize (Bottleneck bottlenecks) = 
-            atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
+        atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
 
 -- A task can be asyncronous, executed by the requestor (lazy)
 -- and executed by the submitter (strict).
 data Task m a
-    = AsyncTask (Async (StM m a))
-    | RequestorTask (m a)
-    | SubmitterTask (Async (StM m a))
+    = AsyncTask (Async (StM m (Either AppError a, ValidationState)))
+    | RequestorTask (ValidatorT m a)
+    | SubmitterTask (Async (StM m (Either AppError a, ValidationState)))
 
 
 -- | If the bootleneck is full, `io` will be executed by the caller of `waitTask`
-lazyTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
+lazyTask :: (MonadBaseControl IO m, MonadIO m) => 
+            ValidatorT m a -> Bottleneck -> ValidatorT m (Task m a)                       
 lazyTask io bottleneck = newTask io bottleneck Requestor
 
 -- | If the bottleneck is full, io will be execute by the thread that calls newTask.
-strictTask :: (MonadBaseControl IO m, MonadIO m) => m a -> Bottleneck -> m (Task m a)                       
+strictTask :: (MonadBaseControl IO m, MonadIO m) => 
+            ValidatorT m a -> Bottleneck -> ValidatorT m (Task m a)                       
 strictTask io bottleneck = newTask io bottleneck Submitter
 
 -- | If the bottleneck is full, io will be execute by the thread that calls newTask.
-pureTask :: (MonadBaseControl IO m, MonadIO m) => a -> Bottleneck -> m (Task m a)                       
+pureTask :: (MonadBaseControl IO m, MonadIO m) => 
+            a -> Bottleneck -> ValidatorT m (Task m a)                       
 pureTask a = strictTask (pure $! a)
+
 
 -- General case
 newTask :: (MonadBaseControl IO m, MonadIO m) => 
-        m a -> Bottleneck -> BottleneckFullExecutor -> m (Task m a)
-newTask io (Bottleneck bottlenecks) execution = 
+            ValidatorT m a 
+            -> Bottleneck 
+            -> BottleneckExecutor -> ValidatorT m (Task m a)
+newTask io (Bottleneck bottlenecks) execution = do     
+    env <- ask
     join $ liftIO $ atomically $ do     
-        eachHasSomeSpace <- someSpaceInBottleneck
+        eachHasSomeSpace <- someSpaceInBottleneck        
         if and eachHasSomeSpace 
             then do 
-                incSizes
-                pure $! AsyncTask <$> asyncForTask                    
+                incSizes                
+                pure $! appLift $ AsyncTask <$> asyncForTask env                        
             else pure $ 
                 case execution of
                     Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
-                    Submitter -> submitterTask
+                    Submitter -> appLift $ submitterTask env
         where            
             someSpaceInBottleneck =
                 forM bottlenecks $ \(currentSize, maxSize) -> do 
@@ -329,27 +294,31 @@ newTask io (Bottleneck bottlenecks) execution =
             incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
             decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
 
-            asyncForTask = async $ io `finally` liftIO (atomically decSizes)
+            asyncForTask env = async $ 
+                                    runValidatorT env io 
+                                    `finally` 
+                                    liftIO (atomically decSizes)
 
             -- TODO This is not very safe w.r.t. exceptions.
-            submitterTask = do 
+            -- submitterTask :: ValidatorT m (Task m a)
+            submitterTask env = do 
                 liftIO $ atomically incSizes
-                a <- asyncForTask
+                a <- asyncForTask env
                 -- Wait for either the task to finish, or until there's 
                 -- some free space in the bottleneck.
                 liftIO $ atomically $ do 
                     spaceInBottlenecks <- someSpaceInBottleneck
                     unless (and spaceInBottlenecks) $ void $ waitSTM a                     
-                pure $ SubmitterTask a                    
+                pure $ SubmitterTask a      
 
 
 
-waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m a
+waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m a
 waitTask (RequestorTask t) = t
 waitTask (SubmitterTask a) = wait a
-waitTask (AsyncTask a)     = wait a
+waitTask (AsyncTask a)     = validatorT $ wait a
 
-cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> m ()
+cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m ()
 cancelTask (RequestorTask _) = pure ()
 cancelTask (SubmitterTask a) = cancel a
 cancelTask (AsyncTask a)     = cancel a
@@ -366,3 +335,37 @@ concurrentTasks v1 v2 = do
         pure ((,) <$> r1 <*> r2, vs1 <> vs2)
 
     
+-- TODO There's still a chance that a task is created and starts to run
+-- but an exception kills this thread before the task gets to `tasks` list.
+-- Fix it
+-- (makeTasks >> readIORef tasks >>= mapM waitTask) 
+--     `onException` 
+--     (readIORef tasks >>= mapM cancelTask)
+parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
+                Bottleneck 
+                -> [a] 
+                -> (a -> ValidatorT m b) 
+                -> ValidatorT m [b]
+parallelTasks bottleneck as f =     
+    snd <$> bracketChanClosable
+                (maxBottleneckSize bottleneck)
+                writeAll
+                readAll
+                cancelTask
+    where        
+        writeAll queue = 
+            forM as $ \s -> do
+                t <- f s `strictTask` bottleneck
+                liftIO $ atomically $ writeCQueue queue t
+
+        readAll queue = go             
+            where
+                go = do 
+                    t <- liftIO $ atomically $ readCQueue queue
+                    case t of
+                        Nothing -> pure []
+                        Just t  -> do 
+                            r    <- waitTask t
+                            rest <- go 
+                            pure $! r : rest
+

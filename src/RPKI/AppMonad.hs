@@ -25,8 +25,7 @@ import           RPKI.Time
 
 
 -- Application monad stack
-type ValidatorT m r = 
-        ReaderT ValidatorPath (ExceptT AppError (StateT ValidationState m)) r
+type ValidatorT m r = ValidatorTCurried m r
 
 type ValidatorTCurried m = 
         ReaderT ValidatorPath (ExceptT AppError (StateT ValidationState m))
@@ -39,6 +38,9 @@ vHoist = hoist $ hoist $ hoist generalize
 
 fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT m r
 fromEitherM = lift . ExceptT . lift 
+
+appLift :: Monad m => m r -> ValidatorT m r
+appLift = lift . lift . lift 
 
 -- TODO Make it not so ugly
 validatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
