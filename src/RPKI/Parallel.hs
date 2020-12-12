@@ -250,7 +250,6 @@ maxBottleneckSize (Bottleneck bottlenecks) =
 data Task m a
     = AsyncTask (Async (StM m (Either AppError a, ValidationState)))
     | RequestorTask (ValidatorT m a)
-    | SubmitterTask (Async (StM m (Either AppError a, ValidationState)))
 
 
 -- | If the bootleneck is full, `io` will be executed by the caller of `waitTask`
@@ -315,18 +314,16 @@ newTask io (Bottleneck bottlenecks) execution = do
                 liftIO $ atomically $ do 
                     spaceInBottlenecks <- someSpaceInBottleneck
                     unless (and spaceInBottlenecks) $ void $ waitSTM a                     
-                pure $ SubmitterTask a      
+                pure $ AsyncTask a      
 
 
 
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m a
 waitTask (RequestorTask t) = t
-waitTask (SubmitterTask a) = wait a
 waitTask (AsyncTask a)     = embedValidatorT $ wait a
 
 cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m ()
 cancelTask (RequestorTask _) = pure ()
-cancelTask (SubmitterTask a) = cancel a
 cancelTask (AsyncTask a)     = cancel a
 
 concurrentTasks :: (MonadBaseControl IO m, MonadIO m) =>  

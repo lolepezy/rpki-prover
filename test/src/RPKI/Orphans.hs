@@ -54,10 +54,9 @@ import           Crypto.PubKey.ECC.Types
 import qualified Crypto.PubKey.Ed25519                as Ed25519
 import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
-
-import           RPKI.Util                            (convert, mkHash)
+import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
-import Data.Map (Map)
+import           RPKI.Util       (convert, mkHash)
 
 
 
