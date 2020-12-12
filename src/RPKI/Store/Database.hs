@@ -514,13 +514,12 @@ appTx :: (Storage s, WithStorage s ws) =>
             -> IO (Either AppError a, ValidationState)) 
         -> ValidatorT IO a
 appTx s f txF = do
-    env   <- ask    
-    state <- St.get
-    validatorT $ transaction env state `catch` 
+    env <- ask        
+    embedValidatorT $ transaction env `catch` 
                     (\(TxRollbackException e vs) -> pure (Left e, vs))
   where
-    transaction env state = txF s $ \tx -> do 
-        z@(r, vs) <- runValidatorStateT env state (f tx)
+    transaction env = txF s $ \tx -> do 
+        z@(r, vs) <- runValidatorT env (f tx)
         case r of
             -- abort transaction on ExceptT error
             Left e  -> throwIO $ TxRollbackException e vs
@@ -548,14 +547,13 @@ appTxEx :: (Storage s, WithStorage s ws, Exception exc) =>
             ValidatorT IO a
 appTxEx ws err f txF = do
     env <- ask
-    state <- St.get
-    validatorT $ transaction env state `catches` [
+    embedValidatorT $ transaction env `catches` [
             Handler $ \(TxRollbackException e vs) -> pure (Left e, vs),
             Handler $ \e -> pure (Left (err e), mempty)
         ]       
     where
-        transaction env state = txF (storage ws) $ \tx -> do 
-            z@(r, vs) <- runValidatorStateT env state (f tx)
+        transaction env = txF (storage ws) $ \tx -> do 
+            z@(r, vs) <- runValidatorT env (f tx)
             case r of
                 -- abort transaction on ExceptT error
                 Left e  -> throwIO $ TxRollbackException e vs

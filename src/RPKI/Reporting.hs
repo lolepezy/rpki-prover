@@ -17,6 +17,7 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
 import           Data.Text                   (Text)
+import           Data.Maybe                  (fromMaybe)
 
 import           Codec.Serialise
 import qualified Data.List                   as List
@@ -36,6 +37,7 @@ import           RPKI.Time
 import Control.Lens.Setter (ASetter)
 import Control.Monad.Reader.Class
 import Data.Int (Int64)
+import Data.Monoid
 
 
 newtype ParseError s = ParseError s
@@ -229,7 +231,7 @@ data ValidatorPath = ValidatorPath {
         metricPath     :: MetricPath
     }
     deriving stock (Show, Eq, Ord, Generic)
-    -- deriving anyclass Serialise
+    deriving anyclass Serialise
 
 newValidatorPath :: Text -> ValidatorPath
 newValidatorPath t = ValidatorPath {
@@ -246,72 +248,91 @@ validatorSubPath t vc =
 
 
 
-
 ------------------------------------------------
 ------------ Metrics
 ------------------------------------------------
 
-class MetricC metric where
-    newMetric  :: metric        
+class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
     metricLens :: Lens' AppMetric (MetricMap metric)
+
+newtype Count = Count { unCount :: Int64 }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise   
+    deriving newtype (Num)
+    deriving Semigroup via Sum Count
+    deriving Monoid via Sum Count
 
 newtype TimeTakenMs = TimeTakenMs Int64
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise    
+    deriving newtype (Num)
+    deriving Semigroup via Sum TimeTakenMs
+    deriving Monoid via Sum TimeTakenMs
 
 instance Show TimeTakenMs where 
     show (TimeTakenMs ms) = show ms
 
 data RrdpSource = RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass Serialise        
+
+instance Monoid RrdpSource where
+    mempty = RrdpSnapshot
+
+instance Semigroup RrdpSource where
+    _ <> r = r
 
 data RrdpMetric = RrdpMetric {
-        added       :: Int,
-        deleted     :: Int,        
+        added       :: Count,
+        deleted     :: Count,        
         rrdpSource  :: RrdpSource,
         timeTakenMs :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup RrdpMetric   
+    deriving Monoid    via GenericMonoid RrdpMetric
 
 data RsyncMetric = RsyncMetric {
-        processed   :: Int,        
+        processed   :: Count,        
         timeTakenMs :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup RsyncMetric   
+    deriving Monoid    via GenericMonoid RsyncMetric
 
 data ValidationMetric = ValidationMetric {
-        vrpNumber       :: Int,        
-        validCertNumber :: Int,
-        validRoaNumber  :: Int,
-        validMftNumber  :: Int,
-        validCrlNumber  :: Int,
+        vrpNumber       :: Count,        
+        validCertNumber :: Count,
+        validRoaNumber  :: Count,
+        validMftNumber  :: Count,
+        validCrlNumber  :: Count,
         timeTakenMs     :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup ValidationMetric   
+    deriving Monoid    via GenericMonoid ValidationMetric
 
 instance MetricC RrdpMetric where
-    newMetric  = RrdpMetric 0 0 RrdpSnapshot (TimeTakenMs 0)    
     metricLens = #rrdpMetrics
 
 instance MetricC RsyncMetric where
-    newMetric  = RsyncMetric 0 (TimeTakenMs 0)
     metricLens = #rsyncMetrics
 
 instance MetricC ValidationMetric where 
-    newMetric  = ValidationMetric 0 0 0 0 0 (TimeTakenMs 0)
     metricLens = #validationMetrics
 
 
 newtype MetricMap a = MetricMap (Map MetricPath a)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
-    deriving newtype Monoid
-    deriving newtype Semigroup
+    deriving newtype Monoid    
+
+instance Semigroup a => Semigroup (MetricMap a) where
+    MetricMap m1 <> MetricMap m2 = MetricMap $ Map.unionWith (<>) m1 m2
 
 data AppMetric = AppMetric {
         rsyncMetrics      :: MetricMap RsyncMetric,
@@ -340,13 +361,10 @@ validationsToList :: Validations -> [(VPath, Set VProblem)]
 validationsToList (Validations vMap) = Map.toList vMap 
 
 
-addMetric :: MetricPath -> a -> MetricMap a -> MetricMap a
-addMetric metricPath metric (MetricMap mm) = 
-    MetricMap $ Map.insert metricPath metric mm
-
-updateMetric :: MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
-updateMetric metricPath f (MetricMap mm) = 
-    MetricMap $ Map.update (Just . f) metricPath mm
+updateMetricInMap :: Monoid a => 
+                MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
+updateMetricInMap metricPath f (MetricMap mm) = 
+    MetricMap $ Map.alter (Just . f . fromMaybe mempty) metricPath mm
 
 lookupMetric :: MetricPath -> MetricMap a -> Maybe a
 lookupMetric metricPath (MetricMap mm) = Map.lookup metricPath mm

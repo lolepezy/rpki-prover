@@ -470,6 +470,10 @@ instance Arbitrary RrdpSource where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary Count where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 -- IPs
 
 instance Arbitrary IpPrefix where

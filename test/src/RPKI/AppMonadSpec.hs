@@ -4,21 +4,23 @@
 
 module RPKI.AppMonadSpec where
 
+import           Control.Monad           (forM, unless)
+import qualified Data.Map.Strict         as Map
+import qualified Data.Set                as Set
+import qualified Data.Text               as Text
+
 import           Test.QuickCheck.Monadic
 import           Test.Tasty
-import           Test.Tasty.QuickCheck             as QC
+import           Test.Tasty.QuickCheck   as QC
 
-import qualified Test.Tasty.HUnit                  as HU
+import qualified Test.Tasty.HUnit        as HU
 
-import           RPKI.Domain
-import           RPKI.Repository
-import           RPKI.Orphans
 import           RPKI.AppMonad
-import           RPKI.Reporting
+import           RPKI.Domain
+import           RPKI.Orphans
 import           RPKI.Parallel
-import Control.Monad (unless, forM)
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
+import           RPKI.Reporting
+import           RPKI.Repository
 
 
 isSemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
@@ -61,17 +63,20 @@ concurrentTasksPreservesState = monadicIO $ do
   assert $ fst q == ((,) <$> fst z1 <*> fst z2)
 
 
-parallelTasksPreservesState :: QC.Property
-parallelTasksPreservesState = monadicIO $ do  
-  zs :: [(Either AppError Int, ValidationState)] <- pick arbitrary 
-  b <- run $ newBottleneckIO 2  
+parallelTasksPreservesState :: HU.Assertion
+parallelTasksPreservesState = do    
+  b <- newBottleneckIO 2  
 
-  q <- run $ 
-        runValidatorT (newValidatorPath "zzz") $
-            parallelTasks b zs $ validatorT . pure
-  
-  assert $ snd q == mconcat (map snd zs)
-  assert $ fst q == mapM fst zs
+  let zs = take 20 $ map (Text.pack . show) [1..]  
+  (_, ValidationState { validations = Validations validationMap, .. })     
+        <- runValidatorT (newValidatorPath "zzz") $ do
+                validatorT $ pure (Right (), mempty)
+                parallelTasks b zs $ \z -> 
+                    appWarn $ UnspecifiedE z (z <> "-bla") 
+    
+  HU.assertEqual "Not the same Validations"
+        (Map.lookup (newPath "zzz") validationMap)
+        (Just $ Set.fromList $ map (\z -> VWarn $ VWarning $ UnspecifiedE z (z <> "-bla")) zs)
 
 
 appMonadSpec :: TestTree
@@ -88,7 +93,7 @@ appMonadSpec = testGroup "AppMonad" [
             "concurrentTasks keeps the state and validity"
             concurrentTasksPreservesState,
 
-        QC.testProperty
+        HU.testCase
             "parallelTasks keeps the state and validity"
             parallelTasksPreservesState,
             

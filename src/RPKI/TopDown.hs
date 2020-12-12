@@ -195,7 +195,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
 -- incValidObject :: TaName -> ValidatorT env IO ()
 -- incValidObject taName = do 
---     modifyMetric
+--     updateMetric
 --         (MetricKey $ unTaName taName)
 --         -- TODO Use a prism here
 --         (\a -> let 

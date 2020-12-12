@@ -24,6 +24,7 @@ import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
 import           Data.Maybe
 import           Data.Ord
+import           Data.Proxy
 import qualified Data.Text                         as Text
 
 import           System.Directory
@@ -265,11 +266,11 @@ shouldPreserveStateInAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    let addedObject   = modifyMetric @RrdpMetric @_ (& #added %~ (+1))    
+    let addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))    
 
     (_, ValidationState { validations = Validations validationMap, .. }) 
         <- runValidatorT (newValidatorPath "root") $ 
-            timedMetric (newMetric @RrdpMetric) $ do                 
+            timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
                 rwAppTx storage' $ \tx -> do                             
                     addedObject        
@@ -279,7 +280,7 @@ shouldPreserveStateInAppTx io = do
                     -- just to have a transaction
                     liftIO $ M.get tx z 0
                     subMetricPath "metric-nested-1" $ do 
-                        timedMetric (newMetric @RrdpMetric) $ do                 
+                        timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                             appWarn $ UnspecifiedE "Error3" "text 3"
                             addedObject
 
@@ -287,12 +288,12 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (lookupMetric (newPath "root") (rrdpMetrics topDownMetric))
         (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpSnapshot, timeTakenMs = TimeTakenMs 0 })
+        (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
-        (lookupMetric (newPath "metric-nested-1" <> newPath "root") (rrdpMetrics topDownMetric))
         (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpSnapshot, timeTakenMs = TimeTakenMs 0 })
+        (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
         (Map.lookup (newPath "root") validationMap)
@@ -306,6 +307,9 @@ shouldPreserveStateInAppTx io = do
         (Map.lookup (newPath "nested-1" <> newPath "root") validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
+
+stripTime :: HasType TimeTakenMs metric => metric -> metric
+stripTime = (& typed .~ TimeTakenMs 0)
 
 generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      

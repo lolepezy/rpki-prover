@@ -218,6 +218,8 @@ instance ToJSON (Path 'Metric)
 instance ToJSON TimeTakenMs where 
     toJSON (TimeTakenMs s) = toJSON $ show s <> "ms"
 
+instance ToJSON Count where
+    toJSON (Count s) = toJSON s
 
 -- RPKI Object
 instance ToJSON RObject

@@ -26,6 +26,7 @@ import qualified Streaming.Prelude               as S
 import RPKI.AppMonad
 import Control.Monad.Reader
 import RPKI.Reporting
+import Control.Monad.State
 
 
 atLeastOne :: Natural -> Natural
@@ -274,13 +275,18 @@ newTask :: (MonadBaseControl IO m, MonadIO m) =>
             -> Bottleneck 
             -> BottleneckExecutor -> ValidatorT m (Task m a)
 newTask io (Bottleneck bottlenecks) execution = do     
-    env <- ask
+    env <- ask    
+    -- NOTE: We do not capture the state here, because the task created
+    -- Will start from its own local state == mempty. After the execution,
+    -- will merge this local thread state in the caller's state using 
+    -- `embedValidatorT`.
+    -- 
     join $ liftIO $ atomically $ do     
         eachHasSomeSpace <- someSpaceInBottleneck        
         if and eachHasSomeSpace 
             then do 
                 incSizes                
-                pure $! appLift $ AsyncTask <$> asyncForTask env                        
+                pure $! appLift $ AsyncTask <$> asyncForTask env                       
             else pure $ 
                 case execution of
                     Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
@@ -303,7 +309,7 @@ newTask io (Bottleneck bottlenecks) execution = do
             -- submitterTask :: ValidatorT m (Task m a)
             submitterTask env = do 
                 liftIO $ atomically incSizes
-                a <- asyncForTask env
+                a <- asyncForTask env 
                 -- Wait for either the task to finish, or until there's 
                 -- some free space in the bottleneck.
                 liftIO $ atomically $ do 
@@ -316,7 +322,7 @@ newTask io (Bottleneck bottlenecks) execution = do
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m a
 waitTask (RequestorTask t) = t
 waitTask (SubmitterTask a) = wait a
-waitTask (AsyncTask a)     = validatorT $ wait a
+waitTask (AsyncTask a)     = embedValidatorT $ wait a
 
 cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m ()
 cancelTask (RequestorTask _) = pure ()
@@ -327,7 +333,7 @@ concurrentTasks :: (MonadBaseControl IO m, MonadIO m) =>
                     ValidatorT m a -> ValidatorT m b -> ValidatorT m (a, b)
 concurrentTasks v1 v2 = do
     env <- askEnv
-    validatorT $ do 
+    embedValidatorT $ do 
         ((r1, vs1), (r2, vs2)) <- 
             concurrently 
                 (runValidatorT env v1) 

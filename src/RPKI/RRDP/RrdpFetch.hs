@@ -45,6 +45,7 @@ import qualified Streaming.Prelude                as S
 
 import           System.Mem                       (performGC)
 import Control.Monad.Reader.Class
+import Data.Proxy
 
 
 
@@ -90,8 +91,8 @@ downloadAndUpdateRRDP
                     useSnapshot snapshotInfo notification            
   where
     
-    snapshotUsed = modifyMetric @RrdpMetric @_ (& #rrdpSource .~ RrdpSnapshot)
-    deltaUsed    = modifyMetric @RrdpMetric @_ (& #rrdpSource .~ RrdpDelta)    
+    snapshotUsed = updateMetric @RrdpMetric @_ (& #rrdpSource .~ RrdpSnapshot)
+    deltaUsed    = updateMetric @RrdpMetric @_ (& #rrdpSource .~ RrdpDelta)    
 
     hoistHere    = vHoist . fromEither . first RrdpE        
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
@@ -217,7 +218,7 @@ updateObjectForRrdpRepository :: Storage s =>
                             -> ValidatorT IO RrdpRepository
 updateObjectForRrdpRepository appContext@AppContext {..} repository = do
     let repoURI = getURL $ repository ^. #uri
-    r <- timedMetric (newMetric @RrdpMetric) $ do 
+    r <- timedMetric (Proxy :: Proxy RrdpMetric) $ do 
         rBefore <- getMetric @RrdpMetric
         z <- downloadAndUpdateRRDP 
                 appContext 
@@ -472,10 +473,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
 
 
 addedObject :: Monad m => ValidatorT m ()
-addedObject = modifyMetric @RrdpMetric @_ (& #added %~ (+1))
+addedObject = updateMetric @RrdpMetric @_ (& #added %~ (+1))
 
 deletedObject :: Monad m => ValidatorT m ()
-deletedObject = modifyMetric @RrdpMetric @_ (& #deleted %~ (+1))
+deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
 
 
 parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject VProblem

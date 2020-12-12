@@ -48,6 +48,7 @@ import           System.Process.Typed
 
 import           System.IO.Posix.MMap             (unsafeMMapFile)
 import           System.Mem                       (performGC)
+import Data.Proxy
 
 
 
@@ -133,7 +134,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         doSaveObjects worldVersion
   where     
     doSaveObjects worldVersion = 
-        timedMetric (newMetric @RsyncMetric) $ do         
+        timedMetric (Proxy :: Proxy RsyncMetric) $ do         
             -- counter <- newIORef (0 :: Integer)                
 
             void $ bracketChanClosable 
@@ -216,8 +217,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                         unless alreadyThere $ do 
                             putObject tx objectStore so worldVersion
                             -- U.increment counter
-                            -- modifyMetric (\rm@RsyncMetric {..} -> rm { processed = processed + 1 })
-                            modifyMetric @RsyncMetric @_ (& #processed %~ (+1))
+                            -- updateMetric (\rm@RsyncMetric {..} -> rm { processed = processed + 1 })
+                            updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     
 

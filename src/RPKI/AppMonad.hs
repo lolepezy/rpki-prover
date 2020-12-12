@@ -22,6 +22,7 @@ import           Data.Bifunctor             (Bifunctor (first))
 import           Data.Text                   (Text)
 import           RPKI.Reporting
 import           RPKI.Time
+import Data.Proxy
 
 
 -- Application monad stack
@@ -48,6 +49,13 @@ validatorT s =
     lift $ ExceptT $ do
         (v, w) <- lift s
         put w
+        pure v
+
+embedValidatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
+embedValidatorT s = 
+    lift $ ExceptT $ do
+        (v, w) <- lift s
+        modify' (<> w)
         pure v
 
 -- This one is slightly heuristical: never catch AsyncExceptions.
@@ -160,37 +168,24 @@ inSubContext :: Monad m =>
                 Text -> ValidatorT m r -> ValidatorT m r
 inSubContext text va = subVPath text $ subMetricPath text va    
 
-
-initMetric :: forall m metric . Monad m => 
-            MetricC metric => 
-            metric -> ValidatorT m ()
-initMetric = vHoist . initPureMetric
-
-initPureMetric :: forall metric . MetricC metric => 
-                metric -> PureValidatorT ()
-initPureMetric metric = do 
-    mp <- asks (^. typed)
-    modify' (& typed . metricLens %~ addMetric mp metric)
-
-modifyMetric :: forall metric m . 
+updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
                 (metric -> metric) -> ValidatorT m ()
-modifyMetric = vHoist . modifyPureMetric
+updateMetric = vHoist . updatePureMetric
 
-modifyPureMetric :: forall metric . MetricC metric => 
+updatePureMetric :: forall metric . MetricC metric => 
                     (metric -> metric) -> PureValidatorT ()
-modifyPureMetric f = do 
+updatePureMetric f = do 
     mp <- asks (^. typed)
-    modify' (& typed . metricLens %~ updateMetric mp f)    
+    modify' (& typed . metricLens %~ updateMetricInMap mp f)    
 
 
 timedMetric :: forall m metric r . 
                 (MonadIO m, MetricC metric, HasType TimeTakenMs metric) =>                 
-                metric -> ValidatorT m r -> ValidatorT m r
-timedMetric initial v = do     
-    initMetric initial 
+                Proxy metric -> ValidatorT m r -> ValidatorT m r
+timedMetric _ v = do         
     (r, elapsed) <- timedMS v          
-    modifyMetric ((& typed .~ TimeTakenMs elapsed) :: metric -> metric)
+    updateMetric ((& typed .~ TimeTakenMs elapsed) :: metric -> metric)
     pure r        
 
 
