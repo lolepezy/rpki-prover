@@ -19,7 +19,6 @@ import           Control.Monad
 import           Control.Monad.Except
 
 import qualified Data.ByteString                  as BS
-import           Data.IORef.Lifted
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
@@ -129,24 +128,16 @@ loadRsyncRepository :: Storage s =>
                         RpkiObjectStore s -> 
                         ValidatorT IO ()
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
-    worldVersion  <- liftIO $ getWorldVerionIO appState
-    subMetricPath (unURI $ getURL repositoryUrl) $ 
-        doSaveObjects worldVersion
-  where     
-    doSaveObjects worldVersion = 
-        timedMetric (Proxy :: Proxy RsyncMetric) $ do         
-            -- counter <- newIORef (0 :: Integer)                
-
-            void $ bracketChanClosable 
-                        -- it makes sense to run slightly more tasks because they 
-                        -- will spend some time waiting for the file IO to finish.
-                        (2 * cpuParallelism)
-                        traverseFS
-                        saveObjects
-                        (cancelTask . snd)
-
-            -- readIORef counter
-      where    
+    worldVersion <- liftIO $ getWorldVerionIO appState    
+    void $ timedMetric (Proxy :: Proxy RsyncMetric) $                 
+        bracketChanClosable 
+            -- it makes sense to run slightly more tasks because they 
+            -- will spend some time waiting for the file IO to finish.
+            (2 * cpuParallelism)
+            traverseFS
+            (saveObjects worldVersion)
+            (cancelTask . snd)        
+    where    
         threads = cpuBottleneck appBottlenecks
         cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
 
@@ -191,7 +182,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                                             -- a slow CPU-intensive transaction (verify that it's the case)
                                             Right ro -> Just $! SObject $ toStorableObject ro
         
-        saveObjects queue = do            
+        saveObjects worldVersion queue = do            
             mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
                 rwAppTx objectStore go
             where
@@ -215,9 +206,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     Right (Just (SObject so@(StorableObject ro _))) -> do                        
                         alreadyThere <- hashExists tx objectStore (getHash ro)
                         unless alreadyThere $ do 
-                            putObject tx objectStore so worldVersion
-                            -- U.increment counter
-                            -- updateMetric (\rm@RsyncMetric {..} -> rm { processed = processed + 1 })
+                            putObject tx objectStore so worldVersion                            
                             updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     
