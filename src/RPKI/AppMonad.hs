@@ -58,6 +58,9 @@ embedValidatorT s =
         modify' (<> w)
         pure v
 
+embedState :: Monad m => ValidationState -> ValidatorT m ()
+embedState w = lift $ lift $ modify' (<> w)    
+
 -- This one is slightly heuristical: never catch AsyncExceptions.
 fromTry :: Exception exc => 
             (exc -> AppError) -> 

@@ -241,7 +241,14 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
                         (fetchRepository appContext taURIContext now)
 
     case partitionFailedSuccess fetchStatuses of 
-        ([], _) -> do
+        ([], _) -> do            
+            -- Embed valdiation state accumulated from 
+            -- the fetching into the current validation state.
+            let z = getValidationState fetchStatuses
+            -- logErrorM logger [i|Embedding z = #{z}.|]
+
+            embedState (getValidationState fetchStatuses)
+
             let flattenedStatuses = flip map fetchStatuses $ \case 
                     FetchFailure r s _ -> (r, FailedAt s)
                     FetchSuccess r s _ -> (r, FetchedAt s)
@@ -257,9 +264,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
                 validateCA appContext taURIContext topDownContext taCert                    
 
             -- get publication points from the topDownContext and save it to the database
-            pubPointAfterTopDown <- liftIO $ readTVarIO (publicationPoints topDownContext)
-            
-            -- logDebugM logger [i|#{taName'} validCount = #{validCount} |]
+            pubPointAfterTopDown <- liftIO $ readTVarIO (publicationPoints topDownContext)        
             
             rwAppTxEx database storageError $ \tx -> do                
                 -- 
@@ -330,10 +335,10 @@ fetchRepository
             case r of
                 Left e -> do                        
                     logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
-                    pure $ FetchFailure repo now (vState (mError vContext' e) <> v)
+                    pure $! FetchFailure repo now (vState (mError vContext' e) <> v)
                 Right resultRepo -> do
                     logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-                    pure $ FetchSuccess resultRepo now v
+                    pure $! FetchSuccess resultRepo now v
 
 
 fetchTimeout :: Config -> RpkiURL -> Seconds
@@ -349,6 +354,11 @@ partitionFailedSuccess = go
         go (FetchSuccess r rs v : frs) = let (fs, ss) = go frs in (fs, (r, rs, v) : ss)
         go (FetchFailure r rs v : frs) = let (fs, ss) = go frs in ((r, rs, v) : fs, ss)
 
+getValidationState :: [FetchResult] -> ValidationState
+getValidationState r = mconcat $ flip map r $ \case 
+    FetchSuccess _ _ v -> v
+    FetchFailure _ _ v -> v  
+                
 
 -- | Validate CA starting from its certificate.
 -- 
@@ -384,7 +394,10 @@ validateCARecursively
         T3 discoveredPPs waitingList tdResult <- 
                 validateCaCertificate appContext topDownContext certificate
         tdResults <- extractPPsAndValidateDown discoveredPPs waitingList
-        pure $! mconcat tdResults <> tdResult                
+        let totalResult = mconcat tdResults <> tdResult
+        let totalMetrics = totalResult ^. #tdValidations . #topDownMetric
+        logDebugM logger [i|totalMetrics = #{totalMetrics}|]
+        pure $! totalResult
         
     pure $! case r of
         Left _  -> fromValidations validationState
@@ -604,12 +617,6 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                                 visitObjects topDownContext $ map snd childrenHashes
                         
                         let processChildren = do 
-                                -- let hashesInChunks = chunksOf 200 childrenHashes
-                                -- r <- fmap mconcat $ parallelTasks 
-                                --         (cpuBottleneck appBottlenecks) 
-                                --         hashesInChunks 
-                                --         $ mapM $ \(filename, hash') -> 
-                                --                   validateManifestEntry filename hash' validCrl
                                 r <- parallelTasks 
                                         (cpuBottleneck appBottlenecks) 
                                         childrenHashes

@@ -257,11 +257,14 @@ class Monoid metric => MetricC metric where
     metricLens :: Lens' AppMetric (MetricMap metric)
 
 newtype Count = Count { unCount :: Int64 }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise   
     deriving newtype (Num)
     deriving Semigroup via Sum Count
     deriving Monoid via Sum Count
+
+instance Show Count where 
+    show (Count c) = show c
 
 newtype TimeTakenMs = TimeTakenMs Int64
     deriving stock (Eq, Ord, Generic)

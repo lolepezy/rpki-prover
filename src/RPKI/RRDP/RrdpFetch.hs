@@ -44,7 +44,6 @@ import qualified RPKI.Util                        as U
 import qualified Streaming.Prelude                as S
 
 import           System.Mem                       (performGC)
-import Control.Monad.Reader.Class
 import Data.Proxy
 
 
@@ -98,12 +97,12 @@ downloadAndUpdateRRDP
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
     useSnapshot (SnapshotInfo uri hash) notification = 
-        subVPath (U.convert uri) $ do
-            z <- getMetric @RrdpMetric
-            logDebugM logger [i|22222 z = #{z}.|]
+        subVPath (U.convert uri) $ do            
+            -- logDebugM logger [i|22222 z = #{z}.|]
             logDebugM logger [i|#{uri}: downloading snapshot.|]
             (r, downloadedIn, savedIn) <- downloadAndSave
-            logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot in #{savedIn}ms.|]                        
+            z <- getMetric @RrdpMetric            
+            logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot #{z}.|]                        
             pure r
         where                     
             downloadAndSave = do
@@ -230,8 +229,8 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
         pure z
     
     m <- getMetric @RrdpMetric
-    DB.ifJust m $ \RrdpMetric {..} ->
-            logDebugM logger [i|Downloaded #{repoURI}, added #{added} objects, ignored removals of #{deleted}.|]
+    DB.ifJust m $ \r ->
+            logDebugM logger [i|Downloaded #{repoURI}, r = #{r}.|]
     pure r
 
 
@@ -275,11 +274,11 @@ saveSnapshot appContext repoUri notification snapshotContent = do
       where
         savingTx sessionId serial f = 
             rwAppTx objectStore $ \tx -> do
-                r <- getMetric @RrdpMetric
-                logDebugM logger [i|77777 r = #{r}.|]
+                -- r <- getMetric @RrdpMetric
+                -- logDebugM logger [i|77777 r = #{r}.|]
                 f tx
-                r1 <- getMetric @RrdpMetric
-                logDebugM logger [i|88888 r = #{r1}.|]                 
+                -- r1 <- getMetric @RrdpMetric
+                -- logDebugM logger [i|88888 r = #{r1}.|]                 
                 RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
         newStorable (SnapshotPublish uri encodedb64) =             
@@ -329,12 +328,12 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     subVPath (unURI uri) $ appError e                 
                 Just (SObject so) -> do 
                     DB.putObject tx objectStore so worldVersion
-                    z <- ask
-                    r1 <- getMetric @RrdpMetric
+                    -- z <- ask
+                    -- r1 <- getMetric @RrdpMetric
                     addedObject
-                    r2 <- getMetric @RrdpMetric
-                    logInfoM logger [i| z = #{z}, r1 = #{r1}, r2 = #{r2}|]
-                    pure ()
+                    -- r2 <- getMetric @RrdpMetric
+                    -- logInfoM logger [i| z = #{z}, r1 = #{r1}, r2 = #{r2}|]
+                    -- pure ()
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
