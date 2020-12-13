@@ -288,11 +288,11 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpSnapshot, timeTakenMs = TimeTakenMs 0 })
+        (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpNothing, timeTakenMs = TimeTakenMs 0 })
         (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
-        (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpSnapshot, timeTakenMs = TimeTakenMs 0 })
+        (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpNothing, timeTakenMs = TimeTakenMs 0 })
         (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     

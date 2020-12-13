@@ -72,39 +72,38 @@ downloadAndUpdateRRDP
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
     case nextStep of
-        NothingToDo -> pure repo
+        NothingToDo -> do 
+            used RrdpNothing
+            pure repo
 
         UseSnapshot snapshotInfo -> do 
-            -- r <- getMetric @RrdpMetric
-            -- logDebugM logger [i|11111 r = #{r}.|]
-            snapshotUsed >> useSnapshot snapshotInfo notification
+            used RrdpSnapshot
+            useSnapshot snapshotInfo notification
 
         UseDeltas sortedDeltas snapshotInfo -> 
-                (deltaUsed >> useDeltas sortedDeltas notification)
+                (used RrdpDelta >> useDeltas sortedDeltas notification)
                     `catchError` 
                 \e -> do         
                     -- NOTE At the moment we ignore the fact that some objects are wrongfully added
                     logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
                     appWarn e
-                    snapshotUsed
+                    used RrdpSnapshot
                     useSnapshot snapshotInfo notification            
   where
     
-    snapshotUsed = updateMetric @RrdpMetric @_ (& #rrdpSource .~ RrdpSnapshot)
-    deltaUsed    = updateMetric @RrdpMetric @_ (& #rrdpSource .~ RrdpDelta)    
-
+    used z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)
+    
     hoistHere    = vHoist . fromEither . first RrdpE        
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
     useSnapshot (SnapshotInfo uri hash) notification = 
-        subVPath (U.convert uri) $ do            
-            -- logDebugM logger [i|22222 z = #{z}.|]
+        subVPath (U.convert uri) $ do
             logDebugM logger [i|#{uri}: downloading snapshot.|]
             (r, downloadedIn, savedIn) <- downloadAndSave
-            z <- getMetric @RrdpMetric            
+            z <- getMetric @RrdpMetric
             logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot #{z}.|]                        
             pure r
-        where                     
+        where
             downloadAndSave = do
                 ((rawContent, _), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 

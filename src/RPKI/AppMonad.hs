@@ -149,7 +149,7 @@ valid :: Applicative m =>
 valid = pure (Right (), mempty)
 
 vWarn :: Monad m =>
-            ValidationError -> ValidatorT m ()
+        ValidationError -> ValidatorT m ()
 vWarn = validatorWarning . VWarning . ValidationE
 
 appWarn :: Monad m =>

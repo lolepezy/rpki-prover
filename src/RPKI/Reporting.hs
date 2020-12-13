@@ -276,15 +276,17 @@ newtype TimeTakenMs = TimeTakenMs Int64
 instance Show TimeTakenMs where 
     show (TimeTakenMs ms) = show ms
 
-data RrdpSource = RrdpDelta | RrdpSnapshot
+data RrdpSource = RrdpNothing | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
 
 instance Monoid RrdpSource where
-    mempty = RrdpSnapshot
+    mempty = RrdpNothing
 
 instance Semigroup RrdpSource where
-    _ <> r = r
+    RrdpNothing <> r           = r
+    r           <> RrdpNothing = r
+    _           <> r           = r
 
 data RrdpMetric = RrdpMetric {
         added       :: Count,
