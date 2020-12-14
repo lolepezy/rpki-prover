@@ -57,6 +57,7 @@ import qualified Crypto.PubKey.RSA                    as RSA
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 import           RPKI.Util       (convert, mkHash)
+import RPKI.CommonTypes
 
 
 
@@ -452,7 +453,11 @@ instance Arbitrary ValidationMetric where
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where
-    arbitrary = generateMap MetricMap
+    arbitrary = generateMap $ MetricMap . MonoidMap
+    shrink = genericShrink
+
+instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidMap k v) where
+    arbitrary = genericArbitrary
     shrink = genericShrink
 
 generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b

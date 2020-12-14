@@ -77,7 +77,7 @@ runWorkflow appContext@AppContext {..} tals = do
             generateNewWorldVersion, 
             generatePeriodicTask 10_000_000 cacheCleanupInterval CacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval CleanOldVersions,
-            generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval Defragment,
+            -- generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval Defragment,
             rtrServer   
         ]
     where
@@ -128,16 +128,17 @@ runWorkflow appContext@AppContext {..} tals = do
                     logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
                     pure r
 
-                saveTopDownResult TopDownResult {..} = rwTx database $ \tx -> do
-                    let uniqueVrps = Set.fromList vrps
-                    putValidations tx (validationsStore database) worldVersion (tdValidations ^. typed)
-                    putMetrics tx (metricStore database) worldVersion (tdValidations ^. typed)
-                    putVrps tx database (Set.toList uniqueVrps) worldVersion
-                    completeWorldVersion tx database worldVersion
-                    atomically $ do 
-                        completeCurrentVersion appState                                    
-                        writeTVar (appState ^. #currentVrps) uniqueVrps
-                    pure uniqueVrps
+                saveTopDownResult TopDownResult {..} = 
+                    rwTx database $ \tx -> do
+                        let uniqueVrps = Set.fromList vrps
+                        putValidations tx (validationsStore database) worldVersion (tdValidations ^. typed)
+                        putMetrics tx (metricStore database) worldVersion (tdValidations ^. typed)
+                        putVrps tx database (Set.toList uniqueVrps) worldVersion
+                        completeWorldVersion tx database worldVersion
+                        atomically $ do 
+                            completeCurrentVersion appState                                    
+                            writeTVar (appState ^. #currentVrps) uniqueVrps
+                        pure uniqueVrps
 
         cacheGC worldVersion = do
             let now = versionToMoment worldVersion

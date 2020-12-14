@@ -53,6 +53,7 @@ import           RPKI.Store.Database
 import           RPKI.Time
 import qualified RPKI.Util                   as U
 import RPKI.Config
+import RPKI.CommonTypes
 
 
 
@@ -208,6 +209,7 @@ instance ToJSON RepositoryStats
 instance ToJSON DBStats
 instance ToJSON AppMetric
 instance ToJSON a => ToJSON (MetricMap a)
+instance (ToJSONKey k, ToJSON v) => ToJSON (MonoidMap k v)
 instance ToJSON ValidationMetric
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric

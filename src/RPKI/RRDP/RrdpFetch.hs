@@ -97,7 +97,7 @@ downloadAndUpdateRRDP
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
     useSnapshot (SnapshotInfo uri hash) notification = 
-        subVPath (U.convert uri) $ do
+        inSubVPath (U.convert uri) $ do
             logDebugM logger [i|#{uri}: downloading snapshot.|]
             (r, downloadedIn, savedIn) <- downloadAndSave
             z <- getMetric @RrdpMetric
@@ -135,7 +135,7 @@ downloadAndUpdateRRDP
                             (S.each sortedDeltas)
                             downloadDelta
                             (\(rawContent, serial, deltaUri) _ -> 
-                                subVPath deltaUri $ 
+                                inSubVPath deltaUri $ 
                                     handleDeltaBS repoUri notification serial rawContent)
                             (mempty :: ())
         
@@ -144,7 +144,7 @@ downloadAndUpdateRRDP
             downloadDelta (DeltaInfo uri hash serial) = do
                 let deltaUri = U.convert uri 
                 (rawContent, _) <- 
-                    subVPath deltaUri $  
+                    inSubVPath deltaUri $  
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                             downloadHashedStrictBS appContext uri hash
                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
@@ -314,17 +314,17 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                                 Right ro -> Just $! SObject $ toStorableObject ro
                                         
         saveStorable _ (Left (e, uri)) _ = 
-            subVPath (unURI uri) $ appWarn e             
+            inSubVPath (unURI uri) $ appWarn e             
 
         saveStorable tx (Right (uri, a)) _ =           
             waitTask a >>= \case     
                 Nothing -> pure ()                   
                 Just (SError (VWarn (VWarning e))) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    subVPath (unURI uri) $ appWarn e 
+                    inSubVPath (unURI uri) $ appWarn e 
                 Just (SError (VErr e)) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    subVPath (unURI uri) $ appError e                 
+                    inSubVPath (unURI uri) $ appError e                 
                 Just (SObject so) -> do 
                     DB.putObject tx objectStore so worldVersion
                     -- z <- ask
@@ -409,7 +409,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
             pure $ Right $ Delete uri hash
         
         saveStorable _ (Left (e, uri)) _ = 
-            subVPath (unURI uri) $ appWarn e             
+            inSubVPath (unURI uri) $ appWarn e             
 
         saveStorable tx (Right op) _ =
             case op of
@@ -427,10 +427,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
             waitTask a >>= \case
                 SError (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    subVPath (unURI uri) $ appWarn e 
+                    inSubVPath (unURI uri) $ appWarn e 
                 SError (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    subVPath (unURI uri) $ appError e 
+                    inSubVPath (unURI uri) $ appError e 
                 SObject so@(StorableObject ro _) -> do
                     alreadyThere <- DB.hashExists tx objectStore (getHash ro)
                     unless alreadyThere $ do
@@ -441,10 +441,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
             waitTask a >>= \case
                 SError (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    subVPath (unURI uri) $ appWarn e 
+                    inSubVPath (unURI uri) $ appWarn e 
                 SError (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    subVPath (unURI uri) $ appError e 
+                    inSubVPath (unURI uri) $ appError e 
                 SObject so@(StorableObject ro _) -> do        
                     oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
                     if oldOneIsAlreadyThere 
@@ -453,7 +453,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                             deletedObject
                         else do 
                             logWarnM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                            subVPath (unURI uri) $ 
+                            inSubVPath (unURI uri) $ 
                                 appError $ RrdpE $ NoObjectToReplace uri oldHash
 
                     newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
@@ -470,10 +470,8 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
     repositoryStore = database ^. #repositoryStore
 
 
-addedObject :: Monad m => ValidatorT m ()
-addedObject = updateMetric @RrdpMetric @_ (& #added %~ (+1))
-
-deletedObject :: Monad m => ValidatorT m ()
+addedObject, deletedObject :: Monad m => ValidatorT m ()
+addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))
 deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
 
 
@@ -491,26 +489,3 @@ parseAndProcess u b64 =
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Task m a) 
                 | Replace URI (Task m a) Hash
-
--- data RrdpStat = RrdpStat {
---     added   :: Int,
---     removed :: Int
--- }
-
--- data RrdpStatWork = RrdpStatWork {
---     added   :: IORef Int,
---     removed :: IORef Int
--- }
-
--- completeRrdpStat :: RrdpStatWork -> IO RrdpStat
--- completeRrdpStat RrdpStatWork {..} = 
---     RrdpStat <$> readIORef added <*> readIORef removed
-
--- newRrdpStat :: IO RrdpStatWork
--- newRrdpStat = RrdpStatWork <$> newIORef 0 <*> newIORef 0
-
--- addedOne :: MonadIO m => RrdpStatWork -> m ()
--- addedOne RrdpStatWork {..} = U.increment added
-
--- removedOne :: MonadIO m => RrdpStatWork -> m ()
--- removedOne RrdpStatWork {..} = U.increment removed

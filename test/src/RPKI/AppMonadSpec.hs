@@ -78,11 +78,9 @@ parallelTasksPreservesState = monadicIO $ do
                         parallelTasks b zs $ \z -> 
                             appWarn $ UnspecifiedE z (z <> "-bla") 
     let x = Map.lookup (newPath "zzz") validationMap
-    let y = Just (Set.fromList $ map (\z -> VWarn $ VWarning $ UnspecifiedE z (z <> "-bla")) zs)
-    when (x /= y) $ do 
-        run $ putStrLn $ "x = " <> show x
+    let y = Just (Set.fromList $ map (\z -> VWarn $ VWarning $ UnspecifiedE z (z <> "-bla")) zs)    
     assert $ x == y
-        
+    
         
 
 

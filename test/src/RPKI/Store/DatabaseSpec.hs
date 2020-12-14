@@ -275,11 +275,11 @@ shouldPreserveStateInAppTx io = do
                 rwAppTx storage' $ \tx -> do                             
                     addedObject        
                     appWarn $ UnspecifiedE "Error1" "text 1"
-                    subVPath "nested-1" $ 
+                    inSubVPath "nested-1" $ 
                         appWarn $ UnspecifiedE "Error2" "text 2"
                     -- just to have a transaction
                     liftIO $ M.get tx z 0
-                    subMetricPath "metric-nested-1" $ do 
+                    inSubMetricPath "metric-nested-1" $ do 
                         timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                             appWarn $ UnspecifiedE "Error3" "text 3"
                             addedObject

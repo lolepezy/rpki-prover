@@ -159,17 +159,17 @@ appWarn = validatorWarning . VWarning
 askEnv :: MonadReader r m => m r
 askEnv = ask
 
-subVPath :: Monad m => 
+inSubVPath :: Monad m => 
             Text -> ValidatorT m r -> ValidatorT m r
-subVPath t = local (& typed @VPath %~ (newPath t <>))
+inSubVPath t = local (& typed @VPath %~ (newPath t <>))
 
-subMetricPath :: Monad m => 
+inSubMetricPath :: Monad m => 
                 Text -> ValidatorT m r -> ValidatorT m r
-subMetricPath text = local (& typed @MetricPath %~ (newPath text <>))
+inSubMetricPath text = local (& typed @MetricPath %~ (newPath text <>))
 
-inSubContext :: Monad m => 
+inSubPath :: Monad m => 
                 Text -> ValidatorT m r -> ValidatorT m r
-inSubContext text va = subVPath text $ subMetricPath text va    
+inSubPath text va = inSubVPath text $ inSubMetricPath text va    
 
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
@@ -186,7 +186,7 @@ updatePureMetric f = do
 timedMetric :: forall m metric r . 
                 (MonadIO m, MetricC metric, HasType TimeTakenMs metric) =>                 
                 Proxy metric -> ValidatorT m r -> ValidatorT m r
-timedMetric _ v = do         
+timedMetric _ v = do
     (r, elapsed) <- timedMS v          
     updateMetric ((& typed .~ TimeTakenMs elapsed) :: metric -> metric)
     pure r        

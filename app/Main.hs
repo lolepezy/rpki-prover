@@ -87,7 +87,7 @@ runValidatorApp appContext@AppContext {..} = do
     let validationContext = newValidatorPath "validation-root"
     (tals, validationState) <- runValidatorT validationContext $ 
         forM talFileNames $ \talFileName -> 
-            subVPath (convert talFileName) $ parseTALFromFile talFileName
+            inSubVPath (convert talFileName) $ parseTALFromFile talFileName
 
     logInfo_ logger [i|Successfully loaded #{length talFileNames} TALs.|]    
     rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion (validationState ^. typed)    

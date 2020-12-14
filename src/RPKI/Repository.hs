@@ -461,9 +461,8 @@ shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (LastSuccededMap l
         rsyncs'       = Map.foldrWithKey addWithParents Map.empty rsyncs
         lastSucceded' = Map.filterWithKey (\u _ -> u `Set.member` uris) lastSucceded
 
-        (rrdpURLs, rsyncURLs) = first Set.fromList $ 
-                                    second Set.fromList $ 
-                                        Set.foldr partitionURLs ([], []) uris
+        (rrdpURLs, rsyncURLs) = bimap Set.fromList Set.fromList 
+                                    $ Set.foldr partitionURLs ([], []) uris
         partitionURLs (RrdpU r) (rr, rs)  = (r : rr, rs)
         partitionURLs (RsyncU r) (rr, rs) = (rr, r : rs)
 
@@ -484,15 +483,19 @@ shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (LastSuccededMap l
 -- | Fix lastSucceeded map based on statuses. 
 -- 
 -- We need to have this because 
--- 1) PublicationPoints is a semigroup for convenience of using <> and mconcat for 
+-- 
+-- * PublicationPoints is a semigroup for convenience of using <> and mconcat for 
 -- multiple things (maps, statuses, etc.);
--- 2) lastSucceeded is semantically dependent on statuses (stored in RrrdpMap and RsyncMap);
--- 3) It's impossible to adjust lastSucceeded based on RrrdpMap and RsyncMap while keeping
+-- 
+-- * lastSucceeded is semantically dependent on statuses (stored in RrrdpMap and RsyncMap);
+-- 
+-- * It's impossible to adjust lastSucceeded based on RrrdpMap and RsyncMap while keeping
 -- semigroup property.
 --
 -- That's why adjusting lastSucceeded must happen as a separate step without all the semigroup laws.
 --
 -- There must be a more elegant way of doing this, but that works for now.
+-- 
 adjustLastSucceeded :: PublicationPoints -> PublicationPoints
 adjustLastSucceeded 
     (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) lastSucceded) = 
@@ -508,6 +511,7 @@ adjustLastSucceeded
             (\(u, status) ls -> succeededFromStatus (RsyncU u) status ls) 
             mempty
             [ (u, status) | (u, Root status) <- Map.toList rsyncs ]        
+
 
 lastSuccess :: PublicationPoints -> RpkiURL -> Maybe Instant
 lastSuccess PublicationPoints { lastSucceded = LastSuccededMap m } u = 

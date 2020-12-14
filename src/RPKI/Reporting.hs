@@ -9,15 +9,14 @@
 
 
 module RPKI.Reporting where
-
-import           Control.Lens                (Lens', (^.), (.~), (&), (%~))
 import           Control.Exception.Lifted
+import           Control.Lens                (Lens', (%~), (&), (.~), (^.))
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
-import           Data.Text                   (Text)
 import           Data.Maybe                  (fromMaybe)
+import           Data.Text                   (Text)
 
 import           Codec.Serialise
 import qualified Data.List                   as List
@@ -34,10 +33,11 @@ import           Data.Maybe                  (listToMaybe)
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Time
-import Control.Lens.Setter (ASetter)
-import Control.Monad.Reader.Class
-import Data.Int (Int64)
-import Data.Monoid
+
+import           Data.Int                    (Int64)
+import           Data.Monoid
+import RPKI.CommonTypes
+
 
 
 newtype ParseError s = ParseError s
@@ -331,13 +331,11 @@ instance MetricC ValidationMetric where
     metricLens = #validationMetrics
 
 
-newtype MetricMap a = MetricMap (Map MetricPath a)
+newtype MetricMap a = MetricMap (MonoidMap MetricPath a)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype Monoid    
-
-instance Semigroup a => Semigroup (MetricMap a) where
-    MetricMap m1 <> MetricMap m2 = MetricMap $ Map.unionWith (<>) m1 m2
+    deriving newtype Semigroup
 
 data AppMetric = AppMetric {
         rsyncMetrics      :: MetricMap RsyncMetric,
@@ -368,11 +366,11 @@ validationsToList (Validations vMap) = Map.toList vMap
 
 updateMetricInMap :: Monoid a => 
                 MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
-updateMetricInMap metricPath f (MetricMap mm) = 
-    MetricMap $ Map.alter (Just . f . fromMaybe mempty) metricPath mm
+updateMetricInMap metricPath f (MetricMap (MonoidMap mm)) = 
+    MetricMap $ MonoidMap $ Map.alter (Just . f . fromMaybe mempty) metricPath mm
 
 lookupMetric :: MetricPath -> MetricMap a -> Maybe a
-lookupMetric metricPath (MetricMap mm) = Map.lookup metricPath mm
+lookupMetric metricPath (MetricMap (MonoidMap mm)) = Map.lookup metricPath mm
 
 -- Experimental more economical version of Validations
 
