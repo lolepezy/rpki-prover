@@ -7,6 +7,9 @@ module RPKI.Parallel where
 
 import           Control.Concurrent.STM
 import           Control.Monad
+import           Control.Monad.Reader
+import           Control.Monad.State
+
 import           Numeric.Natural
 
 import qualified Control.Concurrent.STM.TBQueue  as Q
@@ -21,12 +24,11 @@ import qualified Data.List.NonEmpty              as NonEmpty
 
 import           Data.IORef.Lifted
 
+import           RPKI.AppMonad
+import           RPKI.Reporting
 import           Streaming
 import qualified Streaming.Prelude               as S
-import RPKI.AppMonad
-import Control.Monad.Reader
-import RPKI.Reporting
-import Control.Monad.State
+
 
 
 atLeastOne :: Natural -> Natural
@@ -140,22 +142,42 @@ txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
                                 _ -> go (Just tx) (leftToRead - 1) accum'
 
 
+bracketChanClosableVT :: (MonadBaseControl IO m, MonadIO m) =>
+                Natural ->
+                (ClosableQueue t -> ValidatorT m b) ->
+                (ClosableQueue t -> ValidatorT m c) ->
+                (t -> ValidatorT m w) ->
+                ValidatorT m (b, c)
+bracketChanClosableVT size produce consume kill = 
+    bracketChanClosableImpl size produce consume kill concurrentTasks
+    
+bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
+                Natural ->
+                (ClosableQueue t -> m b) ->
+                (ClosableQueue t -> m c) ->
+                (t -> m w) ->
+                m (b, c)
+bracketChanClosable size produce consume kill = 
+    bracketChanClosableImpl size produce consume kill concurrently
+
+
 -- 
 -- | Created two threads and queue between then. Calls
 -- 'produce' in one thread and 'consume' in the other thread,
 -- 'kill' is used to kill an item in the queue in case
 -- the whole thing is interrupted with an exception.
 --
-bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
-                Natural ->
-                (ClosableQueue t -> ValidatorT m b) ->
-                (ClosableQueue t -> ValidatorT m c) ->
-                (t -> ValidatorT m w) ->
-                ValidatorT m (b, c)
-bracketChanClosable size produce consume kill = do        
+bracketChanClosableImpl :: (MonadBaseControl IO m, MonadIO m) =>
+                Natural 
+                -> (ClosableQueue t -> m b) 
+                -> (ClosableQueue t -> m c) 
+                -> (t -> m w) 
+                -> (m b -> m c -> m (b, c)) 
+                -> m (b, c)
+bracketChanClosableImpl size produce consume kill concurrentRun = do        
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
-    concurrentTasks
+    concurrentRun
             (produce queue `finally` closeQ) 
             (consume queue `finally` closeQ)
         `finally`
@@ -311,10 +333,13 @@ newTask io (Bottleneck bottlenecks) execution = do
                 a <- asyncForTask env 
                 -- Wait for either the task to finish, or until there's 
                 -- some free space in the bottleneck.
-                liftIO $ atomically $ do 
+                liftIO (atomically $ do 
                     spaceInBottlenecks <- someSpaceInBottleneck
-                    unless (and spaceInBottlenecks) $ void $ waitSTM a                     
-                pure $ AsyncTask a      
+                    unless (and spaceInBottlenecks) $ void $ waitSTM a)
+                    `onException`
+                        cancel a
+
+                pure $! AsyncTask a      
 
 
 
@@ -338,12 +363,7 @@ concurrentTasks v1 v2 = do
         pure ((,) <$> r1 <*> r2, vs1 <> vs2)
 
     
--- TODO There's still a chance that a task is created and starts to run
--- but an exception kills this thread before the task gets to `tasks` list.
--- Fix it
--- (makeTasks >> readIORef tasks >>= mapM waitTask) 
---     `onException` 
---     (readIORef tasks >>= mapM cancelTask)
+-- 
 parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck 
                 -> [a] 
@@ -371,4 +391,5 @@ parallelTasks bottleneck as f =
                             r    <- waitTask t
                             rest <- go 
                             pure $! r : rest
+
 

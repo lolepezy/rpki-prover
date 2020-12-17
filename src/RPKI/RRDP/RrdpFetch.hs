@@ -99,9 +99,7 @@ downloadAndUpdateRRDP
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubVPath (U.convert uri) $ do
             logDebugM logger [i|#{uri}: downloading snapshot.|]
-            (r, downloadedIn, savedIn) <- downloadAndSave
-            z <- getMetric @RrdpMetric
-            logDebugM logger [i|#{uri}: downloaded in #{downloadedIn}ms and saved snapshot #{z}.|]                        
+            (r, downloadedIn, savedIn) <- downloadAndSave            
             pure r
         where
             downloadAndSave = do
@@ -109,7 +107,12 @@ downloadAndUpdateRRDP
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                 downloadHashedStrictBS appContext uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
-                (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent            
+
+                updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs downloadedIn)
+
+                (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
+                updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
+
                 pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
 
             rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)                    
@@ -130,15 +133,18 @@ downloadAndUpdateRRDP
                 -- TODO Do not thrash the same server with too big amount of parallel 
                 -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
                 localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-                void $ foldPipeline
-                            (localRepoBottleneck <> ioBottleneck)
-                            (S.each sortedDeltas)
-                            downloadDelta
-                            (\(rawContent, serial, deltaUri) _ -> 
-                                inSubVPath deltaUri $ 
-                                    handleDeltaBS repoUri notification serial rawContent)
-                            (mempty :: ())
+                (_, savedIn) <- timedMS $ foldPipeline
+                                    (localRepoBottleneck <> ioBottleneck)
+                                    (S.each sortedDeltas)
+                                    downloadDelta
+                                    (\(rawContent, serial, deltaUri) _ -> 
+                                        inSubVPath deltaUri $ 
+                                            handleDeltaBS repoUri notification serial rawContent)
+                                    (mempty :: ())
         
+                updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs savedIn)
+                updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
+
                 pure $ repo { rrdpMeta = rrdpMeta' }
 
             downloadDelta (DeltaInfo uri hash serial) = do
@@ -216,26 +222,18 @@ updateObjectForRrdpRepository :: Storage s =>
                             -> ValidatorT IO RrdpRepository
 updateObjectForRrdpRepository appContext@AppContext {..} repository = do
     let repoURI = getURL $ repository ^. #uri
-    r <- timedMetric (Proxy :: Proxy RrdpMetric) $ do 
-        rBefore <- getMetric @RrdpMetric
-        z <- downloadAndUpdateRRDP 
-                appContext 
-                repository 
-                (saveSnapshot appContext)  
-                (saveDelta appContext)       
-        rAfter <- getMetric @RrdpMetric
-        logDebugM logger [i|Metrics #{repoURI}, rBefore = #{rBefore}, rAfter = #{rAfter}.|]
-        pure z
-    
-    m <- getMetric @RrdpMetric
-    DB.ifJust m $ \r ->
-            logDebugM logger [i|Downloaded #{repoURI}, r = #{r}.|]
-    pure r
+    timedMetric (Proxy :: Proxy RrdpMetric) $ 
+        downloadAndUpdateRRDP 
+            appContext 
+            repository 
+            (saveSnapshot appContext)  
+            (saveDelta appContext)                           
 
 
-{- Snapshot case, done in parallel by two thread
-    - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
-    - another thread read parsing tasks, waits for them and saves the results into the DB.
+{- 
+    Snapshot case, done in parallel by two thread
+        - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
+        - another thread read parsing tasks, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
                 AppContext s 
@@ -249,10 +247,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
     doSaveObjects worldVersion 
   where
       -- 
-    doSaveObjects worldVersion = do
-        -- r <- getMetric @RrdpMetric
-        -- logDebugM logger [i|33333 r = #{r}.|]
-
+    doSaveObjects worldVersion = do    
         (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
             fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
@@ -272,35 +267,27 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     (mempty :: ())
       where
         savingTx sessionId serial f = 
-            rwAppTx objectStore $ \tx -> do
-                -- r <- getMetric @RrdpMetric
-                -- logDebugM logger [i|77777 r = #{r}.|]
-                f tx
-                -- r1 <- getMetric @RrdpMetric
-                -- logDebugM logger [i|88888 r = #{r1}.|]                 
+            rwAppTx objectStore $ \tx -> do                
+                f tx                
                 RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
         newStorable (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
-                    -- r <- getMetric @RrdpMetric
-                    -- logDebugM logger [i|44444 r = #{r}.|]
                     task <- readBlob `strictTask` bottleneck
                     pure $ Right (uri, task)
                 else
                     pure $ Left (RrdpE UnsupportedObjectType, uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
-                    Left e        -> pure $! Just $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                    Left e -> 
+                        pure $! Just $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+
                     Right rpkiURL ->
                         case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
                             Left e -> pure $! Just $ SError $ VErr e
-                            Right (DecodedBase64 decoded) -> do 
-                                -- r <- getMetric @RrdpMetric
-                                -- logDebugM logger [i|55555 r = #{r}.|] 
-                                roAppTx database $ \tx -> do
-                                    -- r <- getMetric @RrdpMetric
-                                    -- logDebugM logger [i|66666 r = #{r}.|] 
+                            Right (DecodedBase64 decoded) ->
+                                roAppTx database $ \tx -> do                                    
                                     exists <- DB.hashExists tx objectStore (U.sha256s decoded)
                                     pure $! if exists 
                                     -- The object is already in cache. Do not parse-serialise
@@ -327,12 +314,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     inSubVPath (unURI uri) $ appError e                 
                 Just (SObject so) -> do 
                     DB.putObject tx objectStore so worldVersion
-                    -- z <- ask
-                    -- r1 <- getMetric @RrdpMetric
-                    addedObject
-                    -- r2 <- getMetric @RrdpMetric
-                    -- logInfoM logger [i| z = #{z}, r1 = #{r1}, r2 = #{r2}|]
-                    -- pure ()
+                    addedObject                    
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism

@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module RPKI.AppMonad where
@@ -23,6 +24,7 @@ import           Data.Text                   (Text)
 import           RPKI.Reporting
 import           RPKI.Time
 import Data.Proxy
+import Data.Generics.Product (HasField)
 
 
 -- Application monad stack
@@ -184,11 +186,13 @@ updatePureMetric f = do
 
 
 timedMetric :: forall m metric r . 
-                (MonadIO m, MetricC metric, HasType TimeTakenMs metric) =>                 
+                (MonadIO m, 
+                 MetricC metric, 
+                 HasField "timeTakenMs" metric metric TimeTakenMs TimeTakenMs) =>                 
                 Proxy metric -> ValidatorT m r -> ValidatorT m r
 timedMetric _ v = do
     (r, elapsed) <- timedMS v          
-    updateMetric ((& typed .~ TimeTakenMs elapsed) :: metric -> metric)
+    updateMetric ((& #timeTakenMs .~ TimeTakenMs elapsed) :: metric -> metric)
     pure r        
 
 

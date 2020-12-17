@@ -102,12 +102,9 @@ updateObjectForRsyncRepository
     case exitCode of  
         ExitSuccess -> do 
             -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
-            -- they will hold too much files open.
-            --
-            -- TODO Remove it, use just the metric
-            count <- loadRsyncRepository appContext uri destination objectStore
-                        `finally` liftIO performGC
-            logInfoM logger [i|Finished loading #{count} objects into local storage.|]
+            -- they will hold too much files open.            
+            loadRsyncRepository appContext uri destination objectStore
+                        `finally` liftIO performGC            
             pure repo
         ExitFailure errorCode -> do
             logErrorM logger [i|Rsync process failed: #{rsync} 

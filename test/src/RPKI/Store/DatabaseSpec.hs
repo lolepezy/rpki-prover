@@ -52,6 +52,7 @@ import           RPKI.Time
 
 import           RPKI.RepositorySpec
 import qualified Data.Set as Set
+import Data.Generics.Product (HasField)
 
 
 
@@ -288,12 +289,19 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpNothing, timeTakenMs = TimeTakenMs 0 })
+        (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpNothing, 
+                             downloadTakenMs = TimeTakenMs 0, 
+                             saveTakenMs = TimeTakenMs 0, 
+                             timeTakenMs = TimeTakenMs 0 })
         (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
-        (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpNothing, timeTakenMs = TimeTakenMs 0 })
-        (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") (rrdpMetrics topDownMetric))        
+        (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpNothing, 
+                             downloadTakenMs = TimeTakenMs 0, 
+                             saveTakenMs = TimeTakenMs 0, 
+                             timeTakenMs = TimeTakenMs 0 })
+        (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") 
+                            (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
         (Map.lookup (newPath "root") validationMap)
@@ -308,8 +316,8 @@ shouldPreserveStateInAppTx io = do
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
-stripTime :: HasType TimeTakenMs metric => metric -> metric
-stripTime = (& typed .~ TimeTakenMs 0)
+stripTime :: HasField "timeTakenMs" metric metric TimeTakenMs TimeTakenMs => metric -> metric
+stripTime = (& #timeTakenMs .~ TimeTakenMs 0)
 
 generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      

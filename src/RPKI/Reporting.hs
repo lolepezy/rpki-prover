@@ -15,7 +15,7 @@ import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
-import           Data.Maybe                  (fromMaybe)
+import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Text                   (Text)
 
 import           Codec.Serialise
@@ -28,8 +28,6 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           GHC.Generics
-
-import           Data.Maybe                  (listToMaybe)
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Time
@@ -288,11 +286,14 @@ instance Semigroup RrdpSource where
     r           <> RrdpNothing = r
     _           <> r           = r
 
+
 data RrdpMetric = RrdpMetric {
-        added       :: Count,
-        deleted     :: Count,        
-        rrdpSource  :: RrdpSource,
-        timeTakenMs :: TimeTakenMs
+        added           :: Count,
+        deleted         :: Count,        
+        rrdpSource      :: RrdpSource,
+        downloadTakenMs :: TimeTakenMs,
+        saveTakenMs     :: TimeTakenMs,
+        timeTakenMs     :: TimeTakenMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise

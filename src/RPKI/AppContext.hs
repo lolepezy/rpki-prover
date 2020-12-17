@@ -3,9 +3,7 @@
 
 module RPKI.AppContext where
 
-import           Control.Concurrent.STM
 import           GHC.Generics
-
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Logging
