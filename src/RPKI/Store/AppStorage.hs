@@ -84,10 +84,10 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
                             createLmdb currentCache
                         else do 
                             -- link is broken so clean it up and re-create
-                            logErrorM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
+                            logWarnM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
                             resetCacheDir  
                 else do 
-                    logErrorM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
+                    logWarnM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
                     resetCacheDir
 
     pure (lmdbEnv, cacheDir)
