@@ -165,9 +165,10 @@ validateMft ::
   MftObject ->
   c ->
   Validated CrlObject ->
+  Maybe (VerifiedRS PrefixesAndAsns) ->
   PureValidatorT (Validated MftObject)
-validateMft now mft parentCert crl = do
-    void $ validateCms now (cmsPayload mft) parentCert crl $ \mftCMS -> do
+validateMft now mft parentCert crl verifiedResources = do
+    void $ validateCms now (cmsPayload mft) parentCert crl verifiedResources $ \mftCMS -> do
         let cmsContent = getCMSContent mftCMS
         void $ validateThisUpdate now $ thisTime cmsContent
         void $ validateNextUpdate now $ Just $ nextTime cmsContent
@@ -180,9 +181,12 @@ validateRoa ::
   RoaObject ->
   c ->
   Validated CrlObject ->
+  Maybe (VerifiedRS PrefixesAndAsns) ->
   PureValidatorT (Validated RoaObject)
-validateRoa now roa parentCert crl = do
-  void $ validateCms now (cmsPayload roa) parentCert crl pure
+validateRoa now roa parentCert crl verifiedResources = do
+  void $ validateCms now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do 
+      -- check that prefixes are inside of the resource set
+      pure roaCMS
   pure $ Validated roa
 
 validateGbr ::
@@ -191,9 +195,10 @@ validateGbr ::
   GbrObject ->
   c ->
   Validated CrlObject ->
+  Maybe (VerifiedRS PrefixesAndAsns) ->
   PureValidatorT (Validated GbrObject)
-validateGbr now gbr parentCert crl = do
-  void $ validateCms now (cmsPayload gbr) parentCert crl pure
+validateGbr now gbr parentCert crl verifiedResources = do
+  void $ validateCms now (cmsPayload gbr) parentCert crl verifiedResources pure
   -- TODO Implement it
   pure $ Validated gbr
 
@@ -203,9 +208,10 @@ validateCms ::
   CMS a ->
   c ->
   Validated CrlObject ->
+  Maybe (VerifiedRS PrefixesAndAsns) ->
   (CMS a -> PureValidatorT (CMS a)) ->
   PureValidatorT (Validated (CMS a))
-validateCms now cms parentCert crl extraValidation = do
+validateCms now cms parentCert crl verifiedResources extraValidation = do
   -- Signature algorithm in the EE certificate has to be 
   -- exactly the same as in the signed attributes
   let eeCert = getEEResourceCert $ unCMS cms  
@@ -222,6 +228,7 @@ validateCms now cms parentCert crl extraValidation = do
     
   signatureCheck $ validateCMSSignature cms  
   void $ validateResourceCert now eeCert parentCert crl
+  void $ validateResources verifiedResources eeCert parentCert   
   Validated <$> extraValidation cms
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)

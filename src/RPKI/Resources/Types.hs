@@ -27,6 +27,7 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.SafeEnum
 import           HaskellWorks.Data.Network.Ip.Validity
 
+
 data AddrFamily = Ipv4F | Ipv6F
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise

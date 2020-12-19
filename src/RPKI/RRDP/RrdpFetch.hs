@@ -120,17 +120,15 @@ downloadAndUpdateRRDP
 
     useDeltas sortedDeltas notification = do
         let repoURI = getURL $ repo ^. #uri
-        logDebugM logger [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
+        unless (minSerial == maxSerial) $ 
+            logDebugM logger [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
 
         -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
         -- otherwise they will hold too much files open.
-        (r, elapsed) <- timedMS $ downloadAndSave `finally` liftIO performGC
-
-        logDebugM logger [i|#{repoURI}: downloaded and saved deltas, took #{elapsed}ms.|]                        
-        pure r
+        downloadAndSave `finally` liftIO performGC        
         where
             downloadAndSave = do
-                -- TODO Do not thrash the same server with too big amount of parallel 
+                -- Do not thrash the same server with too big amount of parallel 
                 -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
                 localRepoBottleneck <- liftIO $ newBottleneckIO 8            
                 (_, savedIn) <- timedMS $ foldPipeline
@@ -145,7 +143,7 @@ downloadAndUpdateRRDP
                 updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs savedIn)
                 updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
 
-                pure $ repo { rrdpMeta = rrdpMeta' }
+                pure $! repo { rrdpMeta = rrdpMeta' }
 
             downloadDelta (DeltaInfo uri hash serial) = do
                 let deltaUri = U.convert uri 

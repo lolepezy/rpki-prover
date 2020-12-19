@@ -31,20 +31,20 @@ findIntersections a as = concatMap fst $ findFullIntersections a as
 -- | Return both interesections -- '[a]' and the intervals it intersects with -- 'a'.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
 findFullIntersections a (IntervalSet v) = 
-    case (V.unsafeIndex v 0) `intersection` a of
+    case V.unsafeIndex v 0 `intersection` a of
         [] -> case V.unsafeIndex v lastIndex `intersection` a of
-            [] -> goBinary 0 lastIndex
+            [] -> goBinarySearch 0 lastIndex
             _  -> goBackwards lastIndex
         _  -> goForward 0
     where 
-        goBinary b e
+        goBinarySearch b e
             | e <= b = []
             | otherwise =           
                 case middle `intersection` a of
                     [] -> 
                         case compare (start a) (start middle) of
-                            LT -> goBinary b middleIndex 
-                            GT -> goBinary (middleIndex + 1) e
+                            LT -> goBinarySearch b middleIndex 
+                            GT -> goBinarySearch (middleIndex + 1) e
                             -- this will never happen
                             EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
                     _ -> goBackwards middleIndex <> goForward (middleIndex + 1)

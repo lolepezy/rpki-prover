@@ -86,8 +86,8 @@ parallelTasksPreservesState = monadicIO $ do
 
 appMonadSpec :: TestTree
 appMonadSpec = testGroup "AppMonad" [
-        QC.testProperty "ValidationState is a semigroup"  (isSemigroup @ValidationState),
-        QC.testProperty "RrdpSource is a semigroup"  (isSemigroup @RrdpSource),
+        QC.testProperty "ValidationState is a semigroup" (isSemigroup @ValidationState),
+        QC.testProperty "RrdpSource is a semigroup" (isSemigroup @RrdpSource),
 
         QC.testProperty
             "runValidatorT . validatorT == id"

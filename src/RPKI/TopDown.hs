@@ -543,7 +543,6 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
         Left e                    -> appError $ ValidationE e
         Right (url, discoveredPP) -> do
             let asIfItIsMerged = discoveredPP `mergePP` globalPPs
-
             let stopDescend = do 
                     -- remember to come back to this certificate when the PP is fetched
                     vContext' <- ask
@@ -582,12 +581,14 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
         validateThisCertAndGoDown = do            
             let (childrenAki, certLocations') = (toAKI $ getSKI certificate, getLocations certificate)        
             
-            oneMoreCert
+            oneMoreCert            
             visitObject appContext topDownContext (CerRO certificate)
 
+            -- logDebugM logger [i|certificate #{NonEmpty.head $ getLocations certificate}.|]
+
             mft <- findMft childrenAki certLocations'
-            checkMftLocation mft certificate
-                    
+            checkMftLocation mft certificate                    
+
             manifestResult <- inSubVPath (toText $ NonEmpty.head $ getLocations mft) $ do
                 (_, crlHash) <- case findCrlOnMft mft of 
                     []    -> vError $ NoCRLOnMFT childrenAki certLocations'
@@ -611,7 +612,8 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                         oneMoreCrl
 
                         -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
-                        void $ vHoist $ validateMft (now topDownContext) mft certificate validCrl
+                        void $ vHoist $ validateMft (now topDownContext) mft 
+                                            certificate validCrl (verifiedResources topDownContext)
 
                         -- this for the CRL
                         -- incValidObject (topDownContext ^. typed)          
@@ -699,7 +701,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                             inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do                                
                                 childVerifiedResources <- vHoist $ do                 
                                         Validated validCert <- validateResourceCert now childCert certificate validCrl
-                                        validateResources verifiedResources childCert validCert 
+                                        validateResources verifiedResources childCert validCert
                                 let childTopDownContext = topDownContext { 
                                         verifiedResources = Just childVerifiedResources 
                                     }
@@ -712,23 +714,23 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     --     --           in T3 emptyPublicationPoints mempty (fromValidations childCaError)
                     --     -- because we want to ignore all the errors down the tree when reporting up, they can be confusing.
                     embedState validationState
-                    -- logDebugM logger [i| Nested #{toText $ NonEmpty.head $ getLocations ro}, state = #{validationState}|]
                     pure $! fromRight (T3 emptyPublicationPoints mempty mempty) r                    
 
                 RoaRO roa ->
                     inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do
-                        void $ vHoist $ validateRoa (now topDownContext) roa certificate validCrl
+                        void $ vHoist $ validateRoa (now topDownContext) roa certificate 
+                                            validCrl (verifiedResources topDownContext)
                         oneMoreRoa
-
-                        -- incValidObject (topDownContext ^. typed)
-                            -- logDebugM logger [i|#{getLocations roa}, VRPs: #{getCMSContent (extract roa :: CMS [Vrp])}|]
+                        
                         let vrps = getCMSContent $ cmsPayload roa
+
+                        -- logDebugM logger [i|roa #{NonEmpty.head $ getLocations ro}, vrps = #{vrps}.|]
                         pure $! T3 emptyPublicationPoints mempty vrps
 
                 GbrRO gbr -> withEmptyPPs $
                     inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do
-                        void $ vHoist $ validateGbr (now topDownContext) gbr certificate validCrl                    
-                        -- incValidObject (topDownContext ^. typed)                    
+                        void $ vHoist $ validateGbr (now topDownContext) gbr certificate 
+                                            validCrl (verifiedResources topDownContext)
 
                 -- TODO Anything else?
                 _ -> withEmptyPPs $ pure ()

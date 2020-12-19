@@ -32,15 +32,15 @@ thisInstant = Now . Instant <$> liftIO dateCurrent
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
     Now (Instant begin) <- thisInstant
-    z <- action
+    !z <- action
     Now (Instant end) <- thisInstant
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
     pure (z, s * nanosPerSecond + ns)
 
 timedMS :: MonadIO m => m a -> m (a, Int64)
 timedMS action = do 
-    (z, ns) <- timed action   
-    pure (z, fromIntegral $ ns `div` microsecondsPerSecond)
+    (!z, ns) <- timed action   
+    pure (z, fromIntegral $! ns `div` microsecondsPerSecond)
 
 nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
