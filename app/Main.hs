@@ -171,7 +171,7 @@ createAppContext cliOoptions@CLIOptions{..} logger = do
                 tmpRoot = tmpd,
                 -- Do not download files bigger than 1Gb, it's fishy
                 maxSize = Size 1024 * 1024 * 1024,
-                rrdpTimeout = Seconds $ rsyncTimeout `orDefault` (5 * 60)
+                rrdpTimeout = Seconds $ rrdpTimeout `orDefault` (5 * 60)
             },
             validationConfig = ValidationConfig {                
                 repositoryGracePeriod          = Seconds <$> repositoryGracePeriod,
