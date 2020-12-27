@@ -15,6 +15,7 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
 import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 
@@ -57,8 +58,8 @@ import Data.Proxy
 -- 
 downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository ->                 
-                        (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) ->
-                        (RrdpURL -> Notification -> Serial -> BS.ByteString -> ValidatorT IO ()) ->
+                        (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) ->
+                        (RrdpURL -> Notification -> Serial ->LBS.ByteString -> ValidatorT IO ()) ->
                         ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
@@ -67,7 +68,7 @@ downloadAndUpdateRRDP
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
     do        
     (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
-                                downloadToStrictBS appContext (getURL repoUri)     
+                                downloadToLazyBS appContext (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
@@ -105,7 +106,7 @@ downloadAndUpdateRRDP
             downloadAndSave = do
                 ((rawContent, _), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                                downloadHashedStrictBS appContext uri hash                                    
+                                downloadHashedLazyBS appContext uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
 
                 updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs downloadedIn)
@@ -150,7 +151,7 @@ downloadAndUpdateRRDP
                 (rawContent, _) <- 
                     inSubVPath deltaUri $  
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                            downloadHashedStrictBS appContext uri hash
+                            downloadHashedLazyBS appContext uri hash
                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                 pure (rawContent, serial, deltaUri)
 
@@ -237,7 +238,7 @@ saveSnapshot :: Storage s =>
                 AppContext s 
                 -> RrdpURL
                 -> Notification 
-                -> BS.ByteString 
+                -> LBS.ByteString 
                 -> ValidatorT IO ()
 saveSnapshot appContext repoUri notification snapshotContent = do      
     -- TODO Bad idea if we are lagging behind, put WorldVersion in the reader?
@@ -335,7 +336,7 @@ saveDelta :: Storage s =>
             -> RrdpURL 
             -> Notification 
             -> Serial             
-            -> BS.ByteString 
+            -> LBS.ByteString 
             -> ValidatorT IO ()
 saveDelta appContext repoUri notification currentSerial deltaContent = do        
     worldVersion  <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState

@@ -42,19 +42,27 @@ import           Data.IORef.Lifted
 import           GHC.Generics                   (Generic)
 
 
+lazyFsRead :: FilePath -> IO LBS.ByteString
+-- lazyFsRead = MmapLazy.unsafeMMapFile 
+lazyFsRead = LBS.readFile
+
+fsRead :: FilePath -> IO BS.ByteString
+-- fsRead = Mmap.unsafeMMapFile 
+fsRead = BS.readFile 
+
 downloadToStrictBS :: MonadIO m => 
                     AppContext s ->
                     URI -> 
                     m (BS.ByteString, Size)
 downloadToStrictBS appContext uri = 
-    downloadToBS appContext uri Mmap.unsafeMMapFile    
+    downloadToBS appContext uri fsRead    
 
 downloadToLazyBS :: MonadIO m => 
                     AppContext s ->
                     URI ->
                     m (LBS.ByteString, Size)
 downloadToLazyBS appContext uri = 
-    downloadToBS appContext uri MmapLazy.unsafeMMapFile    
+    downloadToBS appContext uri lazyFsRead    
 
 
 -- | Download HTTP content to a temporary file and return lazy/strict ByteString content 
@@ -95,7 +103,7 @@ downloadHashedLazyBS :: (MonadIO m) =>
                         (Hash -> Either e (LBS.ByteString, Size)) ->
                         m (Either e (LBS.ByteString, Size))
 downloadHashedLazyBS appContext uri hash hashMishmatch = 
-    downloadHashedBS appContext uri hash hashMishmatch  MmapLazy.unsafeMMapFile
+    downloadHashedBS appContext uri hash hashMishmatch lazyFsRead
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
@@ -106,7 +114,7 @@ downloadHashedStrictBS :: (MonadIO m) =>
                         (Hash -> Either e (BS.ByteString, Size)) ->
                         m (Either e (BS.ByteString, Size))
 downloadHashedStrictBS appContext uri hash hashMishmatch = 
-    downloadHashedBS appContext uri hash hashMishmatch  Mmap.unsafeMMapFile
+    downloadHashedBS appContext uri hash hashMishmatch fsRead
 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
@@ -192,7 +200,7 @@ streamHttpToFileWithActions
 
         h <- readIORef hash        
         s <- readIORef size  
-        pure $! (U.mkHash $ S256.finalize h, s)
+        pure (U.mkHash $ S256.finalize h, s)
      
 
 -- | Fetch arbitrary file using the streaming implementation
