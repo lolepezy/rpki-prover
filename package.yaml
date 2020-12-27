@@ -57,6 +57,7 @@ dependencies:
 - generic-lens
 - generic-monoid
 - hashable
+- hexpat
 - hourglass
 - hourglass-orphans
 - hw-ip
