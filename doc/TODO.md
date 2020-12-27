@@ -90,11 +90,17 @@
   choices when to download one or another.
    * validation stats   
 
+
 --------------------------------------- TODOs -----------------------------------------
- 
+- FIX:
+  Resource manipulation, tests coverage.
+
+
 - FIX:
   Some repositories are shared between multiple TAs, make sure they are not updated multiple times.
-  (share topdowncontext)
+ (share topdowncontext)
+
+
 
 - Implement the latest 8210bis whatever the hell it becomes (strict MFTs, 'failed fetch' concept).
 - Implement MFT filename check
