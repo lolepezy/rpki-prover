@@ -105,11 +105,13 @@ runValidatorApp appContext@AppContext {..} = do
 
 
 runHttpApi :: AppEnv -> IO ()
-runHttpApi appContext = Warp.run 9999 $ httpApi appContext
+runHttpApi appContext = let
+    httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
+    in Warp.run httpPort $ httpApi appContext
     
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppEnv
-createAppContext cliOoptions@CLIOptions{..} logger = do        
+createAppContext CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
     
