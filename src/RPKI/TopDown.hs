@@ -142,12 +142,11 @@ validateTA appContext@AppContext {..} tal worldVersion = do
                 validateFromTACert appContext (getTaName tal) taCert repos worldVersion
 
     case r of 
-        (Left e, vs)     -> do
-            logDebugM logger [i|error = #{e}|]                
+        (Left e, vs) -> 
             pure $! TopDownResult mempty vs
         (Right vrps, vs) -> 
             pure $! TopDownResult vrps vs
-    where                            
+    where                     
         taContext = newValidatorPath taNameText
         TaName taNameText = getTaName tal
 
@@ -174,7 +173,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 fetchValidateAndStore now
             | otherwise -> 
                 pure (taCert, initialRepositories, Existing)
-    where       
+    where
         fetchValidateAndStore now = do 
             (uri', ro) <- fetchTACertificate appContext tal
             newCert'   <- vHoist $ validateTACert tal uri' ro
@@ -306,7 +305,8 @@ fetchRepository
         childContext = validatorSubPath (toText repoURL) parentContext
         vContext'    = childContext ^. typed @VPath
 
-        fetchIt = do            
+        fetchIt = do        
+            logDebugM logger [i|Fetching repository #{getURL repoURL}.|]    
             ((r, v), elapsed) <- timedMS $ runValidatorT childContext $                 
                 case repo of
                     RsyncR r -> do 
@@ -319,7 +319,7 @@ fetchRepository
                                     (updateObjectForRrdpRepository appContext r) 
             case r of
                 Left e -> do                        
-                    logErrorM logger [i|Fetching repository #{getURL repoURL} failed: #{e} |]
+                    logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
                     pure $! FetchFailure repo now (vState (mError vContext' e) <> v)
                 Right resultRepo -> do
                     logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
@@ -441,11 +441,17 @@ validateCARecursively
                             FetchFailure r t _ -> (r, FailedAt t)
                             FetchSuccess r t _ -> (r, FetchedAt t)                      
             
-            pps <- liftIO $ atomically $ do                     
-                        modifyTVar' publicationPoints $ \pubPoints -> updateStatuses pubPoints [statusUpdate]
-                        readTVar publicationPoints
+            pps <- liftIO $ atomically $ do  
+                        pps <- readTVar publicationPoints  
+                        let pps' = updateStatuses pps [statusUpdate]     
+                        writeTVar publicationPoints pps' 
+                        pure pps
             
-            proceedUsingGracePeriod pps waitingListForThesePPs fetchResult
+            logDebugM logger [i|fetchAndValidateWaitingList 1 #{getRpkiURL repo}|]
+            z <- proceedUsingGracePeriod pps waitingListForThesePPs fetchResult
+
+            logDebugM logger [i|fetchAndValidateWaitingList 2 #{getRpkiURL repo}|]
+            pure z
 
 
         -- Decide what to do with the result of PP fetching
@@ -513,12 +519,13 @@ validateCARecursively
                 waitingList $ \(T3 hash certVContext verifiedResources') -> do                    
                     o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                     case o of 
-                        Just (CerRO waitingCertificate) -> do
+                        Just c@(CerRO waitingCertificate) -> do
                             let childTopDownContext = topDownContext { 
                                     -- we should start from the resource set of this certificate
                                     -- as it is already has been verified
                                     verifiedResources = verifiedResources'                                                
                                 }
+                            logDebug_ logger [i|Processing c = #{NonEmpty.head $ getLocations c}|]
                             validateCARecursively appContext certVContext childTopDownContext waitingCertificate 
                         ro -> do
                             logError_ logger [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]
@@ -596,7 +603,9 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
 
                 let objectStore' = objectStore database
+                logDebugM logger [i|Looking for CRL #{NonEmpty.head $ getLocations certificate}.|]
                 crlObject <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                logDebugM logger [i|Found CRL #{NonEmpty.head $ getLocations certificate}.|]
                 case crlObject of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations'    
@@ -659,7 +668,9 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
             visitedObjects <- liftIO $ readTVarIO $ visitedHashes topDownContext
 
             let objectStore' = objectStore database
+            logDebugM logger [i|Looking for MFT entry #{filename}.|]
             ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' hash'
+            logDebugM logger [i|Found MFT entry #{filename}.|]
             case ro of 
                 Nothing -> vError $ ManifestEntryDontExist hash'
                 Just ro'
@@ -740,8 +751,10 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
         
 
         findMft childrenAki locations = do
+            logDebugM logger [i|Looking for the MFT #{NonEmpty.head locations}.|]
             mft' <- liftIO $ roTx (objectStore database) $ \tx -> 
                 findLatestMftByAKI tx (objectStore database) childrenAki
+            logDebugM logger [i|Found MFT #{NonEmpty.head locations}.|]
             case mft' of
                 Nothing  -> vError $ NoMFT childrenAki locations
                 Just mft -> do
@@ -749,7 +762,7 @@ validateCaCertificate appContext@AppContext {..} topDownContext certificate = do
                     pure mft
 
         -- TODO Is there a more reliable way to find it?
-        findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $ 
+        findCrlOnMft mft = filter (\(name, _) -> ".crl" `Text.isSuffixOf` name) $
             mftEntries $ getCMSContent $ cmsPayload mft
 
         -- Check that manifest URL in the certificate is the same as the one 
