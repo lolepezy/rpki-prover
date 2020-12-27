@@ -18,7 +18,7 @@ import qualified Data.ByteString                       as BS
 
 import           Data.Kind
 import           Data.Vector                           (Vector)
-import           Data.Word
+import Data.Word ( Word8, Word32 )
 import           GHC.Generics
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
@@ -108,8 +108,10 @@ data PrefixesAndAsns = PrefixesAndAsns
     deriving anyclass Serialise
 
 newtype Nested a = Nested a
-newtype Overclaiming a = Overclaiming a
+    deriving stock (Show, Eq, Ord, Generic) 
 
+newtype Overclaiming a = Overclaiming a
+    deriving stock (Show, Eq, Ord, Generic) 
 
 newtype VerifiedRS a = VerifiedRS a
     deriving stock (Show, Eq, Ord, Generic) 

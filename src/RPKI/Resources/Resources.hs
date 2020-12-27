@@ -30,7 +30,7 @@ import           RPKI.Resources.Types
 instance WithSetOps Ipv4Prefix where
     contains (Ipv4Prefix ip1) (Ipv4Prefix ip2) =   
         V4.firstIpAddress ip1 <= V4.firstIpAddress ip2 && V4.lastIpAddress ip1 >= V4.lastIpAddress ip2
-    intersection p1 p2 = rangesIntersection p1 p2 endsV4 (map Ipv4Prefix . V4.rangeToBlocks)
+    intersection p1 p2 = ipRangesIntersection p1 p2 endsV4 (map Ipv4Prefix . V4.rangeToBlocks)
     normalise = normalisePrefixes
     subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
         where
@@ -49,7 +49,7 @@ instance Interval Ipv4Prefix where
 instance WithSetOps Ipv6Prefix where
     contains (Ipv6Prefix ip1) (Ipv6Prefix ip2) = 
         V6.firstIpAddress ip1 <= V6.firstIpAddress ip2 && V6.lastIpAddress ip1 >= V6.lastIpAddress ip2
-    intersection p1 p2 = rangesIntersection p1 p2 endsV6 (map Ipv6Prefix . V6.rangeToBlocks)  
+    intersection p1 p2 = ipRangesIntersection p1 p2 endsV6 (map Ipv6Prefix . V6.rangeToBlocks)  
     normalise = normalisePrefixes
     subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
         where
@@ -94,21 +94,21 @@ ipv6RangeToPrefixes w1 w2 = map Ipv6Prefix $ V6.rangeToBlocks $ Range (V6.IpAddr
 subtractRange :: (Enum a, Ord a) => a -> a -> a -> a -> r -> (Range a -> [r]) -> [r]
 subtractRange f1 l1 f2 l2 r fromRange = 
     case () of  
-              _ | f2 > l1 || l2 <= f1  -> [r]
-                | f1 < f2 && l1 < l2   -> fromRange $ Range f1 (pred f2)
-                | f1 < f2 && l1 >= l2  -> fromRange (Range f1 (pred f2)) <> fromRange (Range l2 l1)
-                | f1 >= f2 && l1 >= l2 -> fromRange (Range l2 l1)
-                | f1 >= f2 && l1 < l2  -> []
+              _ | f2 > l1  || l2 <= f1 -> [r]
+                | f1 <= f2 && l1 < l2  -> fromRange $ Range f1 (pred f2)
+                | f1 <= f2 && l1 >= l2 -> fromRange (Range f1 (pred f2)) <> fromRange (Range (succ l2) l1)
+                | f1 > f2  && l1 >= l2 -> fromRange (Range l2 l1)
+                | f1 > f2  && l1 < l2  -> []
 
-rangesIntersection :: Ord a => r -> r -> (r -> r -> (a, a, a, a)) -> (Range a -> [r]) -> [r]
-rangesIntersection p1 p2 getEnds fromRange = 
+ipRangesIntersection :: Ord a => r -> r -> (r -> r -> (a, a, a, a)) -> (Range a -> [r]) -> [r]
+ipRangesIntersection p1 p2 getEnds fromRange = 
     case () of  
-          _ | l1 <= f2  -> []
-            | f1 >= l2  -> []
+          _ | l1 < f2  -> []
+            | f1 > l2  -> []
             | otherwise -> fromRange (Range (max f1 f2) (min l1 l2))
-        where
+    where
         (!f1, !l1, !f2, !l2) = getEnds p1 p2
-{-# INLINE rangesIntersection #-}    
+{-# INLINE ipRangesIntersection #-}    
 
 endsV4 :: Ipv4Prefix -> Ipv4Prefix -> (V4.IpAddress, V4.IpAddress, V4.IpAddress, V4.IpAddress)
 endsV4 (Ipv4Prefix ip1) (Ipv4Prefix ip2) = (f1, l1, f2, l2)
@@ -284,14 +284,14 @@ fourW8sToW32 = \case
 {-# INLINE fourW8sToW32 #-}
 
 someW8ToW128 :: [Word8] -> (Word32, Word32, Word32, Word32)
-someW8ToW128 ws = (
+someW8ToW128 w8s = (
         fourW8sToW32 (take 4 unpacked),
         fourW8sToW32 (take 4 drop4),
         fourW8sToW32 (take 4 drop8),
         fourW8sToW32 (take 4 drop12)
     ) 
     where 
-        unpacked = rightPad 16 0 ws  
+        unpacked = rightPad 16 0 w8s  
         drop4 = drop 4 unpacked
         drop8 = drop 4 drop4
         drop12 = drop 4 drop8
@@ -318,3 +318,7 @@ ipv4PrefixLen (Ipv4Prefix (V4.IpBlock _ (V4.IpNetMask mask))) = PrefixLength mas
 
 ipv6PrefixLen :: Ipv6Prefix -> PrefixLength      
 ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask
+
+
+readIp4 :: String -> Ipv4Prefix
+readIp4 s = Ipv4Prefix (read s :: V4.IpBlock V4.Canonical)

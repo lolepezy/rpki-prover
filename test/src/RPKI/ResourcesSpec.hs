@@ -6,15 +6,16 @@
 
 module RPKI.ResourcesSpec where
 
-import           Data.List                         as List
+import           Data.List                  as List
 import           Test.QuickCheck.Gen
 import           Test.Tasty
-import           Test.Tasty.HUnit                  ((@?=))
-import qualified Test.Tasty.HUnit                  as HU
-import qualified Test.Tasty.QuickCheck             as QC
+import           Test.Tasty.HUnit           ((@?=))
+import qualified Test.Tasty.HUnit           as HU
+import qualified Test.Tasty.QuickCheck      as QC
 
 import           RPKI.Orphans
-import qualified RPKI.Resources.IntervalSet        as IS
+
+import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 
@@ -24,7 +25,8 @@ resourceGroup :: TestTree
 resourceGroup = testGroup "Resources" [
         prefixPropertyGroup,
         resourcesUnitTests,
-        intervalSetUnitTests
+        intervalSetUnitTests,
+        ipOverlapTests
     ]
 
 prefixPropertyGroup :: TestTree
@@ -38,14 +40,41 @@ prefixPropertyGroup = testGroup "Prefix properties tests"
             \(ip :: Ipv4Prefix) -> normalise (toPrefixes $ toRange ip) == [ip],
         QC.testProperty "toRange and toPrefix V6" $
             \(ip :: Ipv6Prefix) -> normalise (toPrefixes $ toRange ip) == [ip],
-        QC.testProperty "Every AS interval intersects with every of its element" $
-            \(asns :: [AsResource]) -> 
-                QC.forAll (sublistOf asns) $ \sub ->
-                    let intervalSet = IS.fromList asns
-                        check as = normalise (IS.findIntersections as intervalSet) == [as]
-                        in List.all check sub
-    ]  
 
+        QC.testProperty "Every AS interval intersects with every of its element" $
+            \(asns :: [AsResource]) -> intersectsWithItsElements asns,
+
+        QC.testProperty "Every IPv4 interval intersects with every of its element" $
+            \(ips :: [Ipv4Prefix]) -> intersectsWithItsElements ips,
+
+        QC.testProperty "Every IPv6 interval intersects with every of its element" $
+            \(ips :: [Ipv6Prefix]) -> intersectsWithItsElements ips,
+
+        QC.testProperty "Intersection and over-claming IPv4 must be complimentary" $
+            \(ips :: [Ipv4Prefix]) -> intersectionAndOverclaimedAreComplimentary ips,
+
+        QC.testProperty "Intersection and over-claming IPv6 must be complimentary" $
+            \(ips :: [Ipv6Prefix]) -> intersectionAndOverclaimedAreComplimentary ips,   
+
+        QC.testProperty "Intersection and over-claming ASNs must be complimentary" $
+            \(asns :: [AsResource]) -> intersectionAndOverclaimedAreComplimentary asns                        
+    ]  
+    where 
+        intersectsWithItsElements xs = 
+            QC.forAll (sublistOf xs) $ \sub ->
+                let intervalSet = IS.fromList xs
+                    check as = normalise (IS.findIntersections as intervalSet) == [as]
+                    in List.all check sub
+
+        intersectionAndOverclaimedAreComplimentary xs = 
+            QC.forAll (sublistOf xs) $ \subList ->
+                let biggerSet  = IS.fromList xs
+                    smallerSet = IS.fromList subList
+                    (Nested is, Overclaiming os) = 
+                        IS.intersectionAndOverclaimedIntervals smallerSet biggerSet
+                    in 
+                        is == smallerSet &&
+                        os == IS.empty 
 
 resourcesUnitTests :: TestTree
 resourcesUnitTests = testGroup "AS resource unit tests" [
@@ -108,3 +137,78 @@ intervalSetUnitTests = testGroup "AS interval sets unit tests" [
     ]
     where 
         mkIS = IS.fromList 
+
+ipOverlapTests :: TestTree
+ipOverlapTests = testGroup "IP interval sets unit tests" [
+    HU.testCase "Should calculate intersection IPs with itself" $ do
+        let p1 = readIp4 "103.101.176.0/32"
+        HU.assertEqual "" (intersection p1 p1) [p1],
+
+    HU.testCase "Should calculate intersection for nested IPs" $ do
+        let p1 = readIp4 "103.101.176.0/32"
+        let p2 = readIp4 "103.101.176.0/22"
+        HU.assertEqual "" (intersection p1 p2) [p1]
+        HU.assertEqual "" (intersection p2 p1) [p1],
+
+    HU.testCase "Should calculate intersection for overlapping IPs" $ do
+        let p1 = readIp4 "103.100.0.0/15"
+        let p2 = readIp4 "103.101.0.0/16"
+        HU.assertEqual "" (intersection p1 p2) [p2]
+        HU.assertEqual "" (intersection p2 p1) [p2],
+
+    HU.testCase "Should calculate intersection for overlapping IPs 2" $ do
+        let p1 = readIp4 "103.100.0.0/15"
+        let p2 = readIp4 "103.100.0.0/16"
+        HU.assertEqual "" (intersection p1 p2) [p2]
+        HU.assertEqual "" (intersection p2 p1) [p2],
+
+    HU.testCase "Should calculate intersection for non-overlapping IPs" $ do
+        let p1 = readIp4 "103.101.176.0/24"
+        let p2 = readIp4 "103.101.177.0/24"
+        HU.assertEqual "" (intersection p1 p2) []
+        HU.assertEqual "" (intersection p2 p1) [],
+
+    HU.testCase "Should calculate nested and over-claiming part for IPs resources, one address" $ do
+        let p1 = readIp4 "103.101.176.0/32"
+        let p2 = readIp4 "103.101.176.0/22"
+        let (Nested is, Overclaiming os) = 
+                IS.intersectionAndOverclaimedIntervals (mkIS p1) (mkIS p2)
+        HU.assertEqual "" is (IS.fromList [p1])
+        HU.assertEqual "" os IS.empty,
+
+    HU.testCase "Should calculate nested and over-claiming part for IPs resources, equal prefixes" $ do
+        let p1 = readIp4 "103.101.176.0/22"
+        let p2 = readIp4 "103.101.176.0/22"
+        let (Nested is, Overclaiming os) = 
+                IS.intersectionAndOverclaimedIntervals (mkIS p1) (mkIS p2)
+        HU.assertEqual "" is (IS.fromList [p1])
+        HU.assertEqual "" os IS.empty,
+
+    HU.testCase "Should calculate nested and over-claiming part for IPs resources, nested prefixes" $ do
+        let p1 = readIp4 "103.101.176.0/22"
+        let p2 = readIp4 "103.101.176.0/22"
+        let (Nested is, Overclaiming os) = 
+                IS.intersectionAndOverclaimedIntervals (mkIS p1) (mkIS p2)
+        HU.assertEqual "" is (IS.fromList [p1])
+        HU.assertEqual "" os IS.empty,
+
+    HU.testCase "Should calculate nested and over-claiming part for non-overlapping IPs" $ do
+        let p1 = readIp4 "103.100.0.0/16"
+        let p2 = readIp4 "103.100.100.0/24"        
+        let (Nested is, Overclaiming os) = 
+                IS.intersectionAndOverclaimedIntervals (mkIS p1) (mkIS p2)
+        HU.assertEqual "" is (IS.fromList [p2])
+        let r = [
+                    readIp4 "103.100.0.0/18",
+                    readIp4 "103.100.64.0/19",
+                    readIp4 "103.100.96.0/22",
+                    readIp4 "103.100.101.0/24",
+                    readIp4 "103.100.102.0/23",
+                    readIp4 "103.100.104.0/21",
+                    readIp4 "103.100.112.0/20",
+                    readIp4 "103.100.128.0/17"
+                ]
+        HU.assertEqual "" os (IS.fromList r)
+    ]    
+    where
+        mkIS ip = IS.fromList [ip]

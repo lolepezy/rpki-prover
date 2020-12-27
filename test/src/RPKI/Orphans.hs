@@ -487,24 +487,26 @@ instance Arbitrary IpPrefix where
 instance Arbitrary Ipv4Prefix where
     arbitrary = do
         w1 :: Word8 <- arbitrary `suchThat` (> 0)
-        w2 :: Word8 <- arbitrary `suchThat` (> 0)
-        w3 :: Word8 <- arbitrary `suchThat` (> 0)
-        w4 :: Word8 <- arbitrary `suchThat` (> 0)
+        w2 :: Word8 <- arbitrary
+        w3 :: Word8 <- arbitrary
+        w4 :: Word8 <- arbitrary
         let w = fourW8sToW32 [w1, w2, w3, w4]
         m :: Word8  <- choose (8, 32)
         let x = w `shift` (32 - fromIntegral m)
-        pure $ mkIpv4Block x m
+        pure $! mkIpv4Block x m
+
     shrink = genericShrink
 
 instance Arbitrary Ipv6Prefix where
     arbitrary = do
         w1 :: Word32 <- arbitrary `suchThat` (> 0)
-        w2 :: Word32 <- arbitrary `suchThat` (> 0)
-        w3 :: Word32 <- arbitrary `suchThat` (> 0)
-        w4 :: Word32 <- arbitrary `suchThat` (> 0)    
+        w2 :: Word32 <- arbitrary
+        w3 :: Word32 <- arbitrary
+        w4 :: Word32 <- arbitrary
         m :: Word8  <- choose (46, 128)
         let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
-        pure $ mkIpv6Block x m
+        pure $! mkIpv6Block x m
+
     shrink = genericShrink
 
 instance Arbitrary (V4.IpBlock Canonical) where
