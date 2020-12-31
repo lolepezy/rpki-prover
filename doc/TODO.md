@@ -83,6 +83,7 @@
 - Do LMDb cache de-fragmentation
 - Implement `--reset`
 - Check cRLDistributionPoints == CRL location on the MFT
+- Resource manipulation, tests coverage.
 
 ---------------------------------  In progress ----------------------------------------
 
@@ -90,15 +91,14 @@
   choices when to download one or another.
    * validation stats   
 
+ - Some repositories are shared between multiple TAs, make sure they are not updated multiple times.
+ (share topdowncontext)
 
 --------------------------------------- TODOs -----------------------------------------
-- FIX:
-  Resource manipulation, tests coverage.
 
 
 - FIX:
-  Some repositories are shared between multiple TAs, make sure they are not updated multiple times.
- (share topdowncontext)
+ Segmentation fault in liblmdb!
 
 
 

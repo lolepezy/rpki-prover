@@ -174,7 +174,7 @@ createLmdbMultiStore env@LmdbEnv {..} = do
 data Semaphore = Semaphore Int (TVar Int)
 
 createSemaphore :: Int -> IO Semaphore
-createSemaphore n = Semaphore n <$> atomically (newTVar 0)
+createSemaphore n = Semaphore n <$> newTVarIO 0
 
 withSemaphore :: Semaphore -> IO a -> IO a
 withSemaphore (Semaphore maxCounter current) f = 
@@ -195,9 +195,11 @@ getNativeEnv LmdbEnv {..} = atomically $ do
         ROEnv native -> pure native
         RWEnv native -> pure native
 
+
 -- | Copy all databases from the from LMDB environment to the other
 -- This is a low-level operation to be used for de-fragmentation.
--- `dest` is supposed to be completely empty
+-- `dest` is supposed to be completely empty.
+-- 
 copyEnv :: LmdbEnv -> LmdbEnv -> IO ()
 copyEnv src dst = do
     srcN <- getNativeEnv src
@@ -219,8 +221,7 @@ copyEnv src dst = do
                         copyMultiMap srcMap' dstMap srcTx dstTx                        
                     else do 
                         dstMap <- openDatabase dstTx (Just $ convert mapName) dbSettings
-                        copyMap srcMap dstMap srcTx dstTx
-                                      
+                        copyMap srcMap dstMap srcTx dstTx                                      
     where   
         dbSettings = makeSettings 
             (Lmdb.SortNative Lmdb.NativeSortLexographic) 

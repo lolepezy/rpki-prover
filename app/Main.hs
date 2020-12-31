@@ -9,6 +9,7 @@
 module Main where
     
 import           Colog
+import           Colog.Concurrent
 
 import           Control.Lens ((^.))
 import           Control.Monad

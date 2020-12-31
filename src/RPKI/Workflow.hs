@@ -42,15 +42,10 @@ import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 
 import           System.Exit
+import Data.Maybe (fromMaybe)
+import RPKI.Store.Repository (getPublicationPoints)
 
 type AppEnv = AppContext LmdbStorage
-
-data WorkflowTask = 
-    ValidateTAs WorldVersion | 
-    CacheGC WorldVersion |
-    CleanOldVersions WorldVersion | 
-    Defragment WorldVersion
-  deriving stock (Show, Eq, Ord, Generic)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -75,9 +70,9 @@ runWorkflow appContext@AppContext {..} tals = do
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion, 
-            generatePeriodicTask 10_000_000 cacheCleanupInterval CacheGC,
-            generatePeriodicTask 30_000_000 cacheCleanupInterval CleanOldVersions,
-            generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval Defragment,
+            generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
+            generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
+            generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
             rtrServer   
         ]
     where
@@ -89,7 +84,7 @@ runWorkflow appContext@AppContext {..} tals = do
         rtrConfig            = config ^. #rtrConfig
 
         validateTaTask globalQueue worldVersion = 
-            atomically $ writeCQueue globalQueue $ ValidateTAs worldVersion             
+            atomically $ writeCQueue globalQueue (validateTAs worldVersion)             
 
         -- periodically update world version and generate command 
         -- to re-validate all TAs
@@ -99,34 +94,35 @@ runWorkflow appContext@AppContext {..} tals = do
             logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
             validateTaTask globalQueue newWorldVersion
 
-        generatePeriodicTask delay interval constructor globalQueue = do
+        generatePeriodicTask delay interval whatToDo globalQueue = do
             threadDelay delay
             periodically interval $ do
                 worldVersion <- getWorldVerionIO appState
-                atomically $ writeCQueue globalQueue $ constructor worldVersion                    
+                atomically $ writeCQueue globalQueue (whatToDo worldVersion)
 
         taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
             forever $ do 
-                task <- atomically $ readCQueue globalQueue 
-                ifJust task $ \case 
-                    ValidateTAs worldVersion      -> validateTAs worldVersion
-                    CacheGC worldVersion          -> cacheGC worldVersion
-                    CleanOldVersions worldVersion -> cleanOldVersions worldVersion
-                    Defragment worldVersion       -> defragment worldVersion
+                atomically (readCQueue globalQueue) >>= fromMaybe (pure ())
 
         validateTAs worldVersion = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
             executeOrDie
-                (mconcat <$> mapConcurrently processTAL tals)
+                (processTALs tals)
                 (\tdResult@TopDownResult{..} elapsed -> do 
                     uniqueVrps <- saveTopDownResult tdResult                                
                     logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
             where 
-                processTAL tal = do 
-                    (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
-                    logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-                    pure r
+                processTALs tals = do 
+                    storedPubPoints   <- roTx database $ \tx -> getPublicationPoints tx (repositoryStore database)
+                    repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
+
+                    rs <- forConcurrently tals $ \tal -> do 
+                        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryContext 
+                        logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+                        pure r
+
+                    pure $! mconcat rs
 
                 saveTopDownResult TopDownResult {..} = 
                     rwTx database $ \tx -> do

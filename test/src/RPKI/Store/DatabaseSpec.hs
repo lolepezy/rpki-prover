@@ -185,8 +185,6 @@ shouldInsertAndGetAllBackFromRepositoryStore :: IO ((FilePath, LmdbEnv), DB Lmdb
 shouldInsertAndGetAllBackFromRepositoryStore io = do  
     (_, DB {..}) <- io
 
-    taName1 <- TaName <$> QC.generate arbitrary
-
     let rsyncPPs = fromRsyncPPs repositoriesURIs 
     rrdpMap :: RrdpMap <- QC.generate arbitrary    
 
@@ -196,15 +194,15 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
     let createdPPs = rsyncPPs <> PublicationPoints rrdpMap mempty (LastSuccededMap lastSuccess)
 
     storedPps1 <- roTx repositoryStore $ \tx -> 
-                    getTaPublicationPoints tx repositoryStore taName1
+                    getPublicationPoints tx repositoryStore
 
     let changeSet1 = changeSet storedPps1 createdPPs
 
     rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet1 taName1
+            applyChangeSet tx repositoryStore changeSet1
 
     storedPps2 <- roTx repositoryStore $ \tx -> 
-                    getTaPublicationPoints tx repositoryStore taName1
+                    getPublicationPoints tx repositoryStore
 
     HU.assertEqual "Not the same publication points" createdPPs storedPps2
 
@@ -219,10 +217,10 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
     let changeSet2 = changeSet storedPps2 shrunkPPs
 
     rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet2 taName1
+            applyChangeSet tx repositoryStore changeSet2
 
     storedPps3 <- roTx repositoryStore $ \tx -> 
-                    getTaPublicationPoints tx repositoryStore taName1    
+                    getPublicationPoints tx repositoryStore    
 
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 

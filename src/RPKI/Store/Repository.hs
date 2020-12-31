@@ -23,12 +23,11 @@ import           RPKI.Store.Base.Storage
 data RepositoryStore s = RepositoryStore {
     rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
     rsyncS :: SMap "rsync-repositories" s RsyncURL RsyncParent,
-    lastS  :: SMap "last-fetch-success" s RpkiURL FetchLastSuccess,
-    perTA  :: SMultiMap "repositories-per-ta" s TaName RpkiURL
+    lastS  :: SMap "last-fetch-success" s RpkiURL FetchLastSuccess
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _ _) = storage s
+    storage (RepositoryStore s _ _) = storage s
 
 
 putRepositories :: (MonadIO m, Storage s) => 
@@ -39,12 +38,10 @@ putRepositories tx RepositoryStore {..}
                     rrdps = RrdpMap rrdps', 
                     lastSucceded = LastSuccededMap lastSucceded'} 
                 taName' = liftIO $ do    
-    forM_ (Map.toList rsyncs') $ \(u, p) -> do
+    forM_ (Map.toList rsyncs') $ \(u, p) ->
             M.put tx rsyncS u p    
-            MM.put tx perTA taName' $ RsyncU u
-    forM_ (Map.toList rrdps') $ \(u, p) -> do
+    forM_ (Map.toList rrdps') $ \(u, p) -> 
             M.put tx rrdpS u p    
-            MM.put tx perTA taName' $ RrdpU u
     forM_ (Map.toList lastSucceded') $ \(u, p) -> 
             M.put tx lastS u p                
 
@@ -56,32 +53,28 @@ updateRrdpMeta tx RepositoryStore {..} meta url = liftIO $
         Nothing -> pure ()
         Just r  -> M.put tx rrdpS url (r { rrdpMeta = Just meta })    
 
+
 applyChangeSet :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> 
                 RepositoryStore s -> 
                 ChangeSet -> 
-                TaName -> 
                 m ()
-applyChangeSet tx RepositoryStore {..} (ChangeSet rrdpChanges rsyncChanges lastSucceded) taName' = 
+applyChangeSet tx RepositoryStore {..} (ChangeSet rrdpChanges rsyncChanges lastSucceded) = 
     liftIO $ do
         -- Do the Remove first and only then Put
         let (rrdpPuts, rrdpRemoves) = separate rrdpChanges        
 
-        forM_ rrdpRemoves $ \RrdpRepository{..} -> do 
+        forM_ rrdpRemoves $ \RrdpRepository{..} ->
                 M.delete tx rrdpS uri 
-                MM.delete tx perTA taName' (RrdpU uri)
-        forM_ rrdpPuts $ \r@RrdpRepository{..} -> do 
+        forM_ rrdpPuts $ \r@RrdpRepository{..} ->
                 M.put tx rrdpS uri r
-                MM.put tx perTA taName' (RrdpU uri)        
 
         let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
 
-        forM_ rsyncRemoves $ \(uri', _) -> do
+        forM_ rsyncRemoves $ \(uri', _) ->
                 M.delete tx rsyncS uri'
-                MM.delete tx perTA taName' (RsyncU uri')                            
-        forM_ rsyncPuts $ \(uri', p) -> do
+        forM_ rsyncPuts $ \(uri', p) ->
                 M.put tx rsyncS uri' p
-                MM.put tx perTA taName' (RsyncU uri')
 
         let (lastSPuts, lastSRemoves) = separate lastSucceded
         forM_ lastSRemoves $ \(uri', _) -> 
@@ -91,34 +84,23 @@ applyChangeSet tx RepositoryStore {..} (ChangeSet rrdpChanges rsyncChanges lastS
     where
         separate = foldr f ([], [])
             where 
-                f (Put r) (ps, rs) = (r : ps, rs) 
+                f (Put r) (ps, rs)    = (r : ps, rs) 
                 f (Remove r) (ps, rs) = (ps, r : rs) 
 
+getPublicationPoints :: (MonadIO m, Storage s) => 
+                        Tx s mode -> RepositoryStore s -> m PublicationPoints
+getPublicationPoints tx RepositoryStore {..} = liftIO $ do 
+    rrdps <- M.all tx rrdpS 
+    rsyns <- M.all tx rsyncS 
+    lasts <- M.all tx lastS
+    pure $ PublicationPoints 
+            (RrdpMap $ Map.fromList rrdps) 
+            (RsyncMap $ Map.fromList rsyns)
+            (LastSuccededMap $ Map.fromList lasts)
 
-getTaPublicationPoints :: (MonadIO m, Storage s) => 
-                        Tx s mode -> RepositoryStore s -> TaName -> m PublicationPoints
-getTaPublicationPoints tx s taName' = liftIO $ do
-        (rrdpList, rsyncList, lastSucceded) <- MM.foldS 
-            tx (perTA s) taName' mergeAllRepos ([], [], [])
-        pure $ PublicationPoints 
-            (RrdpMap $ Map.fromList rrdpList) 
-            (RsyncMap $ Map.fromList rsyncList)
-            (LastSuccededMap $ Map.fromList lastSucceded)
-    where
-        mergeAllRepos (rrdps, rsyncs, lastSucc) _ indexUrl = do
-            z <- M.get tx (lastS s) indexUrl 
-            let lastSucc' = case z of
-                    Nothing -> lastSucc
-                    Just ls -> (indexUrl, ls) : lastSucc
-            
-            let result = (rrdps, rsyncs, lastSucc')
-            case indexUrl of 
-                RrdpU uri' -> 
-                    M.get tx (rrdpS s) uri' >>= \case
-                        Just r  -> pure ((uri', r) : rrdps, rsyncs, lastSucc')
-                        Nothing -> pure result
-                RsyncU uri' -> 
-                    M.get tx (rsyncS s) uri' >>= \case
-                        Just r  -> pure (rrdps, (uri', r) : rsyncs, lastSucc')
-                        Nothing -> pure result
-                
+savePublicationPoints :: (MonadIO m, Storage s) => 
+                        Tx s 'RW -> RepositoryStore s -> PublicationPoints -> m ()
+savePublicationPoints tx store@RepositoryStore {..} newPPs = do 
+    ppsInDb <- getPublicationPoints tx store
+    let changes = changeSet ppsInDb newPPs
+    applyChangeSet tx store changes 

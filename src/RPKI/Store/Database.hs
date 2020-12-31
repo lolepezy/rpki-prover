@@ -408,8 +408,7 @@ data VResultStats = VResultStats {
 data RepositoryStats = RepositoryStats {
     rrdpStats  :: SStats,
     rsyncStats :: SStats,
-    lastSStats :: SStats,
-    perTAStats :: SStats    
+    lastSStats :: SStats    
 } deriving stock (Show, Eq, Generic)
 
 data DBStats = DBStats {
@@ -449,8 +448,7 @@ dbStats db@DB {..} = liftIO $ roTx db $ \tx ->
             in RepositoryStats <$>
                 M.stats tx rrdpS <*>
                 M.stats tx rsyncS <*>
-                M.stats tx lastS <*>
-                MM.stats tx perTA
+                M.stats tx lastS
 
         vResultStats tx = 
             let ValidationsStore results = validationsStore
@@ -463,7 +461,7 @@ totalSpace :: DBStats -> Size
 totalSpace DBStats {..} = 
     let fullStat = taStats 
                 <> (let RepositoryStats{..} = repositoryStats 
-                    in rrdpStats <> rsyncStats<> lastSStats <> perTAStats) 
+                    in rrdpStats <> rsyncStats <> lastSStats) 
                 <> (let RpkiObjectStats {..} = rpkiObjectStats
                     in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats)
                 <> resultsStats vResultStats 
