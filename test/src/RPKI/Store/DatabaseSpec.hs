@@ -342,17 +342,12 @@ readObjectFromFile path = do
     pure $! readObject (RsyncU $ RsyncURL $ URI $ Text.pack path) bs
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
-replaceAKI a = go 
+replaceAKI a = \case 
+    CerRO c -> CerRO $ c { aki = Just a }
+    CrlRO c -> CrlRO $ c { aki = a }
+    MftRO c -> MftRO $ c & #cmsPayload %~ mapCms
+    RoaRO c -> RoaRO $ c & #cmsPayload %~ mapCms
+    GbrRO c -> GbrRO $ c & #cmsPayload %~ mapCms
     where
-        go (CerRO c) = CerRO $ c { aki = Just a }
-        go (CrlRO c) = CrlRO $ c { aki = a }
-        go (MftRO c) = MftRO $ c { cmsPayload = mapCms $ cmsPayload c }
-        go (RoaRO c) = RoaRO $ c { cmsPayload = mapCms $ cmsPayload c }
-        go (GbrRO c) = GbrRO $ c { cmsPayload = mapCms $ cmsPayload c }
-
         mapCms :: CMS a -> CMS a
-        mapCms (CMS so) = CMS $ so { soContent = sc { scCertificate = ee' } }
-            where 
-                ee = scCertificate sc
-                sc = soContent so
-                ee' :: EECerObject = ee { aki = a :: AKI }
+        mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a

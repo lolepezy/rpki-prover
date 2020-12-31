@@ -25,15 +25,15 @@ repositoryGroup = testGroup "PublicationPoints" [
             "Make sure RsyncMap is a semigroup (for a list of URLs)"
             prop_rsync_map_is_a_semigroup,
 
-        QC.testProperty "FetchStatus is a semigroup" $ is_a_semigroup @FetchStatus,
-        QC.testProperty "PublicationPoints is a semigroup" $ is_a_semigroup @PublicationPoints,
-        QC.testProperty "RrdpRepository is a semigroup" $ is_a_semigroup @RrdpRepository,
-        QC.testProperty "RsyncMap is a semigroup" $ is_a_semigroup @RsyncMap,
-        QC.testProperty "RrdpMap is a semigroup" $ is_a_semigroup @RrdpMap            
+        QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
+        QC.testProperty "PublicationPoints is a semigroup" $ isASemigroup @PublicationPoints,
+        QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
+        QC.testProperty "RsyncMap is a semigroup" $ isASemigroup @RsyncMap,
+        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap            
     ]
 
-is_a_semigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
-is_a_semigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
+isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
+isASemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 
 repositoriesURIs :: [RsyncPublicationPoint]
 repositoriesURIs = map (RsyncPublicationPoint . RsyncURL . URI . ("rsync://host1.com/" <>)) [

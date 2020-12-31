@@ -140,8 +140,8 @@ foldGeneric tx db f a0 withCurs makeProducer =
                 Lmdb.KeyValue k v <- await
                 lift $ do 
                     a <- readIORef z
-                    a' <- f a (SKey $ Storable k) (SValue $ Storable v)
-                    writeIORef z $! a'
+                    !a' <- f a (SKey $ Storable k) (SValue $ Storable v)
+                    writeIORef z a'
         readIORef z
 
 
