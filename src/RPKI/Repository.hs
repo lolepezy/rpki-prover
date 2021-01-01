@@ -88,7 +88,7 @@ data PublicationPoints = PublicationPoints {
     lastSucceded :: LastSuccededMap
 } deriving stock (Show, Eq, Ord, Generic)   
 
-data RsyncParent = ParentURI !RsyncURL | Root !FetchStatus
+data RsyncParent = ParentURI RsyncURL | Root FetchStatus
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -137,7 +137,6 @@ instance Ord FetchStatus where
             timeAndStatus (FailedAt t)  = (Just t,  0)
             timeAndStatus (FetchedAt t) = (Just t,  1) 
 
-            
 instance Semigroup FetchStatus where
     (<>) = max
 
@@ -201,7 +200,7 @@ allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =
 findPublicationPointStatus :: RpkiURL -> PublicationPoints -> Maybe FetchStatus
 findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =     
     case u of
-        RrdpU  rrdpUrl  -> (^. #status) <$> Map.lookup rrdpUrl rrdps
+        RrdpU  rrdpUrl  -> (^. typed) <$> Map.lookup rrdpUrl rrdps
         RsyncU rsyncUrl -> snd <$> findRsyncStatus rsyncMap rsyncUrl           
     where        
         findRsyncStatus (RsyncMap m) rsyncUrl = go rsyncUrl
@@ -240,46 +239,46 @@ repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =
 mergeRsyncs :: RsyncMap -> RsyncMap -> RsyncMap
 mergeRsyncs (RsyncMap m1) (RsyncMap m2) = 
     RsyncMap $ Map.foldrWithKey' mergeEach m1 m2
-    where
-        mergeEach u parentOrStatus m = 
-            case Map.splitLookup u m of        
-                (_, Just (ParentURI _), _) -> m
-                (_, Just r@(Root status), _) -> 
-                    case parentOrStatus of
-                        Root status1 -> 
-                            Map.insert u (Root (status <> status1)) m
-                        ParentURI _  -> 
-                            -- really weird case, we don't know what to do here,
-                            -- but practically just overwrite the PP with a repository
-                            Map.insert u r m
+  where
+    mergeEach u parentOrStatus m = 
+        case Map.splitLookup u m of        
+            (_, Just (ParentURI _), _) -> m
+            (_, Just r@(Root status), _) -> 
+                case parentOrStatus of
+                    Root status1 -> 
+                        Map.insert u (Root (status <> status1)) m
+                    ParentURI _  -> 
+                        -- really weird case, we don't know what to do here,
+                        -- but practically just overwrite the PP with a repository
+                        Map.insert u r m
 
-                (potentialParents, _, potentialChildren) -> 
-                    replaceTheirParents $ Map.insert u parentUriOrStatus m
-                    where 
-                        parentUriOrStatus = go potentialParents
-                            where 
-                                go low = 
-                                    case Map.maxViewWithKey low of 
-                                        Nothing                               -> parentOrStatus
-                                        Just ((longestParentUri, _), evenLower)
-                                            | longestParentUri `isParentOf` u -> ParentURI longestParentUri
-                                            | otherwise                       -> go evenLower
+            (potentialParents, _, potentialChildren) -> 
+                replaceTheirParents $ Map.insert u parentUriOrStatus m
+              where 
+                parentUriOrStatus = go potentialParents                            
+                  where
+                    go low = 
+                        case Map.maxViewWithKey low of 
+                            Nothing                               -> parentOrStatus
+                            Just ((longestParentUri, _), evenLower)
+                                | longestParentUri `isParentOf` u -> ParentURI longestParentUri
+                                | otherwise                       -> go evenLower
 
-                        replaceTheirParents = go potentialChildren
-                            where
-                                go up resultMap = 
-                                    case Map.minViewWithKey up of 
-                                        Nothing -> resultMap
-                                        Just ((possiblyChild, something), moreChildren)
-                                            | u `isParentOf` possiblyChild -> 
-                                                case something of
-                                                    ParentURI itsParentUri 
-                                                        | itsParentUri `isParentOf` u -> 
-                                                            go moreChildren $ Map.insert possiblyChild (ParentURI u) resultMap
-                                                        | otherwise                   -> go moreChildren resultMap
-                                                    Root _                            -> 
-                                                            go moreChildren $ Map.insert possiblyChild (ParentURI u) resultMap
-                                            | otherwise                               -> resultMap            
+                replaceTheirParents = go potentialChildren
+                  where
+                    go up resultMap = 
+                        case Map.minViewWithKey up of 
+                            Nothing -> resultMap
+                            Just ((possiblyChild, something), moreChildren)
+                                | u `isParentOf` possiblyChild -> 
+                                    case something of
+                                        ParentURI itsParentUri 
+                                            | itsParentUri `isParentOf` u -> 
+                                                go moreChildren $ Map.insert possiblyChild (ParentURI u) resultMap
+                                            | otherwise                   -> go moreChildren resultMap
+                                        Root _                            -> 
+                                                go moreChildren $ Map.insert possiblyChild (ParentURI u) resultMap
+                                | otherwise                               -> resultMap            
 
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
