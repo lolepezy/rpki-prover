@@ -75,7 +75,8 @@ objectStoreGroup = withDB $ \io -> testGroup "Object storage test"
 validationResultStoreGroup :: TestTree
 validationResultStoreGroup = withDB $ \io -> testGroup "Validation result storage test"
     [
-        HU.testCase "Should insert and get back" (shouldInsertAndGetAllBackFromValidationResultStore io)        
+        HU.testCase "Should insert and get back" (shouldInsertAndGetAllBackFromValidationResultStore io),
+        HU.testCase "Should insert and get back" (shouldGetAndSaveRepositories io)        
     ]
 
 repositoryStoreGroup :: TestTree
@@ -185,13 +186,7 @@ shouldInsertAndGetAllBackFromRepositoryStore :: IO ((FilePath, LmdbEnv), DB Lmdb
 shouldInsertAndGetAllBackFromRepositoryStore io = do  
     (_, DB {..}) <- io
 
-    let rsyncPPs = fromRsyncPPs repositoriesURIs 
-    rrdpMap :: RrdpMap <- QC.generate arbitrary    
-
-    let lastSuccess = Map.fromList [ (RrdpU u, FetchLastSuccess t) | 
-            RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
-
-    let createdPPs = rsyncPPs <> PublicationPoints rrdpMap mempty (LastSuccededMap lastSuccess)
+    createdPPs <- generateRepositories
 
     storedPps1 <- roTx repositoryStore $ \tx -> 
                     getPublicationPoints tx repositoryStore
@@ -206,11 +201,8 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
 
     HU.assertEqual "Not the same publication points" createdPPs storedPps2
 
-    rsyncPPs2 <- fromRsyncPPs <$> QC.generate (QC.sublistOf repositoriesURIs)
-
-    let RrdpMap rrdpsM = rrdpMap    
-    keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
-    let rrdpMap2 = RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
+    rsyncPPs2 <- fromRsyncPPs <$> QC.generate (QC.sublistOf repositoriesURIs)    
+    rrdpMap2  <- rrdpSubMap createdPPs
 
     let shrunkPPs = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty mempty
 
@@ -224,7 +216,51 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
 
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
+
+shouldGetAndSaveRepositories :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldGetAndSaveRepositories io = do  
+    (_, DB {..}) <- io
+
+    pps1 <- generateRepositories
+    rwTx repositoryStore $ \tx -> 
+                savePublicationPoints tx repositoryStore pps1
+
+    pps1' <- roTx repositoryStore $ \tx -> 
+                getPublicationPoints tx repositoryStore       
+
+    HU.assertEqual "Not the same publication points first" pps1 pps1'
     
+    rsyncPPs2 <- fromRsyncPPs <$> QC.generate (QC.sublistOf repositoriesURIs)    
+    rrdpMap2  <- rrdpSubMap pps1
+
+    let pps2 = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty mempty
+
+    rwTx repositoryStore $ \tx -> 
+                savePublicationPoints tx repositoryStore pps2
+
+    pps2' <- roTx repositoryStore $ \tx -> 
+                getPublicationPoints tx repositoryStore       
+
+    HU.assertEqual "Not the same publication points second" pps2 pps2'
+    
+
+generateRepositories :: IO PublicationPoints
+generateRepositories = do 
+    let rsyncPPs = fromRsyncPPs repositoriesURIs 
+    rrdpMap :: RrdpMap <- QC.generate arbitrary    
+
+    let lastSuccess = Map.fromList [ (RrdpU u, FetchLastSuccess t) | 
+            RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
+
+    pure $ rsyncPPs <> PublicationPoints rrdpMap mempty (LastSuccededMap lastSuccess)
+    
+
+rrdpSubMap :: PublicationPoints -> IO RrdpMap
+rrdpSubMap pps = do 
+    let RrdpMap rrdpsM = rrdps pps
+    keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
+    pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
+
 shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
     ((_, env), DB {..}) <- io
