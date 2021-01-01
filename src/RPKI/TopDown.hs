@@ -816,25 +816,6 @@ markValidatedObjects AppContext { database = DB {..}, .. } TopDownContext {..} =
     logDebugM logger [i|Marked #{size} objects as visited, took #{elapsed}ms.|]
 
 
-
--- saveRepositories repositoryContext repositoryStore =
---     rwAppTxEx database storageError $ \tx -> do 
-        
---         RepositoryContext {..} <- liftIO $ readTVarIO repositoryContext
---         -- 
---         -- `latestStoreState` is the state in the storage that contains updates 
---         -- made during validation, i.e. RRDP serials updates. In principle, in-memory 
---         -- state (pubPointAfterTopDown) must be the same, but "just in case" we re-read 
---         -- `latestStoreState` and merge them before applying the change set. 
---         -- 
---         -- TODO It needs to be refactored as it's obviously too complicated, brittle
---         -- and nobody would understand what's going on there.
---         -- 
---         latestStoreState <- getPublicationPoints tx repositoryStore
---         let changeSet' = changeSet storedPubPoints (pubPointAfterTopDown <> latestStoreState)
---         applyChangeSet tx repositoryStore changeSet' taName'
-
-
 -- | Figure out which PPs are to be fetched, based on the global RepositoryContext
 -- and a set of PPs (usually just discovered by traversing the tree of objects)
 -- 
