@@ -20,7 +20,6 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 
 
-
 resourceGroup :: TestTree
 resourceGroup = testGroup "Resources" [
         prefixPropertyGroup,
@@ -67,17 +66,47 @@ prefixPropertyGroup = testGroup "Prefix properties tests"
                     in List.all check sub
 
         intersectionAndOverclaimedAreComplimentary xs = 
-            QC.forAll (sublistOf xs) $ \subList ->
+            QC.forAll (sublistOf xs) $ \subXs ->
                 let biggerSet  = IS.fromList xs
-                    smallerSet = IS.fromList subList
-                    (Nested is, Overclaiming os) = 
-                        IS.intersectionAndOverclaimedIntervals smallerSet biggerSet
+                    smallerSet = IS.fromList subXs                    
+                    (Nested is, Overclaiming os)   = IS.intersectionAndOverclaimedIntervals smallerSet biggerSet
+                    (Nested is1, Overclaiming os1) = IS.intersectionAndOverclaimedIntervals biggerSet smallerSet 
                     in 
-                        is == smallerSet &&
-                        os == IS.empty 
+                        is == smallerSet && os == IS.empty 
+                        && is1 == smallerSet
+                        && is <> os == smallerSet
+                        && is1 <> os1 == biggerSet
 
 resourcesUnitTests :: TestTree
 resourcesUnitTests = testGroup "AS resource unit tests" [
+    HU.testCase "Should subtract ASN resource" $ do         
+        let check a b = HU.assertBool (show a <> " doesn't contain " <> show b) $ contains a b
+        let checkNot a b = HU.assertBool (show a <> " contains " <> show b) $ not (contains a b)
+
+        check (ASRange (ASN 10) (ASN 16)) (AS $ ASN 10)
+        checkNot (ASRange (ASN 10) (ASN 16)) (AS $ ASN 20)
+        checkNot (ASRange (ASN 10) (ASN 16)) (AS $ ASN 6)
+
+        check (AS $ ASN 10) (AS $ ASN 10)
+        checkNot (AS $ ASN 10) (AS $ ASN 111)
+
+        check (AS $ ASN 10) (ASRange (ASN 10) (ASN 10)) 
+        checkNot (AS $ ASN 10) (ASRange (ASN 10) (ASN 11)) 
+
+        check (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 14) (ASN 17)) 
+        check (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 10) (ASN 17)) 
+        check (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 18) (ASN 20)) 
+        check (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 20) (ASN 20)) 
+        check (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 10) (ASN 10)) 
+        check (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 10) (ASN 20)) 
+
+        checkNot (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 8) (ASN 18)) 
+        checkNot (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 12) (ASN 22)) 
+        checkNot (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 8) (ASN 22)) 
+        checkNot (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 10) (ASN 22)) 
+        checkNot (ASRange (ASN 10) (ASN 20)) (ASRange (ASN 8) (ASN 20)),
+        
+
     HU.testCase "Should calculate intersection for ASN resource" $ do             
         intersection (AS (ASN 10)) (AS (ASN 15)) @?= []
         intersection (AS (ASN 10)) (AS (ASN 10)) @?= [AS (ASN 10)]

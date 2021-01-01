@@ -26,7 +26,6 @@ import           RPKI.Resources.IntervalSet           as IS
 import           RPKI.Resources.Types
 
 
-
 instance WithSetOps Ipv4Prefix where
     contains (Ipv4Prefix ip1) (Ipv4Prefix ip2) =   
         V4.firstIpAddress ip1 <= V4.firstIpAddress ip2 && V4.lastIpAddress ip1 >= V4.lastIpAddress ip2
@@ -147,10 +146,13 @@ normalisePrefixes p = concatMap toPrefixes $ mergeRanges $
     map toRange $ Set.toAscList $ Set.fromList p
 
 normaliseAsns :: [AsResource] -> [AsResource]
-normaliseAsns asns = mergeAsRanges $ List.sortOn rangeStart asns
+normaliseAsns asns = 
+    mergeAsRanges 
+        $ List.sortOn rangeStart 
+        $ map simplify asns
     where
-        mergeAsRanges [] = []
-        mergeAsRanges [r] = [r]
+        mergeAsRanges []  = []
+        mergeAsRanges [r] = [r]        
         mergeAsRanges (r0 : r1 : rs) =  
             case tryMerge r0 r1 of
                 Nothing     -> r0 : mergeAsRanges (r1 : rs)
@@ -172,7 +174,7 @@ normaliseAsns asns = mergeAsRanges $ List.sortOn rangeStart asns
                     | otherwise = Nothing 
 
                 tryMerge (ASRange a00 a01) (ASRange a10 a11) 
-                    | a01 >= a10 = Just $ ASRange a00 (max a01 a11)
+                    | succ a01 >= a10 = Just $ ASRange a00 (max a01 a11)
                     | otherwise = Nothing 
                 {-# INLINE tryMerge #-}
 
@@ -180,6 +182,13 @@ normaliseAsns asns = mergeAsRanges $ List.sortOn rangeStart asns
             AS a        -> a 
             ASRange a _ -> a
         {-# INLINE rangeStart #-}
+
+        simplify = \case
+            AS a -> AS a 
+            r@(ASRange a b) | a == b    -> AS a
+                            | otherwise -> r
+        {-# INLINE simplify #-}
+        
     
 
 emptyIpSet :: IpResourceSet
@@ -209,10 +218,10 @@ toPrefixesAndAsns (AllResources ipv4 ipv6 asn) = PrefixesAndAsns (get ipv4) (get
 
 containsAsn :: AsResource -> AsResource -> Bool
 containsAsn (AS a) (AS b) = a == b
-containsAsn (AS a) (ASRange b0 b1) = a >= b0 && a <= b1
-containsAsn (ASRange a0 a1) (AS b) = a0 == b && a1 == b
+containsAsn (AS a) (ASRange b0 b1) = a == b0 && a == b1
+containsAsn (ASRange a0 a1) (AS b) = a0 <= b && b <= a1
 containsAsn (ASRange a0 a1) (ASRange b0 b1) = 
-    a0 >= b0 && a0 <= b1 && a1 >= b0 && a1 <= b1
+    b0 >= a0 && b0 <= a1 && b1 <= a1 && b1 >= a0
 {-# INLINE containsAsn #-}    
 
 intersectionAsn :: AsResource -> AsResource -> [AsResource]

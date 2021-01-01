@@ -27,15 +27,21 @@ toList (IntervalSet s) = V.toList s
 findIntersections :: Interval a => a -> IntervalSet a -> [a]
 findIntersections a as = concatMap fst $ findFullIntersections a as
 
+instance WithSetOps a => Semigroup (IntervalSet a) where
+    is1 <> is2 = fromList $ toList is1 <> toList is2
+
 -- | Use binary search to find intersections of an interval within an interval set.
 -- | Return both interesections -- '[a]' and the intervals it intersects with -- 'a'.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
-findFullIntersections a (IntervalSet v) = 
-    case V.unsafeIndex v 0 `intersection` a of
-        [] -> case V.unsafeIndex v lastIndex `intersection` a of
-            [] -> goBinarySearch 0 lastIndex
-            _  -> goBackwards lastIndex
-        _  -> goForward 0
+findFullIntersections a is@(IntervalSet v) = 
+    if null is 
+        then []
+    else 
+        case V.unsafeIndex v 0 `intersection` a of
+            [] -> case V.unsafeIndex v lastIndex `intersection` a of
+                [] -> goBinarySearch 0 lastIndex
+                _  -> goBackwards lastIndex
+            _  -> goForward 0
     where 
         goBinarySearch b e
             | e <= b = []

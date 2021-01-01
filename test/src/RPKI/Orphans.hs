@@ -14,7 +14,7 @@ import qualified Data.Text                            as Text
 
 import           Data.List.NonEmpty                   (NonEmpty)
 
-import           Test.QuickCheck
+import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Instances.ByteString
@@ -65,8 +65,7 @@ instance Arbitrary URI where
     arbitrary = URI <$> do
         ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
         name <- listOf1 $ elements ['a'..'z']
-        pure $ convert $ "rsync://" <> name <> ext
-    shrink = genericShrink
+        pure $ convert $ "rsync://" <> name <> ext    
 
 instance Arbitrary RrdpURL where
     arbitrary = genericArbitrary
@@ -114,7 +113,6 @@ instance Arbitrary EncodedBase64 where
     arbitrary = do 
         DecodedBase64 bs <- arbitrary
         pure $ EncodedBase64 $ B64.encodeBase64' bs
-    shrink = genericShrink   
 
 instance Arbitrary SnapshotInfo where
     arbitrary = genericArbitrary
@@ -261,9 +259,8 @@ instance Arbitrary AsResource where
         as = AS . ASN <$> arbitrary
         asRange = do
             s <- arbitrary
-            e <- suchThat arbitrary ((>s) . fromIntegral)
+            e <- suchThat arbitrary (>s)
             pure $ ASRange (ASN s) (ASN e)
-    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (RSet a) where
     arbitrary = genericArbitrary
@@ -373,8 +370,6 @@ instance Arbitrary RrdpMap where
     arbitrary = do 
         rrdps :: [RrdpRepository] <- arbitrary
         pure $ RrdpMap $ Map.fromList [ (uri, r) | r@RrdpRepository{..} <- rrdps ]
-    shrink = genericShrink
-
 
 -- errors and warnings
 
@@ -427,10 +422,7 @@ instance Arbitrary MetricPath where
     shrink = genericShrink
 
 instance Arbitrary Validations where
-    -- Implement it to prevent hige generated structures and 
-    -- save some time
-    arbitrary = generateMap Validations 
-    shrink = genericShrink
+    arbitrary = generateMap Validations     
 
 instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
@@ -453,8 +445,7 @@ instance Arbitrary ValidationMetric where
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where
-    arbitrary = generateMap $ MetricMap . MonoidMap
-    shrink = genericShrink
+    arbitrary = generateMap $ MetricMap . MonoidMap    
 
 instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidMap k v) where
     arbitrary = genericArbitrary
@@ -492,10 +483,9 @@ instance Arbitrary Ipv4Prefix where
         w4 :: Word8 <- arbitrary
         let w = fourW8sToW32 [w1, w2, w3, w4]
         m :: Word8  <- choose (8, 32)
-        let x = w `shift` (32 - fromIntegral m)
+        let mask = (0xFFFFFFFF :: Word32) `shift` (32 - fromIntegral m)
+        let x = w .&. mask 
         pure $! mkIpv4Block x m
-
-    shrink = genericShrink
 
 instance Arbitrary Ipv6Prefix where
     arbitrary = do
@@ -506,40 +496,6 @@ instance Arbitrary Ipv6Prefix where
         m :: Word8  <- choose (46, 128)
         let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
         pure $! mkIpv6Block x m
-
-    shrink = genericShrink
-
-instance Arbitrary (V4.IpBlock Canonical) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary (V6.IpBlock Canonical) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary (Range V4.IpAddress) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary (Range V6.IpAddress) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary V4.IpAddress where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary V6.IpAddress where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary V4.IpNetMask where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary V6.IpNetMask where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
 
 instance Arbitrary PrefixesAndAsns where
     arbitrary = genericArbitrary
