@@ -45,6 +45,9 @@ instance MaintainableStorage LmdbStorage where
 
 data LmdbFlow = UseExisting | Reset
 
+maxReadersDefault :: Int
+maxReadersDefault = 100
+
 
 -- | Verify that the cache directory is consistent and use it as LMDB cache.
 -- 
@@ -58,7 +61,7 @@ data LmdbFlow = UseExisting | Reset
 -- 
 --  In this case `lmdb.1605220697` contains LMDB files.
 --
-setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Int64 -> ValidatorT IO (LmdbEnv, FilePath)
+setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Size -> ValidatorT IO (LmdbEnv, FilePath)
 setupLmdbCache lmdbFlow logger root lmdbSize = do
     
     -- delete everything in `cache` if `reset` is present
@@ -104,7 +107,7 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
 
         createLmdb lmdbDir' =
             fromTry (InitE . InitError . fmtEx) $ 
-                mkLmdb lmdbDir' lmdbSize 128    
+                mkLmdb lmdbDir' lmdbSize maxReadersDefault    
 
         removePossibleOtherLMDBCaches linkTarget = 
             cleanDirFiltered cacheDir $ \f -> 
@@ -148,20 +151,22 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     let copyToNewEnvironmentAndSwap = do            
             -- make current environment read-only
-            atomically $ do 
+            oldNativeEnv <- atomically $ do 
                 let n = nativeEnv lmdbEnv
                 curentEnv <- readTVar n
                 case curentEnv of
                     -- normally we expect it to be in the `RWEnv` state
-                    RWEnv native -> writeTVar n (ROEnv native)                                
+                    RWEnv native -> do 
+                        writeTVar n (ROEnv native)                                
+                        pure native
                     -- this is weird, but lets just wait for it to change 
                     -- and don't make things even more weird
                     Disabled -> retry
                     -- it shouldn't happes as well, but we can work with it in principle
-                    ROEnv _  -> pure ()
+                    ROEnv n  -> pure n
 
             -- create new native LMDB environment in the temporary directory
-            newLmdb <- mkLmdb newLmdbDir 1000_000 100
+            newLmdb <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
 
             logDebug_ logger [i|Created LMDB environment in #{newLmdbDir}.|]
 
@@ -170,6 +175,7 @@ defragmentStorageWithTmpDir AppContext {..} = do
             logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
             
             -- disable current environment, i.e. stop all DB operations
+            -- TODO Check if it's actually needed
             atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
@@ -182,10 +188,9 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
             -- set new native LMDB environment as the current DB
             newNative <- getNativeEnv newLmdb
-            atomically $ writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)
-
-            -- close old environment
-            closeLmdb lmdbEnv
+            atomically $ writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)            
+            
+            closeNativeLmdb oldNativeEnv
 
             -- delete old environment files
             removePathForcibly currentLinkTarget
@@ -204,12 +209,12 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
-    if fileSizeMb > (3 * dataSizeMb)
-        then do 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
-            copyToNewEnvironmentAndSwap `onException` cleanUpAfterException    
-        else 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
+    -- if fileSizeMb > (3 * dataSizeMb)
+    --     then do 
+    logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
+    copyToNewEnvironmentAndSwap `onException` cleanUpAfterException    
+        -- else 
+        --     logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
         
         
 createLmdbDir :: MonadIO m => FilePath -> m FilePath

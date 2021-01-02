@@ -8,7 +8,7 @@ import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 
 import           Lmdb.Connection
-import           Lmdb.Types
+import           Lmdb.Types hiding (Size)
 import           RPKI.Store.Base.LMDB
 
 import           Data.Int                 (Int64)
@@ -16,6 +16,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
 import Control.Concurrent.STM
+import RPKI.Config
 
 
 
@@ -61,8 +62,8 @@ createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
 createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 
-mkLmdb :: FilePath -> Int64 -> Int -> IO LmdbEnv
-mkLmdb fileName maxSizeMb maxReaders = do 
+mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
+mkLmdb fileName (Size maxSizeMb) maxReaders = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) maxReaders maxDatabases fileName    
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
@@ -73,6 +74,9 @@ mkLmdb fileName maxSizeMb maxReaders = do
 
 closeLmdb :: LmdbEnv -> IO ()
 closeLmdb e = closeEnvironment =<< getNativeEnv e
+
+closeNativeLmdb :: Environment e -> IO ()
+closeNativeLmdb = closeEnvironment
 
 
 createDatabase :: LmdbEnv -> IO (DB LmdbStorage)

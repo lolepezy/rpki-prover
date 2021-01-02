@@ -35,7 +35,8 @@ data Config = Config {
     cacheCleanupInterval      :: Seconds,
     cacheLifeTime             :: Seconds,
     oldVersionsLifetime       :: Seconds,
-    storageDefragmentInterval :: Seconds
+    storageDefragmentInterval :: Seconds,
+    lmdbSize                  :: Size
 } deriving stock (Show, Eq, Ord, Generic)
 
 data RsyncConf = RsyncConf {
@@ -59,7 +60,8 @@ data ValidationConfig = ValidationConfig {
     revalidationInterval           :: Seconds,
     rrdpRepositoryRefreshInterval  :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds,    
-    repositoryGracePeriod          :: Maybe Seconds
+    repositoryGracePeriod          :: Maybe Seconds,
+    dontFetch                      :: Bool
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {

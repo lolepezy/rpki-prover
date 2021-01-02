@@ -72,7 +72,8 @@ runWorkflow appContext@AppContext {..} tals = do
             generateNewWorldVersion, 
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
-            generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
+            -- generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
+            generatePeriodicTask 40_000_000 (Seconds 60) defragment,
             rtrServer   
         ]
     where

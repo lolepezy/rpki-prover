@@ -120,11 +120,12 @@ createAppContext CLIOptions{..} logger = do
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
 
+    let lmdbRealSize = Size $ lmdbSize `orDefault` 2048
     (lmdbEnv, cacheDir) <- setupLmdbCache 
                                 (if reset then Reset else UseExisting) 
                                 logger 
                                 rootDir
-                                (lmdbSize `orDefault` 2048)
+                                lmdbRealSize
                                 
     database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv                
 
@@ -180,7 +181,8 @@ createAppContext CLIOptions{..} logger = do
                 repositoryGracePeriod          = Seconds <$> repositoryGracePeriod,
                 revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
-                rsyncRepositoryRefreshInterval = Seconds $ rsyncRefreshInterval `orDefault` (11 * 60)
+                rsyncRepositoryRefreshInterval = Seconds $ rsyncRefreshInterval `orDefault` (11 * 60),
+                dontFetch = dontFetch
             },
             httpApiConf = HttpApiConfig {
                 port = httpApiPort `orDefault` 9999
@@ -192,7 +194,9 @@ createAppContext CLIOptions{..} logger = do
             -- TODO Think about it, it should be lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
 
-            storageDefragmentInterval = Seconds $ 60 * 60 * 12
+            storageDefragmentInterval = Seconds $ 60 * 60 * 12,
+
+            lmdbSize = lmdbRealSize
         },
         appState = appState,
         database = database,
@@ -295,7 +299,10 @@ data CLIOptions wrapped = CLIOptions {
         "Address to bind to for the RTR server (default is localhost)",
 
     rtrPort :: wrapped ::: Maybe Int16 <?> 
-        "Port to listen to for the RTR server (default is 8282)"
+        "Port to listen to for the RTR server (default is 8282)",
+
+    dontFetch :: wrapped ::: Bool <?> 
+        "Don't fetch repositories, mostly used for testing (default is false)."
 
 } deriving (Generic)
 

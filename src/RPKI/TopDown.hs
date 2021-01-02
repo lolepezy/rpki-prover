@@ -93,7 +93,7 @@ data TopDownContext s = TopDownContext {
         now               :: Now,
         worldVersion      :: WorldVersion,
         visitedHashes     :: TVar (Set Hash)
-    } 
+    }
     deriving stock (Generic)
 
 
@@ -231,10 +231,16 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
                     `shrinkTo` 
                 Set.fromList (map getRpkiURL $ NonEmpty.toList initialRepos)
 
-    fetchStatuses <- parallelTasks 
-                        (ioBottleneck appBottlenecks)
-                        reposToFetch 
-                        (fetchRepository appContext taURIContext now)
+    fetchStatuses <- 
+        if config ^. typed @ValidationConfig . #dontFetch
+            then pure []
+            -- else parallelTasks 
+            --         (ioBottleneck appBottlenecks)
+            --         reposToFetch 
+            --         (fetchRepository appContext taURIContext now)
+            else forConcurrently 
+                    reposToFetch 
+                    (fetchRepository appContext taURIContext now)
 
     case partitionFailedSuccess fetchStatuses of 
         ([], _) -> do            
@@ -538,38 +544,45 @@ validateCaCertificate
     certificate = do          
 
     globalPPs <- (^. #publicationPoints) <$> liftIO (readTVarIO repositoryContext)
+    
+    if appContext ^. typed @Config . typed @ValidationConfig . #dontFetch 
+        -- Don't add anything to the awaited repositories
+        -- Just expect everuything to be already cached
+        then validateThisCertAndGoDown 
+        else checkPublicationPointsFirstAndDecide globalPPs
 
-    let validationConfig = appContext ^. typed @Config . typed
-
-    case publicationPointsFromCertObject certificate of
-        Left e                    -> appError $ ValidationE e
-        Right (url, discoveredPP) -> do
-            let asIfItIsMerged = discoveredPP `mergePP` globalPPs
-            let stopDescend = do 
-                    -- remember to come back to this certificate when the PP is fetched
-                    vContext' <- ask
-                    pure $! T3 
-                            (asIfItIsMerged `shrinkTo` Set.singleton url) 
-                            (toWaitingList
-                                (getRpkiURL discoveredPP) 
-                                (getHash certificate) 
-                                vContext' 
-                                verifiedResources)
-                            mempty
-
-            case findPublicationPointStatus url asIfItIsMerged of 
-                -- this publication point hasn't been seen at all, so stop here
-                Nothing -> stopDescend
-
-                -- If it's been fetched too long ago, stop here and add the certificate 
-                -- to the waiting list of this PP
-                -- if the PP is fresh enough, proceed with the tree descend                
-                Just status -> let                
-                    needToRefetch = needsFetching discoveredPP status validationConfig now                    
-                    in if needToRefetch
-                        then stopDescend 
-                        else validateThisCertAndGoDown                    
     where
+        checkPublicationPointsFirstAndDecide globalPPs = 
+            case publicationPointsFromCertObject certificate of
+                Left e                    -> appError $ ValidationE e
+                Right (url, discoveredPP) -> do
+                    let asIfItIsMerged = discoveredPP `mergePP` globalPPs
+                    let stopDescend = do 
+                            -- remember to come back to this certificate when the PP is fetched
+                            vContext' <- ask
+                            pure $! T3 
+                                    (asIfItIsMerged `shrinkTo` Set.singleton url) 
+                                    (toWaitingList
+                                        (getRpkiURL discoveredPP) 
+                                        (getHash certificate) 
+                                        vContext' 
+                                        verifiedResources)
+                                    mempty
+
+                    case findPublicationPointStatus url asIfItIsMerged of 
+                        -- this publication point hasn't been seen at all, so stop here
+                        Nothing -> stopDescend
+
+                        -- If it's been fetched too long ago, stop here and add the certificate 
+                        -- to the waiting list of this PP
+                        -- if the PP is fresh enough, proceed with the tree descend                
+                        Just status -> let 
+                            validationConfig = appContext ^. typed @Config . typed               
+                            needToRefetch = needsFetching discoveredPP status validationConfig now                    
+                            in if needToRefetch
+                                then stopDescend 
+                                else validateThisCertAndGoDown                    
+    
         -- Here we do the detailed algorithm
         --  * get manifest
         --  * find CRL on it
@@ -636,8 +649,9 @@ validateCaCertificate
                                 visitObjects topDownContext $ map snd childrenHashes
                         
                         let processChildren = do 
-                                r <- parallelTasks 
-                                        (cpuBottleneck appBottlenecks) 
+                                -- r <- parallelTasks 
+                                --         (cpuBottleneck appBottlenecks) 
+                                r <- forConcurrently 
                                         childrenHashes
                                         $ \(filename, hash') -> 
                                                   validateManifestEntry filename hash' validCrl
