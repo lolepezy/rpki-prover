@@ -20,11 +20,12 @@ import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
-
+-- | Parse ROA, https://tools.ietf.org/html/rfc6482
+-- 
 parseRoa :: BS.ByteString -> ParseResult (RpkiURL -> RoaObject)
 parseRoa bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
-    signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject parseRoas') asns
+    signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas') asns
     meta <- getMetaFromSigned signedRoa bs
     pure $ \url -> let (hash, loc) = meta url in newCMSObject hash loc (CMS signedRoa)
     where     

@@ -325,8 +325,8 @@ data SignCRL = SignCRL {
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
 
--- TODO Define it
-data Gbr = Gbr 
+
+data Gbr = Gbr BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

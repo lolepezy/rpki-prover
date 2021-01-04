@@ -44,7 +44,7 @@ id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]
 
 id_ad_rpki_notify         = oid_pkix <> [ 48, 13 ]  
 id_ad_rpki_repository     = oid_pkix <> [ 48, 5 ]  
-id_ad_rpkiManifest        = oid_pkix <> [48, 10]
+id_ad_rpkiManifest        = oid_pkix <> [ 48, 10]
 
 id_cp_ipAddr_asNumber, id_cps_qualifier :: OID
 id_cp_ipAddr_asNumber = oid_pkix <> [ 14, 2 ]

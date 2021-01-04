@@ -40,8 +40,9 @@ import qualified RPKI.Util as U
 
       ContentType ::= OBJECT IDENTIFIER           
 -}
-parseSignedObject :: ParseASN1 a -> ParseASN1 (SignedObject a)
-parseSignedObject eContentParse = 
+parseSignedObject :: (ContentType -> BS.ByteString -> ParseASN1 (EncapsulatedContentInfo a)) 
+                    -> ParseASN1 (SignedObject a)
+parseSignedObject contentBinaryParse = 
   onNextContainer Sequence $ 
     SignedObject <$> parseContentType <*> parseContent
   where  
@@ -72,12 +73,13 @@ parseSignedObject eContentParse =
           eContent contentType = do 
             fullContent <- getMany getNext
             let bs = BS.concat [ os | OctetString os <- fullContent ]            
-            case decodeASN1' BER bs of
-              Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
-              Right asns ->  
-                case runParseASN1 eContentParse asns of
-                  Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
-                  Right a -> pure $ EncapsulatedContentInfo contentType a
+            contentBinaryParse contentType bs
+            -- case decodeASN1' BER bs of
+            --   Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
+            --   Right asns ->  
+            --     case runParseASN1 eContentParse asns of
+            --       Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
+            --       Right a -> pure $ EncapsulatedContentInfo contentType a
         
 
     parseEECertificate = onNextContainer (Container Context 0) $                  
@@ -145,5 +147,16 @@ parseSignedObject eContentParse =
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
+
 getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult (RpkiURL -> (Hash, Locations))
 getMetaFromSigned _ bs = pure $ \location -> (U.sha256s bs, location :| [])
+
+
+parseSignedContent :: ParseASN1 a -> ContentType -> BS.ByteString -> ParseASN1 (EncapsulatedContentInfo a)
+parseSignedContent eContentParse contentType bs = 
+    case decodeASN1' BER bs of
+        Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
+        Right asns ->  
+            case runParseASN1 eContentParse asns of
+                Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
+                Right a -> pure $ EncapsulatedContentInfo contentType a

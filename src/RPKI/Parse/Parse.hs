@@ -20,6 +20,7 @@ import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.CRL
 import           RPKI.Parse.Internal.MFT
 import           RPKI.Parse.Internal.ROA
+import           RPKI.Parse.Internal.GBR
 import           RPKI.Parse.Internal.SignedObject
 
 import           RPKI.Domain
@@ -39,8 +40,9 @@ readObject objectURL content = do
     case ext of
         ".cer" -> parse_ objectURL parseResourceCertificate CerRO content            
         ".mft" -> parse_ objectURL parseMft MftRO content
-        ".roa" -> parse_ objectURL parseRoa RoaRO content            
+        ".roa" -> parse_ objectURL parseRoa RoaRO content                    
         ".crl" -> parse_ objectURL parseCrl CrlRO content            
+        ".gbr" -> parse_ objectURL parseGbr GbrRO content            
         _      -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
             parse_ u parse constructor bs = do
