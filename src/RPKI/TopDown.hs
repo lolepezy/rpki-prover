@@ -850,6 +850,19 @@ oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 
+-- Sum up all the validation metrics from all TA to create the "total" validation metric
+addTotalValidationMetric totalValidationResult =
+    totalValidationResult & vmLens %~ Map.insert (newPath "total") totalValidationMetric
+  where
+    uniqueVrps = Set.fromList (totalValidationResult ^. #vrps)
+    totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 
+                            & #vrpNumber .~ Count (fromIntegral $ Set.size uniqueVrps)
+    vmLens = typed @ValidationState . 
+            typed @AppMetric . 
+            #validationMetrics . 
+            #unMetricMap . 
+            #unMonoidMap                    
+
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 

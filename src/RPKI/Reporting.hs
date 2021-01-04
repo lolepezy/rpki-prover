@@ -67,8 +67,8 @@ data ValidationError = InvalidCert Text |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |                        
-                        NextUpdateTimeIsInThePast Instant Instant |
-                        ThisUpdateTimeIsInTheFuture Instant Instant |
+                        NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
+                        ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |
@@ -332,7 +332,7 @@ instance MetricC ValidationMetric where
     metricLens = #validationMetrics
 
 
-newtype MetricMap a = MetricMap (MonoidMap MetricPath a)
+newtype MetricMap a = MetricMap { unMetricMap :: MonoidMap MetricPath a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype Monoid    
