@@ -146,10 +146,9 @@ createAppContext CLIOptions{..} logger = do
     -- that much IO (http downloads, LMDB reads, etc.) operations at once.
     let ioParallelism = 64     
 
-    appBottlenecks <- liftIO $ do 
-        cpuBottleneck <- newBottleneckIO cpuParallelism
-        ioBottleneck  <- newBottleneckIO ioParallelism
-        pure $ AppBottleneck cpuBottleneck ioBottleneck
+    appBottlenecks <- liftIO $ AppBottleneck <$> 
+                        newBottleneckIO cpuParallelism <*>
+                        newBottleneckIO ioParallelism        
 
     -- TODO read stuff from the config, CLI
     httpContext <- liftIO newHttpContext

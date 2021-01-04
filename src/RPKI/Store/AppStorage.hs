@@ -72,26 +72,27 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
             cleanDir cacheDir
     
     currentExists <- liftIO $ doesPathExist currentCache
-    lmdbEnv <- if currentExists 
-                then do
-                    linkTarget   <- liftIO $ readSymbolicLink currentCache
-                    targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget            
-                    if targetExists 
-                        then do 
-                            -- We have what we need, but there could still be other directories 
-                            -- left from interrupted de-fragmentations or stuff like that -- delete 
-                            -- them all.
-                            removePossibleOtherLMDBCaches linkTarget
+    lmdbEnv <- 
+        if currentExists 
+            then do
+                linkTarget   <- liftIO $ readSymbolicLink currentCache
+                targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget            
+                if targetExists 
+                    then do 
+                        -- We have what we need, but there could still be other directories 
+                        -- left from interrupted de-fragmentations or stuff like that -- delete 
+                        -- them all.
+                        removePossibleOtherLMDBCaches linkTarget
 
-                            logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
-                            createLmdb currentCache
-                        else do 
-                            -- link is broken so clean it up and re-create
-                            logWarnM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
-                            resetCacheDir  
-                else do 
-                    logWarnM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
-                    resetCacheDir
+                        logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
+                        createLmdb currentCache
+                    else do 
+                        -- link is broken so clean it up and re-create
+                        logWarnM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
+                        resetCacheDir  
+            else do 
+                logWarnM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
+                resetCacheDir
 
     pure (lmdbEnv, cacheDir)
     where
@@ -100,7 +101,7 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
 
         resetCacheDir = do             
             cleanDir cacheDir            
-            newLmdbDir <- createLmdbDir cacheDir
+            newLmdbDir <- generateLmdbDir cacheDir
             liftIO $ createDirectory newLmdbDir
             liftIO $ createSymbolicLink newLmdbDir currentCache
             createLmdb currentCache
@@ -139,7 +140,7 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 
-    newLmdbDir <- createLmdbDir cacheDir
+    newLmdbDir <- generateLmdbDir cacheDir
     createDirectory newLmdbDir
 
     logDebug_ logger [i|Created #{newLmdbDir} for storage copy.|]
@@ -149,34 +150,24 @@ defragmentStorageWithTmpDir AppContext {..} = do
             atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
             removePathForcibly newLmdbDir    
 
-    let copyToNewEnvironmentAndSwap = do            
-            -- make current environment read-only
-            oldNativeEnv <- atomically $ do 
-                let n = nativeEnv lmdbEnv
-                curentEnv <- readTVar n
-                case curentEnv of
-                    -- normally we expect it to be in the `RWEnv` state
-                    RWEnv native -> do 
-                        writeTVar n (ROEnv native)                                
-                        pure native
-                    -- this is weird, but lets just wait for it to change 
-                    -- and don't make things even more weird
-                    Disabled -> retry
-                    -- it shouldn't happes as well, but we can work with it in principle
-                    ROEnv n  -> pure n
+    let setEnvToReadOnly = atomically $ do 
+            let n = nativeEnv lmdbEnv
+            readTVar n >>= \case            
+                -- normally we expect it to be in the `RWEnv` state
+                RWEnv native -> do 
+                    writeTVar n (ROEnv native)                                
+                    pure native
+                -- this is weird, but lets just wait for it to change 
+                -- and don't make things even more weird
+                Disabled -> retry
+                -- it shouldn't happes as well, but we can work with it in principle
+                ROEnv n  -> pure n
 
-            -- create new native LMDB environment in the temporary directory
-            newLmdb <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
+    let copyToNewEnvironmentAndSwap = do                        
+            oldNativeEnv <- setEnvToReadOnly
 
-            logDebug_ logger [i|Created LMDB environment in #{newLmdbDir}.|]
-
-            -- copy current environment to the new one
-            copyEnv lmdbEnv newLmdb
+            copyEnv2 oldNativeEnv newLmdbDir
             logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
-            
-            -- disable current environment, i.e. stop all DB operations
-            -- TODO Check if it's actually needed
-            atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
 
@@ -184,18 +175,52 @@ defragmentStorageWithTmpDir AppContext {..} = do
             createSymbolicLink newLmdbDir $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
-            logDebug_ logger [i|Set current cache to #{newLmdbDir}.|]
+            atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
 
-            -- set new native LMDB environment as the current DB
-            newNative <- getNativeEnv newLmdb
-            atomically $ writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)            
-            
             closeNativeLmdb oldNativeEnv
 
-            -- delete old environment files
             removePathForcibly currentLinkTarget
-
             logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
+
+            newLmdb <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
+            atomically $ do
+                newNative <- getNativeEnv newLmdb
+                writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)             
+
+            
+
+            -- create new native LMDB environment in the temporary directory
+            -- newLmdbEnv   <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
+            -- newNativeEnv <- atomically $ getNativeEnv newLmdbEnv
+
+            -- logDebug_ logger [i|Created LMDB environment in #{newLmdbDir}.|]
+
+            -- copy current environment to the new one
+            -- copyEnv oldNativeEnv newNativeEnv
+            
+            
+            -- disable current environment, i.e. stop all DB operations
+            -- TODO Check if it's actually needed
+            -- atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
+
+            
+
+            -- logDebug_ logger [i|Set current cache to #{newLmdbDir}.|]
+
+            -- -- close both and reopen new one
+            -- closeNativeLmdb oldNativeEnv
+            -- closeNativeLmdb newNativeEnv            
+
+            -- newLmdb <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
+
+            -- -- set new native LMDB environment as the current DB            
+            -- atomically $ do
+            --     newNative <- getNativeEnv newLmdb
+            --     writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)                                
+
+            -- -- delete old environment files
+            -- removePathForcibly currentLinkTarget
+            -- logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
             
     
     currentLinkTarget <- liftIO $ readSymbolicLink currentCache
@@ -212,13 +237,15 @@ defragmentStorageWithTmpDir AppContext {..} = do
     -- if fileSizeMb > (3 * dataSizeMb)
     --     then do 
     logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
-    copyToNewEnvironmentAndSwap `onException` cleanUpAfterException    
+    copyToNewEnvironmentAndSwap `catch` (\(e :: SomeException) -> do
+        logError_ logger [i|ERROR: #{e}.|]        
+        cleanUpAfterException)
         -- else 
         --     logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
         
         
-createLmdbDir :: MonadIO m => FilePath -> m FilePath
-createLmdbDir cacheDir = do 
+generateLmdbDir :: MonadIO m => FilePath -> m FilePath
+generateLmdbDir cacheDir = do 
     Now now <- thisInstant
     pure $ cacheDir </> ("lmdb." <> show (asSeconds now))        
 

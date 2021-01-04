@@ -73,7 +73,7 @@ runWorkflow appContext@AppContext {..} tals = do
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
             -- generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
-            generatePeriodicTask 40_000_000 (Seconds 60) defragment,
+            -- generatePeriodicTask 40_000_000 revalidationInterval defragment,
             rtrServer   
         ]
     where
@@ -151,9 +151,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 (\deleted elapsed -> 
                     logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
-        defragment worldVersion = do
-            (_, elapsed) <- timedMS $ runMaintenance appContext 
-            logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
+        -- defragment worldVersion = do
+        --     (_, elapsed) <- timedMS $ runMaintenance appContext 
+        --     logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 

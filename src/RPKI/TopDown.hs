@@ -150,12 +150,14 @@ validateTA appContext@AppContext {..} tal worldVersion repositories = do
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
-                validateFromTACert appContext (getTaName tal) taCert repos worldVersion repositories
+                vrps <- validateFromTACert appContext (getTaName tal) taCert repos worldVersion repositories
+                setVrpNumber $ Count $ fromIntegral $ length vrps
+                pure vrps
 
     case r of 
         (Left e, vs) -> 
             pure $! TopDownResult mempty vs
-        (Right vrps, vs) -> 
+        (Right vrps, vs) ->            
             pure $! TopDownResult vrps vs
     where                     
         taContext = newValidatorPath taNameText
@@ -234,11 +236,8 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
     fetchStatuses <- 
         if config ^. typed @ValidationConfig . #dontFetch
             then pure []
-            -- else parallelTasks 
-            --         (ioBottleneck appBottlenecks)
-            --         reposToFetch 
-            --         (fetchRepository appContext taURIContext now)
-            else forConcurrently 
+            else parallelTasks 
+                    (ioBottleneck appBottlenecks)
                     reposToFetch 
                     (fetchRepository appContext taURIContext now)
 
@@ -443,12 +442,8 @@ validateCARecursively
                         let pps' = updateStatuses (r ^. #publicationPoints) [statusUpdate]     
                         writeTVar repositoryContext $ r { publicationPoints = pps' }
                         pure pps'
-            
-            logDebugM logger [i|fetchAndValidateWaitingList 1 #{getRpkiURL repo}|]
-            z <- proceedUsingGracePeriod pps waitingListForThesePPs fetchResult
 
-            logDebugM logger [i|fetchAndValidateWaitingList 2 #{getRpkiURL repo}|]
-            pure z
+            proceedUsingGracePeriod pps waitingListForThesePPs fetchResult                        
 
 
         -- Decide what to do with the result of PP fetching
@@ -521,8 +516,7 @@ validateCARecursively
                                     -- we should start from the resource set of this certificate
                                     -- as it is already has been verified
                                     verifiedResources = verifiedResources'                                                
-                                }
-                            logDebug_ logger [i|Processing c = #{NonEmpty.head $ getLocations c}|]
+                                }                            
                             validateCARecursively appContext certVContext childTopDownContext waitingCertificate 
                         ro -> do
                             logError_ logger [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]
@@ -547,7 +541,7 @@ validateCaCertificate
     
     if appContext ^. typed @Config . typed @ValidationConfig . #dontFetch 
         -- Don't add anything to the awaited repositories
-        -- Just expect everuything to be already cached
+        -- Just expect all the objects to be already cached
         then validateThisCertAndGoDown 
         else checkPublicationPointsFirstAndDecide globalPPs
 
@@ -599,8 +593,6 @@ validateCaCertificate
             oneMoreCert            
             visitObject appContext topDownContext (CerRO certificate)
 
-            -- logDebugM logger [i|certificate #{NonEmpty.head $ getLocations certificate}.|]
-
             mft <- findMft childrenAki certLocations'
             checkMftLocation mft certificate                    
 
@@ -611,9 +603,7 @@ validateCaCertificate
                     crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
 
                 let objectStore' = objectStore database
-                -- logDebugM logger [i|Looking for CRL #{NonEmpty.head $ getLocations certificate}.|]
                 crlObject <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
-                logDebugM logger [i|Found CRL #{NonEmpty.head $ getLocations certificate}.|]
                 case crlObject of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations'    
@@ -631,15 +621,10 @@ validateCaCertificate
                         -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
                         void $ vHoist $ validateMft now mft 
                                             certificate validCrl verifiedResources
-
-                        -- this for the CRL
-                        -- incValidObject (topDownContext ^. typed)          
                                             
                         -- filter out CRL itself
                         let childrenHashes = filter ((/= getHash crl) . snd) 
                                     $ mftEntries $ getCMSContent $ cmsPayload mft
-                    
-                        logDebugM logger [i|Going to process MFT children #{length childrenHashes}.|]
 
                         -- Mark all manifest entries as visited to avoid the situation
                         -- when some of the children are deleted from the cache and some
@@ -649,12 +634,11 @@ validateCaCertificate
                                 visitObjects topDownContext $ map snd childrenHashes
                         
                         let processChildren = do 
-                                -- r <- parallelTasks 
-                                --         (cpuBottleneck appBottlenecks) 
-                                r <- forConcurrently 
+                                r <- parallelTasks 
+                                        (cpuBottleneck appBottlenecks) 
                                         childrenHashes
                                         $ \(filename, hash') -> 
-                                                  validateManifestEntry filename hash' validCrl
+                                            validateManifestEntry filename hash' validCrl
                                 markAllEntriesAsVisited
                                 pure $! r
                         
@@ -675,13 +659,10 @@ validateCaCertificate
         -- 
         validateManifestEntry filename hash' validCrl = do                    
             validateMftFileName
-            -- 
             visitedObjects <- liftIO $ readTVarIO visitedHashes
 
             let objectStore' = objectStore database
-            logDebugM logger [i|Looking for MFT entry #{filename}.|]
             ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' hash'
-            -- logDebugM logger [i|Found MFT entry #{filename}.|]
             case ro of 
                 Nothing -> vError $ ManifestEntryDontExist hash'
                 Just ro'
@@ -762,10 +743,8 @@ validateCaCertificate
         
 
         findMft childrenAki locations = do
-            -- logDebugM logger [i|Looking for the MFT #{NonEmpty.head locations}.|]
             mft' <- liftIO $ roTx (objectStore database) $ \tx -> 
                 findLatestMftByAKI tx (objectStore database) childrenAki
-            -- logDebugM logger [i|Found MFT #{NonEmpty.head locations}.|]
             case mft' of
                 Nothing  -> vError $ NoMFT childrenAki locations
                 Just mft -> do
@@ -868,6 +847,7 @@ oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
+setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 
 -- | Fetch TA certificate based on TAL location(s)

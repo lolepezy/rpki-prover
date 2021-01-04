@@ -73,7 +73,7 @@ instance WithTx LmdbStorage where
     readOnlyTx lmdb f = let
         e@LmdbEnv {..} = getEnv lmdb
         in withSemaphore txSem $ do 
-                nEnv <- getNativeEnv e
+                nEnv <- atomically $ getNativeEnv e
                 withROTransaction nEnv (f . LmdbTx)        
 
     readWriteTx lmdb f = withTransaction1 (getEnv lmdb) (f . LmdbTx)        
@@ -124,8 +124,8 @@ instance Storage LmdbStorage where
                     v <- await
                     lift $ do 
                         a <- readIORef z
-                        a' <- f a key (SValue $ Storable v)
-                        writeIORef z $! a'
+                        !a' <- f a key (SValue $ Storable v)
+                        writeIORef z a'
             readIORef z
 
     foldMu (LmdbTx tx) LmdbMultiStore {..} f a0 =
@@ -149,26 +149,27 @@ createLmdbStore :: forall name . KnownSymbol name =>
                     LmdbEnv -> IO (LmdbStore name)
 createLmdbStore env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransaction1 env $ \tx -> openDatabase tx (Just name') dbSettings     
-    pure $ LmdbStore db env
-    where
-        dbSettings = makeSettings 
-            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-            byteString byteString
+    db <- withTransaction1 env $ \tx -> openDatabase tx (Just name') defaultDbSettings     
+    pure $ LmdbStore db env    
 
 createLmdbMultiStore :: forall name . KnownSymbol name =>  
                         LmdbEnv -> IO (LmdbMultiStore name)
 createLmdbMultiStore env@LmdbEnv {..} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransaction1 env $ \tx -> openMultiDatabase tx (Just name') dbSettings 
-    pure $ LmdbMultiStore db env
-    where
-        dbSettings :: Lmdb.MultiDatabaseSettings BS.ByteString BS.ByteString
-        dbSettings = makeMultiSettings 
-            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-            byteString byteString
+    db <- withTransaction1 env $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
+    pure $ LmdbMultiStore db env    
 
+
+defaultDbSettings :: Lmdb.DatabaseSettings BS.ByteString BS.ByteString
+defaultDbSettings = makeSettings 
+    (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+    byteString byteString
+
+defaultMultiDbSettngs :: Lmdb.MultiDatabaseSettings BS.ByteString BS.ByteString
+defaultMultiDbSettngs = makeMultiSettings 
+    (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+    (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+    byteString byteString
 
 -- Auxialliry stuff for limiting the amount of parallel LMDB transactions    
 data Semaphore = Semaphore Int (TVar Int)
@@ -188,8 +189,8 @@ withSemaphore (Semaphore maxCounter current) f =
         decrement _ = atomically $ modifyTVar' current $ \c -> c - 1
 
 
-getNativeEnv :: LmdbEnv -> IO Env 
-getNativeEnv LmdbEnv {..} = atomically $ do 
+getNativeEnv :: LmdbEnv -> STM Env 
+getNativeEnv LmdbEnv {..} = do 
     readTVar nativeEnv >>= \case        
         Disabled     -> retry            
         ROEnv native -> pure native
@@ -200,59 +201,63 @@ getNativeEnv LmdbEnv {..} = atomically $ do
 -- This is a low-level operation to be used for de-fragmentation.
 -- `dest` is supposed to be completely empty.
 -- 
-copyEnv :: LmdbEnv -> LmdbEnv -> IO ()
-copyEnv src dst = do
-    srcN <- getNativeEnv src
-    dstN <- getNativeEnv dst
-    srcDb <- withTransaction srcN $ \tx -> openDatabase tx Nothing dbSettings
-    withTransaction dstN $ \dstTx -> do     
-        withROTransaction srcN $ \srcTx -> do                
-            mapNames <- getMapNames srcTx srcDb        
-            forM_ mapNames $ \mapName -> do 
-                -- first open it as is
-                srcMap  <- openDatabase srcTx (Just $ convert mapName) dbSettings           
-                isMulti <- isMultiDatabase srcTx srcMap                            
-                if isMulti
-                    then do 
-                        -- close and reopen as multi map
-                        closeDatabase srcN srcMap
-                        srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) mutliDbSettings
-                        dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) mutliDbSettings
-                        copyMultiMap srcMap' dstMap srcTx dstTx                        
-                    else do 
-                        dstMap <- openDatabase dstTx (Just $ convert mapName) dbSettings
-                        copyMap srcMap dstMap srcTx dstTx                                      
-    where   
-        dbSettings = makeSettings 
-            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-            byteString byteString
+-- copyEnv :: Env -> Env -> IO ()
+-- copyEnv srcN dstN = do        
+--     withROTransaction srcN $ \srcTx -> do       
+--         withTransaction dstN $ \dstTx -> do                              
+--             srcDb <- openDatabase srcTx Nothing defaultDbSettings    
+--             mapNames <- getMapNames srcTx srcDb                
+--             forM_ mapNames $ \mapName -> do 
+--                 -- first open it as is
+--                 srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings           
+--                 isMulti <- isMultiDatabase srcTx srcMap                            
+--                 if isMulti
+--                     then do 
+--                         -- close and reopen as multi map
+--                         closeDatabase srcN srcMap
+--                         srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
+--                         dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) defaultMultiDbSettngs
+--                         copied <- copyMultiMap srcMap' dstMap srcTx dstTx
+--                         putStrLn $ "Copied multi " <> show mapName <> ", " <> show copied <> " bytes."
+--                         closeMultiDatabase dstN dstMap                                                
 
-        mutliDbSettings = makeMultiSettings 
-            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-            (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-            byteString byteString            
-
-        getMapNames tx db =
-            withCursor tx db $ \c -> do 
-                maps <- newIORef []
-                void $ runEffect $ LMap.firstForward c >-> do
-                    forever $ do
-                        Lmdb.KeyValue name _ <- await
-                        lift $ modifyIORef' maps (<> [name])
-                readIORef maps          
+--                     else do 
+--                         dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
+--                         copied <- copyMap srcMap dstMap srcTx dstTx                             
+--                         putStrLn $ "Copied " <> show mapName <> ", " <> show copied <> " bytes."         
+--                         closeDatabase dstN dstMap
+--     where           
+--         getMapNames tx db =
+--             withCursor tx db $ \c -> do 
+--                 maps <- newIORef []
+--                 void $ runEffect $ LMap.firstForward c >-> do
+--                     forever $ do
+--                         Lmdb.KeyValue name _ <- await
+--                         lift $ modifyIORef' maps ([name] <>)
+--                 readIORef maps          
         
-        copyMap srcMap dstMap srcTx dstTx =
-            withCursor srcTx srcMap $ \c ->                
-                void $ runEffect $ LMap.firstForward c >-> do
-                    forever $ do
-                        Lmdb.KeyValue name value <- await
-                        lift $ LMap.repsert' dstTx dstMap name value
+--         copyMap srcMap dstMap srcTx dstTx = do 
+--             bytes <- newIORef 0
+--             withCursor srcTx srcMap $ \c ->                
+--                 void $ runEffect $ LMap.firstForward c >-> do
+--                     forever $ do
+--                         Lmdb.KeyValue name value <- await
+--                         lift $ LMap.insertSuccess' dstTx dstMap name value
+--                         lift $ modifyIORef' bytes (+ (BS.length name + BS.length value))
+--             readIORef bytes
 
-        copyMultiMap srcMap dstMap srcTx dstTx =
-            withMultiCursor dstTx dstMap $ \dstC -> 
-                withMultiCursor srcTx srcMap $ \srcC ->                 
-                    void $ runEffect $ LMMap.firstForward srcC >-> do
-                        forever $ do
-                            Lmdb.KeyValue name value <- await
-                            lift $ LMMap.insert dstC name value
+--         copyMultiMap srcMap dstMap srcTx dstTx = do
+--             bytes <- newIORef 0
+--             withMultiCursor dstTx dstMap $ \dstC -> 
+--                 withMultiCursor srcTx srcMap $ \srcC ->                 
+--                     void $ runEffect $ LMMap.firstForward srcC >-> do
+--                         forever $ do
+--                             Lmdb.KeyValue name value <- await
+--                             lift $ LMMap.insert dstC name value
+--                             lift $ modifyIORef' bytes (+ (BS.length name + BS.length value))
+--             readIORef bytes
 
+
+
+copyEnv2 :: Env -> FilePath -> IO ()
+copyEnv2 = copyEnvironment
