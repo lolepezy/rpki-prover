@@ -138,54 +138,54 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     logInfo_ logger [i|De-fragmenting LMDB storage.|]
 
-    currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
+    -- currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 
-    newLmdbDir <- generateLmdbDir cacheDir
-    createDirectory newLmdbDir
+    -- newLmdbDir <- generateLmdbDir cacheDir
+    -- createDirectory newLmdbDir
 
-    logDebug_ logger [i|Created #{newLmdbDir} for storage copy.|]
+    -- logDebug_ logger [i|Created #{newLmdbDir} for storage copy.|]
 
-    let cleanUpAfterException = do 
-            -- return Env back to what it was in case of failure
-            atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
-            removePathForcibly newLmdbDir    
+    -- let cleanUpAfterException = do 
+    --         -- return Env back to what it was in case of failure
+    --         atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
+    --         removePathForcibly newLmdbDir    
 
-    let setEnvToReadOnly = atomically $ do 
-            let n = nativeEnv lmdbEnv
-            readTVar n >>= \case            
-                -- normally we expect it to be in the `RWEnv` state
-                RWEnv native -> do 
-                    writeTVar n (ROEnv native)                                
-                    pure native
-                -- this is weird, but lets just wait for it to change 
-                -- and don't make things even more weird
-                Disabled -> retry
-                -- it shouldn't happes as well, but we can work with it in principle
-                ROEnv n  -> pure n
+    -- let setEnvToReadOnly = atomically $ do 
+    --         let n = nativeEnv lmdbEnv
+    --         readTVar n >>= \case            
+    --             -- normally we expect it to be in the `RWEnv` state
+    --             RWEnv native -> do 
+    --                 writeTVar n (ROEnv native)                                
+    --                 pure native
+    --             -- this is weird, but lets just wait for it to change 
+    --             -- and don't make things even more weird
+    --             Disabled -> retry
+    --             -- it shouldn't happes as well, but we can work with it in principle
+    --             ROEnv n  -> pure n
 
-    let copyToNewEnvironmentAndSwap = do                        
-            oldNativeEnv <- setEnvToReadOnly
+    -- let copyToNewEnvironmentAndSwap = do                        
+    --         oldNativeEnv <- setEnvToReadOnly
 
-            copyEnv2 oldNativeEnv newLmdbDir
-            logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
+    --         copyEnv2 oldNativeEnv newLmdbDir
+    --         logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
 
-            currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+    --         currentLinkTarget <- liftIO $ readSymbolicLink currentCache
 
-            -- create a new symlink first and only then atomically renamed it into "current"
-            createSymbolicLink newLmdbDir $ cacheDir </> "current.new"
-            renamePath (cacheDir </> "current.new") currentCache
+    --         -- create a new symlink first and only then atomically renamed it into "current"
+    --         createSymbolicLink newLmdbDir $ cacheDir </> "current.new"
+    --         renamePath (cacheDir </> "current.new") currentCache
 
-            atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
+    --         atomically $ writeTVar (nativeEnv lmdbEnv) Disabled
 
-            closeNativeLmdb oldNativeEnv
+    --         closeNativeLmdb oldNativeEnv
 
-            removePathForcibly currentLinkTarget
-            logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
+    --         removePathForcibly currentLinkTarget
+    --         logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
 
-            newLmdb <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
-            atomically $ do
-                newNative <- getNativeEnv newLmdb
-                writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)             
+    --         newLmdb <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
+    --         atomically $ do
+    --             newNative <- getNativeEnv newLmdb
+    --             writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)             
 
             
 
@@ -223,23 +223,23 @@ defragmentStorageWithTmpDir AppContext {..} = do
             -- logDebug_ logger [i|Deleted #{currentLinkTarget}.|]
             
     
-    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+    -- currentLinkTarget <- liftIO $ readSymbolicLink currentCache
     
-    fileSize <- do 
-            lmdbFiles <- listDirectory currentLinkTarget
-            sizes <- forM lmdbFiles $ \f -> getFileSize $ currentCache </> f
-            pure $! sum sizes
+    -- fileSize <- do 
+    --         lmdbFiles <- listDirectory currentLinkTarget
+    --         sizes <- forM lmdbFiles $ \f -> getFileSize $ currentCache </> f
+    --         pure $! sum sizes
 
-    Size dataSize <- DB.totalSpace <$> DB.dbStats database
+    -- Size dataSize <- DB.totalSpace <$> DB.dbStats database
 
-    let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
-    let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
-    -- if fileSizeMb > (3 * dataSizeMb)
-    --     then do 
-    logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
-    copyToNewEnvironmentAndSwap `catch` (\(e :: SomeException) -> do
-        logError_ logger [i|ERROR: #{e}.|]        
-        cleanUpAfterException)
+    -- let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
+    -- let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
+    -- -- if fileSizeMb > (3 * dataSizeMb)
+    -- --     then do 
+    -- logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
+    -- copyToNewEnvironmentAndSwap `catch` (\(e :: SomeException) -> do
+    --     logError_ logger [i|ERROR: #{e}.|]        
+    --     cleanUpAfterException)
         -- else 
         --     logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
         
