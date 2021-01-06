@@ -15,7 +15,7 @@ for I in {1..20}; do
 
     echo "Executing $CMD"
     sh -c "$CMD > ${HOME}/tmp/log-$I 2>${HOME}/tmp/error.log-$I" &
-    sleep 30
+    sleep 10
 done
 
 
