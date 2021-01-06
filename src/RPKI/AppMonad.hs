@@ -45,7 +45,6 @@ fromEitherM = lift . ExceptT . lift
 appLift :: Monad m => m r -> ValidatorT m r
 appLift = lift . lift . lift 
 
--- TODO Make it not so ugly
 validatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
 validatorT s = 
     lift $ ExceptT $ do
