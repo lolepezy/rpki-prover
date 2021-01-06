@@ -8,8 +8,6 @@ module RPKI.Parallel where
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.Reader
-import           Control.Monad.State
-
 import           Numeric.Natural
 
 import qualified Control.Concurrent.STM.TBQueue  as Q
@@ -22,14 +20,10 @@ import           Control.Monad.Trans.Control
 import           Data.List.NonEmpty              (NonEmpty (..))
 import qualified Data.List.NonEmpty              as NonEmpty
 
-import           Data.IORef.Lifted
-
 import           RPKI.AppMonad
 import           RPKI.Reporting
 import           Streaming
 import qualified Streaming.Prelude               as S
-
-
 
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
@@ -181,15 +175,10 @@ bracketChanClosableImpl size produce consume kill concurrentRun = do
             (produce queue `finally` closeQ) 
             (consume queue `finally` closeQ)
         `finally`
-            killAll queue
-    where
-        killAll queue = do
-            a <- liftIO $ atomically $ readCQueue queue
-            case a of   
-                Nothing -> pure ()
-                Just as -> kill as >> killAll queue
+            killAll queue kill
 
 data QState = QWorks | QClosed
+    deriving (Show, Eq)
 
 -- Simplest closeable queue  
 data ClosableQueue a = ClosableQueue (TBQueue a) (TVar QState)    
@@ -222,6 +211,9 @@ readQueueChunked cq chunkSize f = go
 
 closeCQueue :: ClosableQueue a -> STM ()
 closeCQueue (ClosableQueue _ s) = writeTVar s QClosed
+
+isClosedCQueue :: ClosableQueue a -> STM Bool
+isClosedCQueue (ClosableQueue _ s) = (QClosed ==) <$> readTVar s 
 
 
 readChunk :: Natural -> ClosableQueue a -> STM [a]
@@ -267,6 +259,27 @@ maxBottleneckSize :: Bottleneck -> Natural
 maxBottleneckSize (Bottleneck bottlenecks) = 
         atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
 
+
+takeSlot, releaseSlot :: Bottleneck -> STM ()
+takeSlot  (Bottleneck bottlenecks) = 
+    forM_ bottlenecks $ \(currentSize, maxSize) -> do 
+        cs <- readTVar currentSize
+        if cs < maxSize
+            then modifyTVar' currentSize succ
+            else retry
+
+releaseSlot (Bottleneck bottlenecks) = 
+    forM_ bottlenecks $ \(currentSize, _) -> 
+        modifyTVar' currentSize pred
+            -- if s == 0 then 0 else s - 1
+
+someSpaceInBottleneck :: Bottleneck -> STM Bool
+someSpaceInBottleneck (Bottleneck bottlenecks) =
+    fmap and $ 
+        forM bottlenecks $ \(currentSize, maxSize) -> do 
+            cs <- readTVar currentSize
+            pure $ cs < maxSize       
+
 -- A task can be asyncronous, executed by the requestor (lazy)
 -- and executed by the submitter (strict).
 data Task m a
@@ -295,7 +308,7 @@ newTask :: (MonadBaseControl IO m, MonadIO m) =>
             ValidatorT m a 
             -> Bottleneck 
             -> BottleneckExecutor -> ValidatorT m (Task m a)
-newTask io (Bottleneck bottlenecks) execution = do     
+newTask io bn@(Bottleneck bottlenecks) execution = do     
     env <- ask    
     -- NOTE: We do not capture the state here, because the task created
     -- Will start from its own local state == mempty. After the execution,
@@ -303,8 +316,8 @@ newTask io (Bottleneck bottlenecks) execution = do
     -- `embedValidatorT`.
     -- 
     join $ liftIO $ atomically $ do     
-        eachHasSomeSpace <- someSpaceInBottleneck        
-        if and eachHasSomeSpace 
+        hasSomeSpace <- someSpaceInBottleneck bn     
+        if hasSomeSpace 
             then do 
                 incSizes                
                 pure $! appLift $ AsyncTask <$> asyncForTask env                       
@@ -313,11 +326,7 @@ newTask io (Bottleneck bottlenecks) execution = do
                     Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
                     Submitter -> appLift $ submitterTask env
         where            
-            someSpaceInBottleneck =
-                forM bottlenecks $ \(currentSize, maxSize) -> do 
-                        cs <- readTVar currentSize
-                        pure $ cs < maxSize                        
-
+                    
             incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
             decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
 
@@ -334,8 +343,8 @@ newTask io (Bottleneck bottlenecks) execution = do
                 -- Wait for either the task to finish, or until there's 
                 -- some free space in the bottleneck.
                 liftIO (atomically $ do 
-                    spaceInBottlenecks <- someSpaceInBottleneck
-                    unless (and spaceInBottlenecks) $ void $ waitSTM a)
+                    spaceInBottlenecks <- someSpaceInBottleneck bn
+                    unless spaceInBottlenecks $ void $ waitSTM a)
                     `onException`
                         cancel a
 
@@ -362,34 +371,130 @@ concurrentTasks v1 v2 = do
                 (runValidatorT env v2)        
         pure ((,) <$> r1 <*> r2, vs1 <> vs2)
 
-    
+
+data Slot = Free | Taken | DontTake
+
+-- Still prototyping
 -- 
-parallelTasks :: (MonadBaseControl IO m, MonadIO m) =>
+inParallelVT :: (MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck 
                 -> [a] 
                 -> (a -> ValidatorT m b) 
                 -> ValidatorT m [b]
-parallelTasks bottleneck as f =     
-    snd <$> bracketChanClosable
-                (maxBottleneckSize bottleneck)
-                writeAll
-                readAll
-                cancelTask
-    where        
-        writeAll queue = 
-            forM as $ \s -> do
-                t <- f s `strictTask` bottleneck
-                liftIO $ atomically $ writeCQueue queue t
+inParallelVT bottleneck as f = do 
+    env <- askEnv
+    let size = maxBottleneckSize bottleneck
+    queue <- liftIO $ atomically $ newCQueue size    
+    snd <$> concurrently
+                (writeAll env queue `finally` closeQ queue) 
+                (readAll queue `finally` closeQ queue)
+            `finally`
+                killAll queue cancel        
+    where                
+        closeQ q = liftIO $ atomically $ closeCQueue q
+        writeAll env queue = appLift $ go as  
+            where 
+                go [] = pure ()
+                go (s : ss) = do 
+                    slot <- liftIO $ newTVarIO Free
+            
+                    -- It is important to run the async first and then try to acquire 
+                    -- the slot in the bottleneck, otherwise there's potential for 
+                    -- deadlock in the system.            
+                    a <- async $ do                     
+                        z <- runValidatorT env (f s)
+                                `finally` 
+                             liftIO (atomically $ parallelReleaseSlot bottleneck slot)
+                        pure $! z
 
-        readAll queue = go             
-            where
-                go = do 
-                    t <- liftIO $ atomically $ readCQueue queue
-                    case t of
-                        Nothing -> pure []
-                        Just t  -> do 
-                            r    <- waitTask t
-                            rest <- go 
-                            pure $! r : rest
+                    queueClosed <- 
+                        liftIO (atomically $ parallePutToTheQueueWhenReady queue bottleneck slot a)
+                            `onException` 
+                        cancel a
+
+                    unless queueClosed $ go ss                          
+        
+        readAll queue =
+            liftIO (atomically $ readCQueue queue) >>= \case            
+                Nothing -> pure []
+                Just t  -> do                     
+                    r <- appLift $ wait t
+                    case r of 
+                        (Left e, vs) -> do 
+                            closeQ queue
+                            embedState vs
+                            appError e
+                        (Right z, vs) -> do 
+                            embedState vs
+                            rest <- readAll queue 
+                            pure $! z : rest
 
 
+inParallel :: Bottleneck 
+            -> [a] 
+            -> (a -> IO b) 
+            -> IO [b]
+inParallel bottleneck as f = do     
+    let size = maxBottleneckSize bottleneck
+    queue <- atomically $ newCQueue size    
+    snd <$> concurrently
+                (writeAll queue `finally` closeQ queue) 
+                (readAll queue `finally` closeQ queue)
+            `finally`
+                killAll queue cancel        
+    where                
+        closeQ q = liftIO $ atomically $ closeCQueue q
+        writeAll queue = go as  
+            where 
+                go [] = pure ()
+                go (s : ss) = do 
+                    slot <- liftIO $ newTVarIO Free
+
+                    a <- async $ do                     
+                            z <- f s 
+                                    `finally` 
+                                liftIO (atomically $ parallelReleaseSlot bottleneck slot)
+                            pure $! z
+
+                    queueClosed <- 
+                        atomically (parallePutToTheQueueWhenReady queue bottleneck slot a)
+                            `onException` 
+                        cancel a
+
+                    unless queueClosed $ go ss                            
+        
+        readAll queue = 
+            atomically (readCQueue queue) >>= \case             
+                Nothing -> pure []
+                Just t  -> do                     
+                    z    <- wait t
+                    rest <- readAll queue 
+                    pure $! z : rest                    
+
+
+parallePutToTheQueueWhenReady :: ClosableQueue a -> Bottleneck -> TVar Slot -> a -> STM Bool
+parallePutToTheQueueWhenReady queue bottleneck slot t = do
+    closed <- isClosedCQueue queue
+    unless closed $ do 
+        readTVar slot >>= \case
+            Free -> do 
+                writeTVar slot Taken
+                takeSlot bottleneck
+            _ -> pure ()                                    
+        writeCQueue queue t
+    pure closed   
+
+
+parallelReleaseSlot :: Bottleneck -> TVar Slot -> STM ()
+parallelReleaseSlot bottleneck slot = do 
+    readTVar slot >>= \case                            
+        Taken -> releaseSlot bottleneck
+        _     -> writeTVar slot DontTake
+
+
+killAll :: MonadIO m => ClosableQueue t -> (t -> m a) -> m ()
+killAll queue kill = do
+    a <- liftIO $ atomically $ readCQueue queue    
+    case a of   
+        Nothing -> pure ()
+        Just as -> kill as >> killAll queue kill

@@ -23,6 +23,7 @@ import           GHC.Generics (Generic)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
+import qualified Data.List.Split                  as Split
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (fromMaybe)
@@ -236,12 +237,15 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
     fetchStatuses <- 
         if config ^. typed @ValidationConfig . #dontFetch
             then pure []
-            else parallelTasks 
+            else inParallelVT
                     (ioBottleneck appBottlenecks)
                     reposToFetch 
                     (fetchRepository appContext taURIContext now)
+            -- else forConcurrently                    
+            --         reposToFetch 
+            --         (fetchRepository appContext taURIContext now)
 
-    case partitionFailedSuccess fetchStatuses of 
+    case partitionFailedSuccess fetchStatuses of
         ([], _) -> do            
             -- Embed valdiation state accumulated from 
             -- the fetching into the current validation state.
@@ -396,20 +400,10 @@ validateCARecursively
         extractPPsAndValidateDown discoveredPPs waitingList = do            
             ppsToFetch' <- atomically $ getPPsToFetch repositoryContext discoveredPPs
             let (_, rootToPps) = repositoryHierarchy ppsToFetch'
-
-            -- For all discovered repositories that need fetching (new or failed 
-            -- or fetched long ago), drill down recursively.
-            -- parallelTasks 
-            --     (ioBottleneck appBottlenecks) 
-            --     (Map.keys rootToPps) $ \repo ->
-            --         fetchAndValidateWaitingList rootToPps repo waitingList                    
-            --            
-            -- TODO Use another version of `parallelTasks` here and the same bottleneck.
-            -- 
-            forConcurrently
+            inParallel
+                (cpuBottleneck appBottlenecks)
                 (Map.keys rootToPps) $ \repo ->
                     fetchAndValidateWaitingList rootToPps repo waitingList                    
-                    
                     
 
         -- Fetch the PP and validate all the certificates from the waiting 
@@ -507,8 +501,10 @@ validateCARecursively
             -- 
             -- TODO Use another version of `parallelTasks` here and the same bottleneck.
             -- 
-            forConcurrently
-                waitingList $ \(T3 hash certVContext verifiedResources') -> do                    
+            -- forConcurrently
+            inParallel
+                (cpuBottleneck appBottlenecks)
+                waitingList $ \(T3 hash certVContext verifiedResources') -> do
                     o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                     case o of 
                         Just c@(CerRO waitingCertificate) -> do
@@ -633,12 +629,17 @@ validateCaCertificate
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map snd childrenHashes
                         
-                        let processChildren = do 
-                                r <- parallelTasks 
-                                        (cpuBottleneck appBottlenecks) 
+                        let processChildren = do                                 
+                                -- r <- fmap mconcat 
+                                --     $ forConcurrently                                        
+                                --         (Split.chunksOf 100 childrenHashes)
+                                --         $ mapM $ \(filename, hash') -> 
+                                --                     validateManifestEntry filename hash' validCrl
+                                r <- inParallelVT
+                                        (cpuBottleneck appBottlenecks)
                                         childrenHashes
                                         $ \(filename, hash') -> 
-                                            validateManifestEntry filename hash' validCrl
+                                                    validateManifestEntry filename hash' validCrl
                                 markAllEntriesAsVisited
                                 pure $! r
                         

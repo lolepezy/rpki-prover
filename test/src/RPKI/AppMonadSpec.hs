@@ -65,8 +65,8 @@ concurrentTasksPreservesState = monadicIO $ do
   assert $ fst q == ((,) <$> fst z1 <*> fst z2)
 
 
-parallelTasksPreservesState :: QC.Property
-parallelTasksPreservesState = monadicIO $ do    
+inParallelPreservesState :: QC.Property
+inParallelPreservesState = monadicIO $ do    
     i :: Int <- pick $ choose (1, 100)
     let Just bottlneckSize = toNatural i
     b <- run $ newBottleneckIO bottlneckSize
@@ -75,7 +75,7 @@ parallelTasksPreservesState = monadicIO $ do
     (_, ValidationState { validations = Validations validationMap, .. })     
             <- run $ runValidatorT (newValidatorPath "zzz") $ do
                         validatorT $ pure (Right (), mempty)
-                        parallelTasks b zs $ \z -> 
+                        inParallelVT b zs $ \z -> 
                             appWarn $ UnspecifiedE z (z <> "-bla") 
     let x = Map.lookup (newPath "zzz") validationMap
     let y = Just (Set.fromList $ map (\z -> VWarn $ VWarning $ UnspecifiedE z (z <> "-bla")) zs)    
@@ -98,8 +98,8 @@ appMonadSpec = testGroup "AppMonad" [
             concurrentTasksPreservesState,
 
         QC.testProperty
-            "parallelTasks keeps the state and validity"
-            parallelTasksPreservesState,
+            "inParallel keeps the state and validity"
+            inParallelPreservesState,
             
         HU.testCase
             "forM saves state"
