@@ -26,9 +26,9 @@ The only option to use it at the moment is to build from sources:
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
-   - Install libraries for: `lmdb`, `lzma`
-      - On linux using apt-get, that will be : `sudo apt-get install liblmdb-dev liblzma-dev`
-      - On MacOS using brew, that will be: `brew install lmdb xz` 
+   - Install libraries for: `lmdb`, `lzma`, `expat` and some others, like `gmp`.
+      - On linux using apt-get, that will be : `sudo apt-get install libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
+      - On MacOS using brew, that will be: `brew install lmdb xz expat` 
       - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers
    - Install `stack` as described here `https://docs.haskellstack.org/en/stable/install_and_upgrade/`
    - Clone https://github.com/lolepezy/rpki-prover/
