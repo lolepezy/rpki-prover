@@ -286,7 +286,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                         case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
                             Left e -> pure $! Just $ SError $ VErr e
                             Right (DecodedBase64 decoded) ->
-                                roAppTx database $ \tx -> do                                    
+                                liftIO $ roTx database $ \tx -> do                                    
                                     exists <- DB.hashExists tx objectStore (U.sha256s decoded)
                                     pure $! if exists 
                                     -- The object is already in cache. Do not parse-serialise

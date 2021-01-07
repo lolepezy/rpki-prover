@@ -599,7 +599,7 @@ validateCaCertificate
                     crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
 
                 let objectStore' = objectStore database
-                crlObject <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
                 case crlObject of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations'    
@@ -663,7 +663,7 @@ validateCaCertificate
             visitedObjects <- liftIO $ readTVarIO visitedHashes
 
             let objectStore' = objectStore database
-            ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' hash'
+            ro <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
             case ro of 
                 Nothing -> vError $ ManifestEntryDontExist hash'
                 Just ro'
@@ -689,7 +689,7 @@ validateCaCertificate
         
         validateChild validCrl ro = do
             -- At the moment of writing RFC 6486-bis 
-            -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-00#page-12) 
+            -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#page-12) 
             -- prescribes to consider the manifest invalid if any of the objects 
             -- referred by the manifest is invalid. 
             -- 

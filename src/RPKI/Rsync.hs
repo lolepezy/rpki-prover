@@ -162,7 +162,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     liftIO (getSizeAndContent1 filePath) >>= \case                    
                         Left e        -> pure $! Just $! SError e
                         Right (_, bs) -> 
-                            roAppTx database $ \tx -> do
+                            liftIO $ roTx database $ \tx -> do
                                 -- Check if the object is already in the storage
                                 -- before parsing ASN1 and serialising it.
                                 exists <- hashExists tx objectStore (U.sha256s bs)
