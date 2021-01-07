@@ -152,7 +152,7 @@ validateTA appContext@AppContext {..} tal worldVersion repositories = do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 vrps <- validateFromTACert appContext (getTaName tal) taCert repos worldVersion repositories
-                setVrpNumber $ Count $ fromIntegral $ length vrps
+                setVrpNumber $ Count $ fromIntegral $ Set.size (Set.fromList vrps)
                 pure vrps
 
     case r of 
