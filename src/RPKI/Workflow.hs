@@ -13,11 +13,12 @@ import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
 
-import           Control.Lens                     ((^.))
+import           Control.Lens                     ((^.), (%~), (&))
 import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
+import qualified Data.Map.Strict                  as Map
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -25,6 +26,7 @@ import           Data.String.Interpolate.IsString
 import           GHC.Generics
 
 import           RPKI.AppState
+import           RPKI.CommonTypes
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -123,7 +125,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
                         pure r
 
-                    pure $! mconcat rs
+                    pure $! addTotalValidationMetric $ mconcat rs
 
                 saveTopDownResult TopDownResult {..} = 
                     rwTx database $ \tx -> do

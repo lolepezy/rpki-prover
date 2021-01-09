@@ -23,7 +23,7 @@ data T3 a b c = T3 a b c
     deriving Monoid    via GenericMonoid (T3 a b c)
     
 
-newtype MonoidMap k v = MonoidMap (Map k v)
+newtype MonoidMap k v = MonoidMap { unMonoidMap :: Map k v }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Monoid

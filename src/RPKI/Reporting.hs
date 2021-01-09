@@ -67,13 +67,13 @@ data ValidationError = InvalidCert Text |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
                         NextUpdateTimeNotSet |                        
-                        NextUpdateTimeIsInThePast Instant Instant |
-                        ThisUpdateTimeIsInTheFuture Instant Instant |
+                        NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
+                        ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
                         RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |
                         CertificateIsExpired |
-                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI|
+                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
                         ManifestEntryDontExist Hash |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
@@ -81,7 +81,8 @@ data ValidationError = InvalidCert Text |
                         CertificateDoesntHaveSIA | 
                         PublicationPointIsNotAvailable URI |
                         CircularReference Hash Locations |
-                        ManifestLocationMismatch Text Locations
+                        ManifestLocationMismatch Text Locations | 
+                        InvalidVCardFormatInGbr Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
@@ -264,15 +265,15 @@ newtype Count = Count { unCount :: Int64 }
 instance Show Count where 
     show (Count c) = show c
 
-newtype TimeTakenMs = TimeTakenMs Int64
+newtype TimeMs = TimeMs Int64
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype (Num)
-    deriving Semigroup via Sum TimeTakenMs
-    deriving Monoid via Sum TimeTakenMs
+    deriving Semigroup via Sum TimeMs
+    deriving Monoid via Sum TimeMs
 
-instance Show TimeTakenMs where 
-    show (TimeTakenMs ms) = show ms
+instance Show TimeMs where 
+    show (TimeMs ms) = show ms
 
 data RrdpSource = RrdpNothing | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
@@ -291,9 +292,9 @@ data RrdpMetric = RrdpMetric {
         added           :: Count,
         deleted         :: Count,        
         rrdpSource      :: RrdpSource,
-        downloadTakenMs :: TimeTakenMs,
-        saveTakenMs     :: TimeTakenMs,
-        timeTakenMs     :: TimeTakenMs
+        downloadTimeMs  :: TimeMs,
+        saveTimeMs      :: TimeMs,
+        totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -302,7 +303,7 @@ data RrdpMetric = RrdpMetric {
 
 data RsyncMetric = RsyncMetric {
         processed   :: Count,        
-        timeTakenMs :: TimeTakenMs
+        totalTimeMs :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -315,7 +316,8 @@ data ValidationMetric = ValidationMetric {
         validRoaNumber  :: Count,
         validMftNumber  :: Count,
         validCrlNumber  :: Count,
-        timeTakenMs     :: TimeTakenMs
+        validGbrNumber  :: Count,
+        totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -332,7 +334,7 @@ instance MetricC ValidationMetric where
     metricLens = #validationMetrics
 
 
-newtype MetricMap a = MetricMap (MonoidMap MetricPath a)
+newtype MetricMap a = MetricMap { unMetricMap :: MonoidMap MetricPath a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype Monoid    

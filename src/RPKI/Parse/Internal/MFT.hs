@@ -21,7 +21,7 @@ import           RPKI.Util (mkHash)
 parseMft :: BS.ByteString -> ParseResult (RpkiURL -> MftObject)
 parseMft bs = do
     asns         <- first (fmtErr . show) $ decodeASN1' BER bs
-    signedMft    <- first fmtErr $ runParseASN1 (parseSignedObject parseManifest) asns
+    signedMft    <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
     meta <- getMetaFromSigned signedMft bs
     pure $ \url -> let (hash, loc) = meta url in newCMSObject hash loc (CMS signedMft)
     where

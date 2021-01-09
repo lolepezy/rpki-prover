@@ -18,7 +18,8 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-16.26
+resolver: lts-16.27
+# resolver: nightly-2021-01-03
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -41,7 +42,7 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps: 
   - git: https://github.com/lolepezy/lmdb-high-level.git
-    commit: 43a8dd64979cf4a878553b1afae33dff7cac60e8
+    commit: 98630fb39ac34fe209ef03a3d6eb21c9a7a551cb
   - git: https://github.com/lolepezy/hs-certificate.git
     commit: f094fe1a81fe57a2ba42ef919af02bbc7f0b6dcb    
     subdirs:
@@ -50,6 +51,7 @@ extra-deps:
   - json-stream-0.4.2.4       
   - streaming-utils-0.2.0.0
   - hw-ip-2.4.2.0
+  # - ../lib/lmdb-high-level
   
 
 # Override default flag values for local packages and extra-deps

@@ -23,6 +23,7 @@ import           GHC.Generics (Generic)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
+import qualified Data.List.Split                  as Split
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (fromMaybe)
@@ -151,7 +152,7 @@ validateTA appContext@AppContext {..} tal worldVersion repositories = do
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
                 vrps <- validateFromTACert appContext (getTaName tal) taCert repos worldVersion repositories
-                setVrpNumber $ Count $ fromIntegral $ length vrps
+                setVrpNumber $ Count $ fromIntegral $ Set.size (Set.fromList vrps)
                 pure vrps
 
     case r of 
@@ -236,12 +237,15 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
     fetchStatuses <- 
         if config ^. typed @ValidationConfig . #dontFetch
             then pure []
-            else parallelTasks 
+            else inParallelVT
                     (ioBottleneck appBottlenecks)
                     reposToFetch 
                     (fetchRepository appContext taURIContext now)
+            -- else forConcurrently                    
+            --         reposToFetch 
+            --         (fetchRepository appContext taURIContext now)
 
-    case partitionFailedSuccess fetchStatuses of 
+    case partitionFailedSuccess fetchStatuses of
         ([], _) -> do            
             -- Embed valdiation state accumulated from 
             -- the fetching into the current validation state.
@@ -396,20 +400,10 @@ validateCARecursively
         extractPPsAndValidateDown discoveredPPs waitingList = do            
             ppsToFetch' <- atomically $ getPPsToFetch repositoryContext discoveredPPs
             let (_, rootToPps) = repositoryHierarchy ppsToFetch'
-
-            -- For all discovered repositories that need fetching (new or failed 
-            -- or fetched long ago), drill down recursively.
-            -- parallelTasks 
-            --     (ioBottleneck appBottlenecks) 
-            --     (Map.keys rootToPps) $ \repo ->
-            --         fetchAndValidateWaitingList rootToPps repo waitingList                    
-            --            
-            -- TODO Use another version of `parallelTasks` here and the same bottleneck.
-            -- 
-            forConcurrently
+            inParallel
+                (cpuBottleneck appBottlenecks)
                 (Map.keys rootToPps) $ \repo ->
                     fetchAndValidateWaitingList rootToPps repo waitingList                    
-                    
                     
 
         -- Fetch the PP and validate all the certificates from the waiting 
@@ -507,8 +501,10 @@ validateCARecursively
             -- 
             -- TODO Use another version of `parallelTasks` here and the same bottleneck.
             -- 
-            forConcurrently
-                waitingList $ \(T3 hash certVContext verifiedResources') -> do                    
+            -- forConcurrently
+            inParallel
+                (cpuBottleneck appBottlenecks)
+                waitingList $ \(T3 hash certVContext verifiedResources') -> do
                     o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
                     case o of 
                         Just c@(CerRO waitingCertificate) -> do
@@ -603,7 +599,7 @@ validateCaCertificate
                     crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
 
                 let objectStore' = objectStore database
-                crlObject <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
                 case crlObject of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations'    
@@ -633,12 +629,17 @@ validateCaCertificate
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map snd childrenHashes
                         
-                        let processChildren = do 
-                                r <- parallelTasks 
-                                        (cpuBottleneck appBottlenecks) 
+                        let processChildren = do                                 
+                                -- r <- fmap mconcat 
+                                --     $ forConcurrently                                        
+                                --         (Split.chunksOf 100 childrenHashes)
+                                --         $ mapM $ \(filename, hash') -> 
+                                --                     validateManifestEntry filename hash' validCrl
+                                r <- inParallelVT
+                                        (cpuBottleneck appBottlenecks)
                                         childrenHashes
                                         $ \(filename, hash') -> 
-                                            validateManifestEntry filename hash' validCrl
+                                                    validateManifestEntry filename hash' validCrl
                                 markAllEntriesAsVisited
                                 pure $! r
                         
@@ -662,7 +663,7 @@ validateCaCertificate
             visitedObjects <- liftIO $ readTVarIO visitedHashes
 
             let objectStore' = objectStore database
-            ro <- roAppTx objectStore' $ \tx -> getByHash tx objectStore' hash'
+            ro <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
             case ro of 
                 Nothing -> vError $ ManifestEntryDontExist hash'
                 Just ro'
@@ -688,7 +689,7 @@ validateCaCertificate
         
         validateChild validCrl ro = do
             -- At the moment of writing RFC 6486-bis 
-            -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-00#page-12) 
+            -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#page-12) 
             -- prescribes to consider the manifest invalid if any of the objects 
             -- referred by the manifest is invalid. 
             -- 
@@ -734,6 +735,7 @@ validateCaCertificate
                     inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do
                         void $ vHoist $ validateGbr now gbr certificate 
                                             validCrl verifiedResources
+                        oneMoreGbr
 
                 -- TODO Anything else?
                 _ -> withEmptyPPs $ pure ()
@@ -842,13 +844,28 @@ visitObjects TopDownContext {..} hashes =
     liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
 
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
+oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
+
 setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
+
+-- Sum up all the validation metrics from all TA to create the "total" validation metric
+addTotalValidationMetric totalValidationResult =
+    totalValidationResult & vmLens %~ Map.insert (newPath "total") totalValidationMetric
+  where
+    uniqueVrps = Set.fromList (totalValidationResult ^. #vrps)
+    totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 
+                            & #vrpNumber .~ Count (fromIntegral $ Set.size uniqueVrps)
+    vmLens = typed @ValidationState . 
+            typed @AppMetric . 
+            #validationMetrics . 
+            #unMetricMap . 
+            #unMonoidMap                    
 
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)

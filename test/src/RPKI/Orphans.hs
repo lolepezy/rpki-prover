@@ -457,7 +457,7 @@ generateMap constructor = do
     validations <- replicateM size arbitrary
     pure $ constructor $ Map.fromList validations
 
-instance Arbitrary TimeTakenMs where
+instance Arbitrary TimeMs where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

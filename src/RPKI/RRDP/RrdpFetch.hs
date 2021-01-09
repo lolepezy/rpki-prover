@@ -109,10 +109,10 @@ downloadAndUpdateRRDP
                                 downloadHashedLazyBS appContext uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
 
-                updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs downloadedIn)
+                updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs downloadedIn)
 
                 (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
-                updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
+                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
                 pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
 
@@ -141,8 +141,8 @@ downloadAndUpdateRRDP
                                             handleDeltaBS repoUri notification serial rawContent)
                                     (mempty :: ())
         
-                updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs savedIn)
-                updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
+                updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs savedIn)
+                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
                 pure $! repo { rrdpMeta = rrdpMeta' }
 
@@ -286,7 +286,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                         case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
                             Left e -> pure $! Just $ SError $ VErr e
                             Right (DecodedBase64 decoded) ->
-                                roAppTx database $ \tx -> do                                    
+                                liftIO $ roTx database $ \tx -> do                                    
                                     exists <- DB.hashExists tx objectStore (U.sha256s decoded)
                                     pure $! if exists 
                                     -- The object is already in cache. Do not parse-serialise

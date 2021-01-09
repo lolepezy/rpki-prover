@@ -45,7 +45,6 @@ fromEitherM = lift . ExceptT . lift
 appLift :: Monad m => m r -> ValidatorT m r
 appLift = lift . lift . lift 
 
--- TODO Make it not so ugly
 validatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
 validatorT s = 
     lift $ ExceptT $ do
@@ -188,11 +187,11 @@ updatePureMetric f = do
 timedMetric :: forall m metric r . 
                 (MonadIO m, 
                  MetricC metric, 
-                 HasField "timeTakenMs" metric metric TimeTakenMs TimeTakenMs) =>                 
+                 HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
                 Proxy metric -> ValidatorT m r -> ValidatorT m r
 timedMetric _ v = do
     (r, elapsed) <- timedMS v          
-    updateMetric ((& #timeTakenMs .~ TimeTakenMs elapsed) :: metric -> metric)
+    updateMetric ((& #totalTimeMs .~ TimeMs elapsed) :: metric -> metric)
     pure r        
 
 
