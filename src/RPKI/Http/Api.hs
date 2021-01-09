@@ -217,8 +217,8 @@ instance ToJSON PathKind
 instance ToJSON RrdpSource
 instance ToJSONKey (Path 'Metric)
 instance ToJSON (Path 'Metric)
-instance ToJSON TimeTakenMs where 
-    toJSON (TimeTakenMs s) = toJSON $ show s <> "ms"
+instance ToJSON TimeMs where 
+    toJSON (TimeMs s) = toJSON $ show s <> "ms"
 
 instance ToJSON Count where
     toJSON (Count s) = toJSON s

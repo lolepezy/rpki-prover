@@ -735,6 +735,7 @@ validateCaCertificate
                     inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do
                         void $ vHoist $ validateGbr now gbr certificate 
                                             validCrl verifiedResources
+                        oneMoreGbr
 
                 -- TODO Anything else?
                 _ -> withEmptyPPs $ pure ()
@@ -843,11 +844,13 @@ visitObjects TopDownContext {..} hashes =
     liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
 
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
+oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
+
 setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 

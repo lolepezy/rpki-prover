@@ -109,10 +109,10 @@ downloadAndUpdateRRDP
                                 downloadHashedLazyBS appContext uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
 
-                updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs downloadedIn)
+                updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs downloadedIn)
 
                 (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
-                updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
+                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
                 pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
 
@@ -141,8 +141,8 @@ downloadAndUpdateRRDP
                                             handleDeltaBS repoUri notification serial rawContent)
                                     (mempty :: ())
         
-                updateMetric @RrdpMetric @_ (& #downloadTakenMs .~ TimeTakenMs savedIn)
-                updateMetric @RrdpMetric @_ (& #saveTakenMs .~ TimeTakenMs savedIn)          
+                updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs savedIn)
+                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
                 pure $! repo { rrdpMeta = rrdpMeta' }
 

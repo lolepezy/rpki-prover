@@ -187,11 +187,11 @@ updatePureMetric f = do
 timedMetric :: forall m metric r . 
                 (MonadIO m, 
                  MetricC metric, 
-                 HasField "timeTakenMs" metric metric TimeTakenMs TimeTakenMs) =>                 
+                 HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
                 Proxy metric -> ValidatorT m r -> ValidatorT m r
 timedMetric _ v = do
     (r, elapsed) <- timedMS v          
-    updateMetric ((& #timeTakenMs .~ TimeTakenMs elapsed) :: metric -> metric)
+    updateMetric ((& #totalTimeMs .~ TimeMs elapsed) :: metric -> metric)
     pure r        
 
 

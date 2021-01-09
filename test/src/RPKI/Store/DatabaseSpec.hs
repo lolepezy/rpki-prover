@@ -324,16 +324,16 @@ shouldPreserveStateInAppTx io = do
 
     HU.assertEqual "Root metric should count 2 objects" 
         (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpNothing, 
-                             downloadTakenMs = TimeTakenMs 0, 
-                             saveTakenMs = TimeTakenMs 0, 
-                             timeTakenMs = TimeTakenMs 0 })
+                             downloadTimeMs = TimeMs 0, 
+                             saveTimeMs = TimeMs 0, 
+                             totalTimeMs = TimeMs 0 })
         (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
         (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpNothing, 
-                             downloadTakenMs = TimeTakenMs 0, 
-                             saveTakenMs = TimeTakenMs 0, 
-                             timeTakenMs = TimeTakenMs 0 })
+                             downloadTimeMs = TimeMs 0, 
+                             saveTimeMs = TimeMs 0, 
+                             totalTimeMs = TimeMs 0 })
         (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") 
                             (rrdpMetrics topDownMetric))        
 
@@ -350,8 +350,8 @@ shouldPreserveStateInAppTx io = do
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
-stripTime :: HasField "timeTakenMs" metric metric TimeTakenMs TimeTakenMs => metric -> metric
-stripTime = (& #timeTakenMs .~ TimeTakenMs 0)
+stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
+stripTime = (& #totalTimeMs .~ TimeMs 0)
 
 generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
