@@ -84,13 +84,14 @@ EMAIL:job@sobornost.net
 END:VCARD
 -}
 
-data VCardProperty = Version | FN Text | ORG Text | ADR Text | TEL Text | EMAIL Text
+data VCardProperty = VCardVersion | FN Text | ORG Text | ADR Text | TEL Text | EMAIL Text
     deriving (Show, Eq, Ord, Generic)
 
 newtype VCard = VCard [VCardProperty]
     deriving (Show, Eq, Ord, Generic)
 
--- -- | Some primitive parsing of VCARD, not based on the RFC
+-- | Some primitive parsing of VCARD, not based on the proper RFC, 
+-- but checking for the necessary fields.
 parseVCard :: BS.ByteString -> Either Text VCard
 parseVCard bs = do
     t <- first (Text.pack . show) $ TE.decodeUtf8' bs
@@ -107,18 +108,18 @@ parseVCard bs = do
   where
       parseFields fs =
         VCard <$> sequence [
-                getField [ FN fn    | [ "FN", fn ]    <- fs ] "FN",
-                getField [ ORG fn   | [ "ORG", fn ]   <- fs ] "ORG",
-                getField [ ADR fn   | [ adr, fn ]     <- fs, "ADR" `Text.isPrefixOf` adr ] "ADR" ,
-                getField [ TEL fn   | [ tel, fn ]     <- fs, "TEL" `Text.isPrefixOf` tel ] "TEL" ,
-                getField [ EMAIL fn | [ "EMAIL", fn ] <- fs ] "EMAIL" 
+                getField [ VCardVersion | ["VERSION", "4.0" ] <- fs ] "VERSION:4.0",
+                getField [ FN  $ mconcat fn   | "FN"  : fn    <- fs ] "FN",
+                getField [ ORG $ mconcat fn   | "ORG" : fn    <- fs ] "ORG",
+                getField [ ADR $ mconcat fn   | adr : fn      <- fs, "ADR" `Text.isPrefixOf` adr ] "ADR" ,
+                getField [ TEL $ mconcat fn   | tel : fn      <- fs, "TEL" `Text.isPrefixOf` tel ] "TEL" ,
+                getField [ EMAIL $ mconcat fn | "EMAIL" : fn  <- fs ] "EMAIL" 
             ]
         
       getField fieldValues fieldName = 
           case fieldValues of 
-              []  -> Left $ "Not found field " <> fieldName
+              []  -> Left $ "Not found field '" <> fieldName <> "'"
               [f] -> Right f
-              fs  -> Left $ "Multiple fields " <> fieldName
+              fs  -> Left $ "Multiple fields '" <> fieldName <> "'"
 
-    --   [ 1 | ["VERSION", "4.0"] <- zs ] 
 

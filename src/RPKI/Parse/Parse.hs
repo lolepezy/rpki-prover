@@ -5,6 +5,7 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.MFT,
     module RPKI.Parse.Internal.ROA,
     module RPKI.Parse.Internal.SignedObject,
+    module RPKI.Parse.Internal.GBR,
     readObject,
     supportedExtension
 )

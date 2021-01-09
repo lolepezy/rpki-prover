@@ -185,7 +185,7 @@ validateRoa ::
   PureValidatorT (Validated RoaObject)
 validateRoa now roa parentCert crl verifiedResources = do
   void $ validateCms now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do 
-      -- check that prefixes are inside of the resource set
+      -- TODO check that prefixes are inside of the resource set
       pure roaCMS
   pure $ Validated roa
 
@@ -199,8 +199,10 @@ validateGbr ::
   PureValidatorT (Validated GbrObject)
 validateGbr now gbr parentCert crl verifiedResources = do
   void $ validateCms now (cmsPayload gbr) parentCert crl verifiedResources pure
-  -- TODO Implement it
-  pure $ Validated gbr
+  let Gbr vcardBS = getCMSContent $ cmsPayload gbr
+  case parseVCard $ toNormalBS vcardBS of 
+      Left e  -> vPureError $ InvalidVCardFormatInGbr e
+      Right _ -> pure $ Validated gbr
 
 validateCms ::
   (WithResourceCertificate c, WithSKI c) =>
