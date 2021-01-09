@@ -43,12 +43,12 @@ import           GHC.Generics                   (Generic)
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
--- lazyFsRead = MmapLazy.unsafeMMapFile 
-lazyFsRead = LBS.readFile
+lazyFsRead = MmapLazy.unsafeMMapFile 
+-- lazyFsRead = LBS.readFile
 
 fsRead :: FilePath -> IO BS.ByteString
--- fsRead = Mmap.unsafeMMapFile 
-fsRead = BS.readFile 
+fsRead = Mmap.unsafeMMapFile 
+-- fsRead = BS.readFile 
 
 downloadToStrictBS :: MonadIO m => 
                     AppContext s ->
