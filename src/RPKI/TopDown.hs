@@ -482,26 +482,6 @@ validateCARecursively
         -- Resume tree validation starting from every certificate on the waiting list.
         -- 
         validateWaitingList waitingList =
-            -- parallelTasks 
-            --     (cpuBottleneck appBottlenecks) 
-            --     waitingList $ \(T3 hash certVContext verifiedResources') -> do                    
-            --         o <- roTx database $ \tx -> getByHash tx (objectStore database) hash
-            --         case o of 
-            --             Just (CerRO waitingCertificate) -> do
-            --                 -- logInfoM logger [i|From waiting list of #{getRpkiURL repo}: #{getLocations waitingCertificate}.|]
-            --                 let childTopDownContext = topDownContext { 
-            --                         -- we should start from the resource set of this certificate
-            --                         -- as it is already has been verified
-            --                         verifiedResources = verifiedResources'                                                
-            --                     }
-            --                 validateCARecursively appContext certVContext childTopDownContext waitingCertificate 
-            --             ro -> do
-            --                 logError_ logger [i| Something is really wrong with the hash #{hash} in waiting list, got #{ro}|]
-            --                 pure mempty
-            -- 
-            -- TODO Use another version of `parallelTasks` here and the same bottleneck.
-            -- 
-            -- forConcurrently
             inParallel
                 (cpuBottleneck appBottlenecks)
                 waitingList $ \(T3 hash certVContext verifiedResources') -> do
@@ -590,7 +570,7 @@ validateCaCertificate
             visitObject appContext topDownContext (CerRO certificate)
 
             mft <- findMft childrenAki certLocations'
-            checkMftLocation mft certificate                    
+            validateMftLocation mft certificate                    
 
             manifestResult <- inSubVPath (toText $ NonEmpty.head $ getLocations mft) $ do
                 (_, crlHash) <- case findCrlOnMft mft of 
@@ -629,12 +609,7 @@ validateCaCertificate
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map snd childrenHashes
                         
-                        let processChildren = do                                 
-                                -- r <- fmap mconcat 
-                                --     $ forConcurrently                                        
-                                --         (Split.chunksOf 100 childrenHashes)
-                                --         $ mapM $ \(filename, hash') -> 
-                                --                     validateManifestEntry filename hash' validCrl
+                        let processChildren = do
                                 r <- inParallelVT
                                         (cpuBottleneck appBottlenecks)
                                         childrenHashes
@@ -759,7 +734,7 @@ validateCaCertificate
 
         -- Check that manifest URL in the certificate is the same as the one 
         -- the manifest was actually fetched from.
-        checkMftLocation mft certficate = 
+        validateMftLocation mft certficate = 
             case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of
                 Nothing     -> vError $ NoMFTSIA $ getLocations certficate
                 Just mftSIA -> let 
@@ -784,7 +759,8 @@ validateCaCertificate
         --                 _ ->  pure ()
 
 
--- Check if an URL need to be re-fetched, based on fetch status and current time.
+-- | Check if an URL need to be re-fetched, based on fetch status and current time.
+--
 needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
 needsFetching r status ValidationConfig {..} (Now now) = 
     case status of

@@ -30,6 +30,12 @@ findIntersections a as = concatMap fst $ findFullIntersections a as
 instance WithSetOps a => Semigroup (IntervalSet a) where
     is1 <> is2 = fromList $ toList is1 <> toList is2
 
+isInside :: Interval a => a -> IntervalSet a -> Bool
+isInside i is = 
+    case findFullIntersections i is of
+        [([z], _)] -> i == z
+        _          -> False
+
 -- | Use binary search to find intersections of an interval within an interval set.
 -- | Return both interesections -- '[a]' and the intervals it intersects with -- 'a'.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]

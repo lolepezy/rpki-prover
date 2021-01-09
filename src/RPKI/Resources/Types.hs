@@ -117,7 +117,7 @@ newtype VerifiedRS a = VerifiedRS a
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-class (WithSetOps p, Eq (Point p), Ord (Point p)) => Interval p where
+class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
     type Point p :: Type
     start :: p -> Point p
 

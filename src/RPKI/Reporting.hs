@@ -2,20 +2,22 @@
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE OverloadedLabels       #-}
+{-# LANGUAGE OverloadedLabels           #-}
 
 
 module RPKI.Reporting where
 import           Control.Exception.Lifted
-import           Control.Lens                (Lens', (%~), (&), (.~), (^.))
+import           Control.Lens                (Lens', (%~), (&))
+
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
+import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
+import           Data.Monoid
 import           Data.Text                   (Text)
 
 import           Codec.Serialise
@@ -28,13 +30,11 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           GHC.Generics
+import           RPKI.CommonTypes
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Time
 
-import           Data.Int                    (Int64)
-import           Data.Monoid
-import RPKI.CommonTypes
 
 
 
@@ -82,7 +82,9 @@ data ValidationError = InvalidCert Text |
                         PublicationPointIsNotAvailable URI |
                         CircularReference Hash Locations |
                         ManifestLocationMismatch Text Locations | 
-                        InvalidVCardFormatInGbr Text
+                        InvalidVCardFormatInGbr Text | 
+                        RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
+                        RoaPrefixLenghtsIsBiggerThanMaxLength Vrp
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     
@@ -218,9 +220,6 @@ newPath u = Path $ u :| []
 childPath :: Path c -> Text -> Path c
 childPath (Path ts) t = Path $ t <| ts
 
-
-getPath :: HasType a s => s -> a
-getPath = getTyped
 
 subPath :: Text -> Path c -> Path c
 subPath t parent = newPath t <> parent
@@ -362,10 +361,8 @@ data ValidationState = ValidationState {
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty
 
-
 validationsToList :: Validations -> [(VPath, Set VProblem)]
 validationsToList (Validations vMap) = Map.toList vMap 
-
 
 updateMetricInMap :: Monoid a => 
                 MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
@@ -374,18 +371,3 @@ updateMetricInMap metricPath f (MetricMap (MonoidMap mm)) =
 
 lookupMetric :: MetricPath -> MetricMap a -> Maybe a
 lookupMetric metricPath (MetricMap (MonoidMap mm)) = Map.lookup metricPath mm
-
--- Experimental more economical version of Validations
-
-data VTree = 
-    VLeaf (Set VProblem) | 
-    VNode (Map Text VTree)
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
-
-
-instance Monoid VTree where
-    mempty = VLeaf mempty
-
-instance Semigroup VTree where
-    t1 <> t2 = t1

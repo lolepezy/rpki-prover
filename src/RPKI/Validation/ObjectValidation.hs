@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE OverloadedLabels   #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -28,11 +29,14 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
+import           RPKI.Resources.IntervalSet
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
+import RPKI.Resources.Resources
+import Data.Maybe (fromJust)
 
 
 
@@ -93,6 +97,7 @@ validateTACert tal u (CerRO taCert) = do
       
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
+
 -- | In general, resource certifcate validation is:
 --
 --    - check the signature (with the parent)
@@ -126,6 +131,7 @@ validateResourceCert (Now now) cert parentCert vcrl = do
     where
         correctSkiAki c (getSKI -> SKI s) =
             maybe False (\(AKI a) -> a == s) $ getAKI c
+
 
 validateResources :: (WithResourceCertificate c, WithResourceCertificate parent) =>
                     Maybe (VerifiedRS PrefixesAndAsns) ->
@@ -171,48 +177,75 @@ validateMft now mft parentCert crl verifiedResources = do
     void $ validateCms now (cmsPayload mft) parentCert crl verifiedResources $ \mftCMS -> do
         let cmsContent = getCMSContent mftCMS
         void $ validateThisUpdate now $ thisTime cmsContent
-        void $ validateNextUpdate now $ Just $ nextTime cmsContent
-        pure mftCMS
+        void $ validateNextUpdate now $ Just $ nextTime cmsContent        
     pure $ Validated mft
 
 validateRoa ::
-  (WithResourceCertificate c, WithSKI c) =>
-  Now ->
-  RoaObject ->
-  c ->
-  Validated CrlObject ->
-  Maybe (VerifiedRS PrefixesAndAsns) ->
-  PureValidatorT (Validated RoaObject)
+    (WithResourceCertificate c, WithSKI c) =>
+    Now ->
+    RoaObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated RoaObject)
 validateRoa now roa parentCert crl verifiedResources = do
-  void $ validateCms now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do 
-      -- TODO check that prefixes are inside of the resource set
-      pure roaCMS
-  pure $ Validated roa
+    void $
+        validateCms now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do
+            let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
+            let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
+            forM_ (getCMSContent roaCMS) $ \vrp@(Vrp _ prefix maxLength) ->
+                case prefix of
+                    Ipv4P p -> do 
+                        checkerV4 p (RoaPrefixIsOutsideOfResourceSet prefix)
+                        when (ipv4PrefixLen p > maxLength) $ 
+                            vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength vrp
+                    Ipv6P p -> do 
+                        checkerV6 p (RoaPrefixIsOutsideOfResourceSet prefix)
+                        when (ipv6PrefixLen p > maxLength) $ 
+                            vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength vrp
+    pure $ Validated roa
+  where
+    validatedPrefixInRS ::
+        forall a .
+        (Interval a, HasType (IntervalSet a) PrefixesAndAsns) =>
+        Maybe (VerifiedRS PrefixesAndAsns) ->         
+        (a -> (PrefixesAndAsns -> ValidationError) -> PureValidatorT ())
+    validatedPrefixInRS verifiedResources =
+        case verifiedResources of
+            Nothing -> \_ _ -> pure ()
+            Just (VerifiedRS vrs) ->
+                let rs = vrs ^. typed
+                 in \i errorReport ->
+                        unless (isInside i rs) $
+                            vPureError $ errorReport vrs
+
 
 validateGbr ::
-  (WithResourceCertificate c, WithSKI c) =>
-  Now ->
-  GbrObject ->
-  c ->
-  Validated CrlObject ->
-  Maybe (VerifiedRS PrefixesAndAsns) ->
-  PureValidatorT (Validated GbrObject)
+    (WithResourceCertificate c, WithSKI c) =>
+    Now ->
+    GbrObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated GbrObject)
 validateGbr now gbr parentCert crl verifiedResources = do
-  void $ validateCms now (cmsPayload gbr) parentCert crl verifiedResources pure
-  let Gbr vcardBS = getCMSContent $ cmsPayload gbr
-  case parseVCard $ toNormalBS vcardBS of 
-      Left e  -> vPureError $ InvalidVCardFormatInGbr e
-      Right _ -> pure $ Validated gbr
+    void $
+        validateCms now (cmsPayload gbr) parentCert crl verifiedResources $ \gbrCms -> do
+            let Gbr vcardBS = getCMSContent gbrCms
+            case parseVCard $ toNormalBS vcardBS of
+                Left e -> vPureError $ InvalidVCardFormatInGbr e
+                Right _ -> pure ()
+    pure $ Validated gbr
 
 validateCms ::
-  (WithResourceCertificate c, WithSKI c) =>
-  Now ->
-  CMS a ->
-  c ->
-  Validated CrlObject ->
-  Maybe (VerifiedRS PrefixesAndAsns) ->
-  (CMS a -> PureValidatorT (CMS a)) ->
-  PureValidatorT (Validated (CMS a))
+    (WithResourceCertificate c, WithSKI c) =>
+    Now 
+    -> CMS a 
+    -> c 
+    -> Validated CrlObject 
+    -> Maybe (VerifiedRS PrefixesAndAsns) 
+    -> (CMS a -> PureValidatorT ()) 
+    -> PureValidatorT ()
 validateCms now cms parentCert crl verifiedResources extraValidation = do
   -- Signature algorithm in the EE certificate has to be 
   -- exactly the same as in the signed attributes
@@ -231,7 +264,7 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
   signatureCheck $ validateCMSSignature cms  
   void $ validateResourceCert now eeCert parentCert crl
   void $ validateResources verifiedResources eeCert parentCert   
-  Validated <$> extraValidation cms
+  extraValidation cms
 
 -- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
 validateNextUpdate :: Now -> Maybe Instant -> PureValidatorT Instant
