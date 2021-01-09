@@ -35,7 +35,7 @@ supportedExtension filename =
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
 readObject :: RpkiURL -> BS.ByteString -> ParseResult RpkiObject
-readObject objectURL content = do    
+readObject objectURL content = do 
     let URI u = getURL objectURL
     let ext = map toLower $ Text.unpack $ Text.drop (Text.length u - 4) u
     case ext of

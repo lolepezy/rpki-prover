@@ -315,7 +315,6 @@ rightPad n a = go 0
 
 
 
-
 prefixV4ToBytes :: Ipv4Prefix -> (Word8, Word8, Word8, Word8)
 prefixV4ToBytes (Ipv4Prefix (V4.IpBlock p _)) = V4.ipAddressToWords p        
 
