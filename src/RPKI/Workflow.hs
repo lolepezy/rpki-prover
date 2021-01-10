@@ -18,12 +18,11 @@ import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
-import qualified Data.Map.Strict                  as Map
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
-import           GHC.Generics
+import Prometheus
 
 import           RPKI.AppState
 import           RPKI.CommonTypes
@@ -121,7 +120,8 @@ runWorkflow appContext@AppContext {..} tals = do
                     repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
 
                     rs <- forConcurrently tals $ \tal -> do 
-                        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryContext 
+                        (r@TopDownResult{..}, elapsed) <- timedMS $ 
+                                validateTA appContext tal worldVersion repositoryContext 
                         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
                         pure r
 
@@ -228,3 +228,6 @@ periodically (Seconds interval) action =
         
 
     
+createPrometheusMetrics :: Applicative f => f ()
+createPrometheusMetrics = do
+    pure ()

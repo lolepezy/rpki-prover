@@ -76,6 +76,7 @@ dependencies:
 - optparse-generic
 - pipes
 - primitive
+- prometheus-client
 - semigroups
 - serialise
 - servant

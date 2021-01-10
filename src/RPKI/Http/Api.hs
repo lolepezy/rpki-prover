@@ -44,6 +44,9 @@ import           Servant.API
 import           Servant.CSV.Cassava
 
 import           RPKI.Domain                 as Domain
+import           RPKI.Config
+import           RPKI.CommonTypes
+
 import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
@@ -52,8 +55,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database
 import           RPKI.Time
 import qualified RPKI.Util                   as U
-import RPKI.Config
-import RPKI.CommonTypes
 
 
 
@@ -73,6 +74,8 @@ type API = "api" :> (
             :<|> "lmdb-stats" :> Get '[JSON] DBStats
             :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)            
         )
+
+type PrometheusAPI = "prometheus" :> Get '[PlainText] Text 
 
 data ValidationResult = ValidationResult {
     problems :: [VProblem],

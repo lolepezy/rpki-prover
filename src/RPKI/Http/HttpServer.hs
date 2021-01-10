@@ -16,21 +16,24 @@ import           Servant
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe)
 import qualified Data.Set                         as Set
+import Data.Text                        (Text)
 
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Metrics
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import RPKI.Util
 
 
 
-validatorServer :: forall s . Storage s => AppContext s -> Server API
+validatorServer :: Storage s => AppContext s -> Server API
 validatorServer AppContext {..} = 
     liftIO getVRPs
     :<|> liftIO getVRPs
@@ -87,7 +90,14 @@ validatorServer AppContext {..} =
 embeddedUI :: Server Raw
 embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
 
+type FullAPI = API :<|> Raw :<|> PrometheusAPI
+
+prometheus :: Server PrometheusAPI
+prometheus = liftIO $ convert <$> textualMetrics
+
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext = serve 
-                        (Proxy @(API :<|> Raw))
-                        (validatorServer appContext :<|> embeddedUI)
+                        (Proxy @FullAPI)
+                        (validatorServer appContext 
+                        :<|> embeddedUI 
+                        :<|> prometheus)
