@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -51,7 +52,7 @@ data PrometheusMetrics = PrometheusMetrics {
     deriving (Generic)
 
     
--- createPrometheusMetrics :: Applicative f => f ()
+createPrometheusMetrics :: MonadIO m => m PrometheusMetrics
 createPrometheusMetrics = do
     rrdpCode <- register 
             $ vector ("url" :: Text) 

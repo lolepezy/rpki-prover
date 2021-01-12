@@ -16,7 +16,6 @@ import           Servant
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe)
 import qualified Data.Set                         as Set
-import Data.Text                        (Text)
 
 import           Data.String.Interpolate.IsString
 
@@ -46,14 +45,11 @@ validatorServer AppContext {..} =
             vrps <- do 
                 vrps <- readTVarIO $ appState ^. #currentVrps
                 if Set.null vrps
-                    then do 
+                    then 
                         roTx versionStore $ \tx ->
-                            getLastCompletedVersion database tx >>= \case 
-                                Nothing          -> pure []            
-                                Just lastVersion -> do                        
-                                    (!vrps, elapsed) <- timedMS $ getVrps tx database lastVersion
-                                    logDebugM logger [i|Read VRPs, took #{elapsed}ms.|]        
-                                    pure vrps
+                            getLastCompletedVersion database tx >>= 
+                                maybe (pure []) (getVrps tx database)
+                                
                     else pure $! Set.toList vrps                    
 
             pure $! map (\(Vrp a p len) -> VrpDto a p len) vrps                    
@@ -90,7 +86,7 @@ validatorServer AppContext {..} =
 embeddedUI :: Server Raw
 embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
 
-type FullAPI = API :<|> Raw :<|> PrometheusAPI
+type FullAPI = API :<|> PrometheusAPI :<|> Raw
 
 prometheus :: Server PrometheusAPI
 prometheus = liftIO $ convert <$> textualMetrics
@@ -98,6 +94,6 @@ prometheus = liftIO $ convert <$> textualMetrics
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext = serve 
                         (Proxy @FullAPI)
-                        (validatorServer appContext 
-                        :<|> embeddedUI 
-                        :<|> prometheus)
+                        (validatorServer appContext                          
+                        :<|> prometheus
+                        :<|> embeddedUI)
