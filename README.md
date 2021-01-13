@@ -4,7 +4,7 @@ Implementation of the RPKI relying party software with the focus on a reasonable
 
 At the moment it is only the daemon written in Haskell and there's some work planned for the UI.
 
-Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. The doc/TODO.md file includes all the currently planned issue fixes and improvements.
+Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked here https://github.com/lolepezy/rpki-prover/issues
 
 Currently implemented features are
 
@@ -39,6 +39,8 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
 Running Run `rpki-prover --help` gives some help on the CLI options.
 
 Normally it prints quite a lot of logs about what it's doing to the stdout. After it prints "Validated all TAs, took ..." (it should take 2-4 minutes depending on how fast the CPU and network are) VRPs can be fetched by executing `curl -s http://localhost:9999/api/vrps.csv` (or `curl -s http://localhost:9999/api/vrps.json`).
+
+Main page http://localhost:9999 currently contains a bunch of links to available API end-points.
 
 
  
