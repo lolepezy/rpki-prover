@@ -74,3 +74,8 @@ setHttpCode PrometheusMetrics {..} (RrdpURL (URI u)) code =
 
 textualMetrics :: MonadIO m => m LBS.ByteString
 textualMetrics = exportMetricsAsText
+
+updateMetrics :: MonadIO m => AppMetric -> PrometheusMetrics -> m ()
+updateMetrics AppMetric {..} PrometheusMetrics {..} = do 
+    -- TODO Implement it
+    pure ()

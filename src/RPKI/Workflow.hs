@@ -225,9 +225,3 @@ periodically (Seconds interval) action =
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
-        
-
-    
-createPrometheusMetrics :: Applicative f => f ()
-createPrometheusMetrics = do
-    pure ()

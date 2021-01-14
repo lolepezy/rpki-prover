@@ -30,6 +30,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           GHC.Generics
+
 import           RPKI.CommonTypes
 import           RPKI.Domain
 import           RPKI.Resources.Types
@@ -274,6 +275,10 @@ newtype TimeMs = TimeMs Int64
 instance Show TimeMs where 
     show (TimeMs ms) = show ms
 
+newtype HttpStatus = HttpStatus Int 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+
 data RrdpSource = RrdpNothing | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
@@ -290,7 +295,7 @@ instance Semigroup RrdpSource where
 data RrdpMetric = RrdpMetric {
         added           :: Count,
         deleted         :: Count,        
-        rrdpSource      :: RrdpSource,
+        rrdpSource      :: RrdpSource,        
         downloadTimeMs  :: TimeMs,
         saveTimeMs      :: TimeMs,
         totalTimeMs     :: TimeMs

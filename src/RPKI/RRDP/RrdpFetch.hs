@@ -67,7 +67,8 @@ downloadAndUpdateRRDP
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
     do        
-    (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
+    (notificationXml, _, httpStatus) <- 
+                            fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
                                 downloadToLazyBS appContext (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
@@ -104,7 +105,7 @@ downloadAndUpdateRRDP
             pure r
         where
             downloadAndSave = do
-                ((rawContent, _), downloadedIn) <- timedMS $ 
+                ((rawContent, _, _), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                 downloadHashedLazyBS appContext uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
@@ -148,7 +149,7 @@ downloadAndUpdateRRDP
 
             downloadDelta (DeltaInfo uri hash serial) = do
                 let deltaUri = U.convert uri 
-                (rawContent, _) <- 
+                (rawContent, _, _) <- 
                     inSubVPath deltaUri $  
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                             downloadHashedLazyBS appContext uri hash
