@@ -217,7 +217,7 @@ instance ToJSON ValidationMetric
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
 instance ToJSON PathKind
-instance ToJSON HttpStatus 
+instance ToJSON HttpStatus
 instance ToJSON RrdpSource
 instance ToJSONKey (Path 'Metric)
 instance ToJSON (Path 'Metric)

@@ -60,6 +60,7 @@ dependencies:
 - hexpat
 - hourglass
 - hourglass-orphans
+- http-types
 - hw-ip
 - interpolate
 - lens
