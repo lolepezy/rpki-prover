@@ -10,6 +10,10 @@
 module RPKI.Metrics where
 
 import           Control.Lens                     ((^.), (%~), (&))
+import           Control.Lens.Combinators
+import           Control.Monad.IO.Class
+import           Control.Monad
+
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString.Lazy             as LBS
@@ -25,7 +29,9 @@ import           Data.Text                        (Text)
 
 import           Data.String.Interpolate.IsString
 
-import Prometheus
+import           GHC.Generics
+
+import           Prometheus
 
 import           RPKI.AppState
 import           RPKI.CommonTypes
@@ -45,10 +51,6 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
-import GHC.Generics
-import Control.Monad.IO.Class
-import Control.Monad
-import Control.Lens.Combinators
 
 
 data PrometheusMetrics = PrometheusMetrics {
