@@ -18,12 +18,11 @@ import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
-import qualified Data.Map.Strict                  as Map
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
-import           GHC.Generics
+import Prometheus
 
 import           RPKI.AppState
 import           RPKI.CommonTypes
@@ -35,6 +34,7 @@ import           RPKI.Store.Database
 import           RPKI.TopDown
 
 import           RPKI.AppContext
+import           RPKI.Metrics
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
@@ -67,11 +67,14 @@ runWorkflow appContext@AppContext {..} tals = do
     -- It is useful in case of restarts.        
     loadStoredAppState appContext
 
+    -- Initialise prometheus metrics here
+    prometheusMetrics <- createPrometheusMetrics
+
     -- Run threads that periodicallly generate tasks and put them 
     -- to the queue and one thread that executes the tasks.
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
-            generateNewWorldVersion, 
+            generateNewWorldVersion prometheusMetrics, 
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
             -- generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
@@ -86,16 +89,16 @@ runWorkflow appContext@AppContext {..} tals = do
         revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
         rtrConfig            = config ^. #rtrConfig
 
-        validateTaTask globalQueue worldVersion = 
-            atomically $ writeCQueue globalQueue (validateTAs worldVersion)             
+        validateTaTask prometheusMetrics globalQueue worldVersion = 
+            atomically $ writeCQueue globalQueue (validateTAs prometheusMetrics worldVersion)             
 
         -- periodically update world version and generate command 
         -- to re-validate all TAs
-        generateNewWorldVersion globalQueue = periodically revalidationInterval $ do 
+        generateNewWorldVersion prometheusMetrics globalQueue = periodically revalidationInterval $ do 
             oldWorldVersion <- getWorldVerionIO appState
             newWorldVersion <- updateWorldVerion appState
             logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
-            validateTaTask globalQueue newWorldVersion
+            validateTaTask prometheusMetrics globalQueue newWorldVersion
 
         generatePeriodicTask delay interval whatToDo globalQueue = do
             threadDelay delay
@@ -108,7 +111,7 @@ runWorkflow appContext@AppContext {..} tals = do
             forever $ do 
                 atomically (readCQueue globalQueue) >>= fromMaybe (pure ())
 
-        validateTAs worldVersion = do
+        validateTAs prometheusMetrics worldVersion = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
             executeOrDie
                 (processTALs tals)
@@ -121,11 +124,15 @@ runWorkflow appContext@AppContext {..} tals = do
                     repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
 
                     rs <- forConcurrently tals $ \tal -> do 
-                        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryContext 
+                        (r@TopDownResult{..}, elapsed) <- timedMS $ 
+                                validateTA appContext tal worldVersion repositoryContext 
                         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
                         pure r
 
-                    pure $! addTotalValidationMetric $ mconcat rs
+                    let z = addTotalValidationMetric $ mconcat rs
+                    let q = z ^. typed @ValidationState . typed @AppMetric
+                    updateMetrics q prometheusMetrics
+                    pure $! z
 
                 saveTopDownResult TopDownResult {..} = 
                     rwTx database $ \tx -> do
@@ -225,6 +232,3 @@ periodically (Seconds interval) action =
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
-        
-
-    

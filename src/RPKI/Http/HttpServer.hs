@@ -22,15 +22,17 @@ import           Data.String.Interpolate.IsString
 import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Metrics
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import RPKI.Util
 
 
 
-validatorServer :: forall s . Storage s => AppContext s -> Server API
+validatorServer :: Storage s => AppContext s -> Server API
 validatorServer AppContext {..} = 
     liftIO getVRPs
     :<|> liftIO getVRPs
@@ -43,14 +45,11 @@ validatorServer AppContext {..} =
             vrps <- do 
                 vrps <- readTVarIO $ appState ^. #currentVrps
                 if Set.null vrps
-                    then do 
+                    then 
                         roTx versionStore $ \tx ->
-                            getLastCompletedVersion database tx >>= \case 
-                                Nothing          -> pure []            
-                                Just lastVersion -> do                        
-                                    (!vrps, elapsed) <- timedMS $ getVrps tx database lastVersion
-                                    logDebugM logger [i|Read VRPs, took #{elapsed}ms.|]        
-                                    pure vrps
+                            getLastCompletedVersion database tx >>= 
+                                maybe (pure []) (getVrps tx database)
+                                
                     else pure $! Set.toList vrps                    
 
             pure $! map (\(Vrp a p len) -> VrpDto a p len) vrps                    
@@ -87,7 +86,14 @@ validatorServer AppContext {..} =
 embeddedUI :: Server Raw
 embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
 
+type FullAPI = API :<|> PrometheusAPI :<|> Raw
+
+prometheus :: Server PrometheusAPI
+prometheus = liftIO $ convert <$> textualMetrics
+
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext = serve 
-                        (Proxy @(API :<|> Raw))
-                        (validatorServer appContext :<|> embeddedUI)
+                        (Proxy @FullAPI)
+                        (validatorServer appContext                          
+                        :<|> prometheus
+                        :<|> embeddedUI)

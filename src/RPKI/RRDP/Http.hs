@@ -1,16 +1,12 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE MultiWayIf        #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE OverloadedLabels   #-}
 
 module RPKI.RRDP.Http where
 
 import           Control.Lens                   ((^.))
 import           Control.Monad.Except
-import           Control.Monad.Trans.Control
-
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                 (first)
@@ -31,6 +27,8 @@ import qualified Streaming.ByteString      as Q
 import           Data.ByteString.Streaming.HTTP
 
 import qualified Crypto.Hash.SHA256             as S256
+
+import Network.HTTP.Types.Status
 
 import           System.IO                      (Handle, hClose)
 import qualified System.IO.Posix.MMap           as Mmap
@@ -53,14 +51,14 @@ fsRead = Mmap.unsafeMMapFile
 downloadToStrictBS :: MonadIO m => 
                     AppContext s ->
                     URI -> 
-                    m (BS.ByteString, Size)
+                    m (BS.ByteString, Size, HttpStatus)
 downloadToStrictBS appContext uri = 
     downloadToBS appContext uri fsRead    
 
 downloadToLazyBS :: MonadIO m => 
                     AppContext s ->
                     URI ->
-                    m (LBS.ByteString, Size)
+                    m (LBS.ByteString, Size, HttpStatus)
 downloadToLazyBS appContext uri = 
     downloadToBS appContext uri lazyFsRead    
 
@@ -69,30 +67,31 @@ downloadToLazyBS appContext uri =
 -- mapped onto a temporary file. Snapshots (and probably some deltas) can be big 
 -- enough so that we don't want to keep them in memory.
 --
--- NOTE: The file will be deleted from the temporary directory by withSystemTempFile, 
--- but the descriptor taken by mmap will stay until the byte string it GC-ed, so it's 
--- safe to use them after returning from this function.
+-- NOTE: The file will be deleted from the temporary directory by withTempFile, 
+-- but the descriptor taken by mmap/readFile will stay until the byte string it GC-ed, 
+-- so it's safe to use them after returning from this function.
 downloadToBS :: MonadIO m => 
                 AppContext s ->
                 URI -> 
                 (FilePath -> IO bs) ->
-                m (bs, Size)
-downloadToBS appContext uri@(URI u) mmap = liftIO $ do
+                m (bs, Size, HttpStatus)
+downloadToBS appContext uri@(URI u) readF = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = appContext ^. typed @Config . #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        (_, !size) <- streamHttpToFileWithActions 
-                            (appContext ^. #httpContext) 
-                            uri 
-                            DoNothing 
-                            (appContext ^. typed @Config . typed @RrdpConf . #maxSize) 
-                            fd
+        (status, _, !size) <- 
+            streamHttpToFileWithActions 
+                (appContext ^. #httpContext) 
+                uri 
+                DoNothing 
+                (appContext ^. typed @Config . typed @RrdpConf . #maxSize) 
+                fd
         hClose fd                    
-        content <- mmap name
-        pure (content, size)
+        content <- readF name
+        pure (content, size, status)
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
@@ -100,56 +99,57 @@ downloadHashedLazyBS :: (MonadIO m) =>
                         AppContext s ->
                         URI -> 
                         Hash -> 
-                        (Hash -> Either e (LBS.ByteString, Size)) ->
-                        m (Either e (LBS.ByteString, Size))
-downloadHashedLazyBS appContext uri hash hashMishmatch = 
-    downloadHashedBS appContext uri hash hashMishmatch lazyFsRead
+                        (Hash -> Either e (LBS.ByteString, Size, HttpStatus)) ->
+                        m (Either e (LBS.ByteString, Size, HttpStatus))
+downloadHashedLazyBS appContext uri hash' hashMishmatch = 
+    downloadHashedBS appContext uri hash' hashMishmatch lazyFsRead
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
-downloadHashedStrictBS :: (MonadIO m) => 
+downloadHashedStrictBS :: MonadIO m => 
                         AppContext s ->
                         URI -> 
                         Hash -> 
-                        (Hash -> Either e (BS.ByteString, Size)) ->
-                        m (Either e (BS.ByteString, Size))
-downloadHashedStrictBS appContext uri hash hashMishmatch = 
-    downloadHashedBS appContext uri hash hashMishmatch fsRead
+                        (Hash -> Either e (BS.ByteString, Size, HttpStatus)) ->
+                        m (Either e (BS.ByteString, Size, HttpStatus))
+downloadHashedStrictBS appContext uri hash' hashMishmatch = 
+    downloadHashedBS appContext uri hash' hashMishmatch fsRead
 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
-downloadHashedBS :: (MonadIO m) => 
-                        AppContext s ->
-                        URI -> 
-                        Hash -> 
-                        (Hash -> Either e (bs, Size)) ->
-                        (FilePath -> IO bs) ->
-                        m (Either e (bs, Size))
-downloadHashedBS appContext uri@(URI u) hash hashMishmatch mmap = liftIO $ do
+downloadHashedBS :: MonadIO m => 
+                    AppContext s ->
+                    URI -> 
+                    Hash -> 
+                    (Hash -> Either e (bs, Size, HttpStatus)) ->
+                    (FilePath -> IO bs) ->
+                    m (Either e (bs, Size, HttpStatus))
+downloadHashedBS appContext uri@(URI u) expectedHash hashMishmatch readF = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = appContext ^. typed @Config . #tmpDirectory  
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        (actualHash, !size) <- streamHttpToFileWithActions 
-                                    (appContext ^. #httpContext)  
-                                    uri 
-                                    DoHashing 
-                                    (appContext ^. typed @Config . typed @RrdpConf . #maxSize) 
-                                    fd
-        if actualHash /= hash 
+        (status, actualHash, !size) <- 
+            streamHttpToFileWithActions 
+                (appContext ^. #httpContext)  
+                uri 
+                DoHashing 
+                (appContext ^. typed @Config . typed @RrdpConf . #maxSize) 
+                fd
+        if actualHash /= expectedHash 
             then pure $! hashMishmatch actualHash
             else do
                 hClose fd
-                content <- mmap name
-                pure $! Right (content, size)
+                content <- readF name
+                pure $! Right (content, size, status)
 
 
 data ActionWhileDownloading = DoNothing | DoHashing
 
-data OversizedDownloadStream = OversizedDownloadStream Size
+newtype OversizedDownloadStream = OversizedDownloadStream Size
     deriving stock (Show, Eq, Ord, Generic)    
 
 instance Exception OversizedDownloadStream
@@ -167,12 +167,12 @@ streamHttpToFileWithActions :: MonadIO m =>
                             ActionWhileDownloading -> 
                             Size -> 
                             Handle -> 
-                            m (Hash, Size)
+                            m (HttpStatus, Hash, Size)
 streamHttpToFileWithActions 
                     (HttpContext tlsManager) 
                     (URI uri) 
                     whileDownloading 
-                    maxSize 
+                    maxAllowedSize 
                     destinationHandle = 
     liftIO $ do
         req  <- parseRequest $ Text.unpack uri
@@ -189,18 +189,22 @@ streamHttpToFileWithActions
                 hashingAction chunk
                 currentSize <- readIORef size
                 let !newSize = currentSize + (fromIntegral $ BS.length chunk :: Size)
-                if newSize > maxSize
+                if newSize > maxAllowedSize
                     then throwIO $ OversizedDownloadStream newSize
                     else writeIORef size newSize
                 pure chunk                    
 
-        withHTTP req tlsManager $ \resp -> 
-            Q.hPut destinationHandle $ 
-                Q.chunkMapM perChunkAction $ responseBody resp
+        Status {..} <- withHTTP req tlsManager $ \response -> do 
+                    Q.hPut destinationHandle $ 
+                        Q.chunkMapM perChunkAction $ responseBody response
+                    pure $ responseStatus response
 
         h <- readIORef hash        
-        s <- readIORef size  
-        pure (U.mkHash $ S256.finalize h, s)
+        actualSize <- readIORef size  
+        pure (
+            HttpStatus statusCode, 
+            U.mkHash $ S256.finalize h, 
+            actualSize)
      
 
 -- | Fetch arbitrary file using the streaming implementation
@@ -208,8 +212,8 @@ fetchRpkiObject :: AppContext s ->
                 RrdpURL ->             
                 ValidatorT IO RpkiObject
 fetchRpkiObject appContext uri = do
-    (content, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
-                                downloadToStrictBS appContext (getURL uri) 
+    (content, size, status) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
+                                    downloadToStrictBS appContext (getURL uri) 
                         
     fromEitherM $ pure $ first ParseE $ readObject (RrdpU uri) content
     

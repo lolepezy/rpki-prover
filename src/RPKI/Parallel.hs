@@ -187,10 +187,7 @@ newCQueueIO :: Natural -> IO (ClosableQueue a)
 newCQueueIO = atomically . newCQueue
 
 newCQueue :: Natural -> STM (ClosableQueue a)
-newCQueue n = do 
-    q <- newTBQueue n
-    s <- newTVar QWorks
-    pure $ ClosableQueue q s
+newCQueue n = ClosableQueue <$> newTBQueue n <*> newTVar QWorks
 
 writeCQueue :: ClosableQueue a -> a -> STM ()
 writeCQueue (ClosableQueue q s) qe =

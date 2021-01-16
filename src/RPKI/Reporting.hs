@@ -30,6 +30,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           GHC.Generics
+
 import           RPKI.CommonTypes
 import           RPKI.Domain
 import           RPKI.Resources.Types
@@ -264,7 +265,7 @@ newtype Count = Count { unCount :: Int64 }
 instance Show Count where 
     show (Count c) = show c
 
-newtype TimeMs = TimeMs Int64
+newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype (Num)
@@ -273,6 +274,19 @@ newtype TimeMs = TimeMs Int64
 
 instance Show TimeMs where 
     show (TimeMs ms) = show ms
+
+newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+
+instance Monoid HttpStatus where
+    mempty = HttpStatus 200
+
+instance Semigroup HttpStatus where
+    s1 <> s2 
+        | not (isHttpSuccess s2) = s2
+        | not (isHttpSuccess s1) = s1
+        | isHttpSuccess s1 = s2    
 
 data RrdpSource = RrdpNothing | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
@@ -290,7 +304,8 @@ instance Semigroup RrdpSource where
 data RrdpMetric = RrdpMetric {
         added           :: Count,
         deleted         :: Count,        
-        rrdpSource      :: RrdpSource,
+        rrdpSource      :: RrdpSource,        
+        lastHttpStatus  :: HttpStatus,        
         downloadTimeMs  :: TimeMs,
         saveTimeMs      :: TimeMs,
         totalTimeMs     :: TimeMs
@@ -371,3 +386,8 @@ updateMetricInMap metricPath f (MetricMap (MonoidMap mm)) =
 
 lookupMetric :: MetricPath -> MetricMap a -> Maybe a
 lookupMetric metricPath (MetricMap (MonoidMap mm)) = Map.lookup metricPath mm
+
+
+isHttpSuccess :: HttpStatus -> Bool
+isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
+

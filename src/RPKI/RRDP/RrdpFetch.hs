@@ -67,7 +67,8 @@ downloadAndUpdateRRDP
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
     do        
-    (notificationXml, _) <- fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
+    (notificationXml, _, httpStatus) <- 
+                            fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
                                 downloadToLazyBS appContext (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
@@ -92,7 +93,7 @@ downloadAndUpdateRRDP
                     useSnapshot snapshotInfo notification            
   where
     
-    used z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)
+    used z       = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)    
     
     hoistHere    = vHoist . fromEither . first RrdpE        
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
@@ -104,12 +105,13 @@ downloadAndUpdateRRDP
             pure r
         where
             downloadAndSave = do
-                ((rawContent, _), downloadedIn) <- timedMS $ 
+                ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                 downloadHashedLazyBS appContext uri hash                                    
-                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
+                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)                
 
                 updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs downloadedIn)
+                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
 
                 (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
                 updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
@@ -148,11 +150,12 @@ downloadAndUpdateRRDP
 
             downloadDelta (DeltaInfo uri hash serial) = do
                 let deltaUri = U.convert uri 
-                (rawContent, _) <- 
-                    inSubVPath deltaUri $  
+                (rawContent, _, httpStatus') <- 
+                    inSubVPath deltaUri $ do
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                             downloadHashedLazyBS appContext uri hash
                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
+                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
                 pure (rawContent, serial, deltaUri)
 
             serials = map (^. typed @Serial) sortedDeltas
