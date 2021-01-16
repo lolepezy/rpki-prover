@@ -93,7 +93,7 @@ downloadAndUpdateRRDP
                     useSnapshot snapshotInfo notification            
   where
     
-    used z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)
+    used z       = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)    
     
     hoistHere    = vHoist . fromEither . first RrdpE        
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
@@ -105,12 +105,13 @@ downloadAndUpdateRRDP
             pure r
         where
             downloadAndSave = do
-                ((rawContent, _, _), downloadedIn) <- timedMS $ 
+                ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                 downloadHashedLazyBS appContext uri hash                                    
-                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)
+                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)                
 
                 updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs downloadedIn)
+                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
 
                 (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
                 updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
@@ -149,11 +150,12 @@ downloadAndUpdateRRDP
 
             downloadDelta (DeltaInfo uri hash serial) = do
                 let deltaUri = U.convert uri 
-                (rawContent, _, _) <- 
-                    inSubVPath deltaUri $  
+                (rawContent, _, httpStatus') <- 
+                    inSubVPath deltaUri $ do
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                             downloadHashedLazyBS appContext uri hash
                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
+                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
                 pure (rawContent, serial, deltaUri)
 
             serials = map (^. typed @Serial) sortedDeltas

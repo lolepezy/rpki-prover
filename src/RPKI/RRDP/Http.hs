@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedLabels   #-}
@@ -27,7 +28,7 @@ import           Data.ByteString.Streaming.HTTP
 
 import qualified Crypto.Hash.SHA256             as S256
 
-import Network.HTTP.Types.Status (Status)
+import Network.HTTP.Types.Status
 
 import           System.IO                      (Handle, hClose)
 import qualified System.IO.Posix.MMap           as Mmap
@@ -50,14 +51,14 @@ fsRead = Mmap.unsafeMMapFile
 downloadToStrictBS :: MonadIO m => 
                     AppContext s ->
                     URI -> 
-                    m (BS.ByteString, Size, Status)
+                    m (BS.ByteString, Size, HttpStatus)
 downloadToStrictBS appContext uri = 
     downloadToBS appContext uri fsRead    
 
 downloadToLazyBS :: MonadIO m => 
                     AppContext s ->
                     URI ->
-                    m (LBS.ByteString, Size, Status)
+                    m (LBS.ByteString, Size, HttpStatus)
 downloadToLazyBS appContext uri = 
     downloadToBS appContext uri lazyFsRead    
 
@@ -73,7 +74,7 @@ downloadToBS :: MonadIO m =>
                 AppContext s ->
                 URI -> 
                 (FilePath -> IO bs) ->
-                m (bs, Size, Status)
+                m (bs, Size, HttpStatus)
 downloadToBS appContext uri@(URI u) readF = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
@@ -98,8 +99,8 @@ downloadHashedLazyBS :: (MonadIO m) =>
                         AppContext s ->
                         URI -> 
                         Hash -> 
-                        (Hash -> Either e (LBS.ByteString, Size, Status)) ->
-                        m (Either e (LBS.ByteString, Size, Status))
+                        (Hash -> Either e (LBS.ByteString, Size, HttpStatus)) ->
+                        m (Either e (LBS.ByteString, Size, HttpStatus))
 downloadHashedLazyBS appContext uri hash' hashMishmatch = 
     downloadHashedBS appContext uri hash' hashMishmatch lazyFsRead
 
@@ -109,8 +110,8 @@ downloadHashedStrictBS :: MonadIO m =>
                         AppContext s ->
                         URI -> 
                         Hash -> 
-                        (Hash -> Either e (BS.ByteString, Size, Status)) ->
-                        m (Either e (BS.ByteString, Size, Status))
+                        (Hash -> Either e (BS.ByteString, Size, HttpStatus)) ->
+                        m (Either e (BS.ByteString, Size, HttpStatus))
 downloadHashedStrictBS appContext uri hash' hashMishmatch = 
     downloadHashedBS appContext uri hash' hashMishmatch fsRead
 
@@ -121,9 +122,9 @@ downloadHashedBS :: MonadIO m =>
                     AppContext s ->
                     URI -> 
                     Hash -> 
-                    (Hash -> Either e (bs, Size, Status)) ->
+                    (Hash -> Either e (bs, Size, HttpStatus)) ->
                     (FilePath -> IO bs) ->
-                    m (Either e (bs, Size, Status))
+                    m (Either e (bs, Size, HttpStatus))
 downloadHashedBS appContext uri@(URI u) expectedHash hashMishmatch readF = liftIO $ do
     -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
@@ -166,7 +167,7 @@ streamHttpToFileWithActions :: MonadIO m =>
                             ActionWhileDownloading -> 
                             Size -> 
                             Handle -> 
-                            m (Status, Hash, Size)
+                            m (HttpStatus, Hash, Size)
 streamHttpToFileWithActions 
                     (HttpContext tlsManager) 
                     (URI uri) 
@@ -193,14 +194,17 @@ streamHttpToFileWithActions
                     else writeIORef size newSize
                 pure chunk                    
 
-        status <- withHTTP req tlsManager $ \response -> do 
+        Status {..} <- withHTTP req tlsManager $ \response -> do 
                     Q.hPut destinationHandle $ 
                         Q.chunkMapM perChunkAction $ responseBody response
                     pure $ responseStatus response
 
         h <- readIORef hash        
-        s <- readIORef size  
-        pure (status, U.mkHash $ S256.finalize h, s)
+        actualSize <- readIORef size  
+        pure (
+            HttpStatus statusCode, 
+            U.mkHash $ S256.finalize h, 
+            actualSize)
      
 
 -- | Fetch arbitrary file using the streaming implementation
