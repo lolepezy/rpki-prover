@@ -832,7 +832,7 @@ setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 -- Sum up all the validation metrics from all TA to create the "total" validation metric
 addTotalValidationMetric totalValidationResult =
-    totalValidationResult & vmLens %~ Map.insert (newPath "total") totalValidationMetric
+    totalValidationResult & vmLens %~ Map.insert (newPath "alltrustanchors") totalValidationMetric
   where
     uniqueVrps = Set.fromList (totalValidationResult ^. #vrps)
     totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 

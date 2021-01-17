@@ -129,10 +129,10 @@ runWorkflow appContext@AppContext {..} tals = do
                         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
                         pure r
 
-                    let z = addTotalValidationMetric $ mconcat rs
-                    let q = z ^. typed @ValidationState . typed @AppMetric
-                    updateMetrics q prometheusMetrics
-                    pure $! z
+                    let metrics = addTotalValidationMetric $ mconcat rs
+                    let appMetrics = metrics ^. typed @ValidationState . typed @AppMetric
+                    updatePrometheus appMetrics prometheusMetrics
+                    pure $! metrics
 
                 saveTopDownResult TopDownResult {..} = 
                     rwTx database $ \tx -> do

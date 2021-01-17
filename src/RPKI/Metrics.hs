@@ -83,8 +83,8 @@ createPrometheusMetrics = do
 textualMetrics :: MonadIO m => m LBS.ByteString
 textualMetrics = exportMetricsAsText
 
-updateMetrics :: (MonadIO m, MonadMonitor m) => AppMetric -> PrometheusMetrics -> m ()
-updateMetrics AppMetric {..} PrometheusMetrics {..} = do 
+updatePrometheus :: (MonadIO m, MonadMonitor m) => AppMetric -> PrometheusMetrics -> m ()
+updatePrometheus AppMetric {..} PrometheusMetrics {..} = do 
     forM_ (Map.toList $ unMonoidMap$ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.last $ metricPath ^. coerced                
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
@@ -106,5 +106,5 @@ updateMetrics AppMetric {..} PrometheusMetrics {..} = do
         withLabel validObjectNumber (url, "mft") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validMftNumber
         withLabel validObjectNumber (url, "crl") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validCrlNumber
         withLabel validObjectNumber (url, "grb") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validGbrNumber
-        withLabel validObjectNumber (url, "total") $ flip setGauge $ fromIntegral $ unCount totalCount
+        withLabel validObjectNumber (url, "allobjects") $ flip setGauge $ fromIntegral $ unCount totalCount
     
