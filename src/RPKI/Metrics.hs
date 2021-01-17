@@ -93,6 +93,7 @@ updatePrometheus AppMetric {..} PrometheusMetrics {..} = do
         let url = NonEmpty.last $ metricPath ^. coerced        
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
+
     forM_ (Map.toList $ unMonoidMap$ unMetricMap validationMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.last $ metricPath ^. coerced        
         withLabel vrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpNumber
@@ -101,10 +102,12 @@ updatePrometheus AppMetric {..} PrometheusMetrics {..} = do
                          metric ^. #validMftNumber +
                          metric ^. #validCrlNumber +
                          metric ^. #validGbrNumber
-        withLabel validObjectNumber (url, "cer") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validCertNumber
-        withLabel validObjectNumber (url, "roa") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validRoaNumber
-        withLabel validObjectNumber (url, "mft") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validMftNumber
-        withLabel validObjectNumber (url, "crl") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validCrlNumber
-        withLabel validObjectNumber (url, "grb") $ flip setGauge $ fromIntegral $ unCount $ metric ^. #validGbrNumber
-        withLabel validObjectNumber (url, "allobjects") $ flip setGauge $ fromIntegral $ unCount totalCount
+        setValidObjects url "cer" $ metric ^. #validCertNumber
+        setValidObjects url "roa" $ metric ^. #validRoaNumber
+        setValidObjects url "mft" $ metric ^. #validMftNumber
+        setValidObjects url "crl" $ metric ^. #validCrlNumber
+        setValidObjects url "grb" $ metric ^. #validGbrNumber
+        setValidObjects url "allobjects" totalCount        
+        where 
+            setValidObjects url tag count = withLabel validObjectNumber (url, tag) $ flip setGauge $ fromIntegral $ unCount count
     
