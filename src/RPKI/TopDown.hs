@@ -21,7 +21,8 @@ import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
 
 
-import           Data.Either (fromRight)
+import           Data.Either                      (fromRight)
+import           Data.Char                        (toLower)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -657,10 +658,22 @@ validateCaCertificate
                     -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
                     -- or recursively validate CA if the child is a certificate.                           
                     validateChild validCrl ro'
-        where 
-            validateMftFileName = do 
-                -- TODO Check characters in the filenames
-                pure ()
+      where 
+        allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
+        validateMftFileName =                
+            case Text.splitOn "." filename of 
+                [ mainName, extension ] -> do
+                    let loweredExtension = Text.toLower extension
+                    unless (isSupportedExtension loweredExtension) $ 
+                        vError $ BadFileNameOnMFT filename 
+                                    ("Unsupported filename extension " <> extension)
+                    unless (Text.all (`elem` allowedMftFileNameCharacters) mainName) $ do 
+                        let badChars = Text.filter (`notElem` allowedMftFileNameCharacters) mainName
+                        vError $ BadFileNameOnMFT filename 
+                                    ("Unsupported characters in filename: '" <> badChars <> "'")
+                somethgingElse -> 
+                    vError $ BadFileNameOnMFT filename 
+                                "Filename doesn't have exactly one DOT"            
 
     
     validateChild validCrl ro = do
@@ -778,7 +791,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
 
 -- Mark validated objects in the database.
 markValidatedObjects :: (MonadIO m, Storage s) => 
-                    AppContext s -> TopDownContext s -> m ()
+                        AppContext s -> TopDownContext s -> m ()
 markValidatedObjects AppContext { .. } TopDownContext {..} = do
     objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
     (size, elapsed) <- timedMS $ liftIO $ do 

@@ -64,6 +64,7 @@ data ValidationError = InvalidCert Text |
                         MoreThanOneCRLOnMFT AKI Locations [(Text, Hash)] |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
+                        BadFileNameOnMFT Text Text |
                         NoCRLExists AKI Locations |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
