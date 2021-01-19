@@ -323,17 +323,11 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ RrdpMetric { added = 2, deleted = 0, rrdpSource = RrdpNothing, 
-                             downloadTimeMs = TimeMs 0, 
-                             saveTimeMs = TimeMs 0, 
-                             totalTimeMs = TimeMs 0 })
+        (Just $ mempty { added = 2, deleted = 0 })
         (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
-        (Just $ RrdpMetric { added = 1, deleted = 0, rrdpSource = RrdpNothing, 
-                             downloadTimeMs = TimeMs 0, 
-                             saveTimeMs = TimeMs 0, 
-                             totalTimeMs = TimeMs 0 })
+        (Just $ mempty { added = 1, deleted = 0 })
         (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") 
                             (rrdpMetrics topDownMetric))        
 

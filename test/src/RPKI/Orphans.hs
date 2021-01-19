@@ -469,6 +469,10 @@ instance Arbitrary Count where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary HttpStatus where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 -- IPs
 
 instance Arbitrary IpPrefix where
