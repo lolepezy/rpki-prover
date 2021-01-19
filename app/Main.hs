@@ -315,26 +315,3 @@ instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
 
 deriving instance Show (CLIOptions Unwrapped)
-
-
--- 
-
-testDefragmentation :: IO ()
-testDefragmentation = do
-    -- load config file and apply command line options    
-    logger <- createLogger
-
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
-
-    let cliOptions' = cliOptions { rpkiRootDirectory = Just "/home/puz/tmp/rpki" }
-
-    (appContext, validations) <- 
-        runValidatorT (newValidatorPath "configuration") 
-        $ createAppContext cliOptions' logger
-    case appContext of
-        Left e ->
-            logError_ logger [i|Couldn't initialise: #{e}|]
-        Right appContext' -> do             
-            runMaintenance appContext'
-            logDebugM logger [i|Done|]
-            
