@@ -640,7 +640,8 @@ validateCaCertificate
         objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
         ro <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
         case ro of 
-            Nothing -> vError $ ManifestEntryDontExist hash'
+            Nothing -> 
+                vError $ ManifestEntryDontExist hash'
             Just ro'
                 | Set.member hash' visitedObjects ->
                     -- we have already visited this object before, so 
