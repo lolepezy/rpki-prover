@@ -203,14 +203,12 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
-    -- if fileSizeMb > (3 * dataSizeMb)
-    if True
+    if fileSizeMb > (3 * dataSizeMb)    
         then do 
             logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
-            (_, elapsed) <- timedMS $ copyToNewEnvironmentAndSwap `catch` (\(e :: SomeException) -> do
-                                            logError_ logger [i|ERROR: #{e}.|]        
-                                            cleanUpAfterException)
-            logDebug_ logger [i|Done, took #{elapsed}ms.|]
+            copyToNewEnvironmentAndSwap `catch` (\(e :: SomeException) -> do
+                    logError_ logger [i|ERROR: #{e}.|]        
+                    cleanUpAfterException)            
         else 
             logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
         
