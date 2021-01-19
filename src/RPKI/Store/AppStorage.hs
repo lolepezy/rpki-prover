@@ -9,6 +9,7 @@ module RPKI.Store.AppStorage where
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
+import           Control.Monad (forM_)
 import           Control.Monad.IO.Class
 
 import           Control.Lens                     ((^.))
@@ -171,8 +172,10 @@ defragmentStorageWithTmpDir AppContext {..} = do
             newLmdb   <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
             newNativeEnv <- atomically $ getNativeEnv newLmdb
 
-            copyEnv oldNativeEnv newNativeEnv
-            logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
+            stats <- copyEnv oldNativeEnv newNativeEnv
+            forM_ stats $ \(name, bytes) -> 
+                logDebug_ logger [i|Copied #{bytes} bytes for the map '#{name}'.|]
+            logDebug_ logger [i|Copied all data to #{newLmdbDir}.|]
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
 

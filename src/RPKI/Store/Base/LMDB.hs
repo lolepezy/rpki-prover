@@ -8,7 +8,7 @@
 
 module RPKI.Store.Base.LMDB where
 
-import Control.Monad (forever)
+import Control.Monad (forM, forever)
 import Control.Concurrent.STM
 import Control.Exception
 
@@ -34,7 +34,6 @@ import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
 
 import Pipes
-import Data.Foldable (forM_)
 import RPKI.Reporting
 import RPKI.AppMonad
 import RPKI.Parallel
@@ -217,35 +216,36 @@ data MapInfo a
 -- Do it in the pipline fashion: one thread for reading the old Env
 -- and one thread for writing (k,v) pairs into the new Env.
 -- 
-copyEnv :: Env -> Env -> IO ()
+copyEnv :: Env -> Env -> IO [(BS.ByteString, Int)]
 copyEnv srcN dstN = do 
 
     mapNames <- withROTransaction srcN $ \srcTx -> do               
                     srcDb <- openDatabase srcTx Nothing defaultDbSettings    
                     getMapNames srcTx srcDb
 
-    mapException (AppException . storageError) 
-        $ voidRun "cleanObjectCache" 
-        $ bracketChanClosable 
-                50_000
-                (liftIO . readKVs mapNames)
-                (liftIO . writeKVs)
-                (const $ pure ()) 
+    (bytes, _) <- mapException (AppException . storageError)        
+                    $ bracketChanClosable 
+                            50_000
+                            (liftIO . readKVs mapNames)
+                            (liftIO . writeKVs)
+                            (const $ pure ()) 
+    pure bytes
     where
         readKVs mapNames queue = 
             withROTransaction srcN $ \srcTx ->
-                forM_ mapNames $ \mapName -> do 
+                forM mapNames $ \mapName -> do 
                     srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings           
                     isMulti <- isMultiDatabase srcTx srcMap                                   
                     if isMulti
                         then do 
                             closeDatabase srcN srcMap
                             srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
-                            copied  <- writeMultiMapToQueue mapName srcMap' srcTx queue
-                            putStrLn $ "Copied multi " <> show mapName <> ", " <> show copied <> " bytes."
+                            bytes <- writeMultiMapToQueue mapName srcMap' srcTx queue                            
+                            pure (mapName, bytes)
                         else do 
-                            copied <- writeMapToQueue mapName srcMap srcTx queue
-                            putStrLn $ "Copied " <> show mapName <> ", " <> show copied <> " bytes."         
+                            bytes <- writeMapToQueue mapName srcMap srcTx queue
+                            pure (mapName, bytes)
+                            
 
         writeKVs queue = 
             withTransaction dstN $ \dstTx -> 
