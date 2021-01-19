@@ -28,7 +28,7 @@ import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import RPKI.Util
+import           RPKI.Util
 
 
 
@@ -45,7 +45,8 @@ validatorServer AppContext {..} =
             vrps <- do 
                 vrps <- readTVarIO $ appState ^. #currentVrps
                 if Set.null vrps
-                    then 
+                    then do 
+                        database@DB {..} <- readTVarIO database 
                         roTx versionStore $ \tx ->
                             getLastCompletedVersion database tx >>= 
                                 maybe (pure []) (getVrps tx database)
@@ -54,7 +55,8 @@ validatorServer AppContext {..} =
 
             pure $! map (\(Vrp a p len) -> VrpDto a p len) vrps                    
 
-        getVResults = 
+        getVResults = do 
+            database@DB {..} <- readTVarIO database 
             roTx versionStore $ \tx -> 
                 let txValidations = runMaybeT $ do
                         lastVersion <- MaybeT $ getLastCompletedVersion database tx
@@ -63,6 +65,7 @@ validatorServer AppContext {..} =
                 in fromMaybe [] <$> txValidations
                 
         getMetrics = do
+            database@DB {..} <- liftIO $ readTVarIO database 
             metrics <- liftIO $ roTx versionStore $ \tx -> do
                 runMaybeT $ do
                         lastVersion <- MaybeT $ getLastCompletedVersion database tx
@@ -74,13 +77,12 @@ validatorServer AppContext {..} =
         toVR (Path path, problems) = 
             ValidationResult (Set.toList problems) (NonEmpty.toList path)    
 
-        getStats = dbStats database
+        getStats = liftIO $ dbStats =<< readTVarIO database             
 
-        getRpkiObject hash = 
-            liftIO $ roTx objectStore $ \tx -> 
+        getRpkiObject hash = liftIO $ do
+            DB {..} <- readTVarIO database 
+            roTx objectStore $ \tx -> 
                 (RObject <$>) <$> getByHash tx objectStore hash            
-
-        DB {..} = database
 
 
 embeddedUI :: Server Raw

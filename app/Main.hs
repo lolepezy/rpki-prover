@@ -10,6 +10,8 @@ module Main where
     
 import           Colog
 import           Colog.Concurrent
+import           Control.Concurrent.STM (readTVarIO)
+import           Control.Concurrent.STM.TVar (newTVarIO)
 
 import           Control.Lens ((^.))
 import           Control.Monad
@@ -91,7 +93,9 @@ runValidatorApp appContext@AppContext {..} = do
             inSubVPath (convert talFileName) $ parseTALFromFile talFileName
 
     logInfo_ logger [i|Successfully loaded #{length talFileNames} TALs.|]    
-    rwTx database $ \tx -> putValidations tx (validationsStore database) worldVersion (validationState ^. typed)    
+    
+    database' <- readTVarIO database
+    rwTx database' $ \tx -> putValidations tx (validationsStore database') worldVersion (validationState ^. typed)    
     case tals of 
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    
@@ -161,6 +165,7 @@ createAppContext CLIOptions{..} logger = do
             else Nothing     
 
     appState <- liftIO newAppState    
+    tvarDatabase <- liftIO $ newTVarIO database
 
     let appContext = AppContext {        
         logger = logger,
@@ -198,7 +203,7 @@ createAppContext CLIOptions{..} logger = do
             lmdbSize = lmdbRealSize
         },
         appState = appState,
-        database = database,
+        database = tvarDatabase,
         appBottlenecks = appBottlenecks,
         httpContext = httpContext
     }    
@@ -310,3 +315,26 @@ instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
 
 deriving instance Show (CLIOptions Unwrapped)
+
+
+-- 
+
+testDefragmentation :: IO ()
+testDefragmentation = do
+    -- load config file and apply command line options    
+    logger <- createLogger
+
+    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
+
+    let cliOptions' = cliOptions { rpkiRootDirectory = Just "/home/puz/tmp/rpki" }
+
+    (appContext, validations) <- 
+        runValidatorT (newValidatorPath "configuration") 
+        $ createAppContext cliOptions' logger
+    case appContext of
+        Left e ->
+            logError_ logger [i|Couldn't initialise: #{e}|]
+        Right appContext' -> do             
+            runMaintenance appContext'
+            logDebugM logger [i|Done|]
+            

@@ -8,6 +8,7 @@
 
 module RPKI.RRDP.RrdpFetch where
 
+import           Control.Concurrent.STM           (readTVarIO)
 import           Control.Exception.Lifted         (finally)
 import           Control.Lens                     ((.~), (%~), (&), (^.))
 import           Control.Monad.Except
@@ -18,6 +19,7 @@ import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
+import           Data.Proxy
 
 import           GHC.Generics
 
@@ -45,7 +47,6 @@ import qualified RPKI.Util                        as U
 import qualified Streaming.Prelude                as S
 
 import           System.Mem                       (performGC)
-import Data.Proxy
 
 
 
@@ -59,7 +60,7 @@ import Data.Proxy
 downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository ->                 
                         (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) ->
-                        (RrdpURL -> Notification -> Serial ->LBS.ByteString -> ValidatorT IO ()) ->
+                        (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT IO ()) ->
                         ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
@@ -249,7 +250,10 @@ saveSnapshot appContext repoUri notification snapshotContent = do
     doSaveObjects worldVersion 
   where
       -- 
-    doSaveObjects worldVersion = do    
+    doSaveObjects worldVersion = do 
+        db <- liftIO $ readTVarIO $ appContext ^. #database
+        let objectStore     = db ^. #objectStore
+        let repositoryStore = db ^. #repositoryStore   
         (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
             fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
@@ -261,19 +265,19 @@ saveSnapshot appContext repoUri notification snapshotContent = do
         when (serial /= notificationSerial) $ 
             appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
+        let savingTx sessionId serial f = 
+                rwAppTx objectStore $ \tx -> 
+                    f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+
         void $ txFoldPipeline 
                     cpuParallelism
-                    (S.mapM newStorable $ S.each snapshotItems)
+                    (S.mapM (newStorable objectStore) $ S.each snapshotItems)
                     (savingTx sessionId serial)
-                    saveStorable
+                    (saveStorable objectStore)
                     (mempty :: ())
-      where
-        savingTx sessionId serial f = 
-            rwAppTx objectStore $ \tx -> do                
-                f tx                
-                RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+      where        
 
-        newStorable (SnapshotPublish uri encodedb64) =             
+        newStorable objectStore (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
                     task <- readBlob `strictTask` bottleneck
@@ -289,7 +293,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                         case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
                             Left e -> pure $! Just $ SError $ VErr e
                             Right (DecodedBase64 decoded) ->
-                                liftIO $ roTx database $ \tx -> do                                    
+                                liftIO $ roTx objectStore $ \tx -> do                                    
                                     exists <- DB.hashExists tx objectStore (U.sha256s decoded)
                                     pure $! if exists 
                                     -- The object is already in cache. Do not parse-serialise
@@ -302,10 +306,10 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                                 Left e   -> Just $! SError $ VErr e
                                                 Right ro -> Just $! SObject $ toStorableObject ro
                                         
-        saveStorable _ (Left (e, uri)) _ = 
+        saveStorable objectStore _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
 
-        saveStorable tx (Right (uri, a)) _ =           
+        saveStorable objectStore tx (Right (uri, a)) _ =           
             waitTask a >>= \case     
                 Nothing -> pure ()                   
                 Just (SError (VWarn (VWarning e))) -> do                    
@@ -320,10 +324,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
-    bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck
-    database        = appContext ^. #database
-    objectStore     = database ^. #objectStore
-    repositoryStore = database ^. #repositoryStore
+    bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
 
 
 {-
@@ -346,6 +347,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
     doSaveObjects worldVersion
   where
     doSaveObjects worldVersion = do
+        db <- liftIO $ readTVarIO $ appContext ^. #database
+        let objectStore     = db ^. #objectStore
+        let repositoryStore = db ^. #repositoryStore   
+
         Delta _ sessionId serial deltaItems <- 
             vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
 
@@ -362,6 +367,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
 
         let deltaItemS = S.each deltaItems
 
+        let savingTx sessionId serial f = 
+                rwAppTx objectStore $ \tx -> 
+                    f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+
         -- Propagate exceptions from here, anything that can happen here 
         -- (storage failure, mmap failure) should stop the validation and 
         -- probably stop the whole program.
@@ -369,14 +378,9 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 cpuParallelism
                 (S.mapM newStorable deltaItemS)
                 (savingTx sessionId serial)
-                saveStorable
+                (saveStorable objectStore)
                 (mempty :: ())                        
       where        
-        savingTx sessionId serial f = 
-            rwAppTx database $ \tx -> do
-                f tx
-                RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
-
         newStorable (DP (DeltaPublish uri hash encodedb64)) =
             if supportedExtension $ U.convert uri 
                 then do 
@@ -392,10 +396,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
         newStorable (DW (DeltaWithdraw uri hash)) = 
             pure $ Right $ Delete uri hash
         
-        saveStorable _ (Left (e, uri)) _ = 
+        saveStorable objectStore _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
 
-        saveStorable tx (Right op) _ =
+        saveStorable objectStore tx (Right op) _ =
             case op of
                 Delete uri existingHash -> do
                     -- Ignore withdraws and just use the time-based garbage collection
@@ -404,10 +408,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                         then deletedObject
                         else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
                         
-                Add uri async'             -> addObject tx uri async'                
-                Replace uri async' oldHash -> replaceObject tx uri async' oldHash                    
+                Add uri async'             -> addObject objectStore tx uri async'                
+                Replace uri async' oldHash -> replaceObject objectStore tx uri async' oldHash                    
         
-        addObject tx uri a =
+        addObject objectStore tx uri a =
             waitTask a >>= \case
                 SError (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
@@ -421,7 +425,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                         DB.putObject tx objectStore so worldVersion                      
                         addedObject
 
-        replaceObject tx uri a oldHash = do            
+        replaceObject objectStore tx uri a oldHash = do            
             waitTask a >>= \case
                 SError (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
@@ -449,9 +453,6 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
     logger          = appContext ^. typed @AppLogger           
     cpuParallelism  = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
     bottleneck      = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
-    database        = appContext ^. #database
-    objectStore     = database ^. #objectStore
-    repositoryStore = database ^. #repositoryStore
 
 
 addedObject, deletedObject :: Monad m => ValidatorT m ()

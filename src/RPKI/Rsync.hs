@@ -17,6 +17,7 @@ import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.Except
+import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 import           Data.String.Interpolate.IsString
@@ -87,7 +88,7 @@ updateObjectForRsyncRepository
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = do     
 
     let rsyncRoot   = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
-    let objectStore = appContext ^. #database . #objectStore
+    objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO $ appContext ^. #database        
     let destination = rsyncDestination rsyncRoot uri
     let rsync = rsyncProcess uri destination RsyncDirectory
 
@@ -143,6 +144,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 traverseDirectory queue rootPath
 
         traverseDirectory queue currentPath = do
+            objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database
             names <- liftIO $ getDirectoryContents currentPath
             let properNames = filter (`notElem` [".", ".."]) names
             forM_ properNames $ \name -> do
@@ -162,7 +164,7 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                     liftIO (getSizeAndContent1 filePath) >>= \case                    
                         Left e        -> pure $! Just $! SError e
                         Right (_, bs) -> 
-                            liftIO $ roTx database $ \tx -> do
+                            liftIO $ roTx objectStore $ \tx -> do
                                 -- Check if the object is already in the storage
                                 -- before parsing ASN1 and serialising it.
                                 exists <- hashExists tx objectStore (U.sha256s bs)
