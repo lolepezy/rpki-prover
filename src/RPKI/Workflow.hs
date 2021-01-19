@@ -16,13 +16,15 @@ import           Control.Monad
 import           Control.Lens                     ((^.), (%~), (&))
 import           Data.Generics.Product.Typed
 
+import           Data.Maybe (fromMaybe)
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
-import Prometheus
+import           Prometheus
+import           System.Exit
 
 import           RPKI.AppState
 import           RPKI.CommonTypes
@@ -43,9 +45,7 @@ import           RPKI.Time
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 
-import           System.Exit
-import Data.Maybe (fromMaybe)
-import RPKI.Store.Repository (getPublicationPoints)
+import           RPKI.Store.Repository (getPublicationPoints)
 
 type AppEnv = AppContext LmdbStorage
 
@@ -77,8 +77,7 @@ runWorkflow appContext@AppContext {..} tals = do
             generateNewWorldVersion prometheusMetrics, 
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
-            -- generatePeriodicTask (24 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
-            -- generatePeriodicTask 40_000_000 revalidationInterval defragment,
+            generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
             rtrServer   
         ]
     where
@@ -113,14 +112,15 @@ runWorkflow appContext@AppContext {..} tals = do
 
         validateTAs prometheusMetrics worldVersion = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
+            database' <- readTVarIO database 
             executeOrDie
-                (processTALs tals)
+                (processTALs database' tals)
                 (\tdResult@TopDownResult{..} elapsed -> do 
-                    uniqueVrps <- saveTopDownResult tdResult                                
+                    uniqueVrps <- saveTopDownResult database' tdResult                                
                     logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
             where 
-                processTALs tals = do 
-                    storedPubPoints   <- roTx database $ \tx -> getPublicationPoints tx (repositoryStore database)
+                processTALs database' tals = do                    
+                    storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
                     repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
 
                     rs <- forConcurrently tals $ \tal -> do 
@@ -129,18 +129,18 @@ runWorkflow appContext@AppContext {..} tals = do
                         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
                         pure r
 
-                    let z = addTotalValidationMetric $ mconcat rs
-                    let q = z ^. typed @ValidationState . typed @AppMetric
-                    updateMetrics q prometheusMetrics
-                    pure $! z
+                    let metrics = addTotalValidationMetric $ mconcat rs
+                    let appMetrics = metrics ^. typed @ValidationState . typed @AppMetric
+                    updatePrometheus appMetrics prometheusMetrics
+                    pure $! metrics
 
-                saveTopDownResult TopDownResult {..} = 
-                    rwTx database $ \tx -> do
+                saveTopDownResult database' TopDownResult {..} = 
+                    rwTx database' $ \tx -> do
                         let uniqueVrps = Set.fromList vrps
-                        putValidations tx (validationsStore database) worldVersion (tdValidations ^. typed)
-                        putMetrics tx (metricStore database) worldVersion (tdValidations ^. typed)
-                        putVrps tx database (Set.toList uniqueVrps) worldVersion
-                        completeWorldVersion tx database worldVersion
+                        putValidations tx (validationsStore database') worldVersion (tdValidations ^. typed)
+                        putMetrics tx (metricStore database') worldVersion (tdValidations ^. typed)
+                        putVrps tx database' (Set.toList uniqueVrps) worldVersion
+                        completeWorldVersion tx database' worldVersion
                         atomically $ do 
                             completeCurrentVersion appState                                    
                             writeTVar (appState ^. #currentVrps) uniqueVrps
@@ -148,21 +148,23 @@ runWorkflow appContext@AppContext {..} tals = do
 
         cacheGC worldVersion = do
             let now = versionToMoment worldVersion
+            database' <- readTVarIO database 
             executeOrDie 
-                (cleanObjectCache database $ versionIsOld now cacheLifeTime)
+                (cleanObjectCache database' $ versionIsOld now cacheLifeTime)
                 (\(deleted, kept) elapsed -> 
                     logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
 
         cleanOldVersions worldVersion = do
             let now = versionToMoment worldVersion
+            database' <- readTVarIO database 
             executeOrDie 
-                (deleteOldVersions database $ versionIsOld now oldVersionsLifetime)
+                (deleteOldVersions database' $ versionIsOld now oldVersionsLifetime)
                 (\deleted elapsed -> 
                     logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
-        -- defragment worldVersion = do
-        --     (_, elapsed) <- timedMS $ runMaintenance appContext 
-        --     logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
+        defragment worldVersion = do
+            (_, elapsed) <- timedMS $ runMaintenance appContext 
+            logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight = 
@@ -193,8 +195,9 @@ loadStoredAppState :: Storage s => AppContext s -> IO ()
 loadStoredAppState AppContext {..} = do     
     Now now' <- thisInstant    
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-    roTx database $ \tx -> 
-        getLastCompletedVersion database tx >>= \case 
+    database' <- readTVarIO database 
+    roTx database' $ \tx -> 
+        getLastCompletedVersion database' tx >>= \case 
             Nothing          -> pure ()
 
             Just lastVersion             
@@ -204,7 +207,7 @@ loadStoredAppState AppContext {..} = do
                 | otherwise -> do 
                     (vrps, elapsed) <- timedMS $ do             
                         -- TODO It takes 350ms, which is pretty strange, profile it.           
-                        !vrps <- getVrps tx database lastVersion
+                        !vrps <- getVrps tx database' lastVersion
                         atomically $ do
                             completeCurrentVersion appState                            
                             writeTVar (appState ^. #currentVrps) (Set.fromList vrps)                        

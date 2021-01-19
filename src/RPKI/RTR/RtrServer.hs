@@ -113,13 +113,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
-        vrps <- atomically $ readTVar (appState ^. #currentVrps)
+        vrps <- readTVarIO (appState ^. #currentVrps)
         let maxStoredDiffs = 3 * length vrps
                 
         atomically $ writeTVar rtrState $ 
                         Just $ newRtrState worldVersion maxStoredDiffs
 
-        lastTimeNotified <- atomically $ newTVar Nothing
+        lastTimeNotified <- newTVarIO Nothing
 
         forever $ do
             --  wait for a new complete world version
@@ -133,8 +133,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps)
                 
-            previousVrps <- fmap Set.fromList $ 
-                                roTx database $ \tx -> getVrps tx database previousVersion
+            database' <- readTVarIO database
+            previousVrps <- fmap Set.fromList 
+                                $ roTx database' 
+                                $ \tx -> getVrps tx database' previousVersion
 
             let vrpDiff            = evalVrpDiff previousVrps newVrps                         
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
