@@ -204,69 +204,6 @@ getNativeEnv LmdbEnv {..} = do
         ROEnv native -> pure native
         RWEnv native -> pure native
 
-
--- | Copy all databases from the from LMDB environment to the other
--- This is a low-level operation to be used for de-fragmentation.
--- `dest` is supposed to be completely empty.
--- 
-copyEnv :: Env -> Env -> IO ()
-copyEnv srcN dstN = do        
-    withROTransaction srcN $ \srcTx -> do       
-        withTransaction dstN $ \dstTx -> do                              
-            srcDb <- openDatabase srcTx Nothing defaultDbSettings    
-            mapNames <- getMapNames srcTx srcDb                
-            forM_ mapNames $ \mapName -> do 
-                -- first open it as is
-                srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings           
-                isMulti <- isMultiDatabase srcTx srcMap                            
-                if isMulti
-                    then do 
-                        -- close and reopen as multi map
-                        closeDatabase srcN srcMap
-                        srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
-                        dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) defaultMultiDbSettngs
-                        copied <- copyMultiMap srcMap' dstMap srcTx dstTx
-                        putStrLn $ "Copied multi " <> show mapName <> ", " <> show copied <> " bytes."
-                        closeMultiDatabase dstN dstMap                                                
-
-                    else do 
-                        dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
-                        copied <- copyMap srcMap dstMap srcTx dstTx                             
-                        putStrLn $ "Copied " <> show mapName <> ", " <> show copied <> " bytes."         
-                        closeDatabase dstN dstMap
-    where           
-        getMapNames tx db =
-            withCursor tx db $ \c -> do 
-                maps <- newIORef []
-                void $ runEffect $ LMap.firstForward c >-> do
-                    forever $ do
-                        Lmdb.KeyValue name _ <- await
-                        lift $ modifyIORef' maps ([name] <>)
-                readIORef maps          
-        
-        copyMap srcMap dstMap srcTx dstTx = do 
-            bytes <- newIORef 0
-            withCursor srcTx srcMap $ \c ->                
-                void $ runEffect $ LMap.firstForward c >-> do
-                    forever $ do
-                        Lmdb.KeyValue name value <- await
-                        lift $ LMap.insertSuccess' dstTx dstMap name value
-                        lift $ modifyIORef' bytes (+ (BS.length name + BS.length value))
-            readIORef bytes
-
-        copyMultiMap srcMap dstMap srcTx dstTx = do
-            bytes <- newIORef 0
-            withMultiCursor dstTx dstMap $ \dstC -> 
-                withMultiCursor srcTx srcMap $ \srcC ->                 
-                    void $ runEffect $ LMMap.firstForward srcC >-> do
-                        forever $ do
-                            Lmdb.KeyValue name value <- await
-                            lift $ LMMap.insert dstC name value
-                            lift $ modifyIORef' bytes (+ (BS.length name + BS.length value))
-            readIORef bytes
-
-
-
 data MapInfo a
     = Single a
     | Multi a
@@ -275,10 +212,13 @@ data MapInfo a
 
 -- | Copy all databases from the from LMDB environment to the other
 -- This is a low-level operation to be used for de-fragmentation.
--- `dest` is supposed to be completely empty.
+-- `dstN` is supposed to be a completely empty environment.
+--
+-- Do it in the pipline fashion: one thread for reading the old Env
+-- and one thread for writing (k,v) pairs into the new Env.
 -- 
-copyEnvAsync :: Env -> Env -> IO ()
-copyEnvAsync srcN dstN = do 
+copyEnv :: Env -> Env -> IO ()
+copyEnv srcN dstN = do 
 
     mapNames <- withROTransaction srcN $ \srcTx -> do               
                     srcDb <- openDatabase srcTx Nothing defaultDbSettings    

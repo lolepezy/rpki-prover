@@ -171,7 +171,7 @@ defragmentStorageWithTmpDir AppContext {..} = do
             newLmdb   <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
             newNativeEnv <- atomically $ getNativeEnv newLmdb
 
-            copyEnvAsync oldNativeEnv newNativeEnv
+            copyEnv oldNativeEnv newNativeEnv
             logDebug_ logger [i|Copied data to #{newLmdbDir}.|]
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
