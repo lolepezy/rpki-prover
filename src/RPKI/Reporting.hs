@@ -71,7 +71,6 @@ data ValidationError = InvalidCert Text |
                         NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
-                        RevokedEECertificate |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture |
                         CertificateIsExpired |
@@ -173,24 +172,6 @@ newtype VWarning = VWarning AppError
 data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-
-mError :: VPath -> AppError -> Validations
-mError vc w = mProblem vc (VErr w)
-
-mWarning :: VPath -> VWarning -> Validations
-mWarning vc w = mProblem vc (VWarn w)
-
-mProblem :: VPath -> VProblem -> Validations
-mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
-
-emptyValidations :: Validations -> Bool 
-emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
-
-findError :: Validations -> Maybe AppError
-findError (Validations m) = 
-    listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
-
-
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
 
@@ -216,16 +197,6 @@ data PathKind = Validation | Metric
 type VPath      = Path 'Validation    
 type MetricPath = Path 'Metric
     
-newPath :: Text -> Path c
-newPath u = Path $ u :| []
-
-childPath :: Path c -> Text -> Path c
-childPath (Path ts) t = Path $ t <| ts
-
-
-subPath :: Text -> Path c -> Path c
-subPath t parent = newPath t <> parent
-
 data ValidatorPath = ValidatorPath {
         validationPath :: VPath,
         metricPath     :: MetricPath
@@ -233,12 +204,17 @@ data ValidatorPath = ValidatorPath {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
+newPath :: Text -> Path c
+newPath u = Path $ u :| []
+
+subPath :: Text -> Path c -> Path c
+subPath t parent = newPath t <> parent
+
 newValidatorPath :: Text -> ValidatorPath
 newValidatorPath t = ValidatorPath {
         validationPath = newPath t,
         metricPath     = newPath t
     }
-
 
 -- | Step down     
 validatorSubPath :: Text -> ValidatorPath -> ValidatorPath
@@ -246,6 +222,30 @@ validatorSubPath t vc =
     vc & typed @VPath      %~ subPath t
        & typed @MetricPath %~ subPath t
 
+
+mError :: VPath -> AppError -> Validations
+mError vc w = mProblem vc (VErr w)
+
+mWarning :: VPath -> VWarning -> Validations
+mWarning vc w = mProblem vc (VWarn w)
+
+mProblem :: VPath -> VProblem -> Validations
+mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
+
+emptyValidations :: Validations -> Bool 
+emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
+
+findError :: Validations -> Maybe AppError
+findError (Validations m) = 
+    listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
+
+removeValidation :: VPath -> (AppError -> Bool) -> Validations -> Validations
+removeValidation vPath predicate (Validations vs) =
+    Validations $ Map.adjust removeFromSet vPath vs    
+    where 
+        removeFromSet = Set.filter $ \case 
+            VErr e             -> not $ predicate e
+            VWarn (VWarning e) -> not $ predicate e
 
 
 ------------------------------------------------

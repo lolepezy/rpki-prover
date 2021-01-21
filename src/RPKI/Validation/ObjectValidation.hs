@@ -218,7 +218,7 @@ validateRoa now roa parentCert crl verifiedResources = do
         (a -> (PrefixesAndAsns -> ValidationError) -> PureValidatorT ())
     validatedPrefixInRS verifiedResources =
         case verifiedResources of
-            Nothing -> \_ _ -> pure ()
+            Nothing               -> \_ _ -> pure ()
             Just (VerifiedRS vrs) -> \i errorReport ->
                 unless (isInside i (vrs ^. typed)) $
                     vPureError $ errorReport vrs

@@ -135,6 +135,21 @@ pureError e = do
     modify' $ typed %~ (mError validationPath e <>)
     throwError e
 
+catchAndEraseError :: Monad m => 
+                        ValidatorT m r 
+                    -> (AppError -> Bool) 
+                    -> ValidatorT m r 
+                    -> ValidatorT m r
+catchAndEraseError f predicate errorHandler = do
+    catchError f $ \e -> 
+        if predicate e 
+            then do 
+                validationPath <- asks (^. typed)
+                modify' $ typed %~ removeValidation validationPath predicate
+                errorHandler 
+            else throwError e
+
+
 pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
 pureErrorIfNot b e = if b then pure () else vPureError e
 

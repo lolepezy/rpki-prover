@@ -14,6 +14,7 @@ import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 -- import           Control.Concurrent.Async.Lifted (forConcurrently)
 import           Control.Monad.Except
+import           Control.Monad.Trans.Except
 import           Control.Monad.Reader
 
 import           Control.Lens
@@ -707,31 +708,38 @@ validateCaCertificate
                 --     --           in T3 emptyPublicationPoints mempty (fromValidations childCaError)
                 --     -- because we want to ignore all the errors down the tree when reporting up, they can be confusing.
                 embedState validationState
-                pure $! fromRight (T3 emptyPublicationPoints mempty mempty) r                    
+                pure $! fromRight mempty r                    
 
-            RoaRO roa ->
-                inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do
-                    void $ vHoist $ validateRoa now roa certificate 
-                                        validCrl verifiedResources
-                    oneMoreRoa
-                    
-                    let vrps = getCMSContent $ cmsPayload roa
+            RoaRO roa -> inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ 
+                            allowRevoked $ do
+                                void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
+                                oneMoreRoa
+                                
+                                let vrps = getCMSContent $ cmsPayload roa
+                                -- logDebugM logger [i|roa #{NonEmpty.head $ getLocations ro}, vrps = #{vrps}.|]
+                                pure $! T3 mempty mempty vrps
 
-                    -- logDebugM logger [i|roa #{NonEmpty.head $ getLocations ro}, vrps = #{vrps}.|]
-                    pure $! T3 emptyPublicationPoints mempty vrps
-
-            GbrRO gbr -> withEmptyPPs $
-                inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ do
-                    void $ vHoist $ validateGbr now gbr certificate 
-                                        validCrl verifiedResources
-                    oneMoreGbr
+            GbrRO gbr -> inSubVPath (toText $ NonEmpty.head $ getLocations ro) $ 
+                            allowRevoked $ do
+                                void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
+                                oneMoreGbr
+                                pure $! mempty
 
             -- TODO Anything else?
-            _ -> withEmptyPPs $ pure ()
+            _ -> pure mempty
 
         where                
-            withEmptyPPs f = f >> (pure $! T3 emptyPublicationPoints mempty mempty)
-    
+            -- In case of RevokedResourceCertificate error, manifest should not be considered 
+            -- invalid, only the object with the revoked certificate is considered invalid.
+            -- This is a slightly ad-hoc code, but works fine
+            allowRevoked f =                
+                catchAndEraseError f isRevokedCertError $ do 
+                    vWarn RevokedResourceCertificate
+                    pure $! mempty
+                where                 
+                    isRevokedCertError (ValidationE RevokedResourceCertificate) = True
+                    isRevokedCertError _ = False
+
 
     findMft childrenAki locations = do
         objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)

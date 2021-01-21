@@ -24,6 +24,7 @@ import qualified Data.List                   as List
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Maybe                  (isJust)
+import           Data.Monoid.Generic
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
@@ -83,10 +84,13 @@ data RsyncRepository = RsyncRepository {
     deriving anyclass Serialise
 
 data PublicationPoints = PublicationPoints {
-    rrdps  :: RrdpMap,
-    rsyncs :: RsyncMap,
-    lastSucceded :: LastSuccededMap
-} deriving stock (Show, Eq, Ord, Generic)   
+        rrdps  :: RrdpMap,
+        rsyncs :: RsyncMap,
+        lastSucceded :: LastSuccededMap
+    } 
+    deriving stock (Show, Eq, Ord, Generic)   
+    deriving Semigroup via GenericSemigroup PublicationPoints   
+    deriving Monoid    via GenericMonoid PublicationPoints
 
 data RsyncParent = ParentURI RsyncURL | Root FetchStatus
     deriving stock (Show, Eq, Ord, Generic)
@@ -148,13 +152,6 @@ instance Semigroup LastSuccededMap where
 
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
-
-instance Semigroup PublicationPoints where
-    PublicationPoints rr1 rs1 ls1 <> PublicationPoints rr2 rs2 ls2 = 
-        PublicationPoints (rr1 <> rr2) (rs1 <> rs2) (ls1 <> ls2)
-
-instance Monoid PublicationPoints where
-    mempty = emptyPublicationPoints
     
 
 rsyncR :: RsyncURL -> Repository
