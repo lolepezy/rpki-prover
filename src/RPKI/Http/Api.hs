@@ -240,7 +240,9 @@ instance ToJSON a => ToJSON (SignedData a)
 instance ToJSON a => ToJSON (EncapsulatedContentInfo a)
 
 instance ToJSON PrefixLength
-instance ToJSON Gbr
+instance ToJSON Gbr where
+    toJSON (Gbr s) = toJSON $ show s
+
 instance ToJSON Vrp
 instance ToJSON Manifest
 instance ToJSON CertificateWithSignature

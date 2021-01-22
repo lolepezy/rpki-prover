@@ -84,7 +84,7 @@ EMAIL:job@sobornost.net
 END:VCARD
 -}
 
-data VCardProperty = VCardVersion | FN Text | ORG Text | ADR Text | TEL Text | EMAIL Text
+data VCardProperty = VCardVersion Text | FN Text | ORG Text | ADR Text | TEL Text | EMAIL Text
     deriving (Show, Eq, Ord, Generic)
 
 newtype VCard = VCard [VCardProperty]
@@ -108,7 +108,7 @@ parseVCard bs = do
   where
       parseFields fs =
         VCard <$> sequence [
-                getField [ VCardVersion | ["VERSION", "4.0" ] <- fs ] "VERSION:4.0",
+                getField [ VCardVersion version | ["VERSION", version ] <- fs, version `elem` ["3.0", "4.0"] ] "VERSION",
                 getField [ FN  $ mconcat fn   | "FN"  : fn    <- fs ] "FN",
                 getField [ ORG $ mconcat fn   | "ORG" : fn    <- fs ] "ORG",
                 getField [ ADR $ mconcat fn   | adr : fn      <- fs, "ADR" `Text.isPrefixOf` adr ] "ADR" ,
