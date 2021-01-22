@@ -1,6 +1,7 @@
 {-# LANGUAGE QuasiQuotes     #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedLabels  #-}
+{-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module RPKI.Http.HttpServer where
@@ -11,7 +12,7 @@ import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           FileEmbedLzma
-import           Servant
+import           Servant hiding (URI)
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe)
@@ -79,10 +80,27 @@ validatorServer AppContext {..} =
 
         getStats = liftIO $ dbStats =<< readTVarIO database             
 
-        getRpkiObject hash = liftIO $ do
-            DB {..} <- readTVarIO database 
-            roTx objectStore $ \tx -> 
-                (RObject <$>) <$> getByHash tx objectStore hash            
+        getRpkiObject uri hash =
+            case (uri, hash) of 
+                (Nothing,  Nothing) -> 
+                    throwError $ err400 { errBody = "'uri' or 'hash' must be provided." }
+
+                (Just uri', Nothing) -> 
+                    liftIO $ do 
+                        DB {..} <- readTVarIO database 
+                        roTx objectStore $ \tx -> 
+                            (RObject <$>) <$> getByUri tx objectStore (URI uri')
+
+                (Nothing, Just hash') -> 
+                    case parseHash hash' of 
+                        Left e  -> throwError err400 
+                        Right h -> liftIO $ do 
+                            DB {..} <- readTVarIO database 
+                            roTx objectStore $ \tx -> 
+                                (RObject <$>) <$> getByHash tx objectStore h                                      
+
+                (Just _, Just _) -> 
+                    throwError $ err400 { errBody = "Only 'uri' or 'hash' must be provided, not both." }
 
 
 embeddedUI :: Server Raw

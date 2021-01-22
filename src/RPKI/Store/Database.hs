@@ -78,6 +78,7 @@ data RpkiObjectStore s = RpkiObjectStore {
     keys        :: Sequence s,
     objects     :: SMap "objects" s ArtificialKey SValue,
     hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
+    uriToKey    :: SMap "uri-to-key" s URI ArtificialKey,
     mftByAKI    :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
     objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
@@ -145,6 +146,16 @@ getByHash_ tx RpkiObjectStore {..} h = liftIO $
                 Nothing -> pure Nothing 
                 Just sv -> pure $ Just (k, fromSValue sv)
             
+getByUri :: (MonadIO m, Storage s) => 
+            Tx s mode -> RpkiObjectStore s -> URI -> m (Maybe RpkiObject)
+getByUri tx RpkiObjectStore {..} uri = liftIO $ do 
+    M.get tx uriToKey uri >>= \case 
+        Nothing -> pure Nothing 
+        Just k  -> 
+            M.get tx objects k >>= \case 
+                Nothing -> pure Nothing 
+                Just sv -> pure $ Just $ fromSValue sv
+
 
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> WorldVersion -> m ()
@@ -157,6 +168,8 @@ putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
         let key = ArtificialKey k
         M.put tx hashToKey h key
         M.put tx objects key sv   
+        forM_ (getLocations ro) $ \location -> 
+            M.put tx uriToKey (getURL location) key
         M.put tx objectMetas key (ROMeta wv Nothing)  
         ifJust (getAKI ro) $ \aki' ->
             case ro of

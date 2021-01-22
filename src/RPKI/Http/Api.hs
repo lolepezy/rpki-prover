@@ -67,12 +67,12 @@ instance EncodeOpts CSVOptions where
 type CSVType = CSV' 'HasHeader CSVOptions
 
 type API = "api" :> (     
-                "vrps.csv"  :> Get '[CSVType] [VrpDto]
+                 "vrps.csv"  :> Get '[CSVType] [VrpDto]
             :<|> "vrps.json" :> Get '[JSON] [VrpDto]
             :<|> "validation-results" :> Get '[JSON] [ValidationResult]
-            :<|> "metrics" :> Get '[JSON] AppMetric
+            :<|> "metrics"    :> Get '[JSON] AppMetric
             :<|> "lmdb-stats" :> Get '[JSON] DBStats
-            :<|> "object" :> Capture "hash" Hash :> Get '[JSON] (Maybe RObject)            
+            :<|> "object"     :> QueryParam "uri" Text :> QueryParam "hash" Text :> Get '[JSON] (Maybe RObject)                        
         )
 
 type PrometheusAPI = "prometheus" :> Get '[PlainText] Text 
