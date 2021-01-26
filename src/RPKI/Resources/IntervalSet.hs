@@ -72,7 +72,7 @@ findFullIntersections a is@(IntervalSet v) =
             | otherwise = 
                 case big `intersection` a of
                     [] -> []
-                    is -> (is, big) : goForward (index + 1)
+                    is' -> (is', big) : goForward (index + 1)
             where
                 big = V.unsafeIndex v index
         
