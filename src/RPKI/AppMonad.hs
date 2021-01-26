@@ -104,9 +104,6 @@ runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 runValidatorT :: ValidatorPath -> ValidatorT m r -> m (Either AppError r, ValidationState)
 runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
-runValidatorStateT :: ValidatorPath -> ValidationState -> ValidatorT m r -> m (Either AppError r, ValidationState)
-runValidatorStateT vc state v = (runStateT $ runExceptT $ runReaderT v vc) state
-
 -- | Shorthand version for cases when we need to actually 
 -- run IO or something similar like that
 voidRun :: Functor m => Text -> ValidatorT m r -> m ()
