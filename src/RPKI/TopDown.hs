@@ -12,7 +12,6 @@ module RPKI.TopDown where
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
--- import           Control.Concurrent.Async.Lifted (forConcurrently)
 import           Control.Monad.Except
 import           Control.Monad.Trans.Except
 import           Control.Monad.Reader
@@ -64,6 +63,7 @@ import           RPKI.AppState
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
+import Control.Concurrent.Async (forConcurrently)
 
 
 -- List of hashes of certificates, validation contexts and verified resource sets 
@@ -181,7 +181,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
     let validationConfig = config ^. typed @ValidationConfig
 
-    taStore <- (^. #taStore) <$> liftIO (readTVarIO database)
+    taStore  <- taStore <$> liftIO (readTVarIO database)
     taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName'
     case taByName of
         Nothing -> fetchValidateAndStore taStore now
@@ -237,19 +237,19 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
     fetchStatuses <- 
         if config ^. typed @ValidationConfig . #dontFetch
             then pure []
-            else inParallelVT
-                    (ioBottleneck appBottlenecks)
-                    reposToFetch 
-                    (fetchRepository appContext taURIContext now)
-            -- else forConcurrently                    
+            -- else inParallelVT
+            --         (ioBottleneck appBottlenecks)
             --         reposToFetch 
             --         (fetchRepository appContext taURIContext now)
+            else forM
+                    reposToFetch 
+                    (fetchRepository appContext taURIContext now)
 
     case partitionFailedSuccess fetchStatuses of
         ([], _) -> do            
             -- Embed valdiation state accumulated from 
             -- the fetching into the current validation state.
-            embedState (getValidationState fetchStatuses)
+            embedState (fetchStatuses2ValidationState fetchStatuses)
 
             let flattenedStatuses = flip map fetchStatuses $ \case 
                     FetchFailure r s _ -> (r, FailedAt s)
@@ -352,8 +352,8 @@ partitionFailedSuccess = go
         go (FetchSuccess r rs v : frs) = let (fs, ss) = go frs in (fs, (r, rs, v) : ss)
         go (FetchFailure r rs v : frs) = let (fs, ss) = go frs in ((r, rs, v) : fs, ss)
 
-getValidationState :: [FetchResult] -> ValidationState
-getValidationState r = mconcat $ flip map r $ \case 
+fetchStatuses2ValidationState :: [FetchResult] -> ValidationState
+fetchStatuses2ValidationState r = mconcat $ flip map r $ \case 
     FetchSuccess _ _ v -> v
     FetchFailure _ _ v -> v  
                 
@@ -401,10 +401,13 @@ validateCARecursively
         extractPPsAndValidateDown discoveredPPs waitingList = do            
             ppsToFetch' <- atomically $ getPPsToFetch repositoryContext discoveredPPs
             let (_, rootToPps) = repositoryHierarchy ppsToFetch'
-            inParallel
-                (cpuBottleneck appBottlenecks)
+            forM                
                 (Map.keys rootToPps) $ \repo ->
                     fetchAndValidateWaitingList rootToPps repo waitingList                    
+            -- inParallel
+            --     (cpuBottleneck appBottlenecks)
+            --     (Map.keys rootToPps) $ \repo ->
+            --         fetchAndValidateWaitingList rootToPps repo waitingList                    
                     
 
         -- Fetch the PP and validate all the certificates from the waiting 
@@ -459,33 +462,24 @@ validateCARecursively
                     proceedWithValidation validations
 
                 FetchFailure r _ validations -> 
-                    -- check when was the last successful fetch of this URL
                     case lastSuccess pps $ getRpkiURL r of
-                        Nothing -> do 
+                        Never -> do 
                             logWarn_ logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
                             noFurtherValidation
-                        Just successInstant -> 
-                            case appContext ^. typed @Config . typed @ValidationConfig . #repositoryGracePeriod of
-                                Nothing -> noFurtherValidation
-                                Just repositoryGracePeriod 
-                                    | closeEnoughMoments now' successInstant repositoryGracePeriod -> do 
-                                        logWarn_ logger $ 
-                                            [i|Repository #{getRpkiURL r} failed, but grace period of #{repositoryGracePeriod} is set, |] <>
-                                            [i|last success #{successInstant}, current moment is #{now'}.|]    
-                                        proceedWithValidation validations
-                                    | otherwise -> do 
-                                        logWarn_ logger $
-                                            [i|Repository #{getRpkiURL r} failed, grace period of #{repositoryGracePeriod} has expired, |] <>
-                                            [i|last success #{successInstant}, current moment is #{now'}.|]    
-                                        noFurtherValidation
+                        AtLeastOnce -> do                             
+                            logWarn_ logger $ 
+                                [i|Repository #{getRpkiURL r} failed, but it succeeded before, so acched objects will be used |]
+                            proceedWithValidation validations
+                            
                                  
 
         -- Resume tree validation starting from every certificate on the waiting list.
         -- 
         validateWaitingList waitingList = do 
             objectStore <- objectStore <$> readTVarIO database
-            inParallel
-                (cpuBottleneck appBottlenecks)
+            forM
+            -- inParallel
+            --     (cpuBottleneck appBottlenecks)
                 waitingList $ \(T3 hash certVContext verifiedResources') -> do
                     o <- roTx objectStore $ \tx -> getByHash tx objectStore hash
                     case o of 
@@ -611,15 +605,25 @@ validateCaCertificate
                     let markAllEntriesAsVisited = 
                             visitObjects topDownContext $ map snd childrenHashes
                     
+                    let processChildren1 = do                 
+                            env <- askEnv           
+                            r <- liftIO $ forM
+                                    childrenHashes
+                                    $ \(filename, hash') -> 
+                                                runValidatorT env $ validateManifestEntry filename hash' validCrl
+                            markAllEntriesAsVisited
+                            pure $! r
+
                     let processChildren = do
-                            r <- inParallelVT
-                                    (cpuBottleneck appBottlenecks)
+                            -- r <- inParallelVT
+                            --         (cpuBottleneck appBottlenecks)
+                            r <- forM
                                     childrenHashes
                                     $ \(filename, hash') -> 
                                                 validateManifestEntry filename hash' validCrl
                             markAllEntriesAsVisited
-                            pure $! r
-                    
+                            pure $! r                                       
+
                     childrenResults <- processChildren `catchError` 
                                     (\e -> markAllEntriesAsVisited >> throwError e)
 

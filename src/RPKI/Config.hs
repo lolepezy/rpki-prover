@@ -60,7 +60,6 @@ data ValidationConfig = ValidationConfig {
     revalidationInterval           :: Seconds,
     rrdpRepositoryRefreshInterval  :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds,    
-    repositoryGracePeriod          :: Maybe Seconds,
     dontFetch                      :: Bool
 } deriving stock (Show, Eq, Ord, Generic)
 

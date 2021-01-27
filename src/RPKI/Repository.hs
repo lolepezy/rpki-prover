@@ -23,7 +23,7 @@ import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List                   as List
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (isJust)
+import           Data.Maybe                  (fromMaybe, isJust)
 import           Data.Monoid.Generic
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
@@ -42,10 +42,16 @@ data RepositoryFetchType = RRDP | Rsync
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass Serialise
 
-newtype FetchLastSuccess = FetchLastSuccess { unFetchLastSuccess :: Instant }
+data FetchEverSucceeded = Never | AtLeastOnce
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass Serialise
-    deriving (Semigroup) via Max Instant
+    deriving anyclass Serialise        
+
+instance Monoid FetchEverSucceeded where
+    mempty = Never
+instance Semigroup FetchEverSucceeded where
+    _           <> AtLeastOnce = AtLeastOnce
+    AtLeastOnce <> _           = AtLeastOnce
+    Never       <> Never       = Never
 
 data FetchStatus
   = Pending
@@ -86,7 +92,7 @@ data RsyncRepository = RsyncRepository {
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
         rsyncs :: RsyncMap,
-        lastSucceded :: LastSuccededMap
+        lastSucceded :: EverSucceededMap
     } 
     deriving stock (Show, Eq, Ord, Generic)   
     deriving Semigroup via GenericSemigroup PublicationPoints   
@@ -106,7 +112,7 @@ newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository }
     deriving anyclass Serialise
     deriving newtype (Monoid)
 
-newtype LastSuccededMap = LastSuccededMap (Map RpkiURL FetchLastSuccess)
+newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid)
@@ -147,8 +153,8 @@ instance Semigroup FetchStatus where
 instance Semigroup RsyncMap where
     rs1 <> rs2 = rs1 `mergeRsyncs` rs2
 
-instance Semigroup LastSuccededMap where
-    LastSuccededMap ls1 <> LastSuccededMap ls2 = LastSuccededMap $ Map.unionWith (<>) ls1 ls2        
+instance Semigroup EverSucceededMap where
+    EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
 
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
@@ -305,9 +311,9 @@ mergeRrdp r@RrdpRepository { .. }
         lastSucceded' = succeededFromStatus (RrdpU uri) status lastSucceded        
 
 
-succeededFromStatus :: RpkiURL -> FetchStatus -> LastSuccededMap -> LastSuccededMap
+succeededFromStatus :: RpkiURL -> FetchStatus -> EverSucceededMap -> EverSucceededMap
 succeededFromStatus u (FetchedAt t) lastSucceded = 
-    lastSucceded <> LastSuccededMap (Map.singleton u (FetchLastSuccess t))
+    lastSucceded <> EverSucceededMap (Map.singleton u AtLeastOnce)
 succeededFromStatus _ _ lastSucceded = lastSucceded
 
 
@@ -392,14 +398,14 @@ data Change a = Put a | Remove a
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
     [Change (RsyncURL, RsyncParent)]
-    [Change (RpkiURL, FetchLastSuccess)]
+    [Change (RpkiURL, FetchEverSucceeded)]
 
 
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncMap rsyncOld) (LastSuccededMap lastSuccededOld)) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncMap rsyncNew) (LastSuccededMap lastSuccededNew)) = 
+    (PublicationPoints (RrdpMap rrdpOld) (RsyncMap rsyncOld) (EverSucceededMap lastSuccededOld)) 
+    (PublicationPoints (RrdpMap rrdpNew) (RsyncMap rsyncNew) (EverSucceededMap lastSuccededNew)) = 
     ChangeSet 
         (putNewRrdps <> removeOldRrdps) 
         (putNewRsyncs <> removeOldRsyncs)
@@ -429,7 +435,7 @@ updateStatuses
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdpUpdates))
             (rsyncs <> RsyncMap (Map.fromList rsyncUpdates))
-            (lastSucceded <> LastSuccededMap (Map.fromList lastSuccededUpdates))
+            (lastSucceded <> EverSucceededMap (Map.fromList lastSuccededUpdates))
     where
         (rrdpUpdates, rsyncUpdates, lastSuccededUpdates) = 
             foldr foldRepos ([], [], []) newStatuses
@@ -443,15 +449,15 @@ updateStatuses
                     (uri, Root newStatus) : rsyncs', 
                     status2Success (RsyncU uri) newStatus lastS)
 
-        status2Success u (FetchedAt t) lastS = (u, FetchLastSuccess t) : lastS
+        status2Success u (FetchedAt t) lastS = (u, AtLeastOnce) : lastS
         status2Success _ _             lastS = lastS
 
 
 -- Limit PublicationPoints only to the set of URIs in the set that comes the first argument.
 -- For rsync, also add all the parent URLs.
 shrinkTo :: PublicationPoints -> Set RpkiURL -> PublicationPoints
-shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (LastSuccededMap lastSucceded)) uris = 
-    PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs') (LastSuccededMap lastSucceded')
+shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (EverSucceededMap lastSucceded)) uris = 
+    PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs') (EverSucceededMap lastSucceded')
     where
         rrdps'        = Map.filterWithKey (\u _ -> u `Set.member` rrdpURLs) rrdps
         rsyncs'       = Map.foldrWithKey addWithParents Map.empty rsyncs
@@ -509,6 +515,6 @@ adjustLastSucceeded
             [ (u, status) | (u, Root status) <- Map.toList rsyncs ]        
 
 
-lastSuccess :: PublicationPoints -> RpkiURL -> Maybe Instant
-lastSuccess PublicationPoints { lastSucceded = LastSuccededMap m } u = 
-    unFetchLastSuccess <$> Map.lookup u m
+lastSuccess :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
+lastSuccess PublicationPoints { lastSucceded = EverSucceededMap m } u = 
+    fromMaybe Never $ Map.lookup u m

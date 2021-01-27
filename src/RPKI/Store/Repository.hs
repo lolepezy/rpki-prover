@@ -23,7 +23,7 @@ import           RPKI.Store.Base.Storage
 data RepositoryStore s = RepositoryStore {
     rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
     rsyncS :: SMap "rsync-repositories" s RsyncURL RsyncParent,
-    lastS  :: SMap "last-fetch-success" s RpkiURL FetchLastSuccess
+    lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded 
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
@@ -36,7 +36,7 @@ putRepositories tx RepositoryStore {..}
                 PublicationPoints { 
                     rsyncs = RsyncMap rsyncs',
                     rrdps = RrdpMap rrdps', 
-                    lastSucceded = LastSuccededMap lastSucceded'} 
+                    lastSucceded = EverSucceededMap lastSucceded'} 
                 taName' = liftIO $ do    
     forM_ (Map.toList rsyncs') $ \(u, p) ->
             M.put tx rsyncS u p    
@@ -96,7 +96,7 @@ getPublicationPoints tx RepositoryStore {..} = liftIO $ do
     pure $ PublicationPoints 
             (RrdpMap $ Map.fromList rrdps) 
             (RsyncMap $ Map.fromList rsyns)
-            (LastSuccededMap $ Map.fromList lasts)
+            (EverSucceededMap $ Map.fromList lasts)
 
 savePublicationPoints :: (MonadIO m, Storage s) => 
                         Tx s 'RW -> RepositoryStore s -> PublicationPoints -> m ()
