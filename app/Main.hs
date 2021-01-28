@@ -181,8 +181,7 @@ createAppContext CLIOptions{..} logger = do
                 maxSize = Size 1024 * 1024 * 1024,
                 rrdpTimeout = Seconds $ rrdpTimeout `orDefault` (5 * 60)
             },
-            validationConfig = ValidationConfig {                
-                repositoryGracePeriod          = Seconds <$> repositoryGracePeriod,
+            validationConfig = ValidationConfig {
                 revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
                 rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
                 rsyncRepositoryRefreshInterval = Seconds $ rsyncRefreshInterval `orDefault` (11 * 60),
