@@ -515,6 +515,6 @@ adjustLastSucceeded
             [ (u, status) | (u, Root status) <- Map.toList rsyncs ]        
 
 
-lastSuccess :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
-lastSuccess PublicationPoints { lastSucceded = EverSucceededMap m } u = 
+everSucceeded :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
+everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u = 
     fromMaybe Never $ Map.lookup u m

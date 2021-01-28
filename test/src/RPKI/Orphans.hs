@@ -350,11 +350,11 @@ instance Arbitrary RsyncMap where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary LastSuccededMap where
+instance Arbitrary EverSucceededMap where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary FetchLastSuccess where
+instance Arbitrary FetchEverSucceeded  where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

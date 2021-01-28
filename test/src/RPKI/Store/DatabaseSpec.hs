@@ -249,10 +249,10 @@ generateRepositories = do
     let rsyncPPs = fromRsyncPPs repositoriesURIs 
     rrdpMap :: RrdpMap <- QC.generate arbitrary    
 
-    let lastSuccess = Map.fromList [ (RrdpU u, FetchLastSuccess t) | 
+    let everSucceeded = Map.fromList [ (RrdpU u, AtLeastOnce) | 
             RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
 
-    pure $ rsyncPPs <> PublicationPoints rrdpMap mempty (LastSuccededMap lastSuccess)
+    pure $ rsyncPPs <> PublicationPoints rrdpMap mempty (EverSucceededMap everSucceeded)
     
 
 rrdpSubMap :: PublicationPoints -> IO RrdpMap

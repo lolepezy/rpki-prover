@@ -462,12 +462,12 @@ validateCARecursively
                     proceedWithValidation validations
 
                 FetchFailure r _ validations -> 
-                    case lastSuccess pps $ getRpkiURL r of
+                    case everSucceeded pps $ getRpkiURL r of
                         Never -> do 
                             logWarn_ logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
                             noFurtherValidation
                         AtLeastOnce -> do                             
-                            logWarn_ logger $ 
+                            logWarn_ logger  
                                 [i|Repository #{getRpkiURL r} failed, but it succeeded before, so acched objects will be used |]
                             proceedWithValidation validations
                             
