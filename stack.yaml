@@ -18,8 +18,8 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-16.31
-# resolver: nightly-2021-01-03
+# resolver: lts-16.31
+resolver:  lts-17.0
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -51,7 +51,7 @@ extra-deps:
   - json-stream-0.4.2.4       
   - streaming-utils-0.2.0.0
   - hw-ip-2.4.2.0
-  # - ../lib/lmdb-high-level
+  - servant-cassava-0.10@sha256:9edd9b59aa5013c829cc25b67d25dc3c3a7185926f2c59006a38a9ae405d9658,1686
   
 
 # Override default flag values for local packages and extra-deps
@@ -78,7 +78,7 @@ extra-deps:
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
 
-# allow-newer: true
+allow-newer: true
 
 # system-ghc: false
 # docker:
