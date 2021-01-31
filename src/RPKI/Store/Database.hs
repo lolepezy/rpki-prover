@@ -497,11 +497,6 @@ instance Storage s => WithStorage s (DB s) where
     storage DB {..} = storage taStore
 
 
-storageError :: SomeException -> AppError
-storageError = StorageE . StorageError . fmtEx    
-
-
-
 -- Utilities to have storage transaction in ValidatorT monad.
 
 roAppTx :: (Storage s, WithStorage s ws) => 
