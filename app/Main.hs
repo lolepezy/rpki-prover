@@ -275,11 +275,11 @@ data CLIOptions wrapped = CLIOptions {
         `AppendSymbol`  "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?> 
-        ("Timeout for RRDP repositories. If fetching of a repository does not "
+        ("Timeout for RRDP repositories, in seconds. If fetching of a repository does not "
         `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?> 
-        ("Timeout for rsync repositories. If fetching of a repository does not "
+        ("Timeout for rsync repositories, in seconds. If fetching of a repository does not "
         `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
 
     repositoryGracePeriod :: wrapped ::: Maybe Int64 <?> 
