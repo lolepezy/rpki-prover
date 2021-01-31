@@ -43,7 +43,7 @@ import           RPKI.RTR.Types
 
 import           RPKI.Parallel
 import           RPKI.Time
-import           RPKI.Util                        (convert, hexL)
+import           RPKI.Util                        (convert, hexL, ifJust)
 
 import           RPKI.AppState
 import           RPKI.Store.Base.Storage
@@ -62,7 +62,7 @@ import Data.Set (Set)
 -- 
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
 runRtrServer AppContext {..} RtrConfig {..} = do     
-    rtrState <- atomically $ newTVar Nothing
+    rtrState <- newTVarIO Nothing
     -- re-initialise the rtrContext and create a broadcast 
     -- channel to publish update for all clients
     updateBroadcastChan <- atomically newBroadcastTChan 

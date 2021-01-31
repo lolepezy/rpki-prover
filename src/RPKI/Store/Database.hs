@@ -12,6 +12,7 @@ import           Codec.Serialise
 import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
 import           Control.Monad
+import           Control.Monad.Trans
 import           Control.Monad.IO.Class
 import           Control.Monad.Reader     (ask)
 import qualified Control.Monad.State as St
@@ -42,12 +43,11 @@ import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
 import           RPKI.Time                (Instant)
-import           RPKI.Util                (fmtEx, increment)
+import           RPKI.Util                (fmtEx, increment, ifJust)
 
 import           RPKI.AppMonad
 import           RPKI.Repository
 import           RPKI.Store.Repository
-import Control.Monad.Trans
 
 
 
@@ -256,10 +256,6 @@ putTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 
 getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe StorableTA)
 getTA tx (TAStore s) name = liftIO $ M.get tx s name
-
-ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
-ifJust a f = maybe (pure ()) f a
-
 
 putValidations :: (MonadIO m, Storage s) => 
             Tx s 'RW -> ValidationsStore s -> WorldVersion -> Validations -> m ()

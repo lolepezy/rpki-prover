@@ -113,3 +113,6 @@ parseRpkiURL t
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
+
+ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
+ifJust a f = maybe (pure ()) f a

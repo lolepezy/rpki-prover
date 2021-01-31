@@ -19,6 +19,7 @@ import           Data.Generics.Product.Typed
 import           Data.Maybe (fromMaybe)
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
+import           Data.IORef
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -44,8 +45,8 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
-
 import           RPKI.Store.Repository (getPublicationPoints)
+import           RPKI.Util (increment)
 
 type AppEnv = AppContext LmdbStorage
 
@@ -93,11 +94,13 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- periodically update world version and generate command 
         -- to re-validate all TAs
-        generateNewWorldVersion prometheusMetrics globalQueue = periodically revalidationInterval $ do 
-            oldWorldVersion <- getWorldVerionIO appState
-            newWorldVersion <- updateWorldVerion appState
-            logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
-            validateTaTask prometheusMetrics globalQueue newWorldVersion
+        generateNewWorldVersion prometheusMetrics globalQueue = 
+            -- periodicallyCapped revalidationInterval 20 $ do 
+            periodically revalidationInterval $ do 
+                oldWorldVersion <- getWorldVerionIO appState
+                newWorldVersion <- updateWorldVerion appState
+                logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
+                validateTaTask prometheusMetrics globalQueue newWorldVersion
 
         generatePeriodicTask delay interval whatToDo globalQueue = do
             threadDelay delay
@@ -115,7 +118,7 @@ runWorkflow appContext@AppContext {..} tals = do
             database' <- readTVarIO database 
             executeOrDie
                 (processTALs database' tals)
-                (\tdResult@TopDownResult{..} elapsed -> do 
+                (\tdResult elapsed -> do 
                     uniqueVrps <- saveTopDownResult database' tdResult                                
                     logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
             where 
@@ -235,3 +238,19 @@ periodically (Seconds interval) action =
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
+
+periodicallyCapped :: Seconds -> Int -> IO () -> IO ()
+periodicallyCapped (Seconds interval) maxNumber action =
+    go 0
+  where
+    go counter = do      
+        Now start <- thisInstant        
+        action        
+        Now end <- thisInstant
+        when (counter < maxNumber) $ do 
+            let executionTimeNs = toNanoseconds end - toNanoseconds start
+            when (executionTimeNs < nanosPerSecond * interval) $ do        
+                let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
+                when (timeToWaitNs > 0) $ 
+                    threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
+            go $ counter + 1
