@@ -135,14 +135,20 @@ downloadAndUpdateRRDP
                 -- Do not thrash the same server with too big amount of parallel 
                 -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
                 localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-                (_, savedIn) <- timedMS $ foldPipeline
-                                    (localRepoBottleneck <> ioBottleneck)
-                                    (S.each sortedDeltas)
-                                    downloadDelta
-                                    (\(rawContent, serial, deltaUri) _ -> 
+                -- (_, savedIn) <- timedMS $ foldPipeline
+                --                     (localRepoBottleneck <> ioBottleneck)
+                --                     (S.each sortedDeltas)
+                --                     downloadDelta
+                --                     (\(rawContent, serial, deltaUri) _ -> 
+                --                         inSubVPath deltaUri $ 
+                --                             handleDeltaBS repoUri notification serial rawContent)
+                --                     (mempty :: ())
+
+                (_, savedIn) <- timedMS $ 
+                                    forM sortedDeltas $ \d -> do 
+                                        (rawContent, serial, deltaUri) <- downloadDelta d  
                                         inSubVPath deltaUri $ 
-                                            handleDeltaBS repoUri notification serial rawContent)
-                                    (mempty :: ())
+                                            handleDeltaBS repoUri notification serial rawContent  
         
                 updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs savedIn)
                 updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
@@ -229,8 +235,8 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
         downloadAndUpdateRRDP 
             appContext 
             repository 
-            (saveSnapshot appContext)  
-            (saveDelta appContext)                           
+            (saveSnapshotSeq appContext)  
+            (saveDeltaSeq appContext)                           
 
 
 {- 
@@ -327,6 +333,100 @@ saveSnapshot appContext repoUri notification snapshotContent = do
     bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
 
 
+
+{- 
+    Snapshot case, done in parallel by two thread
+        - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
+        - another thread read parsing tasks, waits for them and saves the results into the DB.
+-} 
+saveSnapshotSeq :: Storage s => 
+                AppContext s 
+                -> RrdpURL
+                -> Notification 
+                -> LBS.ByteString 
+                -> ValidatorT IO ()
+saveSnapshotSeq appContext repoUri notification snapshotContent = do      
+    -- TODO Bad idea if we are lagging behind, put WorldVersion in the reader?
+    worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
+    doSaveObjects worldVersion 
+  where
+      -- 
+    doSaveObjects worldVersion = do 
+        db <- liftIO $ readTVarIO $ appContext ^. #database
+        let objectStore     = db ^. #objectStore
+        let repositoryStore = db ^. #repositoryStore   
+        (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
+            fromEither $ first RrdpE $ parseSnapshot snapshotContent
+
+        let notificationSessionId = notification ^. typed @SessionId
+        when (sessionId /= notificationSessionId) $ 
+            appError $ RrdpE $ SnapshotSessionMismatch sessionId notificationSessionId
+
+        let notificationSerial = notification ^. typed @Serial
+        when (serial /= notificationSerial) $ 
+            appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
+        
+        rwAppTx objectStore $ \tx -> do
+            forM_ snapshotItems $ \si -> do 
+                o <- liftIO $ newStorable objectStore si
+                saveStorable objectStore tx o ()
+
+            RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+
+      where        
+
+        newStorable objectStore (SnapshotPublish uri encodedb64) =             
+            if supportedExtension $ U.convert uri 
+                then do
+                    b <- readBlob 
+                    pure $ Right (uri, b)
+                else
+                    pure $ Left (RrdpE UnsupportedObjectType, uri)
+            where 
+                readBlob = case U.parseRpkiURL $ unURI uri of
+                    Left e -> 
+                        pure $! Just $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+
+                    Right rpkiURL ->
+                        case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                            Left e -> pure $! Just $ SError $ VErr e
+                            Right (DecodedBase64 decoded) ->
+                                roTx objectStore $ \tx -> do                                    
+                                    exists <- DB.hashExists tx objectStore (U.sha256s decoded)
+                                    pure $! if exists 
+                                    -- The object is already in cache. Do not parse-serialise
+                                    -- anything, just skip it. We are not afraid of possible 
+                                    -- race-conditions here, it's not a problem to double-insert
+                                    -- an object and delete-insert race will never happen in practice.
+                                        then Nothing
+                                        else
+                                            case first ParseE $ readObject rpkiURL decoded of 
+                                                Left e   -> Just $! SError $ VErr e
+                                                Right ro -> Just $! SObject $ toStorableObject ro
+                                        
+        saveStorable objectStore _ (Left (e, uri)) _ = 
+            inSubVPath (unURI uri) $ appWarn e             
+
+        saveStorable objectStore tx (Right (uri, a)) _ =           
+            case a of
+                Nothing -> pure ()                   
+                Just (SError (VWarn (VWarning e))) -> do                    
+                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                    inSubVPath (unURI uri) $ appWarn e 
+                Just (SError (VErr e)) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    inSubVPath (unURI uri) $ appError e                 
+                Just (SObject so) -> do 
+                    DB.putObject tx objectStore so worldVersion
+                    addedObject                    
+
+    logger         = appContext ^. typed @AppLogger           
+    cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+    bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
+
+
+
+
 {-
     Similar to `saveSnapshot` but takes base64s from ordered list of deltas.
 
@@ -364,9 +464,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
 
         when (currentSerial /= serial) $
             appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
-
-        let deltaItemS = S.each deltaItems
-
+        
         let savingTx sessionId serial f = 
                 rwAppTx objectStore $ \tx -> 
                     f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
@@ -376,10 +474,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
         -- probably stop the whole program.
         txFoldPipeline 
                 cpuParallelism
-                (S.mapM newStorable deltaItemS)
+                (S.mapM newStorable $ S.each deltaItems)
                 (savingTx sessionId serial)
                 (saveStorable objectStore)
-                (mempty :: ())                        
+                (mempty :: ())
       where        
         newStorable (DP (DeltaPublish uri hash encodedb64)) =
             if supportedExtension $ U.convert uri 
@@ -455,6 +553,127 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
     bottleneck      = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
 
 
+
+{-
+    Similar to `saveSnapshot` but takes base64s from ordered list of deltas.
+
+    NOTE: Delta application is more strict; we require complete consistency, 
+    i.e. applying delta is considered failed if it tries to withdraw or replace
+    a non-existent object, or place an existent one. In all these cases, we
+    fall back to downloading the snapshot.
+-}
+saveDeltaSeq :: Storage s => 
+            AppContext s 
+            -> RrdpURL 
+            -> Notification 
+            -> Serial             
+            -> LBS.ByteString 
+            -> ValidatorT IO ()
+saveDeltaSeq appContext repoUri notification currentSerial deltaContent = do        
+    worldVersion  <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
+    doSaveObjects worldVersion
+  where
+    doSaveObjects worldVersion = do
+        db <- liftIO $ readTVarIO $ appContext ^. #database
+        let objectStore     = db ^. #objectStore
+        let repositoryStore = db ^. #repositoryStore   
+
+        Delta _ sessionId serial deltaItems <- 
+            vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
+
+        let notificationSessionId = notification ^. typed @SessionId
+        when (sessionId /= notificationSessionId) $ 
+            appError $ RrdpE $ DeltaSessionMismatch sessionId notificationSessionId
+
+        let notificationSerial = notification ^. typed @Serial
+        when (serial > notificationSerial) $ 
+            appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
+
+        when (currentSerial /= serial) $
+            appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
+        
+        rwAppTx objectStore $ \tx -> do
+            forM_ deltaItems $ \si -> do 
+                o <- newStorable si
+                saveStorable objectStore tx o ()
+
+            RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+
+      where        
+        newStorable (DP (DeltaPublish uri hash encodedb64)) =
+            if supportedExtension $ U.convert uri 
+                then 
+                    pure $ Right $ maybe (Add1 uri readBlob) (Replace1 uri readBlob) hash
+                else 
+                    pure $ Left (RrdpE UnsupportedObjectType, uri)
+            where 
+                readBlob = case U.parseRpkiURL $ unURI uri of
+                    Left e        -> SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                    Right rpkiURL -> parseAndProcess rpkiURL encodedb64
+
+        newStorable (DW (DeltaWithdraw uri hash)) = 
+            pure $ Right $ Delete1 uri hash
+        
+        saveStorable objectStore _ (Left (e, uri)) _ = 
+            inSubVPath (unURI uri) $ appWarn e             
+
+        saveStorable objectStore tx (Right op) _ =
+            case op of
+                Delete1 uri existingHash -> do
+                    -- Ignore withdraws and just use the time-based garbage collection
+                    existsLocally <- DB.hashExists tx objectStore existingHash
+                    if existsLocally
+                        then deletedObject
+                        else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
+                        
+                Add1 uri a             -> addObject objectStore tx uri a
+                Replace1 uri a oldHash -> replaceObject objectStore tx uri a oldHash                    
+        
+        addObject objectStore tx uri a =
+            case a of
+                SError (VWarn (VWarning e)) -> do                    
+                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                    inSubVPath (unURI uri) $ appWarn e 
+                SError (VErr e) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    inSubVPath (unURI uri) $ appError e 
+                SObject so@(StorableObject ro _) -> do
+                    alreadyThere <- DB.hashExists tx objectStore (getHash ro)
+                    unless alreadyThere $ do
+                        DB.putObject tx objectStore so worldVersion                      
+                        addedObject
+
+        replaceObject objectStore tx uri a oldHash = do            
+            case a of
+                SError (VWarn (VWarning e)) -> do                    
+                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                    inSubVPath (unURI uri) $ appWarn e 
+                SError (VErr e) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    inSubVPath (unURI uri) $ appError e 
+                SObject so@(StorableObject ro _) -> do        
+                    oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
+                    if oldOneIsAlreadyThere 
+                        then do 
+                            -- Ignore withdraws and just use the time-based garbage collection
+                            deletedObject
+                        else do 
+                            logWarnM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
+                            inSubVPath (unURI uri) $ 
+                                appError $ RrdpE $ NoObjectToReplace uri oldHash
+
+                    newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
+                    unless newOneIsAlreadyThere $ do                            
+                        DB.putObject tx objectStore so worldVersion
+                        addedObject
+
+    logger          = appContext ^. typed @AppLogger           
+    cpuParallelism  = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+    bottleneck      = appContext ^. typed @AppBottleneck . #cpuBottleneck          
+
+
+
+
 addedObject, deletedObject :: Monad m => ValidatorT m ()
 addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))
 deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
@@ -474,3 +693,6 @@ parseAndProcess u b64 =
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Task m a) 
                 | Replace URI (Task m a) Hash
+data DeltaOp1 a = Delete1 URI Hash 
+                | Add1 URI a
+                | Replace1 URI a Hash

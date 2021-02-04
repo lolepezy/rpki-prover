@@ -64,24 +64,26 @@ instance Storage InMemoryStorage where
     foldS _ (MapStore m) f a0 = do        
         mm <- readTVarIO m 
         z <- newIORef a0
-        for_ (Map.toList mm) $ \(k, v) -> do 
-            a <- readIORef z
-            !a' <- f a (SKey $ Storable k) (SValue $ Storable v)
-            writeIORef z a'
+        for_ (Map.toAscList mm) $ \(k, v) ->
+            updateRef z $ \a -> 
+                f a (SKey $ Storable k) (SValue $ Storable v)            
         readIORef z
 
     putMu _ (MultiMapStore m) (SKey (Storable ks)) (SValue (Storable vs)) = 
-        atomically $ modifyTVar m (<> Map.singleton ks (Set.singleton vs))
+        atomically $ modifyTVar' m (Map.alter alterIt ks) 
+            where 
+                alterIt Nothing = Just $ Set.singleton vs
+                alterIt (Just s) = Just $ Set.insert vs s
 
-    deleteMu _ (MultiMapStore m) (SKey (Storable ks)) (SValue (Storable vs)) = 
-        atomically $ modifyTVar' m $ \mm -> do 
-            case Map.lookup ks mm of 
-                Nothing -> mm
-                Just s -> let
+    deleteMu _ (MultiMapStore m) (SKey (Storable ks)) (SValue (Storable vs)) =
+        atomically $ modifyTVar' m $ Map.alter alterIt ks            
+            where 
+                alterIt Nothing = Nothing
+                alterIt (Just s) = let
                     s' = Set.delete vs s
                     in if Set.null s'
-                        then Map.delete ks mm
-                        else Map.insert ks s' mm
+                        then Nothing 
+                        else Just s'
 
     deleteAllMu _ (MultiMapStore m) (SKey (Storable ks)) = 
         atomically $ modifyTVar' m $ Map.delete ks
@@ -90,21 +92,26 @@ instance Storage InMemoryStorage where
         mm <- readTVarIO m 
         let s = fromMaybe Set.empty $ Map.lookup ks mm        
         z <- newIORef a0
-        for_ s $ \v -> do 
-            a <- readIORef z
-            !a' <- f a key (SValue $ Storable v)
-            writeIORef z a'
+        for_ s $ \v -> 
+            updateRef z $ \a -> 
+                f a key (SValue $ Storable v)            
         readIORef z
 
     foldMu _ (MultiMapStore m) f a0 = do        
         mm <- readTVarIO m 
         z <- newIORef a0
-        for_ (Map.toList mm) $ \(k, s) ->
-            for_ s $ \v -> do 
-                a <- readIORef z
-                !a' <- f a (SKey $ Storable k) (SValue $ Storable v)
-                writeIORef z a'
+        for_ (Map.toAscList mm) $ \(k, s) ->
+            for_ s $ \v -> 
+                updateRef z $ \a -> 
+                    f a (SKey $ Storable k) (SValue $ Storable v)
         readIORef z
+
+
+updateRef :: IORef a -> (a -> IO a) -> IO ()
+updateRef z f = do 
+    a <- readIORef z
+    !a' <- f a
+    writeIORef z a'
 
 
 createMapStore :: forall name . KnownSymbol name => IO (MapStore name)

@@ -57,7 +57,9 @@ import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
-import           RPKI.Store.Util
+import           RPKI.Store.AppLmdbStorage
+import qualified RPKI.Store.MakeLmdb as Lmdb
+import qualified RPKI.Store.MakeInMemory as Mem
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Workflow
@@ -82,7 +84,7 @@ main = do
                 (runValidatorApp appContext')
 
 
-runValidatorApp :: AppEnv -> IO ()
+runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- updateWorldVerion appState
@@ -109,13 +111,13 @@ runValidatorApp appContext@AppContext {..} = do
             vHoist $ fromEither $ first TAL_E $ parseTAL $ convert talContent
 
 
-runHttpApi :: AppEnv -> IO ()
+runHttpApi :: Storage s => AppContext s -> IO ()
 runHttpApi appContext = let
     httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
     in Warp.run httpPort $ httpApi appContext
     
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppEnv
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppMemEnv
 createAppContext CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
@@ -131,7 +133,8 @@ createAppContext CLIOptions{..} logger = do
                                 rootDir
                                 lmdbRealSize
                                 
-    database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv                
+    -- database <- fromTry (InitE . InitError . fmtEx) $ MakeDb.createDatabase lmdbEnv                
+    database <- fromTry (InitE . InitError . fmtEx) Mem.createDatabase
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd    

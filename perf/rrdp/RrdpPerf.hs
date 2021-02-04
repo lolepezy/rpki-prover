@@ -64,6 +64,7 @@ import           RPKI.Store.Base.LMDB hiding (getEnv)
 import qualified System.IO.Posix.MMap.Lazy        as MmapLazy
 import qualified System.IO.Posix.MMap        as Mmap
 import RPKI.RRDP.Types
+import RPKI.Store.Base.InMemory
 
 
 main :: IO ()
@@ -112,9 +113,10 @@ newtype HexString = HexString BS.ByteString
     deriving (Show, Eq, Ord)
 
 
-type AppEnv = AppContext LmdbStorage
+type AppLmdbEnv = AppContext LmdbStorage
+type AppMemEnv = AppContext InMemoryStorage
 
-createAppContext :: AppLogger -> ValidatorT IO AppEnv
+createAppContext :: AppLogger -> ValidatorT IO AppLmdbEnv
 createAppContext logger = do
 
     -- TODO Make it configurable?

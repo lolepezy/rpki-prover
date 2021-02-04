@@ -19,16 +19,13 @@ import           Data.Generics.Product.Typed
 import           Data.Maybe (fromMaybe)
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
-import           Data.IORef
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
-import           Prometheus
 import           System.Exit
 
 import           RPKI.AppState
-import           RPKI.CommonTypes
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -44,11 +41,13 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
+import           RPKI.Store.Base.InMemory
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Repository (getPublicationPoints)
 import           RPKI.Util (increment)
 
-type AppEnv = AppContext LmdbStorage
+type AppLmdbEnv = AppContext LmdbStorage
+type AppMemEnv = AppContext InMemoryStorage
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -95,7 +94,7 @@ runWorkflow appContext@AppContext {..} tals = do
         -- periodically update world version and generate command 
         -- to re-validate all TAs
         generateNewWorldVersion prometheusMetrics globalQueue = 
-            -- periodicallyCapped revalidationInterval 20 $ do 
+            -- periodicallyCapped revalidationInterval 3 $ do 
             periodically revalidationInterval $ do 
                 oldWorldVersion <- getWorldVerionIO appState
                 newWorldVersion <- updateWorldVerion appState
@@ -170,7 +169,7 @@ runWorkflow appContext@AppContext {..} tals = do
             logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
-        executeOrDie f onRight = 
+        executeOrDie f onRight =
             exec `catches` [
                     Handler $ \(AppException seriousProblem) ->
                         die [i|Something really bad happened #{seriousProblem}, exiting.|],

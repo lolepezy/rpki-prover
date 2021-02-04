@@ -25,6 +25,7 @@ import qualified Data.Map.Strict                   as Map
 import           Data.Maybe
 import           Data.Ord
 import           Data.Proxy
+import qualified Data.Set as Set
 import qualified Data.Text                         as Text
 
 import           System.Directory
@@ -47,12 +48,15 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
-import           RPKI.Store.Util
+
+import qualified RPKI.Store.MakeLmdb as Lmdb
+import qualified RPKI.Store.MakeInMemory as Mem
 import           RPKI.Time
 
 import           RPKI.RepositorySpec
-import qualified Data.Set as Set
+
 import Data.Generics.Product (HasField)
+import RPKI.Store.Base.InMemory
 
 
 
@@ -60,31 +64,52 @@ storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
+        objectStoreGroupMem,
         validationResultStoreGroup,
+        validationResultStoreGroupMem,
         repositoryStoreGroup,
+        repositoryStoreGroupMem,
         txGroup
     ]
 
 objectStoreGroup :: TestTree
-objectStoreGroup = withDB $ \io -> testGroup "Object storage test"
-    [
-        HU.testCase "Should insert and get back" (shouldInsertAndGetAllBackFromObjectStore io),        
-        HU.testCase "Should order manifests accoring to their dates" (shouldOrderManifests io)
-    ]
+objectStoreGroup = withDB $ \io -> objectStoreGroup' "lmdb" $ snd <$> io    
+
+objectStoreGroupMem :: TestTree
+objectStoreGroupMem = withMem $ objectStoreGroup' "mem"
+
+objectStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
+objectStoreGroup' suffix db = testGroup "Object storage test"
+        [
+            HU.testCase ("Should insert and get back " <> suffix) (shouldInsertAndGetAllBackFromObjectStore db),        
+            HU.testCase ("Should order manifests accoring to their dates " <> suffix) (shouldOrderManifests db)
+        ]        
 
 validationResultStoreGroup :: TestTree
-validationResultStoreGroup = withDB $ \io -> testGroup "Validation result storage test"
-    [
-        HU.testCase "Should insert and get back" (shouldInsertAndGetAllBackFromValidationResultStore io),
-        HU.testCase "Should insert and get back" (shouldGetAndSaveRepositories io)        
-    ]
+validationResultStoreGroup = withDB $ \io -> validationResultStoreGroup' "db" $ snd <$> io    
+
+validationResultStoreGroupMem :: TestTree
+validationResultStoreGroupMem = withMem $ validationResultStoreGroup' "mem"
+        
+validationResultStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
+validationResultStoreGroup' suffix db = testGroup "Validation result storage test"
+        [
+            HU.testCase ("Should insert and get back " <> suffix) (shouldInsertAndGetAllBackFromValidationResultStore db),
+            HU.testCase ("Should insert and get back " <> suffix) (shouldGetAndSaveRepositories db)        
+        ]
 
 repositoryStoreGroup :: TestTree
-repositoryStoreGroup = withDB $ \io -> testGroup "Repository LMDB storage test"
-    [
-        HU.testCase "Should insert and get a repository" (shouldInsertAndGetAllBackFromRepositoryStore io)
-        -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
-    ]
+repositoryStoreGroup = withDB $ \io -> repositoryStoreGroup' "db" $ snd <$> io    
+
+repositoryStoreGroupMem :: TestTree
+repositoryStoreGroupMem = withMem $ repositoryStoreGroup' "mem"
+
+repositoryStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
+repositoryStoreGroup' suffix db = testGroup "Repository LMDB storage test"
+        [
+            HU.testCase ("Should insert and get a repository " <> suffix) (shouldInsertAndGetAllBackFromRepositoryStore db)
+            -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
+        ]        
 
 txGroup :: TestTree
 txGroup = withDB $ \io -> testGroup "App transaction test"
@@ -95,9 +120,9 @@ txGroup = withDB $ \io -> testGroup "App transaction test"
 
 
 
-shouldInsertAndGetAllBackFromObjectStore :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromObjectStore io = do  
-    (_, DB {..}) <- io
+    DB {..} <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [RpkiObject] <- removeMftNumberDuplicates <$> generateSome
@@ -149,9 +174,9 @@ shouldInsertAndGetAllBackFromObjectStore io = do
             HU.assertEqual "Not the same manifests" mftLatest mftLatest'
 
 
-shouldOrderManifests :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldOrderManifests :: Storage s => IO (DB s) -> HU.Assertion
 shouldOrderManifests io = do  
-    (_, DB {..}) <- io
+    DB {..} <- io
     Right mft1 <- readObjectFromFile "./test/data/afrinic_mft1.mft"
     Right mft2 <- readObjectFromFile "./test/data/afrinic_mft2.mft"
 
@@ -169,9 +194,9 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
 
-shouldInsertAndGetAllBackFromValidationResultStore :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldInsertAndGetAllBackFromValidationResultStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromValidationResultStore io = do  
-    (_, DB {..}) <- io
+    DB {..} <- io
     vrs :: Validations <- QC.generate arbitrary      
 
     world <- getWorldVerionIO =<< newAppState
@@ -182,9 +207,9 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
 
-shouldInsertAndGetAllBackFromRepositoryStore :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldInsertAndGetAllBackFromRepositoryStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromRepositoryStore io = do  
-    (_, DB {..}) <- io
+    DB {..} <- io
 
     createdPPs <- generateRepositories
 
@@ -217,9 +242,9 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
 
-shouldGetAndSaveRepositories :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldGetAndSaveRepositories :: Storage s => IO (DB s) -> HU.Assertion
 shouldGetAndSaveRepositories io = do  
-    (_, DB {..}) <- io
+    DB {..} <- io
 
     pps1 <- generateRepositories
     rwTx repositoryStore $ \tx -> 
@@ -351,19 +376,22 @@ generateSome :: Arbitrary a => IO [a]
 generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
 
 withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
-withDB = withResource (makeLmdbStuff createDatabase) releaseLmdb
+withDB = withResource (makeLmdbStuff Lmdb.createDatabase) releaseLmdb
+
+withMem :: (IO (DB InMemoryStorage) -> TestTree) -> TestTree
+withMem = withResource Mem.createDatabase (const $ pure ())
 
 
 makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
 makeLmdbStuff mkStore = do 
     dir <- createTempDirectory "/tmp" "lmdb-test"
-    e <- mkLmdb dir 1000 1000 
+    e <- Lmdb.mkLmdb dir 1000 1000 
     store <- mkStore e
     pure ((dir, e), store)
 
 releaseLmdb :: ((FilePath, LmdbEnv), b) -> IO ()
 releaseLmdb ((dir, e), _) = do    
-    closeLmdb e
+    Lmdb.closeLmdb e
     removeDirectoryRecursive dir
 
 readObjectFromFile :: FilePath -> IO (ParseResult RpkiObject)
