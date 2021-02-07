@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE DerivingStrategies         #-}
@@ -39,7 +40,9 @@ instance Prefix Ipv4Prefix where
     type Address Ipv4Prefix = V4.IpAddress
     make bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
     toRange (Ipv4Prefix p) = V4.blockToRange p
-    toPrefixes = map Ipv4Prefix . V4.rangeToBlocks
+    toPrefixes r@Range {..} 
+        | first > last = []
+        | otherwise = map Ipv4Prefix $ V4.rangeToBlocks r
 
 instance Interval Ipv4Prefix where
     type Point Ipv4Prefix = Address Ipv4Prefix
@@ -58,12 +61,13 @@ instance Interval Ipv6Prefix where
     type Point Ipv6Prefix = Address Ipv6Prefix
     start = startV6
 
-
 instance Prefix Ipv6Prefix where
     type Address Ipv6Prefix = V6.IpAddress
     make bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
-    toRange (Ipv6Prefix p) = V6.blockToRange p
-    toPrefixes = map Ipv6Prefix . V6.rangeToBlocks
+    toRange (Ipv6Prefix p) = V6.blockToRange p    
+    toPrefixes r@Range {..} 
+        | first > last = []
+        | otherwise = map Ipv6Prefix $ V6.rangeToBlocks r
 
 instance WithSetOps AsResource where
     contains = containsAsn    
