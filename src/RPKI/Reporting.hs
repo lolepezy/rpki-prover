@@ -61,7 +61,7 @@ data ValidationError = InvalidCert Text |
                         NoMFT AKI Locations |
                         NoMFTNoRepository AKI Locations |
                         NoCRLOnMFT AKI Locations |
-                        MoreThanOneCRLOnMFT AKI Locations [(Text, Hash)] |
+                        MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |

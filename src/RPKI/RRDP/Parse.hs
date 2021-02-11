@@ -13,11 +13,8 @@ import           Control.Monad.Trans.Except
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.ByteString.Base64           as B64
-import qualified Data.ByteString.Base16 as Hex
 import qualified Data.List                        as List
 import qualified Data.Text                        as Text
-
-
 
 import           Data.String.Interpolate.IsString
 

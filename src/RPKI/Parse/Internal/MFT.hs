@@ -4,6 +4,7 @@ import Control.Monad
 
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as Text
+import qualified Data.Vector              as V
 
 import           Data.ASN1.Types
 import           Data.Bifunctor (first)
@@ -12,6 +13,7 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
 
 import           RPKI.Domain
+import           RPKI.CommonTypes
 import           RPKI.Time
 import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.SignedObject
@@ -54,8 +56,8 @@ parseMft bs = do
 
         getEntries _ = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
-                (,) <$> getIA5String (pure . Text.pack) "Wrong file name"
-                    <*> getBitString (pure . mkHash) "Wrong hash"
+                T2 <$> getIA5String (pure . Text.pack) "Wrong file name"
+                   <*> getBitString (pure . mkHash) "Wrong hash"
 
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt

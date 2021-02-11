@@ -171,7 +171,7 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
 
-            -- create a new symlink first and only then atomically renamed it into "current"
+            -- create a new symlink first and only then atomically rename it into "current"
             createSymbolicLink newLmdbDir $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
@@ -217,3 +217,8 @@ cleanDirFiltered d f = fromTry (InitE . InitError . fmtEx) $
 
 cleanDir :: FilePath -> ValidatorT IO ()
 cleanDir d = cleanDirFiltered d (const True)
+
+
+closeLmdbStorage :: AppContext LmdbStorage -> IO ()
+closeLmdbStorage AppContext {..} =    
+    closeLmdb . unEnv . storage =<< readTVarIO database

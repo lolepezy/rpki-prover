@@ -34,6 +34,7 @@ import           Data.ASN1.Types
 import           Data.Set                 (Set)
 
 import           RPKI.Resources.Resources as RS
+import           RPKI.CommonTypes
 import           RPKI.Resources.Types
 import           RPKI.Time
 
@@ -173,7 +174,7 @@ data CrlObject = CrlObject {
         hash      :: {-# UNPACK #-} Hash,
         locations :: {-# UNPACK #-} Locations,
         aki       :: {-# UNPACK #-} AKI,
-        signCrl :: SignCRL
+        signCrl   :: SignCRL
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -304,11 +305,11 @@ data Vrp = Vrp
     deriving anyclass Serialise
 
 data Manifest = Manifest {
-        mftNumber   :: Int, 
+        mftNumber   :: Integer, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: Instant, 
         nextTime    :: Instant, 
-        mftEntries  :: [(Text, Hash)]
+        mftEntries  :: [T2 Text Hash]
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -468,8 +469,11 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+
+instance Show TaName where
+    show = show . unTaName
 
 data TA = TA {
         taName        :: TaName, 
@@ -520,7 +524,7 @@ emptyIpResources = IpResources RS.emptyIpSet
 emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
 
-getMftNumber :: MftObject -> Int
+getMftNumber :: MftObject -> Integer
 getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
 
 newCrl :: RpkiURL -> AKI -> Hash -> SignCRL -> CrlObject

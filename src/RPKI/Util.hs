@@ -28,10 +28,10 @@ import           Data.IORef.Lifted
 
 
 sha256 :: LBS.ByteString -> Hash
-sha256 = Hash . BSS.toShort . S256.hashlazy
+sha256 = mkHash . S256.hashlazy
 
 sha256s :: BS.ByteString -> Hash
-sha256s = Hash . BSS.toShort . S256.hash
+sha256s = mkHash . S256.hash
 
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort

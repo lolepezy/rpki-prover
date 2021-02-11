@@ -177,7 +177,7 @@ defaultMultiDbSettngs = makeMultiSettings
     (Lmdb.SortNative Lmdb.NativeSortLexographic) 
     byteString byteString
 
--- Auxialliry stuff for limiting the amount of parallel LMDB transactions    
+-- Auxialliry stuff for limiting the amount of parallel reading LMDB transactions    
 data Semaphore = Semaphore Int (TVar Int)
 
 createSemaphore :: Int -> IO Semaphore

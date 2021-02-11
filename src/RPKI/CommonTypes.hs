@@ -16,12 +16,13 @@ data T2 a b = T2 a b
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup (T2 a b)
     deriving Monoid    via GenericMonoid (T2 a b)
+    deriving anyclass Serialise
     
 data T3 a b c = T3 a b c
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup (T3 a b c)
     deriving Monoid    via GenericMonoid (T3 a b c)
-    
+    deriving anyclass Serialise
 
 newtype MonoidMap k v = MonoidMap { unMonoidMap :: Map k v }
     deriving stock (Show, Eq, Ord, Generic)

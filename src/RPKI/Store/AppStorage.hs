@@ -7,9 +7,12 @@ import           RPKI.Store.AppLmdbStorage
 
 class MaintainableStorage s where
     runMaintenance :: AppContext s -> IO ()
+    closeStorage :: AppContext s -> IO ()
 
 instance MaintainableStorage LmdbStorage where
     runMaintenance = defragmentStorageWithTmpDir
+    closeStorage = closeLmdbStorage
 
 instance MaintainableStorage InMemoryStorage where
     runMaintenance _ = pure ()
+    closeStorage _ = pure ()

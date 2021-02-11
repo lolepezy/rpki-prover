@@ -15,7 +15,6 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
-import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -38,7 +37,7 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database              (roAppTx, rwAppTx)
+import           RPKI.Store.Database              (rwAppTx)
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
@@ -70,7 +69,7 @@ downloadAndUpdateRRDP
     do        
     (notificationXml, _, httpStatus) <- 
                             fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
-                                downloadToLazyBS appContext (getURL repoUri)     
+                                downloadToBS (appContext ^. typed @Config) (getURL repoUri)     
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
@@ -108,7 +107,7 @@ downloadAndUpdateRRDP
             downloadAndSave = do
                 ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                                downloadHashedLazyBS appContext uri hash                                    
+                                downloadHashedBS (appContext ^. typed @Config) uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)                
 
                 updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs downloadedIn)
@@ -117,7 +116,7 @@ downloadAndUpdateRRDP
                 (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
                 updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
-                pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)   
+                pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)
 
             rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)                    
     
@@ -135,20 +134,14 @@ downloadAndUpdateRRDP
                 -- Do not thrash the same server with too big amount of parallel 
                 -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
                 localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-                -- (_, savedIn) <- timedMS $ foldPipeline
-                --                     (localRepoBottleneck <> ioBottleneck)
-                --                     (S.each sortedDeltas)
-                --                     downloadDelta
-                --                     (\(rawContent, serial, deltaUri) _ -> 
-                --                         inSubVPath deltaUri $ 
-                --                             handleDeltaBS repoUri notification serial rawContent)
-                --                     (mempty :: ())
-
-                (_, savedIn) <- timedMS $ 
-                                    forM sortedDeltas $ \d -> do 
-                                        (rawContent, serial, deltaUri) <- downloadDelta d  
+                (_, savedIn) <- timedMS $ foldPipeline
+                                    (localRepoBottleneck <> ioBottleneck)
+                                    (S.each sortedDeltas)
+                                    downloadDelta
+                                    (\(rawContent, serial, deltaUri) _ -> 
                                         inSubVPath deltaUri $ 
-                                            handleDeltaBS repoUri notification serial rawContent  
+                                            handleDeltaBS repoUri notification serial rawContent)
+                                    (mempty :: ())
         
                 updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs savedIn)
                 updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
@@ -160,7 +153,7 @@ downloadAndUpdateRRDP
                 (rawContent, _, httpStatus') <- 
                     inSubVPath deltaUri $ do
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                            downloadHashedLazyBS appContext uri hash
+                            downloadHashedBS (appContext ^. typed @Config) uri hash
                                 (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
                 updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
                 pure (rawContent, serial, deltaUri)
@@ -235,8 +228,8 @@ updateObjectForRrdpRepository appContext@AppContext {..} repository = do
         downloadAndUpdateRRDP 
             appContext 
             repository 
-            (saveSnapshotSeq appContext)  
-            (saveDeltaSeq appContext)                           
+            (saveSnapshot appContext)  
+            (saveDelta appContext)                           
 
 
 {- 

@@ -53,7 +53,6 @@ import           RPKI.Reporting
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
-import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
@@ -79,7 +78,7 @@ main = do
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
         Right appContext' -> 
-            void $ concurrently
+            void $ race
                 (runHttpApi appContext')
                 (runValidatorApp appContext')
 
@@ -102,9 +101,11 @@ runValidatorApp appContext@AppContext {..} = do
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    
             throwIO $ AppException e        
-        Right tals' ->
+        Right tals' -> do 
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
+            `finally`
+            closeStorage appContext
     where
         parseTALFromFile talFileName = do
             talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
@@ -117,7 +118,7 @@ runHttpApi appContext = let
     in Warp.run httpPort $ httpApi appContext
     
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppMemEnv
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
 createAppContext CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
@@ -133,8 +134,8 @@ createAppContext CLIOptions{..} logger = do
                                 rootDir
                                 lmdbRealSize
                                 
-    -- database <- fromTry (InitE . InitError . fmtEx) $ MakeDb.createDatabase lmdbEnv                
-    database <- fromTry (InitE . InitError . fmtEx) Mem.createDatabase
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv                
+    -- database <- fromTry (InitE . InitError . fmtEx) Mem.createDatabase
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd    
@@ -158,7 +159,7 @@ createAppContext CLIOptions{..} logger = do
                         newBottleneckIO ioParallelism        
 
     -- TODO read stuff from the config, CLI
-    httpContext <- liftIO newHttpContext
+    -- httpContext <- liftIO newHttpContext
     
     let rtrConfig = if withRtr
             then Just $ RtrConfig { 
@@ -176,6 +177,7 @@ createAppContext CLIOptions{..} logger = do
             talDirectory = tald,
             tmpDirectory = tmpd,
             cacheDirectory = cacheDir,
+            -- cacheDirectory = rootDir </> "cache",
             parallelism  = Parallelism cpuParallelism ioParallelism,
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
@@ -206,8 +208,7 @@ createAppContext CLIOptions{..} logger = do
         },
         appState = appState,
         database = tvarDatabase,
-        appBottlenecks = appBottlenecks,
-        httpContext = httpContext
+        appBottlenecks = appBottlenecks
     }    
 
     logDebugM logger [i|Created application context: #{config appContext}|]
