@@ -64,11 +64,11 @@ storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
-        objectStoreGroupMem,
+        -- objectStoreGroupMem,
         validationResultStoreGroup,
-        validationResultStoreGroupMem,
+        -- validationResultStoreGroupMem,
         repositoryStoreGroup,
-        repositoryStoreGroupMem,
+        -- repositoryStoreGroupMem,
         txGroup
     ]
 
