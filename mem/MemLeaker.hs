@@ -1,38 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE QuasiQuotes        #-}
 
 import Colog hiding (extract)
 
-import           Colog
-
-import           Control.Monad
+import Control.Concurrent.STM
+import Control.Lens
+import Control.Monad
 import           Control.Monad.IO.Class
-
-import           Control.Lens                     ((^.))
-import           Data.Generics.Labels
-import           Data.Generics.Product.Fields
-import           Data.Generics.Product.Typed
-
-import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
-import           Control.Exception.Lifted
-
 import           Data.Bifunctor
-import qualified Data.ByteString                  as BS
-import qualified Data.List                        as List
-import           Data.Maybe
-import           Data.Text                        (Text)
-
 import           Data.String.Interpolate.IsString
-
-import           GHC.TypeLits
-
-import qualified Network.Wai.Handler.Warp         as Warp
 
 import           System.Directory                 (removeFile, doesDirectoryExist, getDirectoryContents, listDirectory,
                                                    removePathForcibly)
 import           System.Environment
+import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.IO                        (BufferMode (..), hSetBuffering, stdout)
 
@@ -45,78 +29,85 @@ import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
-import           RPKI.Time
 import           RPKI.RRDP.RrdpFetch
-import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 
 import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)
-import           Numeric.Natural                  (Natural)
-import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import           RPKI.Repository
 import           RPKI.Store.Base.LMDB hiding (getEnv)
 
-import qualified System.IO.Posix.MMap.Lazy        as MmapLazy
-import RPKI.RRDP.Types
 import qualified RPKI.Store.MakeLmdb as Lmdb
-import Control.Concurrent.STM
+import RPKI.Store.Base.Storage
+import RPKI.Store.Repository
+import RPKI.Store.Database
+import RPKI.Workflow
+import RPKI.Time
+import Data.Generics.Product.Typed
+
+
 
 
 main :: IO ()
-main = do 
-    -- testDeltaLoad
-    testSnapshotLoad
-    pure ()
-
-
-testSnapshotLoad :: IO ()
-testSnapshotLoad = do
+main = do     
     logger <- createLogger
     z <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
     case z of 
         (Left e, x) -> do 
             putStrLn $ "Error: " <> show e        
+            
+        (Right appContext, _) -> do             
+            let repository = RrdpRepository {
+                    uri      = RrdpURL $ URI "https://rrdp.ripe.net/notification.xml",
+                    rrdpMeta = Nothing,
+                    status   = Pending
+                } 
+            runValidatorT (newValidatorPath "download-rrdp") 
+                $ updateObjectForRrdpRepository appContext repository   
 
-        (Right appContext, _) -> do 
-            snapshotContent <- readB "../tmp/test-data/snapshot.xml"
-            logDebug_ logger [i|Starting |]        
-            let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (Serial 673)
-            void $ forever $ do 
-                (_, t) <- timedMS $ runValidatorT (newValidatorPath "snapshot") $ 
-                            saveSnapshotSeq appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
-                logDebug_ logger [i|Saved snapshot in #{t}ms |]  
+            let tal = RFC_TAL {
+                certificateLocations = newLocation "https://rpki.ripe.net/ta/ripe-ncc-ta.cer",
+                publicKeyInfo = EncodedBase64 $
+                    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0URYSGqUz2myBsOzeW1j" <>
+                    "Q6NsxNvlLMyhWknvnl8NiBCs/T/S2XuNKQNZ+wBZxIgPPV2pFBFeQAvoH/WK83Hw" <>
+                    "A26V2siwm/MY2nKZ+Olw+wlpzlZ1p3Ipj2eNcKrmit8BwBC8xImzuCGaV0jkRB0G" <>
+                    "Z0hoH6Ml03umLprRsn6v0xOP0+l6Qc1ZHMFVFb385IQ7FQQTcVIxrdeMsoyJq9eM" <>
+                    "kE6DoclHhF/NlSllXubASQ9KUWqJ0+Ot3QCXr4LXECMfkpkVR2TZT+v5v658bHVs" <>
+                    "6ZxRD1b6Uk1uQKAyHUbn/tXvP8lrjAibGzVsXDT2L0x4Edx+QdixPgOji3gBMyL2" <>
+                    "VwIDAQAB"
+            }
+            database' <- readTVarIO (appContext ^. #database)
+            worldVersion <- updateWorldVerion (appContext ^. #appState)
+            storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
+            repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
 
-testDeltaLoad :: IO ()
-testDeltaLoad = do
-    logger <- createLogger
-    (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
-    deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
-    deltaContents <- forM deltas $ \d -> MmapLazy.unsafeMMapFile $ "../tmp/test-data/" </> d
-    logDebug_ logger [i|Starting |]    
-    -- void $ runValidatorT (vContext "snapshot") $ mapM (saveDelta appContext) deltaContents    
+            -- Don't update data
+            let appContext' = appContext & typed @Config . typed @ValidationConfig . #dontFetch .~ True
+            forever $ do                
+                let now = versionToMoment worldVersion
+                let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
+                validateTA appContext' tal worldVersion repositoryContext 
+                ((deleted, kept), elapsed) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
+                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]                
+            pure ()
 
 
-newtype HexString = HexString BS.ByteString 
-    deriving (Show, Eq, Ord)
 
 
-type AppLmdbEnv = AppContext LmdbStorage
+-- Auxilliary functions
 
-createAppContext :: AppLogger -> ValidatorT IO AppLmdbEnv
+createAppContext :: AppLogger -> ValidatorT IO (AppContext LmdbStorage)
 createAppContext logger = do
 
     -- TODO Make it configurable?
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let rootDir = home </> ".rpki-rrdp-perf"
-    
-    tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
+    let rootDir = home </> ".mem-test"
+        
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
-    lmdb   <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
+    lmdb   <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir 
 
     lmdbEnv  <- fromTry (InitE . InitError . fmtEx) $ Lmdb.mkLmdb lmdb 1000 1000
     database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
@@ -124,9 +115,6 @@ createAppContext logger = do
     -- clean up tmp directory if it's not empty
     fromTry (InitE . InitError . fmtEx) $ 
         listDirectory tmpd >>= mapM_ (removeFile . (tmpd </>))
-
-    appState <- liftIO newAppState    
-    tvarDatabase <- liftIO $ newTVarIO database
 
     let cpuCount' = getRtsCpuCount
     liftIO $ setCpuCount cpuCount'
@@ -138,7 +126,10 @@ createAppContext logger = do
     appBottlenecks <- liftIO $ do 
         cpuBottleneck <- newBottleneckIO cpuParallelism
         ioBottleneck  <- newBottleneckIO ioParallelism
-        pure $ AppBottleneck cpuBottleneck ioBottleneck    
+        pure $ AppBottleneck cpuBottleneck ioBottleneck
+    
+    appState <- liftIO newAppState    
+    tvarDatabase <- liftIO $ newTVarIO database
 
     let appContext = AppContext {        
         logger = logger,
@@ -177,7 +168,7 @@ createAppContext logger = do
         appState = appState,
         database = tvarDatabase,
         appBottlenecks = appBottlenecks
-    }     
+    }   
     pure appContext
 
 createLogger :: IO AppLogger
@@ -190,27 +181,15 @@ createLogger = do
             cmapM fmtRichMessageDefault logTextStdout     
 
 
-
-talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
-talsDir root  = checkSubDirectory root "tals"
-rsyncDir root = checkSubDirectory root "rsync"
-tmpDir root   = checkSubDirectory root "tmp"
-lmdbDir root  = checkSubDirectory root "cache"
-
-checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
-checkSubDirectory root sub = do
-    let talDirectory = root </> sub
-    doesDirectoryExist talDirectory >>= \case
-        False -> pure $ Left [i| Directory #{talDirectory} doesn't exist.|]
-        True ->  pure $ Right talDirectory
+rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
+rsyncDir root = createSubDirectoryIfNeeded root "rsync"
+tmpDir root   = createSubDirectoryIfNeeded root "tmp"
+cacheDir root = createSubDirectoryIfNeeded root "cache"
 
 
-
-makeNotification :: SessionId -> Serial -> Notification
-makeNotification sessionId' serial' = Notification {
-    version = Version 1,
-    sessionId = sessionId',
-    serial = serial',
-    snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB"),
-    deltas = []
-  }
+createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
+createSubDirectoryIfNeeded root sub = do
+    let subDirectory = root </> sub
+    exists <- doesDirectoryExist subDirectory
+    unless exists $ createDirectory subDirectory   
+    pure $ Right subDirectory

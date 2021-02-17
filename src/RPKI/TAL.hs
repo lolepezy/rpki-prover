@@ -13,6 +13,7 @@ import           Control.Monad
 import           Codec.Serialise
 
 import qualified Data.List                        as List
+import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
@@ -61,6 +62,16 @@ getTaCertURL :: TAL -> RpkiURL
 getTaCertURL PropertiesTAL {..} = NonEmpty.head certificateLocation
 getTaCertURL RFC_TAL {..}       = NonEmpty.head certificateLocations
 
+newLocation :: Text.Text -> NonEmpty RpkiURL
+newLocation t =  RrdpU (RrdpURL $ URI t) :| []
+
+newLocations :: NonEmpty RpkiURL -> NonEmpty RpkiURL
+newLocations = NonEmpty.sortWith urlOrder
+  where
+    urlOrder u = case u of
+        RrdpU _ -> (0 :: Int, u)
+        _       -> (1, u)
+
 -- | Parse TAL object from raw text
 parseTAL :: Text.Text -> Either TALError TAL
 parseTAL bs = 
@@ -69,13 +80,6 @@ parseTAL bs =
         (Left _,  Right t) -> Right t
         (Left (TALError e1), Left (TALError e2)) -> Left $ TALError $ e1 <> " | " <> e2    
     where
-        newLocations = NonEmpty.sortWith urlOrder
-            where
-                urlOrder u = 
-                    case u of
-                        RrdpU _ -> (0 :: Int, u)
-                        _       -> (1, u)
-
         parseAsProperties = 
             case Text.lines bs of 
                 [] -> Left $ TALError "Couldn't find newline character."
