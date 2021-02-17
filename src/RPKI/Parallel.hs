@@ -199,12 +199,10 @@ writeCQueue (ClosableQueue q s) qe =
 -- each chunk
 readQueueChunked :: ClosableQueue a -> Natural -> ([a] -> IO ()) -> IO ()
 readQueueChunked cq chunkSize f = go
-    where 
-        go = do 
-            chunk' <- atomically $ readChunk chunkSize cq                
-            case chunk' of 
-                [] -> pure ()
-                chu -> f chu >> go              
+  where     
+    go = atomically (readChunk chunkSize cq) >>= \case             
+            []    -> pure ()
+            chunk -> f chunk >> go              
 
 closeCQueue :: ClosableQueue a -> STM ()
 closeCQueue (ClosableQueue _ s) = writeTVar s QClosed
@@ -214,11 +212,10 @@ isClosedCQueue (ClosableQueue _ s) = (QClosed ==) <$> readTVar s
 
 
 readChunk :: Natural -> ClosableQueue a -> STM [a]
-readChunk 0 _          = pure []
-readChunk leftToRead cq@(ClosableQueue q queueState) = do 
-    z <- Q.tryReadTBQueue q
-    case z of 
-        Just z' -> (z' : ) <$> readChunk (leftToRead - 1) cq
+readChunk 0 _ = pure []
+readChunk leftToRead cq@(ClosableQueue q queueState) =
+    Q.tryReadTBQueue q >>= \case     
+        Just z -> (z : ) <$> readChunk (leftToRead - 1) cq
         Nothing -> 
             readTVar queueState >>= \case 
                 QClosed -> pure []
@@ -226,9 +223,8 @@ readChunk leftToRead cq@(ClosableQueue q queueState) = do
 
 
 readCQueue :: ClosableQueue a -> STM (Maybe a)
-readCQueue (ClosableQueue q queueState) = do 
-    z <- Q.tryReadTBQueue q
-    case z of 
+readCQueue (ClosableQueue q queueState) =
+    Q.tryReadTBQueue q >>= \case    
         Just z' -> pure $ Just z'
         Nothing -> 
             readTVar queueState >>= \case 

@@ -50,7 +50,7 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
-import           RPKI.Store.AppStorage
+import           RPKI.Store.AppLmdbStorage
 
 
 data PrometheusMetrics = PrometheusMetrics {

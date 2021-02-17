@@ -45,6 +45,7 @@ dependencies:
 - containers
 - co-log
 - co-log-core
+- conduit
 - cryptonite
 - cryptohash-sha256
 - deepseq
@@ -61,6 +62,8 @@ dependencies:
 - hourglass
 - hourglass-orphans
 - http-types
+- http-client
+- http-conduit
 - hw-ip
 - interpolate
 - lens
@@ -88,8 +91,6 @@ dependencies:
 - stm
 - stm-chans
 - streaming
-- streaming-bytestring
-- streaming-utils
 - string-conversions
 - text
 - text-short
@@ -164,6 +165,7 @@ tests:
     - tasty-quickcheck    
     - generic-arbitrary
     - quickcheck-instances
+    - wreq
 
   rrdp-perf:
     main:                RrdpPerf.hs
@@ -172,7 +174,21 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
+    - '"-with-rtsopts=-A24m -AL128m -N -s"'
     - -Wall
-    # - -O2
+    - -O2
+    dependencies:
+    - rpki-prover
+
+  min-memory-leaker:
+    main:                MemLeaker.hs
+    source-dirs:         
+    - mem
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - '"-with-rtsopts=-A24m -AL128m -N4"'
+    - -Wall
+    - -O2
     dependencies:
     - rpki-prover

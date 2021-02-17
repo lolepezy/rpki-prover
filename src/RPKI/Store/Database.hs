@@ -330,29 +330,27 @@ cleanObjectCache DB {..} tooOld = do
     kept    <- newIORef (0 :: Int)
     deleted <- newIORef (0 :: Int)
     
-    let queueToDeletOrKeep worldVersion queue hash = 
-            if tooOld worldVersion
-                then increment deleted >> atomically (writeCQueue queue hash)
-                else increment kept
-
     let readOldObjects queue =
             roTx objectStore $ \tx ->
                 M.traverse tx (hashToKey objectStore) $ \hash key -> do
                     r <- M.get tx (objectMetas objectStore) key
                     ifJust r $ \ROMeta {..} -> do
                         let cutoffVersion = fromMaybe insertedBy validatedBy
-                        queueToDeletOrKeep cutoffVersion queue hash                        
+                        if tooOld cutoffVersion
+                            then increment deleted >> atomically (writeCQueue queue hash)
+                            else increment kept
 
     -- Don't lock the DB for potentially too long, use big but finite chunks
+    let chunkSize = 2000
     let deleteObjects queue =
-            readQueueChunked queue 50_000 $ \quuElems ->
+            readQueueChunked queue chunkSize $ \quuElems ->
                 rwTx objectStore $ \tx ->
                     forM_ quuElems $ deleteObject tx objectStore
 
     mapException (AppException . storageError) 
         $ voidRun "cleanObjectCache" 
         $ bracketChanClosable 
-                50_000
+                (2 * chunkSize)
                 (liftIO . readOldObjects)
                 (liftIO . deleteObjects)
                 (const $ pure ())    
@@ -495,11 +493,6 @@ data DB s = DB {
 
 instance Storage s => WithStorage s (DB s) where
     storage DB {..} = storage taStore
-
-
-storageError :: SomeException -> AppError
-storageError = StorageE . StorageError . fmtEx    
-
 
 
 -- Utilities to have storage transaction in ValidatorT monad.

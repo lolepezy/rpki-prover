@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
-module RPKI.Store.Util where
 
+module RPKI.Store.MakeLmdb where
 
 import Data.Text (Text)
 

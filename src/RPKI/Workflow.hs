@@ -19,16 +19,13 @@ import           Data.Generics.Product.Typed
 import           Data.Maybe (fromMaybe)
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
-import           Data.IORef
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
-import           Prometheus
 import           System.Exit
 
 import           RPKI.AppState
-import           RPKI.CommonTypes
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -44,11 +41,14 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
+import           RPKI.Store.Base.InMemory
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Repository (getPublicationPoints)
-import           RPKI.Util (increment)
+import           RPKI.Util (increment, ifJust)
+import Data.IORef
 
-type AppEnv = AppContext LmdbStorage
+type AppLmdbEnv = AppContext LmdbStorage
+type AppMemEnv = AppContext InMemoryStorage
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -74,12 +74,12 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Run threads that periodicallly generate tasks and put them 
     -- to the queue and one thread that executes the tasks.
     mapConcurrently_ (\f -> f globalQueue) [ 
-            taskExecutor,
-            generateNewWorldVersion prometheusMetrics, 
-            generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
-            generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
-            generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
-            rtrServer   
+            logged "taskExecutor" . taskExecutor,
+            logged "generateNewWorldVersion" . generateNewWorldVersion prometheusMetrics, 
+            logged "periodic cacheGC" . generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
+            logged "periodic cleanOldVersions" . generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
+            logged "periodic defragment" . generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
+            logged "rtrServer" . rtrServer   
         ]
     where
         storageDefragmentInterval = config ^. #storageDefragmentInterval
@@ -89,29 +89,44 @@ runWorkflow appContext@AppContext {..} tals = do
         revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
         rtrConfig            = config ^. #rtrConfig
 
-        validateTaTask prometheusMetrics globalQueue worldVersion = 
-            atomically $ writeCQueue globalQueue (validateTAs prometheusMetrics worldVersion)             
+        logged tag io = do 
+            logDebug_ logger [i|Started #{tag}|]
+            io
+            logDebug_ logger [i|Finished #{tag}|]
+
 
         -- periodically update world version and generate command 
         -- to re-validate all TAs
-        generateNewWorldVersion prometheusMetrics globalQueue = 
-            -- periodicallyCapped revalidationInterval 20 $ do 
+        generateNewWorldVersion prometheusMetrics globalQueue = do            
             periodically revalidationInterval $ do 
                 oldWorldVersion <- getWorldVerionIO appState
                 newWorldVersion <- updateWorldVerion appState
-                logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]
-                validateTaTask prometheusMetrics globalQueue newWorldVersion
+                logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]                
+                atomically $ do 
+                    writeCQueue globalQueue (validateTAs prometheusMetrics newWorldVersion)                    
+                    pure Repeat
+
+            atomically $ closeCQueue globalQueue
 
         generatePeriodicTask delay interval whatToDo globalQueue = do
             threadDelay delay
             periodically interval $ do
                 worldVersion <- getWorldVerionIO appState
-                atomically $ writeCQueue globalQueue (whatToDo worldVersion)
+                atomically $ do 
+                    closed <- isClosedCQueue globalQueue
+                    unless closed $ 
+                        writeCQueue globalQueue (whatToDo worldVersion)
+                    pure $ if closed 
+                            then Done
+                            else Repeat
 
         taskExecutor globalQueue = do
             logDebug_ logger [i|Starting task executor.|]
-            forever $ do 
-                atomically (readCQueue globalQueue) >>= fromMaybe (pure ())
+            go 
+          where
+            go = do 
+                z <- atomically (readCQueue globalQueue)
+                ifJust z $ \task -> task >> go
 
         validateTAs prometheusMetrics worldVersion = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
@@ -139,7 +154,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
                 saveTopDownResult database' TopDownResult {..} = 
                     rwTx database' $ \tx -> do
-                        let uniqueVrps = Set.fromList vrps
+                        let uniqueVrps = vrps
                         putValidations tx (validationsStore database') worldVersion (tdValidations ^. typed)
                         putMetrics tx (metricStore database') worldVersion (tdValidations ^. typed)
                         putVrps tx database' (Set.toList uniqueVrps) worldVersion
@@ -170,7 +185,7 @@ runWorkflow appContext@AppContext {..} tals = do
             logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
-        executeOrDie f onRight = 
+        executeOrDie f onRight =
             exec `catches` [
                     Handler $ \(AppException seriousProblem) ->
                         die [i|Something really bad happened #{seriousProblem}, exiting.|],
@@ -226,31 +241,20 @@ versionIsOld now period (WorldVersion nanos) =
     in not $ closeEnoughMoments validatedAt now period
 
 -- | Execute an IO action every N seconds
--- 
-periodically :: Seconds -> IO () -> IO ()
-periodically (Seconds interval) action =
-    forever $ do 
+periodically :: Seconds -> IO NextStep -> IO ()
+periodically (Seconds interval) action = go 
+  where
+    go = do 
         Now start <- thisInstant        
-        action
+        nextStep <- action
         Now end <- thisInstant
         let executionTimeNs = toNanoseconds end - toNanoseconds start
         when (executionTimeNs < nanosPerSecond * interval) $ do        
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
                 threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
+        case nextStep of 
+            Repeat -> go 
+            Done   -> pure ()        
 
-periodicallyCapped :: Seconds -> Int -> IO () -> IO ()
-periodicallyCapped (Seconds interval) maxNumber action =
-    go 0
-  where
-    go counter = do      
-        Now start <- thisInstant        
-        action        
-        Now end <- thisInstant
-        when (counter < maxNumber) $ do 
-            let executionTimeNs = toNanoseconds end - toNanoseconds start
-            when (executionTimeNs < nanosPerSecond * interval) $ do        
-                let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
-                when (timeToWaitNs > 0) $ 
-                    threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
-            go $ counter + 1
+data NextStep = Repeat | Done

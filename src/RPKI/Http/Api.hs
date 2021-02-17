@@ -201,7 +201,6 @@ instance ToJSON Ipv6Prefix where
 instance ToJSON AsResource where
     toJSON = toJSON . show
 
-
 instance ToJSON Size where 
     toJSON (Size s) = toJSON s
     
@@ -324,6 +323,12 @@ instance ToJSON Crypto.PubKey.ECC.Types.CurveName
 
 instance ToJSON SessionId where
     toJSON (SessionId s) = shortBsJson s
+
+
+instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
+    toJSON (T2 a b) = toJSON (a, b)
+instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (T3 a b c) where
+    toJSON (T3 a b c) = toJSON (a, b, c)
 
 -- Parsing
 instance FromHttpApiData Hash where    

@@ -53,11 +53,12 @@ import           RPKI.Reporting
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
-import           RPKI.RRDP.HttpContext
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
-import           RPKI.Store.Util
+import           RPKI.Store.AppLmdbStorage
+import qualified RPKI.Store.MakeLmdb as Lmdb
+import qualified RPKI.Store.MakeInMemory as Mem
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Workflow
@@ -77,12 +78,12 @@ main = do
         Left e ->
             logError_ logger [i|Couldn't initialise: #{e}|]
         Right appContext' -> 
-            void $ concurrently
+            void $ race
                 (runHttpApi appContext')
                 (runValidatorApp appContext')
 
 
-runValidatorApp :: AppEnv -> IO ()
+runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- updateWorldVerion appState
@@ -100,22 +101,24 @@ runValidatorApp appContext@AppContext {..} = do
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]    
             throwIO $ AppException e        
-        Right tals' ->
+        Right tals' -> do 
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
+            `finally`
+            closeStorage appContext
     where
         parseTALFromFile talFileName = do
             talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
             vHoist $ fromEither $ first TAL_E $ parseTAL $ convert talContent
 
 
-runHttpApi :: AppEnv -> IO ()
+runHttpApi :: Storage s => AppContext s -> IO ()
 runHttpApi appContext = let
     httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
     in Warp.run httpPort $ httpApi appContext
     
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppEnv
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
 createAppContext CLIOptions{..} logger = do        
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
@@ -123,15 +126,17 @@ createAppContext CLIOptions{..} logger = do
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
+    cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir            
 
     let lmdbRealSize = Size $ lmdbSize `orDefault` 2048
-    (lmdbEnv, cacheDir) <- setupLmdbCache 
-                                (if reset then Reset else UseExisting) 
-                                logger 
-                                rootDir
-                                lmdbRealSize
+    lmdbEnv <- setupLmdbCache 
+                    (if reset then Reset else UseExisting)
+                    logger 
+                    cached
+                    lmdbRealSize
                                 
-    database <- fromTry (InitE . InitError . fmtEx) $ createDatabase lmdbEnv                
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv                
+    -- database <- fromTry (InitE . InitError . fmtEx) Mem.createDatabase
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd    
@@ -155,7 +160,7 @@ createAppContext CLIOptions{..} logger = do
                         newBottleneckIO ioParallelism        
 
     -- TODO read stuff from the config, CLI
-    httpContext <- liftIO newHttpContext
+    -- httpContext <- liftIO newHttpContext
     
     let rtrConfig = if withRtr
             then Just $ RtrConfig { 
@@ -172,7 +177,7 @@ createAppContext CLIOptions{..} logger = do
         config = Config {
             talDirectory = tald,
             tmpDirectory = tmpd,
-            cacheDirectory = cacheDir,
+            cacheDirectory = cached,
             parallelism  = Parallelism cpuParallelism ioParallelism,
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
@@ -203,8 +208,7 @@ createAppContext CLIOptions{..} logger = do
         },
         appState = appState,
         database = tvarDatabase,
-        appBottlenecks = appBottlenecks,
-        httpContext = httpContext
+        appBottlenecks = appBottlenecks
     }    
 
     logDebugM logger [i|Created application context: #{config appContext}|]
@@ -233,18 +237,25 @@ listTALFiles talDirectory = do
 
             
 
-talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
+talsDir, rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
-rsyncDir root = checkSubDirectory root "rsync"
-tmpDir root   = checkSubDirectory root "tmp"
-lmdbDir root  = checkSubDirectory root "cache"
+rsyncDir root = createSubDirectoryIfNeeded root "rsync"
+tmpDir root   = createSubDirectoryIfNeeded root "tmp"
+cacheDir root = createSubDirectoryIfNeeded root "cache"
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
-    let talDirectory = root </> sub
-    doesDirectoryExist talDirectory >>= \case
-        False -> pure $ Left [i| Directory #{talDirectory} doesn't exist.|]
-        True  -> pure $ Right talDirectory
+    let subDirectory = root </> sub
+    doesDirectoryExist subDirectory >>= \case
+        False -> pure $ Left [i| Directory #{subDirectory} doesn't exist.|]
+        True  -> pure $ Right subDirectory
+
+createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
+createSubDirectoryIfNeeded root sub = do
+    let subDirectory = root </> sub
+    exists <- doesDirectoryExist subDirectory
+    unless exists $ createDirectory subDirectory   
+    pure $ Right subDirectory
 
 
 -- CLI Options-related machinery

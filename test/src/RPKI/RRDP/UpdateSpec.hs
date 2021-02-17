@@ -10,6 +10,7 @@ import           RPKI.Repository
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.RrdpFetch
+import           RPKI.RRDP.Http
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
@@ -101,3 +102,5 @@ makeDelta :: Serial -> DeltaInfo
 makeDelta serial'@(Serial s) = DeltaInfo (URI u) (Hash "AABBCC") serial'
   where u = Text.pack $ "http://somehost/delta" <> show s <> ".xml"
 
+
+    

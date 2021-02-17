@@ -37,7 +37,6 @@ import Pipes
 import RPKI.Reporting
 import RPKI.AppMonad
 import RPKI.Parallel
-import RPKI.Store.Database
 
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
@@ -178,7 +177,7 @@ defaultMultiDbSettngs = makeMultiSettings
     (Lmdb.SortNative Lmdb.NativeSortLexographic) 
     byteString byteString
 
--- Auxialliry stuff for limiting the amount of parallel LMDB transactions    
+-- Auxialliry stuff for limiting the amount of parallel reading LMDB transactions    
 data Semaphore = Semaphore Int (TVar Int)
 
 createSemaphore :: Int -> IO Semaphore

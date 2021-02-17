@@ -473,6 +473,14 @@ instance Arbitrary HttpStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance (Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 -- IPs
 
 instance Arbitrary IpPrefix where
@@ -485,10 +493,9 @@ instance Arbitrary Ipv4Prefix where
         w2 :: Word8 <- arbitrary
         w3 :: Word8 <- arbitrary
         w4 :: Word8 <- arbitrary
-        let w = fourW8sToW32 [w1, w2, w3, w4]
-        m :: Word8  <- choose (8, 32)
+        m :: Word8  <- choose (8, 32)        
         let mask = (0xFFFFFFFF :: Word32) `shift` (32 - fromIntegral m)
-        let x = w .&. mask 
+        let x = fourW8sToW32 [w1, w2, w3, w4] .&. mask 
         pure $! mkIpv4Block x m
 
 instance Arbitrary Ipv6Prefix where
