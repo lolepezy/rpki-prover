@@ -126,13 +126,14 @@ createAppContext CLIOptions{..} logger = do
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
+    cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir            
 
     let lmdbRealSize = Size $ lmdbSize `orDefault` 2048
-    (lmdbEnv, cacheDir) <- setupLmdbCache 
-                                (if reset then Reset else UseExisting) 
-                                logger 
-                                rootDir
-                                lmdbRealSize
+    lmdbEnv <- setupLmdbCache 
+                    (if reset then Reset else UseExisting)
+                    logger 
+                    cached
+                    lmdbRealSize
                                 
     database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv                
     -- database <- fromTry (InitE . InitError . fmtEx) Mem.createDatabase
@@ -176,8 +177,7 @@ createAppContext CLIOptions{..} logger = do
         config = Config {
             talDirectory = tald,
             tmpDirectory = tmpd,
-            cacheDirectory = cacheDir,
-            -- cacheDirectory = rootDir </> "cache",
+            cacheDirectory = cached,
             parallelism  = Parallelism cpuParallelism ioParallelism,
             rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
             rrdpConf     = RrdpConf { 
@@ -237,18 +237,25 @@ listTALFiles talDirectory = do
 
             
 
-talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
+talsDir, rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
-rsyncDir root = checkSubDirectory root "rsync"
-tmpDir root   = checkSubDirectory root "tmp"
-lmdbDir root  = checkSubDirectory root "cache"
+rsyncDir root = createSubDirectoryIfNeeded root "rsync"
+tmpDir root   = createSubDirectoryIfNeeded root "tmp"
+cacheDir root = createSubDirectoryIfNeeded root "cache"
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
-    let talDirectory = root </> sub
-    doesDirectoryExist talDirectory >>= \case
-        False -> pure $ Left [i| Directory #{talDirectory} doesn't exist.|]
-        True  -> pure $ Right talDirectory
+    let subDirectory = root </> sub
+    doesDirectoryExist subDirectory >>= \case
+        False -> pure $ Left [i| Directory #{subDirectory} doesn't exist.|]
+        True  -> pure $ Right subDirectory
+
+createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
+createSubDirectoryIfNeeded root sub = do
+    let subDirectory = root </> sub
+    exists <- doesDirectoryExist subDirectory
+    unless exists $ createDirectory subDirectory   
+    pure $ Right subDirectory
 
 
 -- CLI Options-related machinery
