@@ -808,9 +808,9 @@ markValidatedObjects AppContext { .. } TopDownContext {..} = do
     (size, elapsed) <- timedMS $ liftIO $ do 
             vhs <- readTVarIO visitedHashes        
             rwTx objectStore' $ \tx -> 
-                forM_ vhs $ \h -> 
+                for_ vhs $ \h -> 
                     markValidated tx objectStore' h worldVersion 
-            pure $ Set.size vhs
+            pure $! Set.size vhs
     logDebugM logger [i|Marked #{size} objects as visited, took #{elapsed}ms.|]
 
 

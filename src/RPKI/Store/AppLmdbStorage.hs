@@ -54,9 +54,8 @@ maxReadersDefault = 100
 -- 
 --  In this case `lmdb.1605220697` contains LMDB files.
 --
-setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Size -> ValidatorT IO (LmdbEnv, FilePath)
-setupLmdbCache lmdbFlow logger root lmdbSize = do
-    
+setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Size -> ValidatorT IO LmdbEnv
+setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do    
     -- delete everything in `cache` if `reset` is present
     case lmdbFlow of 
         UseExisting -> pure ()
@@ -64,32 +63,29 @@ setupLmdbCache lmdbFlow logger root lmdbSize = do
             logInfoM logger [i|The option `reset` is present: cleaning up #{cacheDir}.|] 
             cleanDir cacheDir
     
-    currentExists <- liftIO $ doesPathExist currentCache
-    lmdbEnv <- 
-        if currentExists 
-            then do
-                linkTarget   <- liftIO $ readSymbolicLink currentCache
-                targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget            
-                if targetExists 
-                    then do 
-                        -- We have what we need, but there could still be other directories 
-                        -- left from interrupted de-fragmentations or stuff like that -- delete 
-                        -- them all.
-                        removePossibleOtherLMDBCaches linkTarget
+    currentExists <- liftIO $ doesPathExist currentCache    
+    if currentExists 
+        then do
+            linkTarget   <- liftIO $ readSymbolicLink currentCache
+            targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget            
+            if targetExists 
+                then do 
+                    -- We have what we need, but there could still be other directories 
+                    -- left from interrupted de-fragmentations or stuff like that -- delete 
+                    -- them all.
+                    removePossibleOtherLMDBCaches linkTarget
 
-                        logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
-                        createLmdb currentCache
-                    else do 
-                        -- link is broken so clean it up and re-create
-                        logWarnM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
-                        resetCacheDir  
-            else do 
-                logWarnM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
-                resetCacheDir
-
-    pure (lmdbEnv, cacheDir)
-    where
-        cacheDir     = root </> "cache"
+                    logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
+                    createLmdb currentCache
+                else do 
+                    -- link is broken so clean it up and re-create
+                    logWarnM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
+                    resetCacheDir  
+        else do 
+            logWarnM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
+            resetCacheDir
+    
+    where        
         currentCache = cacheDir </> "current"
 
         resetCacheDir = do             
@@ -153,8 +149,8 @@ defragmentStorageWithTmpDir AppContext {..} = do
                 -- this is weird, but lets just wait for it to change 
                 -- and don't make things even more weird
                 Disabled -> retry
-                -- it shouldn't happes as well, but we can work with it in principle
-                ROEnv n  -> pure n
+                -- it shouldn't happen as well, but we can work with it in principle
+                ROEnv nn -> pure nn
 
             
     let copyToNewEnvironmentAndSwap = do                        

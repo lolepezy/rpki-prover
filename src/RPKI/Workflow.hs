@@ -78,7 +78,7 @@ runWorkflow appContext@AppContext {..} tals = do
             logged "generateNewWorldVersion" . generateNewWorldVersion prometheusMetrics, 
             logged "periodic cacheGC" . generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             logged "periodic cleanOldVersions" . generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
-            -- logged "periodic defragment" . generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
+            logged "periodic defragment" . generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageDefragmentInterval defragment,
             logged "rtrServer" . rtrServer   
         ]
     where
@@ -97,18 +97,13 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- periodically update world version and generate command 
         -- to re-validate all TAs
-        generateNewWorldVersion prometheusMetrics globalQueue = do
-            -- let maxNumber = 2
-            -- counter <- newTVarIO 0
+        generateNewWorldVersion prometheusMetrics globalQueue = do            
             periodically revalidationInterval $ do 
                 oldWorldVersion <- getWorldVerionIO appState
                 newWorldVersion <- updateWorldVerion appState
                 logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]                
                 atomically $ do 
-                    -- c <- readTVar counter
-                    writeCQueue globalQueue (validateTAs prometheusMetrics newWorldVersion)
-                    -- writeTVar counter (c + 1)
-                    -- pure $ c == maxNumber
+                    writeCQueue globalQueue (validateTAs prometheusMetrics newWorldVersion)                    
                     pure Repeat
 
             atomically $ closeCQueue globalQueue
@@ -185,9 +180,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 (\deleted elapsed -> 
                     logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms|])
 
-        -- defragment worldVersion = do
-        --     (_, elapsed) <- timedMS $ runMaintenance appContext 
-        --     logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
+        defragment worldVersion = do
+            (_, elapsed) <- timedMS $ runMaintenance appContext 
+            logInfo_ logger [i|Done with defragmenting the storage, version #{worldVersion}, took #{elapsed}ms|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight =
