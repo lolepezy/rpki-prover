@@ -1,7 +1,8 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE OverloadedLabels    #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE QuasiQuotes         #-}
 
 module RPKI.RRDP.Http where
@@ -24,7 +25,8 @@ import qualified Data.Text as Text
 
 import GHC.Generics (Generic)
 
-import Network.HTTP.Client (parseRequest)
+import Network.HTTP.Client
+import Network.HTTP.Types.Header
 import Network.HTTP.Simple (getResponseBody, getResponseStatusCode, httpSource)
 
 import RPKI.AppContext
@@ -43,6 +45,11 @@ import qualified System.IO.Posix.MMap.Lazy as MmapLazy
 import System.IO.Temp (withTempFile)
 
 import RPKI.CommonTypes
+
+import Data.Version
+import qualified Paths_rpki_prover as Autogen
+
+
 class Blob bs where    
     readB :: FilePath -> IO bs
     sizeB :: bs -> Size
@@ -151,18 +158,21 @@ downloadConduit :: (MonadIO m, MonadUnliftIO m) =>
                     -> ConduitT BS.ByteString Void (ResourceT m) t
                     -> m (t, HttpStatus)
 downloadConduit (URI u) fileHandle sink = do 
-    req <- liftIO $ parseRequest $ Text.unpack u
+    req <- liftIO $ parseRequest $ Text.unpack u    
+    let req' = req { requestHeaders = (hUserAgent, userAgent) : (requestHeaders req) }
     status <- liftIO $ newIORef mempty
     let getSrc r = do         
             liftIO $ writeIORef status $ HttpStatus $ getResponseStatusCode r         
             getResponseBody r
 
     (z, _) <- runConduitRes 
-                    $ httpSource req getSrc
+                    $ httpSource req' getSrc
                     .| zipSinks sink (sinkHandle fileHandle)    
 
     (z,) <$> liftIO (readIORef status)
 
+userAgent :: BS.ByteString
+userAgent = U.convert $ "rpki-prover-" <> (showVersion Autogen.version)
 
 -- | Calculate size and extra arbitrary function of the sinked stream
 -- | and throw and exception is the size gets too big.
