@@ -14,17 +14,18 @@ Currently implemented features are
 - Output of VRPs in CSV and JSON formats
 - Output of found problems
 - Cache cleanup, scheduled revalidation
-- Support for RTR protocol
+- Support for RTR protocol, both version 0 and 1
+- Docker image
 
 Current and future work
 - Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
-- Static binaries (at least for linux), packaging and a Docker image
+- Static binaries (at least for linux)
 - SLURM support
 - Fancy UI
 
 There are two options to install the program:
 
-## Building from sources
+### Building from sources
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
@@ -44,9 +45,14 @@ Normally it prints quite a lot of logs about what it's doing to the stdout. Afte
 
 Main page http://localhost:9999 currently contains a bunch of links to available API end-points.
 
-## Use Docker image
+### Use Docker image
 
 Dockerfile is available and the image exposes port 9999 for HTTP API.
+
+### Prometheus metrics 
+
+Prometheus metrics are accessible via the standard "/metrics" path.
+
 
 
 
