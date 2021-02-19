@@ -1,0 +1,53 @@
+FROM fpco/stack-build-small:latest as dependencies
+RUN mkdir /opt/build
+WORKDIR /opt/build
+
+# GHC dynamically links its compilation targets to lib gmp
+RUN apt-get update && apt-get download libgmp10
+RUN mv libgmp*.deb libgmp.deb
+RUN apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev
+
+# Docker build should not use cached layer if any of these is modified
+COPY stack.yaml package.yaml stack.yaml.lock /opt/build/
+RUN stack build rpki-prover:rpki-prover --system-ghc --dependencies-only
+
+# -------------------------------------------------------------------------------------------
+FROM fpco/stack-build-small:latest as build
+
+# Copy compiled dependencies from previous stage
+COPY --from=dependencies /root/.stack /root/.stack
+COPY . /opt/build/
+
+WORKDIR /opt/build
+
+RUN apt-get update && apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev
+RUN stack build --system-ghc
+
+RUN mv "$(stack path --local-install-root --system-ghc)/bin" /opt/build/bin
+
+# -------------------------------------------------------------------------------------------
+# Base image for stack build so compiled artifact from previous
+# stage should run
+FROM ubuntu:20.04 as prover
+
+# Add the libraries we need to run the application
+RUN apt-get update && apt-get install -y libgmp-dev libexpat1-dev liblmdb-dev liblzma-dev curl rsync
+
+RUN mkdir -p /opt/app
+WORKDIR /opt/app
+
+RUN mkdir -p /opt/rpki
+RUN mkdir -p /opt/rpki/cache
+RUN mkdir -p /opt/rpki/rsync
+RUN mkdir -p /opt/rpki/tmp
+RUN mkdir -p /opt/rpki/tals
+
+RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/afrinic.tal > /opt/rpki/tals/afrinic.tal
+RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/apnic.tal   > /opt/rpki/tals/apnic.tal
+RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/arin.tal    > /opt/rpki/tals/arin.tal
+RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/lacnic.tal  > /opt/rpki/tals/lacnic.tal
+RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/ripe.tal    > /opt/rpki/tals/ripe.tal
+
+COPY --from=build /opt/build/bin .
+EXPOSE 9999
+CMD [ "/opt/app/rpki-prover", "--rpki-root-directory", "/opt/rpki/", "--http-api-port", "9999"  ]
