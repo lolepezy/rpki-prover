@@ -70,12 +70,12 @@ type API = "api" :> (
                  "vrps.csv"  :> Get '[CSVType] [VrpDto]
             :<|> "vrps.json" :> Get '[JSON] [VrpDto]
             :<|> "validation-results" :> Get '[JSON] [ValidationResult]
-            :<|> "metrics"    :> Get '[JSON] AppMetric
+            :<|> "app-metrics"    :> Get '[JSON] AppMetric
             :<|> "lmdb-stats" :> Get '[JSON] DBStats
             :<|> "object"     :> QueryParam "uri" Text :> QueryParam "hash" Text :> Get '[JSON] (Maybe RObject)                        
         )
 
-type PrometheusAPI = "prometheus" :> Get '[PlainText] Text 
+type PrometheusAPI = "metrics" :> Get '[PlainText] Text 
 
 data ValidationResult = ValidationResult {
     problems :: [VProblem],
