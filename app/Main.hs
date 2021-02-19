@@ -128,7 +128,7 @@ createAppContext CLIOptions{..} logger = do
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
     cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir            
 
-    let lmdbRealSize = Size $ lmdbSize `orDefault` 2048
+    let lmdbRealSize = Size $ lmdbSize `orDefault` 8192
     lmdbEnv <- setupLmdbCache 
                     (if reset then Reset else UseExisting)
                     logger 
