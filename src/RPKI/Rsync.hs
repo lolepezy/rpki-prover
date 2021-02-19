@@ -85,34 +85,35 @@ updateObjectForRsyncRepository :: Storage s =>
                                   ValidatorT IO RsyncRepository
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
-    repo@(RsyncRepository (RsyncPublicationPoint uri) _) = do     
-
-    let rsyncRoot   = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
-    objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO $ appContext ^. #database        
-    let destination = rsyncDestination rsyncRoot uri
-    let rsync = rsyncProcess uri destination RsyncDirectory
-
-    void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
-        createDirectoryIfMissing True destination
+    repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
-    logInfoM logger [i|Going to run #{rsync}|]
-    (exitCode, out, err) <- fromTry 
-        (RsyncE . RsyncRunningError . U.fmtEx) $ 
-        readProcess rsync
-    logInfoM logger [i|Finished rsynching #{destination}|]
-    case exitCode of  
-        ExitSuccess -> do 
-            -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
-            -- they will hold too much files open.            
-            loadRsyncRepository appContext uri destination objectStore
-                        `finally` liftIO performGC            
-            pure repo
-        ExitFailure errorCode -> do
-            logErrorM logger [i|Rsync process failed: #{rsync} 
-                                        with code #{errorCode}, 
-                                        stderr = #{err}, 
-                                        stdout = #{out}|]
-            appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err 
+    timedMetric (Proxy :: Proxy RsyncMetric) $ do     
+        let rsyncRoot   = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
+        objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
+        let destination = rsyncDestination rsyncRoot uri
+        let rsync = rsyncProcess uri destination RsyncDirectory
+
+        void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
+            createDirectoryIfMissing True destination
+            
+        logInfoM logger [i|Going to run #{rsync}|]
+        (exitCode, out, err) <- fromTry 
+            (RsyncE . RsyncRunningError . U.fmtEx) $ 
+            readProcess rsync
+        logInfoM logger [i|Finished rsynching #{destination}|]
+        case exitCode of  
+            ExitSuccess -> do 
+                -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
+                -- they will hold too much files open.            
+                loadRsyncRepository appContext uri destination objectStore
+                            `finally` liftIO performGC            
+                pure repo
+            ExitFailure errorCode -> do
+                logErrorM logger [i|Rsync process failed: #{rsync} 
+                                            with code #{errorCode}, 
+                                            stderr = #{err}, 
+                                            stdout = #{out}|]
+                appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err 
 
 
 -- | Recursively traverse given directory and save all the parseable 
@@ -127,14 +128,13 @@ loadRsyncRepository :: Storage s =>
                         ValidatorT IO ()
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
     worldVersion <- liftIO $ getWorldVerionIO appState    
-    void $ timedMetric (Proxy :: Proxy RsyncMetric) $                 
-        bracketChanClosable 
-            -- it makes sense to run slightly more tasks because they 
-            -- will spend some time waiting for the file IO to finish.
-            (2 * cpuParallelism)
-            traverseFS
-            (saveObjects worldVersion)
-            (cancelTask . snd)        
+    void $ bracketChanClosable 
+        -- it makes sense to run slightly more tasks because they 
+        -- will spend some time waiting for the file IO to finish.
+        (2 * cpuParallelism)
+        traverseFS
+        (saveObjects worldVersion)
+        (cancelTask . snd)        
     where    
         threads = cpuBottleneck appBottlenecks
         cpuParallelism = config ^. typed @Parallelism . #cpuParallelism

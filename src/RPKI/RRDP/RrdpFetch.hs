@@ -67,9 +67,11 @@ downloadAndUpdateRRDP
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
     do        
-    (notificationXml, _, httpStatus) <- 
-                            fromTry (RrdpE . CantDownloadNotification . U.fmtEx) $ 
-                                downloadToBS (appContext ^. typed @Config) (getURL repoUri)     
+    ((notificationXml, _, httpStatus), notificationDownloadTime) <- 
+                            fromTry (RrdpE . CantDownloadNotification . U.fmtEx) 
+                                $ timedMS 
+                                $ downloadToBS (appContext ^. typed) (getURL repoUri)         
+    bumpDownloadTime notificationDownloadTime
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
@@ -98,6 +100,8 @@ downloadAndUpdateRRDP
     hoistHere    = vHoist . fromEither . first RrdpE        
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
+    bumpDownloadTime t = updateMetric @RrdpMetric @_ (& #downloadTimeMs %~ (<> TimeMs t))
+
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubVPath (U.convert uri) $ do
             logDebugM logger [i|#{uri}: downloading snapshot.|]
@@ -110,7 +114,7 @@ downloadAndUpdateRRDP
                                 downloadHashedBS (appContext ^. typed @Config) uri hash                                    
                                     (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)                
 
-                updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs downloadedIn)
+                bumpDownloadTime downloadedIn
                 updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
 
                 (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
@@ -142,8 +146,7 @@ downloadAndUpdateRRDP
                                         inSubVPath deltaUri $ 
                                             handleDeltaBS repoUri notification serial rawContent)
                                     (mempty :: ())
-        
-                updateMetric @RrdpMetric @_ (& #downloadTimeMs .~ TimeMs savedIn)
+                bumpDownloadTime savedIn                
                 updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
                 pure $! repo { rrdpMeta = rrdpMeta' }
@@ -222,7 +225,7 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s 
                             -> RrdpRepository 
                             -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext@AppContext {..} repository = do
+updateObjectForRrdpRepository appContext repository = do
     let repoURI = getURL $ repository ^. #uri
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
