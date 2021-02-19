@@ -51,7 +51,7 @@ Dockerfile is available and the image exposes port 9999 for HTTP API.
 
 ### Prometheus metrics 
 
-Prometheus metrics are accessible via the standard "/metrics" path.
+Prometheus metrics are accessible via the standard `/metrics` path.
 
 
 
