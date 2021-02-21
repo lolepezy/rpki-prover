@@ -42,6 +42,7 @@ import           Data.X509                   as X509
 
 import           Servant.API
 import           Servant.CSV.Cassava
+import           Servant.HTML.Blaze
 
 import           RPKI.Domain                 as Domain
 import           RPKI.Config

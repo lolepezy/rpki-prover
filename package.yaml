@@ -37,6 +37,8 @@ dependencies:
 - base16-bytestring
 - base64
 - binary
+- blaze-html
+- blaze-markup
 - bytestring
 - bytestring-conversion
 - bytestring-mmap
@@ -62,6 +64,7 @@ dependencies:
 - hourglass
 - hourglass-orphans
 - http-types
+- http-media
 - http-client
 - http-conduit
 - hw-ip
@@ -87,6 +90,7 @@ dependencies:
 - servant-cassava
 - servant-server
 - servant-swagger-ui
+- servant-blaze
 - split
 - stm
 - stm-chans
@@ -116,7 +120,7 @@ dependencies:
 
 
 ghc-options:
-  - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
+  - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS -fprint-potential-instances
 #   - -j4 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS
 
 #   - -with-rtsopts=-N    

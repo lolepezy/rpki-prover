@@ -111,7 +111,7 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
         ((actualHash, size), status) <- 
                 downloadConduit uri fd 
                     (sinkGenSize                     
-                        uri    
+                       uri    
                         (config ^. typed @RrdpConf . #maxSize)
                         S256.init
                         S256.update

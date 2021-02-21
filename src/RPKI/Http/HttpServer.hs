@@ -27,10 +27,30 @@ import           RPKI.Metrics
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
+import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Util
 
+staticUI :: Server Raw
+staticUI = serveDirectoryEmbedded $(embedDir "ui")
+
+type FullAPI = API :<|> PrometheusAPI :<|> Raw :<|> UI
+
+prometheus :: Server PrometheusAPI
+prometheus = liftIO $ convert <$> textualMetrics
+
+httpApi :: Storage s => AppContext s -> Application
+httpApi appContext = serve 
+                        (Proxy @FullAPI)
+                        (validatorServer appContext                          
+                        :<|> prometheus
+                        :<|> staticUI
+                        :<|> uiServer appContext)
+
+uiServer :: Storage s => AppContext s -> Server UI
+uiServer AppContext {..} = 
+    pure validaionResults
 
 
 validatorServer :: Storage s => AppContext s -> Server API
@@ -102,18 +122,3 @@ validatorServer AppContext {..} =
                 (Just _, Just _) -> 
                     throwError $ err400 { errBody = "Only 'uri' or 'hash' must be provided, not both." }
 
-
-embeddedUI :: Server Raw
-embeddedUI = serveDirectoryEmbedded $(embedDir "ui")
-
-type FullAPI = API :<|> PrometheusAPI :<|> Raw
-
-prometheus :: Server PrometheusAPI
-prometheus = liftIO $ convert <$> textualMetrics
-
-httpApi :: Storage s => AppContext s -> Application
-httpApi appContext = serve 
-                        (Proxy @FullAPI)
-                        (validatorServer appContext                          
-                        :<|> prometheus
-                        :<|> embeddedUI)
