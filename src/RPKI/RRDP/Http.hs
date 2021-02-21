@@ -83,6 +83,7 @@ downloadToBS config uri@(URI u) = liftIO $ do
         ((_, size), status) <- 
                 downloadConduit uri fd 
                     (sinkGenSize 
+                        uri
                         (config ^. typed @RrdpConf . #maxSize)
                         ()
                         (\_ _ -> ()) 
@@ -109,7 +110,8 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
     withTempFile tmpDir tmpFileName $ \name fd -> do
         ((actualHash, size), status) <- 
                 downloadConduit uri fd 
-                    (sinkGenSize 
+                    (sinkGenSize                     
+                        uri    
                         (config ^. typed @RrdpConf . #maxSize)
                         S256.init
                         S256.update
@@ -144,7 +146,7 @@ fsRead :: FilePath -> IO BS.ByteString
 fsRead = Mmap.unsafeMMapFile 
 -- fsRead = BS.readFile 
 
-newtype OversizedDownloadStream = OversizedDownloadStream Size
+data OversizedDownloadStream = OversizedDownloadStream URI Size 
     deriving stock (Show, Eq, Ord, Generic)    
 
 instance Exception OversizedDownloadStream
@@ -178,13 +180,14 @@ userAgent = U.convert $ "rpki-prover-" <> (showVersion Autogen.version)
 -- | and throw and exception is the size gets too big.
 -- 
 sinkGenSize :: MonadIO m => 
-            Size             
+            URI 
+            -> Size             
             -> h
             -> (h -> BS.ByteString -> h)
             -> (h -> a)
             -> ConduitT BS.ByteString o m (a, Size)
-sinkGenSize maxAllowedSize initValue updateValue finalValue = do 
-    T2 h s <- loop $ T2 initValue 0
+sinkGenSize uri maxAllowedSize initialValue updateValue finalValue = do 
+    T2 h s <- loop $ T2 initialValue 0
     pure (h, s)
   where    
     loop (T2 ctx s) =
@@ -193,5 +196,5 @@ sinkGenSize maxAllowedSize initValue updateValue finalValue = do
             Just chunk -> let 
                 !newSize = s + (fromIntegral (BS.length chunk) :: Size)                
                 in if newSize > maxAllowedSize
-                    then liftIO $ throwIO $ OversizedDownloadStream newSize
+                    then liftIO $ throwIO $ OversizedDownloadStream uri newSize
                     else loop $! T2 (updateValue ctx chunk) newSize
