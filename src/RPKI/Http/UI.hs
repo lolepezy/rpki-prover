@@ -1,5 +1,4 @@
 {-# LANGUAGE RecordWildCards #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -10,12 +9,21 @@
 
 module RPKI.Http.UI where
 
+import Control.Monad
+
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Short       as BSS
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
+
+import           Data.Map.Strict             (Map)
+import qualified Data.Map.Strict             as Map
+import           Data.Set             (Set)
+import qualified Data.Set             as Set
+
+import Data.Maybe (maybeToList)
 
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
@@ -59,16 +67,54 @@ import qualified RPKI.Util                   as U
 
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
-import Text.Blaze.Renderer.Utf8
+import Text.Blaze.Internal as I
+import Text.Blaze.Html.Renderer.Utf8
+import Text.Blaze
+import RPKI.Http.Types
 
 
-newtype RawHtml = RawHtml { unRaw :: BSL.ByteString }
+instance ToMarkup [ValidationResult] where
+  toMarkup = validaionResultsHtml
 
-instance MimeRender HTML RawHtml where
-  mimeRender _ = unRaw
-
-type UI = "validation-results.html" :> Get '[HTML] RawHtml
+type UI = "ui" :> "validation-results.html" :> Get '[HTML] Html
 
 
-validaionResults :: RawHtml
-validaionResults = RawHtml $ renderHtml $ p ! class_ "styled" $ em "Context here."
+withUI :: Html -> Html 
+withUI include =
+    H.html $ do
+        H.head $ do
+            link ! rel "stylesheet" ! href "/styles.css"
+            script ! src "/jquery.min.js" $ mempty
+            script ! src "/functions.js" ! type_ "text/javascript" $ mempty
+        H.body include
+
+validaionResultsHtml :: [ValidationResult] -> Html
+validaionResultsHtml result = 
+    H.table $ do 
+        thead $ tr $ do 
+            th $ H.span $ toHtml ("Problem" :: Text)
+            th $ H.span $ toHtml ("URL" :: Text)        
+        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
+            tbody ! A.class_ "labels" $ do 
+                tr $ td ! colspan "2" $ do
+                    let taText = textValue ta
+                    H.label ! A.for taText $ toHtml ta
+                    input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
+            tbody ! class_ "hide" $ do
+                forM_ vrs $ \ValidationResult{..} -> do 
+                    let z = Prelude.head context 
+                    forM_ problems $ \p -> do                         
+                        tr $ do 
+                            td $ toHtml $ show p
+                            td $ toHtml z
+
+groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
+groupByTa vrs = 
+    Map.fromListWith (<>) 
+    $ [ (ta, [vr]) 
+            | vr@(ValidationResult {..}) <- vrs, 
+              ta <- lastOne context ]    
+  where
+    lastOne [] = []
+    lastOne xs = [last xs]
+
