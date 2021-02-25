@@ -264,7 +264,7 @@ data CLIOptions wrapped = CLIOptions {
         "Root directory (default is ${HOME}/.rpki/).",
 
     cpuCount :: wrapped ::: Maybe Natural <?> 
-        "CPU number available to the program (default is all CPUs).",
+        "CPU number available to the program (default is 2).",
 
     reset :: wrapped ::: Bool <?> 
         "Reset the disk cache of (i.e. remove ~/.rpki/cache/*.mdb files.",
