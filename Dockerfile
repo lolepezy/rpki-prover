@@ -5,7 +5,7 @@ WORKDIR /opt/build
 # GHC dynamically links its compilation targets to lib gmp
 RUN apt-get update && apt-get download libgmp10
 RUN mv libgmp*.deb libgmp.deb
-RUN apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev
+RUN apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev
 
 # Docker build should not use cached layer if any of these is modified
 COPY stack.yaml package.yaml stack.yaml.lock /opt/build/
@@ -20,7 +20,7 @@ COPY . /opt/build/
 
 WORKDIR /opt/build
 
-RUN apt-get update && apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev
+RUN apt-get update && apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev
 RUN stack build --system-ghc
 
 RUN mv "$(stack path --local-install-root --system-ghc)/bin" /opt/build/bin
@@ -31,7 +31,7 @@ RUN mv "$(stack path --local-install-root --system-ghc)/bin" /opt/build/bin
 FROM ubuntu:20.04 as prover
 
 # Add the libraries we need to run the application
-RUN apt-get update && apt-get install -y libgmp-dev libexpat1-dev liblmdb-dev liblzma-dev curl rsync
+RUN apt-get update && apt-get install -y libgmp-dev libexpat1-dev liblmdb-dev liblzma-dev curl rsync libz-dev
 
 RUN mkdir -p /opt/app
 WORKDIR /opt/app
