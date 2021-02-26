@@ -55,3 +55,7 @@ td, th {
 .yellow-dot {
     background-color: #ffa700;
 }
+
+.even-row {
+    background-color: #ebebeb;
+}

@@ -165,7 +165,7 @@ toValidationMessage = \case
           [i|Object with hash #{hash} and location #{fmtLocations locations} creates reference cycle.|]
 
       ManifestLocationMismatch filename locations -> 
-          [i|Object hash manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]
+          [i|Object has manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]
 
       InvalidVCardFormatInGbr e -> [i|InvalidVCard format: #[e}.|]
 

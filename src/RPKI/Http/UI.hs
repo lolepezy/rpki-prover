@@ -103,13 +103,16 @@ validaionResultsHtml result =
                     H.label ! A.for taText $ toHtml ta
                     input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
             tbody ! class_ "hide" $ do
-                forM_ vrs vrHtml
+                forM_ (zip vrs [1..]) vrHtml
 
   where
-      vrHtml ValidationResult{..} = do 
+      vrHtml (ValidationResult{..}, index) = do 
         let url = Prelude.head context 
-        forM_ problems $ \p -> do                         
-            tr $ do 
+        let htmlRow = case index `mod` 2 of 
+                    0 -> tr ! A.class_ "even-row"                    
+                    _ -> tr 
+        forM_ problems $ \p -> do                    
+            htmlRow $ do 
                 let (marker, problem) = 
                         case p of 
                             VErr p             -> ("red-dot",    p)                                        
@@ -117,7 +120,7 @@ validaionResultsHtml result =
                 td $ H.span $ do 
                     H.span ! A.class_ marker $ ""
                     space >> space
-                    toHtml $ toMessage problem
+                    toHtml $ toMessage problem                    
 
                 -- TODO This is pretty ugly, find a better way to get a proper URL
                 let link = "/api/object?uri=" <> url
