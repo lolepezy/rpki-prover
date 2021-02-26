@@ -9,7 +9,7 @@ table {
 }
 
 th { 
-	background: #d8d8d8;
+	background: white;
 	color: rgb(52, 52, 52); 
 	font-weight: bold; 
 }
@@ -23,7 +23,7 @@ td, th {
 }
 
 .labels tr td {
-	background-color: #a1a1a1;
+	background-color: #c1c1c1;
 	font-weight: bold;
 	color: rgb(52, 52, 52); 
 }
