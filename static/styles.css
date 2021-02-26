@@ -9,22 +9,23 @@ table {
 }
 
 th { 
-	background: #b8b8b8;
-	color: white; 
+	background: #d8d8d8;
+	color: rgb(52, 52, 52); 
 	font-weight: bold; 
 }
 
 td, th { 
 	padding: 8px; 
-	border: 1px solid #ccc; 
+	/* border: 1px solid #ccc;  */
+	border: 0px;
 	text-align: left; 
 	font-size: 15px;
 }
 
 .labels tr td {
-	background-color: #797979;
+	background-color: #a1a1a1;
 	font-weight: bold;
-	color: #fff;
+	color: rgb(52, 52, 52); 
 }
 
 .label tr td label {

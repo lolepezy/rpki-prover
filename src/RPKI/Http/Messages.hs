@@ -150,7 +150,7 @@ toValidationMessage = \case
           [i|Manifest entry #{filename} with hash #{hash} not found.|]
 
       OverclaimedResources resources -> 
-          [i|Child certificate claims resources #{resources} not present on parent certificate.|]
+          [i|Certificate (or EE) claims resources #{resources} not present on parent certificate.|]
 
       InheritWithoutParentResources -> 
           [i|Certificate has 'inherit' as resource set, but its parent doesn't have resources.|]
