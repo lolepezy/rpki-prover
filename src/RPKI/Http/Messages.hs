@@ -156,7 +156,7 @@ toValidationMessage = \case
           [i|Certificate has 'inherit' as resource set, but its parent doesn't have resources.|]
 
       UnknownUriType url -> 
-          [i|URL type is unknown #{url}.|]          
+          [i|URL type is neither rsync nor RRDP, #{url}.|]          
 
       CertificateDoesntHaveSIA -> 
           [i|Certificate doesn't have SIA with publication point.|]
