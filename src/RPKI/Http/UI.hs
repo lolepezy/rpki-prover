@@ -71,6 +71,7 @@ import Text.Blaze.Internal as I
 import Text.Blaze.Html.Renderer.Utf8
 import Text.Blaze
 import RPKI.Http.Types
+import RPKI.Http.Messages
 
 
 instance ToMarkup [ValidationResult] where
@@ -88,6 +89,7 @@ withUI include =
             script ! src "/functions.js" ! type_ "text/javascript" $ mempty
         H.body include
 
+
 validaionResultsHtml :: [ValidationResult] -> Html
 validaionResultsHtml result = 
     H.table $ do 
@@ -101,12 +103,26 @@ validaionResultsHtml result =
                     H.label ! A.for taText $ toHtml ta
                     input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
             tbody ! class_ "hide" $ do
-                forM_ vrs $ \ValidationResult{..} -> do 
-                    let z = Prelude.head context 
-                    forM_ problems $ \p -> do                         
-                        tr $ do 
-                            td $ toHtml $ show p
-                            td $ toHtml z
+                forM_ vrs vrHtml
+
+  where
+      vrHtml ValidationResult{..} = do 
+        let url = Prelude.head context 
+        forM_ problems $ \p -> do                         
+            tr $ do 
+                let (marker, problem) = 
+                        case p of 
+                            VErr p             -> ("red-dot",    p)                                        
+                            VWarn (VWarning p) -> ("yellow-dot", p)
+                td $ H.span $ do 
+                    H.span ! A.class_ marker $ ""
+                    space >> space
+                    toHtml $ toMessage problem
+
+                -- TODO This is pretty ugly, find a better way to get a proper URL
+                let link = "/api/object?uri=" <> url
+                td $ H.a ! A.href (textValue link) $ toHtml url
+
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
@@ -118,3 +134,4 @@ groupByTa vrs =
     lastOne [] = []
     lastOne xs = [last xs]
 
+space = preEscapedToMarkup ("&nbsp;" :: Text)

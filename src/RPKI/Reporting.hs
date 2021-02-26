@@ -43,23 +43,16 @@ newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data ValidationError = InvalidCert Text |
-                        ParentDoesntHaveResources |
-                        NoAKIinManifest |
-                        ROACannotBeAParent |
-                        NoAKI | 
-                        SPKIMismatch EncodedBase64 EncodedBase64 |
+data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         UnknownObjectAsTACert |
                         ObjectIsTooSmall Integer |
                         ObjectIsTooBig Integer |
-                        TACertificateLocalIsNewer Serial Serial |
                         InvalidSignature Text |  
                         CMSSignatureAlgorithmMismatch Text Text |                      
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension BS.ByteString |
                         NoMFT AKI Locations |
-                        NoMFTNoRepository AKI Locations |
                         NoCRLOnMFT AKI Locations |
                         MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
                         NoMFTSIA Locations |
@@ -72,15 +65,14 @@ data ValidationError = InvalidCert Text |
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
                         RevokedResourceCertificate |
-                        CertificateIsInTheFuture |
-                        CertificateIsExpired |
+                        CertificateIsInTheFuture { before :: Instant, after :: Instant } |
+                        CertificateIsExpired { before :: Instant, after :: Instant } |
                         AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
-                        ManifestEntryDontExist Hash |
+                        ManifestEntryDontExist Hash Text |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         UnknownUriType URI | 
                         CertificateDoesntHaveSIA | 
-                        PublicationPointIsNotAvailable URI |
                         CircularReference Hash Locations |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 

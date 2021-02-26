@@ -125,11 +125,19 @@ validateResourceCert ::
 validateResourceCert (Now now) cert parentCert vcrl = do
     let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
     signatureCheck $ validateCertSignature cert parentCert
-    when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
-    when (now < Instant before) $ vPureError CertificateIsInTheFuture
-    when (now > Instant after) $ vPureError CertificateIsExpired
+
+    when (isRevoked cert vcrl) $ 
+        vPureError RevokedResourceCertificate
+
+    when (now < Instant before) $ 
+        vPureError $ CertificateIsInTheFuture (Instant before) (Instant after)
+
+    when (now > Instant after) $ 
+        vPureError $ CertificateIsExpired (Instant before) (Instant after)
+
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+
     void $ validateResourceCertExtensions cert
     pure $ Validated cert
   where

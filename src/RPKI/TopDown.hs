@@ -603,16 +603,7 @@ validateCaCertificate
                     -- are still there. Do it both in case of successful validation
                     -- or a validation error.
                     let markAllEntriesAsVisited = 
-                            visitObjects topDownContext $ map (\(T2 _ h) -> h) childrenHashes
-                    
-                    -- let processChildren1 = do                 
-                    --         env <- askEnv           
-                    --         r <- liftIO $ forM
-                    --                 childrenHashes
-                    --                 $ \(T2 filename hash') -> 
-                    --                             runValidatorT env $ validateManifestEntry filename hash' validCrl
-                    --         markAllEntriesAsVisited
-                    --         pure $! r
+                            visitObjects topDownContext $ map (\(T2 _ h) -> h) childrenHashes                
 
                     let processChildren = do
                             r <- inParallelVT
@@ -646,7 +637,7 @@ validateCaCertificate
         ro <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
         case ro of 
             Nothing -> 
-                vError $ ManifestEntryDontExist hash'
+                vError $ ManifestEntryDontExist hash' filename
             Just ro'
                 | Set.member hash' visitedObjects ->
                     -- we have already visited this object before, so 
@@ -793,12 +784,12 @@ needsFetching r status ValidationConfig {..} (Now now) =
         Pending         -> True
         FetchedAt time  -> tooLongAgo time
         FailedAt time   -> tooLongAgo time
-    where
-        tooLongAgo momendTnThePast = 
-            not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
-            where 
-                interval (RrdpU _)  = rrdpRepositoryRefreshInterval
-                interval (RsyncU _) = rsyncRepositoryRefreshInterval
+  where
+    tooLongAgo momendTnThePast = 
+        not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
+      where 
+        interval (RrdpU _)  = rrdpRepositoryRefreshInterval
+        interval (RsyncU _) = rsyncRepositoryRefreshInterval
 
 -- Mark validated objects in the database.
 markValidatedObjects :: (MonadIO m, Storage s) => 

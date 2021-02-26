@@ -76,7 +76,7 @@ newtype RrdpURL  = RrdpURL URI
     deriving anyclass Serialise
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving  (Show, Eq, Ord, Generic)
+    deriving  (Eq, Ord, Generic)
     deriving anyclass Serialise
 
 class WithURL a where
@@ -87,6 +87,10 @@ class WithRpkiURL a where
 
 instance WithURL URI where
     getURL = id
+
+instance Show RpkiURL where
+    show (RsyncU u) = show u
+    show (RrdpU u) = show u 
 
 instance WithURL RsyncURL where
     getURL (RsyncURL u) = u

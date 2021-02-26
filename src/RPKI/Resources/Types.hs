@@ -18,7 +18,7 @@ import qualified Data.ByteString                       as BS
 
 import           Data.Kind
 import           Data.Vector                           (Vector)
-import Data.Word ( Word8, Word32 )
+import           Data.Word ( Word8, Word32 )
 import           GHC.Generics
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
@@ -104,7 +104,7 @@ data PrefixesAndAsns = PrefixesAndAsns
         (IntervalSet Ipv4Prefix)
         (IntervalSet Ipv6Prefix)
         (IntervalSet AsResource)
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 newtype Nested a = Nested a
@@ -123,7 +123,7 @@ class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
 
 -- | Representation of the resource set
 newtype IntervalSet a = IntervalSet (Vector a) 
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass Serialise
 
 
@@ -136,3 +136,12 @@ instance Serialise V4.IpAddress
 instance Serialise V6.IpAddress
 instance Serialise V4.IpNetMask
 instance Serialise V6.IpNetMask
+
+instance Show PrefixesAndAsns where
+    show (PrefixesAndAsns v4 v6 asn) = 
+        show v4 <> ", " <> show v6 <> ", " <> show asn
+        -- where 
+        --     print x = if empty x then Nothing else Just (show x)
+
+instance Show a => Show (IntervalSet a) where
+    show (IntervalSet is) = show is        
