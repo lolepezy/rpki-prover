@@ -102,12 +102,9 @@ validaionResultsHtml result =
 
   where
     vrHtml (ValidationResult{..}, index) = do 
-        let objectUrl = Prelude.head context 
-        let htmlRow = case index `mod` 2 of 
-                    0 -> tr ! A.class_ "even-row"                    
-                    _ -> tr 
+        let objectUrl = Prelude.head context         
         forM_ problems $ \p -> do                    
-            htmlRow $ do 
+            htmlRow index $ do 
                 let (marker, problem) = 
                         case p of 
                             VErr p             -> ("red-dot",    p)                                        
@@ -128,72 +125,51 @@ validaionResultsHtml result =
                 
 
     -- TODO This is quite ugly, find a better way to get a proper URL (using servant maybe)
-    objectLink url = let 
-        link = "/api/object?uri=" <> url 
-        in H.a ! A.href (textValue link) $ toHtml url
+    
 
 
 validaionMetricsHtml :: MetricMap ValidationMetric -> Html
 validaionMetricsHtml validationMetricMap =
     H.table $ do 
         thead $ tr $ do 
-            th $ H.span $ toHtml ("TA" :: Text)
-            th $ H.span $ toHtml ("Validation time" :: Text)
-            th $ H.span $ toHtml ("VRPs" :: Text)        
-            th $ H.span $ toHtml ("Objects" :: Text)        
-            th $ H.span $ toHtml ("ROAs" :: Text)        
-            th $ H.span $ toHtml ("Certificates" :: Text)        
-            th $ H.span $ toHtml ("Manifests" :: Text)        
-            th $ H.span $ toHtml ("CRLs" :: Text)        
-            th $ H.span $ toHtml ("GBRs" :: Text)        
+            th $ toHtml ("TA" :: Text)
+            th $ toHtml ("Validation time" :: Text)
+            th $ toHtml ("VRPs" :: Text)        
+            th $ toHtml ("Objects" :: Text)        
+            th $ toHtml ("ROAs" :: Text)        
+            th $ toHtml ("Certificates" :: Text)        
+            th $ toHtml ("Manifests" :: Text)        
+            th $ toHtml ("CRLs" :: Text)        
+            th $ toHtml ("GBRs" :: Text)        
         let allTaMetricPath = Path (allTAsMetricsName :| [])
         let rawMap = unMonoidMap $ unMetricMap validationMetricMap
         let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
                             $ Map.toList rawMap
         H.tbody $ do 
-            forM_ taMetrics $ \(path, vm) -> do 
+            forM_ (zip taMetrics [1..]) $ \((path, vm), index) -> do 
                 let ta = NonEmpty.head $ unPath path
-                metricRow ta vm       
+                metricRow index ta vm      
             ifJust (allTaMetricPath `Map.lookup` rawMap) 
-                $ metricRow allTAsMetricsName
+                $ metricRow (Map.size rawMap) allTAsMetricsName
 
   where
-    metricRow ta vm = do 
+    metricRow index ta vm = do 
         let totalCount = vm ^. #validCertNumber + 
-                vm ^. #validRoaNumber +
-                vm ^. #validMftNumber +
-                vm ^. #validCrlNumber +
-                vm ^. #validGbrNumber
-        tr $ do 
-            td $ H.span $ toHtml ta                        
-            td $ H.span $ toHtml $ vm ^. #totalTimeMs
-            td $ H.span $ toHtml $ show $ vm ^. #vrpNumber
-            td $ H.span $ toHtml $ show totalCount
-            td $ H.span $ toHtml $ show $ vm ^. #validRoaNumber
-            td $ H.span $ toHtml $ show $ vm ^. #validCertNumber
-            td $ H.span $ toHtml $ show $ vm ^. #validMftNumber
-            td $ H.span $ toHtml $ show $ vm ^. #validCrlNumber
-            td $ H.span $ toHtml $ show $ vm ^. #validGbrNumber
+                         vm ^. #validRoaNumber +
+                         vm ^. #validMftNumber +
+                         vm ^. #validCrlNumber +
+                         vm ^. #validGbrNumber
+        htmlRow index $ do 
+            td $ toHtml ta                        
+            td $ toHtml $ vm ^. #totalTimeMs
+            td $ toHtml $ show $ vm ^. #vrpNumber
+            td $ toHtml $ show totalCount
+            td $ toHtml $ show $ vm ^. #validRoaNumber
+            td $ toHtml $ show $ vm ^. #validCertNumber
+            td $ toHtml $ show $ vm ^. #validMftNumber
+            td $ toHtml $ show $ vm ^. #validCrlNumber
+            td $ toHtml $ show $ vm ^. #validGbrNumber
 
-    vrHtml (ValidationResult{..}, index) = do 
-        let url = Prelude.head context 
-        let htmlRow = case index `mod` 2 of 
-                    0 -> tr ! A.class_ "even-row"                    
-                    _ -> tr 
-        forM_ problems $ \p -> do                    
-            htmlRow $ do 
-                let (marker, problem) = 
-                        case p of 
-                            VErr p             -> ("red-dot",    p)                                        
-                            VWarn (VWarning p) -> ("yellow-dot", p)
-                td $ H.span $ do 
-                    H.span ! A.class_ marker $ ""
-                    space >> space
-                    toHtml $ toMessage problem                    
-
-                -- TODO This is pretty ugly, find a better way to get a proper URL
-                let link = "/api/object?uri=" <> url
-                td $ H.a ! A.href (textValue link) $ toHtml url
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
@@ -206,10 +182,20 @@ groupByTa vrs =
     lastOne xs = [last xs]
 
 
-space :: Html
-space = preEscapedToMarkup ("&nbsp;" :: Text)
+objectLink :: Text -> Html
+objectLink url = let 
+    link = "/api/object?uri=" <> url 
+    in H.a ! A.href (textValue link) $ toHtml url
 
-arrowUp = preEscapedToMarkup ("&#9650;" :: Text)
+htmlRow index = 
+    case index `mod` 2 of 
+        0 -> tr ! A.class_ "even-row"                    
+        _ -> tr 
+
+
+space, arrowUp, arrowRight :: Html
+space      = preEscapedToMarkup ("&nbsp;" :: Text)
+arrowUp    = preEscapedToMarkup ("&#9650;" :: Text)
 arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
 
 lineBreak = H.br

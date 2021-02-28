@@ -138,5 +138,6 @@ getRpkiObject AppContext {..} uri hash =
                         (RObject <$>) <$> getByHash tx objectStore h                                      
 
         (Just _, Just _) -> 
-            throwError $ err400 { errBody = "Only 'uri' or 'hash' must be provided, not both." }
+            throwError $ err400 { errBody = 
+                "Only 'uri' or 'hash' must be provided, not both." }
 
