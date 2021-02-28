@@ -4,12 +4,14 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE TypeOperators         #-}
 
 module RPKI.Http.UI where
 
-import Control.Monad
+import           Control.Monad
+import           Control.Lens                     ((^.), (%~), (&))
 
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
@@ -30,19 +32,11 @@ import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 
 import           GHC.Generics                (Generic)
 
-import qualified Crypto.PubKey.Curve25519    as C25519
-import qualified Crypto.PubKey.Curve448      as C448
-import           Crypto.PubKey.DSA           (Params (..), PublicKey (..))
-import           Crypto.PubKey.ECC.Types
-import qualified Crypto.PubKey.Ed25519       as E25519
-import qualified Crypto.PubKey.Ed448         as E448
-import           Crypto.PubKey.RSA.Types     (PublicKey (..))
-import           Data.ASN1.BitArray
-import           Data.ASN1.Types
 import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Base16.Lazy as HexLazy
-import           Data.Hourglass
-import           Data.X509                   as X509
+
+import           Data.List.NonEmpty          (NonEmpty (..))
+import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Servant.API
 import           Servant.CSV.Cassava
@@ -60,6 +54,7 @@ import Text.Blaze
 import           RPKI.Domain                 as Domain
 import           RPKI.Config
 import           RPKI.CommonTypes
+import           RPKI.Metrics
 
 import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
@@ -68,7 +63,7 @@ import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Database
 import           RPKI.Time
-import qualified RPKI.Util                   as U
+import           RPKI.Util                   (ifJust)
 
 import RPKI.Http.Types
 import RPKI.Http.Messages
@@ -138,23 +133,49 @@ validaionResultsHtml result =
         in H.a ! A.href (textValue link) $ toHtml url
 
 
-validaionMetricsHtml :: [ValidationResult] -> Html
-validaionMetricsHtml result = 
+validaionMetricsHtml :: MetricMap ValidationMetric -> Html
+validaionMetricsHtml validationMetricMap =
     H.table $ do 
         thead $ tr $ do 
-            th $ H.span $ toHtml ("Problem" :: Text)
-            th $ H.span $ toHtml ("URL" :: Text)        
-        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
-            tbody ! A.class_ "labels" $ do 
-                tr $ td ! colspan "2" $ do
-                    let taText = textValue ta
-                    H.label ! A.for taText $ toHtml ta
-                    input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
-            tbody ! class_ "hide" $ do
-                forM_ (zip vrs [1..]) vrHtml
+            th $ H.span $ toHtml ("TA" :: Text)
+            th $ H.span $ toHtml ("Validation time" :: Text)
+            th $ H.span $ toHtml ("VRPs" :: Text)        
+            th $ H.span $ toHtml ("Objects" :: Text)        
+            th $ H.span $ toHtml ("ROAs" :: Text)        
+            th $ H.span $ toHtml ("Certificates" :: Text)        
+            th $ H.span $ toHtml ("Manifests" :: Text)        
+            th $ H.span $ toHtml ("CRLs" :: Text)        
+            th $ H.span $ toHtml ("GBRs" :: Text)        
+        let allTaMetricPath = Path (allTAsMetricsName :| [])
+        let rawMap = unMonoidMap $ unMetricMap validationMetricMap
+        let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
+                            $ Map.toList rawMap
+        H.tbody $ do 
+            forM_ taMetrics $ \(path, vm) -> do 
+                let ta = NonEmpty.head $ unPath path
+                metricRow ta vm       
+            ifJust (allTaMetricPath `Map.lookup` rawMap) 
+                $ metricRow allTAsMetricsName
 
   where
-      vrHtml (ValidationResult{..}, index) = do 
+    metricRow ta vm = do 
+        let totalCount = vm ^. #validCertNumber + 
+                vm ^. #validRoaNumber +
+                vm ^. #validMftNumber +
+                vm ^. #validCrlNumber +
+                vm ^. #validGbrNumber
+        tr $ do 
+            td $ H.span $ toHtml ta                        
+            td $ H.span $ toHtml $ vm ^. #totalTimeMs
+            td $ H.span $ toHtml $ show $ vm ^. #vrpNumber
+            td $ H.span $ toHtml $ show totalCount
+            td $ H.span $ toHtml $ show $ vm ^. #validRoaNumber
+            td $ H.span $ toHtml $ show $ vm ^. #validCertNumber
+            td $ H.span $ toHtml $ show $ vm ^. #validMftNumber
+            td $ H.span $ toHtml $ show $ vm ^. #validCrlNumber
+            td $ H.span $ toHtml $ show $ vm ^. #validGbrNumber
+
+    vrHtml (ValidationResult{..}, index) = do 
         let url = Prelude.head context 
         let htmlRow = case index `mod` 2 of 
                     0 -> tr ! A.class_ "even-row"                    
@@ -190,3 +211,8 @@ space = preEscapedToMarkup ("&nbsp;" :: Text)
 
 arrowUp = preEscapedToMarkup ("&#9650;" :: Text)
 arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
+
+lineBreak = H.br
+
+instance ToMarkup TimeMs where 
+    toMarkup (TimeMs s) = toMarkup $ show s <> "ms"

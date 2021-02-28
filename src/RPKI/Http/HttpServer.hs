@@ -51,7 +51,14 @@ httpApi appContext = serve
                         :<|> staticServer)
 
 uiServer :: Storage s => AppContext s -> Server UI
-uiServer appContext = withUI . validaionResultsHtml <$> liftIO (getVResults appContext)
+-- uiServer appContext = withUI . validaionResultsHtml <$> liftIO (getVResults appContext)
+uiServer appContext = do 
+    vResults <- liftIO $ getVResults appContext
+    metrics  <- getMetrics appContext
+    pure $ withUI $ do 
+        validaionMetricsHtml $ validationMetrics metrics
+        lineBreak >> lineBreak        
+        validaionResultsHtml vResults
 
 apiServer :: Storage s => AppContext s -> Server API
 apiServer appContext = 
