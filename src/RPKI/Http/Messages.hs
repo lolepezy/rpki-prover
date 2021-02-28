@@ -10,9 +10,6 @@
 
 module RPKI.Http.Messages where
 
-import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as BSL
-import qualified Data.ByteString.Short       as BSS
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
@@ -40,9 +37,6 @@ import qualified Crypto.PubKey.Ed448         as E448
 import           Crypto.PubKey.RSA.Types     (PublicKey (..))
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
-import qualified Data.ByteString.Base16      as Hex
-import qualified Data.ByteString.Base16.Lazy as HexLazy
-import           Data.Hourglass
 import           Data.X509                   as X509
 
 import           RPKI.Domain                 as Domain

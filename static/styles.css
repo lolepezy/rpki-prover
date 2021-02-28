@@ -32,6 +32,31 @@ td, th {
 	display: block;
 }
 
+.drop {
+    cursor: pointer;
+    display: block;
+}
+
+input[type="checkbox"] {
+    display: none;
+}
+
+input+.drop+div {
+    display: none;
+}
+
+.drop:after {
+    content: '▼';
+}
+
+ :checked+.drop:after {
+    content: '▲';
+}
+
+input:checked+.drop+div {
+    display: block;
+}
+
 
 [data-toggle="toggle"] {
 	display: none;
@@ -58,4 +83,25 @@ td, th {
 
 .even-row {
     background-color: #ebebeb;
+}
+
+.pointer-down {
+    cursor: pointer;
+    float: left;
+    width: 20px;
+}
+
+.pointer-up {
+    cursor: pointer;
+    float: left;
+    width: 20px;
+}
+
+.full-path {
+    float: right;
+    width: calc(100% - 20px);
+}
+
+.path-elem {
+    margin: 4px;    
 }

@@ -51,6 +51,12 @@ import           Servant.HTML.Blaze
 import Network.HTTP.Media ((//), (/:))
 import Servant.API (Accept(..))
 
+import Text.Blaze.Html5 as H
+import Text.Blaze.Html5.Attributes as A
+import Text.Blaze.Internal as I
+import Text.Blaze.Html.Renderer.Utf8
+import Text.Blaze
+
 import           RPKI.Domain                 as Domain
 import           RPKI.Config
 import           RPKI.CommonTypes
@@ -64,12 +70,6 @@ import           RPKI.Store.Database
 import           RPKI.Time
 import qualified RPKI.Util                   as U
 
-
-import Text.Blaze.Html5 as H
-import Text.Blaze.Html5.Attributes as A
-import Text.Blaze.Internal as I
-import Text.Blaze.Html.Renderer.Utf8
-import Text.Blaze
 import RPKI.Http.Types
 import RPKI.Http.Messages
 
@@ -81,8 +81,8 @@ type UI = "ui" :> "validation-results.html" :> Get '[HTML] Html
 
 
 withUI :: Html -> Html 
-withUI include =
-    H.html $ do
+withUI include = do 
+    H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/styles.css"
             script ! src "/jquery.min.js" $ mempty
@@ -92,6 +92,54 @@ withUI include =
 
 validaionResultsHtml :: [ValidationResult] -> Html
 validaionResultsHtml result = 
+    H.table $ do 
+        thead $ tr $ do 
+            th $ H.span $ toHtml ("Problem" :: Text)
+            th $ H.span $ toHtml ("URL" :: Text)        
+        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
+            tbody ! A.class_ "labels" $ do 
+                tr $ td ! colspan "2" $ do
+                    let taText = textValue ta                    
+                    input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
+                    H.label ! A.class_ "drop" ! A.for taText $ toHtml ta >> space
+            tbody ! class_ "hide" $ do
+                forM_ (zip vrs [1..]) vrHtml
+
+  where
+    vrHtml (ValidationResult{..}, index) = do 
+        let objectUrl = Prelude.head context 
+        let htmlRow = case index `mod` 2 of 
+                    0 -> tr ! A.class_ "even-row"                    
+                    _ -> tr 
+        forM_ problems $ \p -> do                    
+            htmlRow $ do 
+                let (marker, problem) = 
+                        case p of 
+                            VErr p             -> ("red-dot",    p)                                        
+                            VWarn (VWarning p) -> ("yellow-dot", p)
+                td $ H.span $ do 
+                    H.span ! A.class_ marker $ ""
+                    space >> space
+                    toHtml $ toMessage problem
+                td $ do
+                    H.div ! class_ "flex short-link" $ do
+                        H.div ! class_ "pointer-down" $ arrowRight >> space
+                        H.div ! class_ "full-path" $ objectLink objectUrl
+                    H.div ! class_ "flex full-link" ! A.style "display: none;" $ do
+                        H.div ! class_ "pointer-up" $ arrowUp >> space
+                        H.div ! class_ "full-path" $ do
+                            forM_ context $ \pathUrl -> do            
+                                H.div ! A.class_ "path-elem" $ objectLink pathUrl
+                
+
+    -- TODO This is quite ugly, find a better way to get a proper URL (using servant maybe)
+    objectLink url = let 
+        link = "/api/object?uri=" <> url 
+        in H.a ! A.href (textValue link) $ toHtml url
+
+
+validaionMetricsHtml :: [ValidationResult] -> Html
+validaionMetricsHtml result = 
     H.table $ do 
         thead $ tr $ do 
             th $ H.span $ toHtml ("Problem" :: Text)
@@ -126,7 +174,6 @@ validaionResultsHtml result =
                 let link = "/api/object?uri=" <> url
                 td $ H.a ! A.href (textValue link) $ toHtml url
 
-
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
     Map.fromListWith (<>) 
@@ -137,4 +184,9 @@ groupByTa vrs =
     lastOne [] = []
     lastOne xs = [last xs]
 
+
+space :: Html
 space = preEscapedToMarkup ("&nbsp;" :: Text)
+
+arrowUp = preEscapedToMarkup ("&#9650;" :: Text)
+arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
