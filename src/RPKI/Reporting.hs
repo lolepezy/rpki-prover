@@ -177,7 +177,7 @@ newtype Validations = Validations (Map VPath (Set VProblem))
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
-newtype Path a = Path (NonEmpty Text) 
+newtype Path a = Path { unPath :: NonEmpty Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
@@ -281,16 +281,16 @@ instance Semigroup HttpStatus where
         | not (isHttpSuccess s1) = s1
         | isHttpSuccess s1 = s2    
 
-data RrdpSource = RrdpNothing | RrdpDelta | RrdpSnapshot
+data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
 
 instance Monoid RrdpSource where
-    mempty = RrdpNothing
+    mempty = RrdpNoUpdate
 
 instance Semigroup RrdpSource where
-    RrdpNothing <> r           = r
-    r           <> RrdpNothing = r
+    RrdpNoUpdate <> r           = r
+    r           <> RrdpNoUpdate = r
     _           <> r           = r
 
 

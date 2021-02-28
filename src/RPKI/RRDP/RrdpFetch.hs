@@ -22,6 +22,9 @@ import           Data.Proxy
 
 import           GHC.Generics
 
+import qualified Streaming.Prelude                as S
+import           System.Mem                       (performGC)
+
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -43,10 +46,6 @@ import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 
-import qualified Streaming.Prelude                as S
-
-import           System.Mem                       (performGC)
-
 
 
 -- | 
@@ -66,7 +65,7 @@ downloadAndUpdateRRDP
         repo@(RrdpRepository repoUri _ _)      
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
-    do        
+  do        
     ((notificationXml, _, httpStatus), notificationDownloadTime) <- 
                             fromTry (RrdpE . CantDownloadNotification . U.fmtEx) 
                                 $ timedMS 
@@ -77,7 +76,7 @@ downloadAndUpdateRRDP
 
     case nextStep of
         NothingToDo -> do 
-            used RrdpNothing
+            used RrdpNoUpdate
             pure repo
 
         UseSnapshot snapshotInfo -> do 
@@ -88,7 +87,8 @@ downloadAndUpdateRRDP
                 (used RrdpDelta >> useDeltas sortedDeltas notification)
                     `catchError` 
                 \e -> do         
-                    -- NOTE At the moment we ignore the fact that some objects are wrongfully added
+                    -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
+                    -- some of the deltas
                     logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
                     appWarn e
                     used RrdpSnapshot
