@@ -8,8 +8,8 @@ table {
 	margin:50px auto;
 }
 
-th { 
-	background: white;
+th { 	
+    background-color: #ebebeb;
 	color: rgb(52, 52, 52); 
 	font-weight: bold; 
 }

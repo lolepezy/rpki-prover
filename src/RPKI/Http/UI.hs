@@ -75,7 +75,7 @@ instance ToMarkup [ValidationResult] where
 type UI = "ui" :> "validation-results.html" :> Get '[HTML] Html
 
 
-
+mainPage :: [ValidationResult] -> AppMetric -> Html
 mainPage vResults metrics = 
     H.docTypeHtml $ do
         H.head $ do
@@ -89,14 +89,19 @@ mainPage vResults metrics =
                 H.a ! A.href "#rsync-metrics"      $ fromText "Rsync metrics"
                 H.a ! A.href "#validation-details" $ fromText "Validation details"
     
-        H.div ! A.class_ "sidenav" $ do 
-            H.a ! A.id "validation-metrics" $ h4 $ fromText "Validation metrics"
-            validaionMetricsHtml $ validationMetrics metrics
-            H.a ! A.id "rrdp-metrics" $ h4 $ fromText "RRDP metrics"
+        H.div ! A.class_ "main" $ do
+            H.br
+            H.a ! A.id "validation-metrics" $ "" 
+            H.section $ fromText "Validation metrics"
+            validationMetricsHtml $ validationMetrics metrics
+            H.a ! A.id "rrdp-metrics" $ ""
+            H.section $ fromText "RRDP metrics"
             rrdpMetricsHtml $ rrdpMetrics metrics 
-            H.a ! A.id "rsync-metrics" $ h4 $ fromText "Rsync metrics"
+            H.a ! A.id "rsync-metrics" $ ""
+            H.section $ fromText "Rsync metrics"
             rsyncMetricsHtml $ rsyncMetrics metrics        
-            H.a ! A.id "validation-details" $ h4 $ fromText "Validation details"
+            H.a ! A.id "validation-details" $ ""
+            H.section $ fromText "Validation details"
             validaionResultsHtml vResults
 
 
@@ -143,8 +148,8 @@ validaionResultsHtml result =
     
 
 
-validaionMetricsHtml :: MetricMap ValidationMetric -> Html
-validaionMetricsHtml validationMetricMap =
+validationMetricsHtml :: MetricMap ValidationMetric -> Html
+validationMetricsHtml validationMetricMap =
     H.table $ do 
         H.thead $ tr $ do 
             th $ toHtml ("TA" :: Text)
@@ -217,6 +222,7 @@ rrdpMetricsHtml rrdpMetricMap =
             td $ toHtml $ rm ^. #lastHttpStatus
             td $ toHtml $ rm ^. #saveTimeMs
             td $ toHtml $ rm ^. #totalTimeMs            
+
 
 rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
 rsyncMetricsHtml rrdpMetricMap =
