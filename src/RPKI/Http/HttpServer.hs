@@ -55,10 +55,7 @@ uiServer :: Storage s => AppContext s -> Server UI
 uiServer appContext = do 
     vResults <- liftIO $ getVResults appContext
     metrics  <- getMetrics appContext
-    pure $ withUI $ do 
-        validaionMetricsHtml $ validationMetrics metrics
-        lineBreak >> lineBreak        
-        validaionResultsHtml vResults
+    pure $ mainPage vResults metrics
 
 apiServer :: Storage s => AppContext s -> Server API
 apiServer appContext = 

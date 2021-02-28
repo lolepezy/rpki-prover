@@ -37,8 +37,6 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 
-
-
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise

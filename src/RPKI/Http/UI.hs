@@ -75,27 +75,42 @@ instance ToMarkup [ValidationResult] where
 type UI = "ui" :> "validation-results.html" :> Get '[HTML] Html
 
 
-withUI :: Html -> Html 
-withUI include = do 
+
+mainPage vResults metrics = 
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/styles.css"
             script ! src "/jquery.min.js" $ mempty
-            script ! src "/functions.js" ! type_ "text/javascript" $ mempty
-        H.body include
+            script ! src "/functions.js" ! type_ "text/javascript" $ mempty            
+        H.body $ do 
+            H.div ! A.class_ "sidenav" $ do 
+                H.a ! A.href "#validation-metrics" $ fromText "Validation metrics"
+                H.a ! A.href "#rrdp-metrics"       $ fromText "RRDP metrics"
+                H.a ! A.href "#rsync-metrics"      $ fromText "Rsync metrics"
+                H.a ! A.href "#validation-details" $ fromText "Validation details"
+    
+        H.div ! A.class_ "sidenav" $ do 
+            H.a ! A.id "validation-metrics" $ h4 $ fromText "Validation metrics"
+            validaionMetricsHtml $ validationMetrics metrics
+            H.a ! A.id "rrdp-metrics" $ h4 $ fromText "RRDP metrics"
+            rrdpMetricsHtml $ rrdpMetrics metrics 
+            H.a ! A.id "rsync-metrics" $ h4 $ fromText "Rsync metrics"
+            rsyncMetricsHtml $ rsyncMetrics metrics        
+            H.a ! A.id "validation-details" $ h4 $ fromText "Validation details"
+            validaionResultsHtml vResults
 
 
 validaionResultsHtml :: [ValidationResult] -> Html
 validaionResultsHtml result = 
     H.table $ do 
-        thead $ tr $ do 
+        H.thead $ tr $ do 
             th $ H.span $ toHtml ("Problem" :: Text)
             th $ H.span $ toHtml ("URL" :: Text)        
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
-            tbody ! A.class_ "labels" $ do 
+            H.tbody ! A.class_ "labels" $ do 
                 tr $ td ! colspan "2" $ do
                     let taText = textValue ta                    
-                    input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
+                    H.input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
                     H.label ! A.class_ "drop" ! A.for taText $ toHtml ta >> space
             tbody ! class_ "hide" $ do
                 forM_ (zip vrs [1..]) vrHtml
@@ -131,7 +146,7 @@ validaionResultsHtml result =
 validaionMetricsHtml :: MetricMap ValidationMetric -> Html
 validaionMetricsHtml validationMetricMap =
     H.table $ do 
-        thead $ tr $ do 
+        H.thead $ tr $ do 
             th $ toHtml ("TA" :: Text)
             th $ toHtml ("Validation time" :: Text)
             th $ toHtml ("VRPs" :: Text)        
@@ -150,7 +165,7 @@ validaionMetricsHtml validationMetricMap =
                 let ta = NonEmpty.head $ unPath path
                 metricRow index ta vm      
             ifJust (allTaMetricPath `Map.lookup` rawMap) 
-                $ metricRow (Map.size rawMap) allTAsMetricsName
+                $ metricRow (Map.size rawMap) ("Total" :: Text)
 
   where
     metricRow index ta vm = do 
@@ -169,6 +184,57 @@ validaionMetricsHtml validationMetricMap =
             td $ toHtml $ show $ vm ^. #validMftNumber
             td $ toHtml $ show $ vm ^. #validCrlNumber
             td $ toHtml $ show $ vm ^. #validGbrNumber
+
+
+rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
+rrdpMetricsHtml rrdpMetricMap =
+    H.table $ do 
+        H.thead $ tr $ do 
+            th $ fromText "Repository"
+            th $ fromText "Source"
+            th $ fromText "Download time"
+            th $ fromText "Added objects"
+            th $ fromText "Deleted objects"
+            th $ fromText "Last HTTP status"
+            th $ fromText "Save time"
+            th $ fromText "Total time"
+                
+        let taMetrics = Map.toList $ unMonoidMap $ unMetricMap rrdpMetricMap
+
+        H.tbody $ do 
+            forM_ (zip taMetrics [1..]) $ \((path, vm), index) -> do 
+                let repository = NonEmpty.head $ unPath path
+                metricRow index repository vm                  
+
+  where
+    metricRow index repository rm = do         
+        htmlRow index $ do 
+            td $ toHtml repository                        
+            td $ toHtml $ rm ^. #rrdpSource
+            td $ toHtml $ rm ^. #downloadTimeMs            
+            td $ toHtml $ show $ rm ^. #added
+            td $ toHtml $ show $ rm ^. #deleted
+            td $ toHtml $ rm ^. #lastHttpStatus
+            td $ toHtml $ rm ^. #saveTimeMs
+            td $ toHtml $ rm ^. #totalTimeMs            
+
+rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
+rsyncMetricsHtml rrdpMetricMap =
+    H.table $ do 
+        H.thead $ tr $ do 
+            th $ fromText "TA"
+            th $ fromText "Processed objects"
+            th $ fromText "Total time"
+                
+        let taMetrics = Map.toList $ unMonoidMap $ unMetricMap rrdpMetricMap
+
+        H.tbody $
+            forM_ (zip taMetrics [1..]) $ \((path, rm), index) -> do 
+                let repository = NonEmpty.head $ unPath path
+                htmlRow index $ do 
+                    td $ toHtml repository                                    
+                    td $ toHtml $ show $ rm ^. #processed            
+                    td $ toHtml $ rm ^. #totalTimeMs            
 
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
@@ -200,5 +266,16 @@ arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
 
 lineBreak = H.br
 
+fromText :: Text -> Html
+fromText t = toHtml t
+
 instance ToMarkup TimeMs where 
     toMarkup (TimeMs s) = toMarkup $ show s <> "ms"
+
+instance ToMarkup HttpStatus where 
+    toMarkup (HttpStatus s) = toMarkup $ show s
+
+instance ToMarkup RrdpSource where 
+    toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
+    toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
+    toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
