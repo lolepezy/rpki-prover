@@ -60,6 +60,7 @@ import           RPKI.CommonTypes
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
+import           RPKI.Metrics
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
@@ -848,9 +849,10 @@ oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 
--- Sum up all the validation metrics from all TA to create the "total" validation metric
+-- Sum up all the validation metrics from all TA to create 
+-- the "alltrustanchors" validation metric
 addTotalValidationMetric totalValidationResult =
-    totalValidationResult & vmLens %~ Map.insert (newPath "alltrustanchors") totalValidationMetric
+    totalValidationResult & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
   where
     uniqueVrps = totalValidationResult ^. #vrps
     totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 

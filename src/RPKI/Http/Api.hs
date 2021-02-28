@@ -38,7 +38,9 @@ type API = "api" :> (
             :<|> "validation-results" :> Get '[JSON] [ValidationResult]
             :<|> "app-metrics"    :> Get '[JSON] AppMetric
             :<|> "lmdb-stats" :> Get '[JSON] DBStats
-            :<|> "object"     :> QueryParam "uri" Text :> QueryParam "hash" Text :> Get '[JSON] (Maybe RObject)                        
+            :<|> "object"     :> QueryParam "uri" Text 
+                              :> QueryParam "hash" Text 
+                              :> Get '[JSON] (Maybe RObject)                        
         )
 
 type PrometheusAPI = "metrics" :> Get '[PlainText] Text 
