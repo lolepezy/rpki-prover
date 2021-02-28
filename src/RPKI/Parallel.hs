@@ -79,19 +79,19 @@ txFoldPipeline poolSize stream withTx consume accum0 =
                 writeAll 
                 readAll 
                 (\_ -> pure ())
-    where
-        writeAll queue = 
-            S.mapM_ 
-                (liftIO . atomically . writeCQueue queue) 
-                stream
-            
-        readAll queue = withTx $ \tx -> go tx accum0
-            where
-                go tx accum = do                
-                    a <- liftIO $ atomically $ readCQueue queue
-                    case a of
-                        Nothing -> pure accum
-                        Just a' -> consume tx a' accum >>= go tx
+  where
+    writeAll queue = 
+        S.mapM_ 
+            (liftIO . atomically . writeCQueue queue) 
+            stream
+        
+    readAll queue = withTx $ \tx -> go tx accum0
+      where
+        go tx accum = do                
+            a <- liftIO $ atomically $ readCQueue queue
+            case a of
+                Nothing -> pure accum
+                Just a' -> consume tx a' accum >>= go tx
 
 
 -- | The same as `txFoldPipeline` but transaction is divided into chunks.
@@ -110,30 +110,30 @@ txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
                 writeAll 
                 readAll 
                 (\_ -> pure ())
-    where
-        writeAll queue = S.mapM_ toQueue stream
-            where 
-                toQueue = liftIO . atomically . writeCQueue queue
+  where
+    writeAll queue = S.mapM_ toQueue stream
+      where 
+        toQueue = liftIO . atomically . writeCQueue queue
 
-        readAll queue = 
-            go Nothing chunkSize accum0
-            where
-                go maybeTx leftToRead accum = do 
-                    n <- liftIO $ atomically $ readCQueue queue                            
-                    case n of
-                        Nothing      -> pure accum
-                        Just nextOne ->
-                            case maybeTx of
-                                Nothing -> do 
-                                    accum' <- withTx $ \tx -> work tx nextOne
-                                    go Nothing chunkSize accum' 
-                                Just tx -> work tx nextOne
-                    where                    
-                        work tx element = do 
-                            accum' <- consume tx element accum
-                            case leftToRead of
-                                0 -> pure accum'
-                                _ -> go (Just tx) (leftToRead - 1) accum'
+    readAll queue = 
+        go Nothing chunkSize accum0
+      where
+        go maybeTx leftToRead accum = do 
+            n <- liftIO $ atomically $ readCQueue queue                            
+            case n of
+                Nothing      -> pure accum
+                Just nextOne ->
+                    case maybeTx of
+                        Nothing -> do 
+                            accum' <- withTx $ \tx -> work tx nextOne
+                            go Nothing chunkSize accum' 
+                        Just tx -> work tx nextOne
+          where                    
+            work tx element = do 
+                accum' <- consume tx element accum
+                case leftToRead of
+                    0 -> pure accum'
+                    _ -> go (Just tx) (leftToRead - 1) accum'
 
 
 bracketChanClosableVT :: (MonadBaseControl IO m, MonadIO m) =>
@@ -365,10 +365,10 @@ concurrentTasks v1 v2 = do
         pure ((,) <$> r1 <*> r2, vs1 <> vs2)
 
 
+
 data Slot = Free | Taken | DontTake
 
--- Still prototyping
--- 
+-- | 
 inParallelVT :: (MonadBaseControl IO m, MonadIO m) =>
                 Bottleneck 
                 -> [a] 
@@ -391,7 +391,7 @@ inParallelVT bottleneck as f = do
                 go (s : ss) = do 
                     slot <- liftIO $ newTVarIO Free
             
-                    -- It is important to run the async first and then try to acquire 
+                    -- It is important to create the async first and then try to acquire 
                     -- the slot in the bottleneck, otherwise there's potential for 
                     -- deadlock in the system.            
                     a <- async $ do                     
