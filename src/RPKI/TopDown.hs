@@ -26,7 +26,6 @@ import           Data.Char                        (toLower)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
-import qualified Data.List.Split                  as Split
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (fromMaybe)
@@ -305,8 +304,12 @@ fetchRepository
     (Now now) 
     repo = liftIO $ do
         let (Seconds maxDduration, timeoutError) = case repoURL of
-                RrdpU _  -> (config ^. typed @RrdpConf . #rrdpTimeout, RrdpE RrdpDownloadTimeout)
-                RsyncU _ -> (config ^. typed @RsyncConf . #rsyncTimeout, RsyncE RsyncDownloadTimeout)
+                RrdpU _  -> 
+                    (config ^. typed @RrdpConf . #rrdpTimeout, 
+                     RrdpE $ RrdpDownloadTimeout maxDduration)
+                RsyncU _ -> 
+                    (config ^. typed @RsyncConf . #rsyncTimeout, 
+                     RsyncE $ RsyncDownloadTimeout maxDduration)
                 
         r <- timeout (1_000_000 * fromIntegral maxDduration) fetchIt
         case r of 

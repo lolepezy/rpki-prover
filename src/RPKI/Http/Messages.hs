@@ -59,15 +59,114 @@ import RPKI.Http.Types
 
 toMessage :: AppError -> Text
 toMessage = \case
-    ValidationE v -> toValidationMessage v
-    other -> Text.pack $ show other    
---     TAL_E t   -> toTalMessage t
---     RrdpE r -> RrdpE _
---     RsyncE r -> RsyncE _
---     StorageE s -> StorageE _
+    ParseE (ParseError t) -> t
+    ValidationE v -> toValidationMessage v    
+    RrdpE r  -> toRrdpMessage r
+    RsyncE r -> toRsyncMessage r
+    TAL_E (TALError t) -> t
+    InitE (InitError t) -> t
     
---     InitE i -> InitE _
---     UnspecifiedE t t1 -> UnspecifiedE _ _
+    StorageE (StorageError t) -> t
+    StorageE (DeserialisationError t) -> t
+    
+    UnspecifiedE context e -> 
+        [i|Unspecified error #{context}, details: #{e}.|]
+
+
+toRsyncMessage :: RsyncError -> Text
+toRsyncMessage = \case 
+    RsyncProcessError errorCode e ->
+        [i|Rsync client returned code #{errorCode}, error = #{e}.|]
+
+    FileReadError e ->
+        [i|Can't read local file created by rsync client #{e}.|]
+
+    RsyncRunningError e ->
+        [i|Error running rsync client #{e}.|]
+
+    RsyncDownloadTimeout t ->
+        [i|Could not update repository in #{t}s.|]
+
+    UnknownRsyncProblem e ->
+        [i|Unknown problem with rsync #{e}.|]
+
+
+toRrdpMessage :: RrdpError -> Text
+toRrdpMessage = \case
+    BrokenXml t    -> [i|XML parsing error: #{t}.|]
+    BrokenSerial s -> [i|Malformed serial number: #{s}.|]
+    NoSessionId    -> [i|Session ID is not set.|]
+    NoSerial       -> [i|Serial number is not set.|]
+    NoSnapshotHash -> [i|Snapshot hash is not set.|]
+    NoSnapshotURI  -> [i|Snapshot URL is not set.|]
+    NoDeltaSerial  -> [i|Delta serial is not set.|]
+    NoDeltaURI     -> [i|Delta URL is not set.|]
+    NoDeltaHash    -> [i|Delta hash is not set.|]
+    BadHash h      -> [i|String #{h} is not a valid SHA256 hash.|]
+    NoVersion      -> [i|RRDP version is not set.|]  
+    BadVersion v   -> [i|String #{v} is not a valid RRDP version.|]  
+    NoPublishURI   -> [i|An "publish" element doesn't have URL attribute.|]  
+
+    BadBase64 base64 url -> [i|Base64 #{base64} for URL #{url} is invalid.|]  
+
+    BadURL u -> [i|Unsupported or invalid URL #{u}.|]  
+
+    NoHashInWithdraw -> [i|No "hash" attribute in a "withdraw" element.|]  
+
+    ContentInWithdraw url content -> 
+        [i|Content inside of "withdraw" element with url #{url}.|]  
+
+    LocalSerialBiggerThanRemote local remote -> 
+        [i|Local RRDP serial is #{local} higher than then remote #{remote}.|]  
+
+    NonConsecutiveDeltaSerials deltaPairs ->           
+        [i|Non-consecutive deltas: #{mconcat (map show deltaPairs)}.|]  
+
+    CantDownloadFile e -> [i|Cannot download file: #{e}.|]  
+
+    CantDownloadNotification e -> [i|Cannot download notification.xml: #{e}.|]  
+
+    CantDownloadSnapshot e -> [i|Cannot download snapshot #{e}.|]  
+    CantDownloadDelta e    -> [i|Cannot download delta #{e}.|]  
+
+    SnapshotHashMismatch {..} -> 
+        [i|Snapshot hash is #{actualHash} but required hash is #{expectedHash}.|]  
+
+    SnapshotSessionMismatch {..} -> 
+        [i|Snapshot session ID is #{actualSessionId} but required hash is #{expectedSessionId}.|]  
+
+    SnapshotSerialMismatch {..} -> 
+        [i|Snapshot serial is #{actualSerial} but required hash is #{expectedSerial}.|]  
+
+    DeltaHashMismatch {..} -> 
+        [i|Delta #{serial} hash is #{actualHash} but required hash is #{expectedHash}.|]  
+
+    DeltaSessionMismatch {..} -> 
+        [i|Delta's session ID is #{actualSessionId} but required session ID is #{expectedSessionId}.|]  
+
+    DeltaSerialMismatch {..} -> 
+        [i|Delta serial is #{actualSerial} but required serial is #{expectedSerial}.|]        
+
+    DeltaSerialTooHigh {..} -> 
+        [i|Delta serial #{actualSerial} is larger than maximal expected #{expectedSerial}.|]        
+    
+    NoObjectToReplace url hash -> 
+        [i|No object with url #{url} and hash #{hash} to replace.|]        
+
+    NoObjectToWithdraw url hash ->
+        [i|No object with url #{url} and hash #{hash} to withdraw.|]        
+
+    ObjectExistsWhenReplacing url hash -> 
+        [i|Cannot replace object with url #{url}: object with hash #{hash} already exists.|]        
+
+    UnsupportedObjectType url -> 
+        [i|Unsupported object type #{url}.|]        
+        
+    RrdpDownloadTimeout t -> 
+        [i|Could not update repository in #{t}s.|]        
+
+    UnknownRrdpProblem e -> 
+        [i|Unknown problem with RRDP: #{e}.|]  
 
 
 toValidationMessage :: ValidationError -> Text

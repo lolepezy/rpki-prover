@@ -93,37 +93,35 @@ data RrdpError = BrokenXml Text |
                 BadVersion Text | 
                 NoPublishURI |
                 BadBase64 Text Text |
-                BadPublish Text |
                 BadURL Text |
                 NoHashInWithdraw |
-                ContentInWithdraw Text |
+                ContentInWithdraw Text Text |
                 LocalSerialBiggerThanRemote Serial Serial |
                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
                 CantDownloadFile Text |
                 CantDownloadNotification Text |
                 CantDownloadSnapshot Text |
                 CantDownloadDelta Text |
-                SnapshotHashMismatch Hash Hash |
+                SnapshotHashMismatch { actualHash :: Hash, expectedHash :: Hash } |
                 SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
                 SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
                 DeltaSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
-                DeltaHashMismatch Hash Hash Serial |
+                DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: Serial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType | 
-                RrdpDownloadTimeout | 
+                UnsupportedObjectType Text | 
+                RrdpDownloadTimeout Int64 | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
-                    RsyncRunningError Text |
-                    RsyncDirError Text |               
-                    RsyncDownloadTimeout | 
+                    RsyncRunningError Text |         
+                    RsyncDownloadTimeout Int64 | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise

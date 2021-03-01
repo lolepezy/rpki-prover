@@ -34,10 +34,10 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Util
 
-staticServer :: Server Raw
-staticServer = serveDirectoryEmbedded $(embedDir "static")
+staticServer :: Server StaticContent
+staticServer = serveDirectoryEmbedded $(embedRecursiveDir "static")
 
-type FullAPI = API :<|> UI :<|> PrometheusAPI :<|> Raw
+type FullAPI = API :<|> UI :<|> PrometheusAPI :<|> StaticContent
 
 prometheus :: Server PrometheusAPI
 prometheus = liftIO $ convert <$> textualMetrics

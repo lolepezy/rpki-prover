@@ -44,3 +44,5 @@ type API = "api" :> (
         )
 
 type PrometheusAPI = "metrics" :> Get '[PlainText] Text 
+
+type StaticContent = "static" :> Raw

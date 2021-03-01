@@ -186,8 +186,7 @@ parseDelta1 bs = runST $ do
                         item : is ->
                             case item of
                                 Left  (uri, _) -> 
-                                    throwE $ ContentInWithdraw $ Text.concat 
-                                        [convert uri, ", c = ", convert base64]
+                                    throwE $ ContentInWithdraw (convert uri) (convert base64)
                                 Right (uri, hash, existing) -> do
                                     let base64' = BS.concat [existing, base64]
                                     lift $ writeSTRef deltaItems $ Right (uri, hash, base64') : is   
@@ -408,10 +407,10 @@ parseDelta xml = makeDelta =<< folded
             let !nc = c <> trim cd 
             in pure $! T2 (Just sn) (DP (DeltaPublish uri' h (EncodedBase64 nc)) : ps)
 
-        foldItems d@(T2 (Just _) (DW (DeltaWithdraw _ _) : _)) (X.CharacterData cd) = 
+        foldItems d@(T2 (Just _) (DW (DeltaWithdraw uri _) : _)) (X.CharacterData cd) = 
             if BS.all isSpace_ cd 
                 then let !z = Right d in z
-                else Left $ ContentInWithdraw $ convert cd
+                else Left $ ContentInWithdraw (convert uri) (convert cd)
                  
         foldItems x  _                                          = Right x
 

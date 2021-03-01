@@ -16,8 +16,7 @@ th {
 
 td, th { 
 	padding: 8px; 
-	/* border: 1px solid #ccc;  */
-	border: 0px;
+	border: 1px solid rgb(153, 153, 153); 	
 	text-align: left; 
 	font-size: 15px;
 }
@@ -106,7 +105,7 @@ input:checked+.drop+div {
     margin: 4px;    
 }
 
-.sidenav {
+.side-navigation {
     height: 100%;
     width: 150px;
     position: fixed;
@@ -117,14 +116,14 @@ input:checked+.drop+div {
     padding-top: 20px;
 }
 
-.sidenav a {
+.side-navigation a {
     padding: 6px 6px 6px 32px;
     text-decoration: none;
     color: #6b6b6b;
     display: block;
 }
 
-.sidenav a:hover {
+.side-navigation a:hover {
     color: #222222;
 }
 

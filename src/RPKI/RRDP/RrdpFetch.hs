@@ -112,7 +112,11 @@ downloadAndUpdateRRDP
                 ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
                         fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                                 downloadHashedBS (appContext ^. typed @Config) uri hash                                    
-                                    (\actualHash -> Left $ RrdpE $ SnapshotHashMismatch hash actualHash)                
+                                    (\actualHash -> 
+                                        Left $ RrdpE $ SnapshotHashMismatch { 
+                                            expectedHash = hash,
+                                            actualHash = actualHash                                            
+                                        })                
 
                 bumpDownloadTime downloadedIn
                 updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
@@ -157,7 +161,12 @@ downloadAndUpdateRRDP
                     inSubVPath deltaUri $ do
                         fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
                             downloadHashedBS (appContext ^. typed @Config) uri hash
-                                (\actualHash -> Left $ RrdpE $ DeltaHashMismatch hash actualHash serial)
+                                (\actualHash -> 
+                                    Left $ RrdpE $ DeltaHashMismatch {
+                                        actualHash = actualHash,
+                                        expectedHash = hash,
+                                        serial = serial
+                                    })
                 updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
                 pure (rawContent, serial, deltaUri)
 
@@ -188,7 +197,7 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
     if  | sessionId /= repoSessionId -> pure $ UseSnapshot snapshotInfo
         | repoSerial > serial        -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure $ UseSnapshot snapshotInfo
+            pure NothingToDo
         | repoSerial == serial       -> pure NothingToDo
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
@@ -285,7 +294,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     task <- readBlob `strictTask` bottleneck
                     pure $ Right (uri, task)
                 else
-                    pure $ Left (RrdpE UnsupportedObjectType, uri)
+                    pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
                     Left e -> 
@@ -387,7 +396,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                     task <- readBlob `pureTask` bottleneck
                     pure $ Right $ maybe (Add uri task) (Replace uri task) hash
                 else 
-                    pure $ Left (RrdpE UnsupportedObjectType, uri)
+                    pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
                     Left e        -> SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
