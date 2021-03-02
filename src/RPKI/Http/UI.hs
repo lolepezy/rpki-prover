@@ -27,7 +27,6 @@ import           Servant.HTML.Blaze
 
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
-import Text.Blaze.Internal as I
 
 import           RPKI.CommonTypes
 import           RPKI.AppState
@@ -51,40 +50,41 @@ mainPage worldVersion vResults metrics =
             script ! src "/static/functions.js" ! type_ "text/javascript" $ mempty            
         H.body $ do 
             H.div ! A.class_ "side-navigation" $ do  
-                H.a ! A.href "#overall"            $ fromText "Overall"
-                H.a ! A.href "#validation-metrics" $ fromText "Validation metrics"
-                H.a ! A.href "#rrdp-metrics"       $ fromText "RRDP metrics"
-                H.a ! A.href "#rsync-metrics"      $ fromText "Rsync metrics"
-                H.a ! A.href "#validation-details" $ fromText "Validation details"
+                H.a ! A.href "#overall"            $ H.text "Overall"
+                H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
+                H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
+                H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
+                H.a ! A.href "#validation-details" $ H.text "Validation details"
     
         H.div ! A.class_ "main" $ do            
             H.a ! A.id "overall" $ "" 
             H.br
-            H.section $ fromText "Overall"
+            H.section $ H.text "Overall"
             H.br
             overallHtml worldVersion
             H.br >> H.br            
             H.a ! A.id "validation-metrics" $ "" 
-            H.section $ fromText "Validation metrics"
+            H.section $ H.text "Validation metrics"
             validationMetricsHtml $ validationMetrics metrics
             H.a ! A.id "rrdp-metrics" $ ""
-            H.section $ fromText "RRDP metrics"
+            H.section $ H.text "RRDP metrics"
             rrdpMetricsHtml $ rrdpMetrics metrics 
             H.a ! A.id "rsync-metrics" $ ""
-            H.section $ fromText "Rsync metrics"
+            H.section $ H.text "Rsync metrics"
             rsyncMetricsHtml $ rsyncMetrics metrics        
             H.a ! A.id "validation-details" $ ""
-            H.section $ fromText "Validation details"
-            validaionResultsHtml vResults
+            H.section $ H.text "Validation details"
+            validaionDetailsHtml vResults
 
 
+overallHtml :: Maybe WorldVersion -> Html
 overallHtml Nothing = pure ()
 overallHtml (Just worldVersion) = do 
     let t = versionToMoment worldVersion
     H.div ! A.class_ "overall" $ do 
-        fromText "Last validation: " >> space
-        fromText $ Text.pack $ uiDateFormat t
-        space >> fromText "(UTC)"
+        H.text "Last validation: " >> space
+        H.text $ Text.pack $ uiDateFormat t
+        space >> H.text "(UTC)"
 
 
 validationMetricsHtml :: MetricMap ValidationMetric -> Html
@@ -134,42 +134,38 @@ rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table $ do 
         H.thead $ tr $ do 
-            th $ fromText "Repository"
-            th $ fromText "Source"
-            th $ fromText "Download time"
-            th $ fromText "Added objects"
-            th $ fromText "Deleted objects"
-            th $ fromText "Last HTTP status"
-            th $ fromText "Save time"
-            th $ fromText "Total time"
+            th $ H.text "Repository"
+            th $ H.text "Source"
+            th $ H.text "Download time"
+            th $ H.text "Added objects"
+            th $ H.text "Deleted objects"
+            th $ H.text "Last HTTP status"
+            th $ H.text "Save time"
+            th $ H.text "Total time"
                 
         let taMetrics = Map.toList $ unMonoidMap $ unMetricMap rrdpMetricMap
 
         H.tbody $ do 
-            forM_ (zip taMetrics [1 :: Int ..]) $ \((path, vm), index) -> do 
+            forM_ (zip taMetrics [1 :: Int ..]) $ \((path, rm), index) -> do 
                 let repository = NonEmpty.head $ unPath path
-                metricRow index repository vm                  
-
-  where
-    metricRow index repository rm = do         
-        htmlRow index $ do 
-            td $ toHtml repository                        
-            td $ toHtml $ rm ^. #rrdpSource
-            td $ toHtml $ rm ^. #downloadTimeMs            
-            td $ toHtml $ show $ rm ^. #added
-            td $ toHtml $ show $ rm ^. #deleted
-            td $ toHtml $ rm ^. #lastHttpStatus
-            td $ toHtml $ rm ^. #saveTimeMs
-            td $ toHtml $ rm ^. #totalTimeMs            
+                htmlRow index $ do 
+                    td $ toHtml repository                        
+                    td $ toHtml $ rm ^. #rrdpSource
+                    td $ toHtml $ rm ^. #downloadTimeMs            
+                    td $ toHtml $ show $ rm ^. #added
+                    td $ toHtml $ show $ rm ^. #deleted
+                    td $ toHtml $ rm ^. #lastHttpStatus
+                    td $ toHtml $ rm ^. #saveTimeMs
+                    td $ toHtml $ rm ^. #totalTimeMs     
 
 
 rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
 rsyncMetricsHtml rrdpMetricMap =
     H.table $ do 
         H.thead $ tr $ do 
-            th $ fromText "Trust Anchor"
-            th $ fromText "Processed objects"
-            th $ fromText "Total time"
+            th $ H.text "Trust Anchor"
+            th $ H.text "Processed objects"
+            th $ H.text "Total time"
                 
         let taMetrics = Map.toList $ unMonoidMap $ unMetricMap rrdpMetricMap
 
@@ -182,12 +178,12 @@ rsyncMetricsHtml rrdpMetricMap =
                     td $ toHtml $ rm ^. #totalTimeMs            
 
 
-validaionResultsHtml :: [ValidationResult] -> Html
-validaionResultsHtml result = 
+validaionDetailsHtml :: [ValidationResult] -> Html
+validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
             th $ H.span $ toHtml ("Problem" :: Text)
-            th $ H.span $ toHtml ("URL" :: Text)        
+            th $ H.span $ toHtml ("URL/Path" :: Text)        
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
                 tr $ td ! colspan "2" $                                         
@@ -210,7 +206,7 @@ validaionResultsHtml result =
                 td $ H.span $ do 
                     H.span ! A.class_ marker $ ""
                     space >> space
-                    toHtml $ toMessage problem
+                    mapM_ (\z -> H.text z >> H.br) $ Text.lines $ toMessage problem
                 td $ do
                     H.div ! class_ "flex short-link" $ do
                         H.div ! class_ "pointer-right" $ arrowRight >> space
@@ -226,7 +222,7 @@ groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
     Map.fromListWith (<>) 
     $ [ (ta, [vr]) 
-            | vr@(ValidationResult {..}) <- vrs, 
+            | vr@ValidationResult {..} <- vrs, 
               ta <- lastOne context ]    
   where
     lastOne [] = []
@@ -244,17 +240,16 @@ htmlRow index =
         0 -> tr ! A.class_ "even-row"                    
         _ -> tr 
 
-
 space, arrowUp, arrowRight :: Html
 space      = preEscapedToMarkup ("&nbsp;" :: Text)
 arrowUp    = preEscapedToMarkup ("&#9650;" :: Text)
 arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
 
-lineBreak :: Html
-lineBreak = H.br
 
-fromText :: Text -> Html
-fromText t = toHtml t
+-- | Very crude formatting of a text to avoid using <pre> and screwing up the style.
+--
+htmlMessage :: Text -> Html
+htmlMessage message = mapM_ (\z -> H.text z >> H.br) $ Text.lines message
 
 instance ToMarkup TimeMs where 
     toMarkup (TimeMs s) = toMarkup $ show s <> "ms"
