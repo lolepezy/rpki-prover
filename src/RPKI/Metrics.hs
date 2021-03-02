@@ -28,6 +28,7 @@ import           Data.Text                        (Text)
 import           GHC.Generics
 
 import           Prometheus
+import           Prometheus.Metric.GHC
 
 import           RPKI.CommonTypes
 import           RPKI.Domain
@@ -61,6 +62,8 @@ createPrometheusMetrics = do
     validObjectNumber <- register 
             $ vector ("trustanchor", "type") 
             $ gauge (Info "object_number" "Number of valid objects of different types")
+
+    register ghcMetrics
 
     pure $ PrometheusMetrics {..}
 

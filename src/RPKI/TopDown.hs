@@ -472,7 +472,7 @@ validateCARecursively
                             noFurtherValidation
                         AtLeastOnce -> do                             
                             logWarn_ logger  
-                                [i|Repository #{getRpkiURL r} failed, but it succeeded before, so acched objects will be used |]
+                                [i|Repository #{getRpkiURL r} failed, but it succeeded before, so cached objects will be used |]
                             proceedWithValidation validations
                             
                                  
