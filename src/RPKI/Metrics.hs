@@ -32,6 +32,7 @@ import           Data.String.Interpolate.IsString
 import           GHC.Generics
 
 import           Prometheus
+import           Prometheus.Metric.GHC
 
 import           RPKI.AppState
 import           RPKI.CommonTypes
@@ -76,6 +77,8 @@ createPrometheusMetrics = do
     validObjectNumber <- register 
             $ vector ("trustanchor", "type") 
             $ gauge (Info "object_number" "Number of valid objects of different types")
+
+    register ghcMetrics
 
     pure $ PrometheusMetrics {..}
 

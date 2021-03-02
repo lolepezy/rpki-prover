@@ -84,6 +84,7 @@ dependencies:
 - pipes
 - primitive
 - prometheus-client
+- prometheus-metrics-ghc
 - semigroups
 - serialise
 - servant
