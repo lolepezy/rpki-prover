@@ -172,11 +172,12 @@ validaionResultsHtml result =
             th $ H.span $ toHtml ("URL" :: Text)        
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
-                tr $ td ! colspan "2" $ do
-                    let taText = textValue ta                    
-                    H.input ! A.type_ "checkbox" ! name taText ! A.id taText ! I.dataAttribute "toggle" "toggle"
-                    H.label ! A.class_ "drop" ! A.for taText $ toHtml ta >> space
-            tbody ! class_ "hide" $ do
+                tr $ td ! colspan "2" $                                         
+                    H.div ! class_ "flex switch" $ do                        
+                        H.div ! class_ "ta-header" $ toHtml ta >> space
+                        H.div ! class_ "pointer-up-header" $ arrowUp >> space
+                        H.div ! class_ "pointer-right-header" ! A.style "display: none;" $ arrowRight >> space                        
+            tbody ! class_ "hide" $ do 
                 forM_ (zip vrs [1 :: Int ..]) vrHtml
 
   where
@@ -194,7 +195,7 @@ validaionResultsHtml result =
                     toHtml $ toMessage problem
                 td $ do
                     H.div ! class_ "flex short-link" $ do
-                        H.div ! class_ "pointer-down" $ arrowRight >> space
+                        H.div ! class_ "pointer-right" $ arrowRight >> space
                         H.div ! class_ "full-path" $ objectLink objectUrl
                     H.div ! class_ "flex full-link" ! A.style "display: none;" $ do
                         H.div ! class_ "pointer-up" $ arrowUp >> space

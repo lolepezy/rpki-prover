@@ -27,40 +27,6 @@ td, th {
 	color: rgb(52, 52, 52); 
 }
 
-.label tr td label {
-	display: block;
-}
-
-.drop {
-    cursor: pointer;
-    display: block;
-}
-
-input[type="checkbox"] {
-    display: none;
-}
-
-input+.drop+div {
-    display: none;
-}
-
-.drop:after {
-    content: '▼';
-}
-
- :checked+.drop:after {
-    content: '▲';
-}
-
-input:checked+.drop+div {
-    display: block;
-}
-
-
-[data-toggle="toggle"] {
-	display: none;
-}
-
 .error-message {
     margin-bottom: 3px;
 }
@@ -84,7 +50,7 @@ input:checked+.drop+div {
     background-color: #ebebeb;
 }
 
-.pointer-down {
+.pointer-right {
     cursor: pointer;
     float: left;
     width: 20px;
@@ -99,6 +65,25 @@ input:checked+.drop+div {
 .full-path {
     float: right;
     width: calc(100% - 20px);
+}
+
+.pointer-right-header {    
+    float: right;
+    width: 20px;
+}
+
+.pointer-up-header {    
+    float: right;
+    width: 20px;
+}
+
+.ta-header {
+    float: left;
+    width: calc(100% - 20px);
+}
+
+.switch {
+    cursor: pointer;
 }
 
 .path-elem {
