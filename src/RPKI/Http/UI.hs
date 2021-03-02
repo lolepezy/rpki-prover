@@ -14,6 +14,7 @@ import           Control.Monad
 import           Control.Lens                ((^.))
 
 import           Data.Text                   (Text)
+import qualified Data.Text                   as Text
 
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
@@ -29,8 +30,10 @@ import Text.Blaze.Html5.Attributes as A
 import Text.Blaze.Internal as I
 
 import           RPKI.CommonTypes
+import           RPKI.AppState
 import           RPKI.Metrics
 import           RPKI.Reporting
+import           RPKI.Time
 import           RPKI.Util                   (ifJust)
 
 import RPKI.Http.Types
@@ -39,8 +42,8 @@ import RPKI.Http.Messages
 
 type UI = Get '[HTML] Html
 
-mainPage :: [ValidationResult] -> AppMetric -> Html
-mainPage vResults metrics = 
+mainPage :: Maybe WorldVersion -> [ValidationResult] -> AppMetric -> Html
+mainPage worldVersion vResults metrics = 
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -48,13 +51,19 @@ mainPage vResults metrics =
             script ! src "/static/functions.js" ! type_ "text/javascript" $ mempty            
         H.body $ do 
             H.div ! A.class_ "side-navigation" $ do  
+                H.a ! A.href "#overall"            $ fromText "Overall"
                 H.a ! A.href "#validation-metrics" $ fromText "Validation metrics"
                 H.a ! A.href "#rrdp-metrics"       $ fromText "RRDP metrics"
                 H.a ! A.href "#rsync-metrics"      $ fromText "Rsync metrics"
                 H.a ! A.href "#validation-details" $ fromText "Validation details"
     
-        H.div ! A.class_ "main" $ do
+        H.div ! A.class_ "main" $ do            
+            H.a ! A.id "overall" $ "" 
             H.br
+            H.section $ fromText "Overall"
+            H.br
+            overallHtml worldVersion
+            H.br >> H.br            
             H.a ! A.id "validation-metrics" $ "" 
             H.section $ fromText "Validation metrics"
             validationMetricsHtml $ validationMetrics metrics
@@ -67,6 +76,15 @@ mainPage vResults metrics =
             H.a ! A.id "validation-details" $ ""
             H.section $ fromText "Validation details"
             validaionResultsHtml vResults
+
+
+overallHtml Nothing = pure ()
+overallHtml (Just worldVersion) = do 
+    let t = versionToMoment worldVersion
+    H.div ! A.class_ "overall" $ do 
+        fromText "Last validation: " >> space
+        fromText $ Text.pack $ uiDateFormat t
+        space >> fromText "(UTC)"
 
 
 validationMetricsHtml :: MetricMap ValidationMetric -> Html
