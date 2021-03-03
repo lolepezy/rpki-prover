@@ -22,6 +22,7 @@ import           Data.Text                       (Text)
 
 import           Data.String.Interpolate.IsString
 import           RPKI.AppContext
+import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Metrics
@@ -34,10 +35,10 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Util
 
-staticServer :: Server Raw
-staticServer = serveDirectoryEmbedded $(embedDir "static")
+staticServer :: Server StaticContent
+staticServer = serveDirectoryEmbedded $(embedRecursiveDir "static")
 
-type FullAPI = API :<|> UI :<|> PrometheusAPI :<|> Raw
+type FullAPI = API :<|> UI :<|> PrometheusAPI :<|> StaticContent
 
 prometheus :: Server PrometheusAPI
 prometheus = liftIO $ convert <$> textualMetrics
@@ -51,7 +52,12 @@ httpApi appContext = serve
                         :<|> staticServer)
 
 uiServer :: Storage s => AppContext s -> Server UI
-uiServer appContext = withUI . validaionResultsHtml <$> liftIO (getVResults appContext)
+-- uiServer appContext = withUI . validaionResultsHtml <$> liftIO (getVResults appContext)
+uiServer appContext = do 
+    worldVersion <- liftIO $ getLastVersion appContext
+    vResults <- liftIO $ getVResults appContext
+    metrics  <- getMetrics appContext
+    pure $ mainPage worldVersion vResults metrics
 
 apiServer :: Storage s => AppContext s -> Server API
 apiServer appContext = 
@@ -86,6 +92,11 @@ getVResults AppContext {..} = do
                 validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
                 pure $ map toVR $ validationsToList validations
         in fromMaybe [] <$> txValidations
+
+getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
+getLastVersion AppContext {..} = do 
+    database@DB {..} <- readTVarIO database 
+    roTx versionStore $ getLastCompletedVersion database                
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m AppMetric
@@ -131,5 +142,6 @@ getRpkiObject AppContext {..} uri hash =
                         (RObject <$>) <$> getByHash tx objectStore h                                      
 
         (Just _, Just _) -> 
-            throwError $ err400 { errBody = "Only 'uri' or 'hash' must be provided, not both." }
+            throwError $ err400 { errBody = 
+                "Only 'uri' or 'hash' must be provided, not both." }
 

@@ -140,7 +140,7 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T"'
     # - -fPIC
     # cc-options: -static
     # ld-options: -static -pthread  

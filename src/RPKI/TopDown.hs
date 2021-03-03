@@ -26,7 +26,6 @@ import           Data.Char                        (toLower)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
-import qualified Data.List.Split                  as Split
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (fromMaybe)
@@ -60,6 +59,7 @@ import           RPKI.CommonTypes
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
+import           RPKI.Metrics
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
@@ -304,8 +304,12 @@ fetchRepository
     (Now now) 
     repo = liftIO $ do
         let (Seconds maxDduration, timeoutError) = case repoURL of
-                RrdpU _  -> (config ^. typed @RrdpConf . #rrdpTimeout, RrdpE RrdpDownloadTimeout)
-                RsyncU _ -> (config ^. typed @RsyncConf . #rsyncTimeout, RsyncE RsyncDownloadTimeout)
+                RrdpU _  -> 
+                    (config ^. typed @RrdpConf . #rrdpTimeout, 
+                     RrdpE $ RrdpDownloadTimeout maxDduration)
+                RsyncU _ -> 
+                    (config ^. typed @RsyncConf . #rsyncTimeout, 
+                     RsyncE $ RsyncDownloadTimeout maxDduration)
                 
         r <- timeout (1_000_000 * fromIntegral maxDduration) fetchIt
         case r of 
@@ -848,9 +852,10 @@ oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 
--- Sum up all the validation metrics from all TA to create the "total" validation metric
+-- Sum up all the validation metrics from all TA to create 
+-- the "alltrustanchors" validation metric
 addTotalValidationMetric totalValidationResult =
-    totalValidationResult & vmLens %~ Map.insert (newPath "alltrustanchors") totalValidationMetric
+    totalValidationResult & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
   where
     uniqueVrps = totalValidationResult ^. #vrps
     totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 

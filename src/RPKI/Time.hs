@@ -71,3 +71,15 @@ fromNanoseconds totalNanos =
 closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
 closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds = 
     timeDiff secondMoment firstMoment < intervalSeconds
+
+
+uiDateFormat (Instant d) = timePrint format d
+  where 
+    format = TimeFormatString [
+            Format_Year, dash, Format_Month2, dash, Format_Day2,
+            Format_Text ' ',
+            Format_Hour, colon, Format_Minute, colon, Format_Second,
+            Format_TimezoneName
+        ]
+    dash = Format_Text '-'
+    colon = Format_Text ':'   

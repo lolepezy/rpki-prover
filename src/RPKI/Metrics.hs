@@ -18,41 +18,26 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString.Lazy             as LBS
 
-import           Data.Hourglass
-import           Data.Int                         (Int64)
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
-
-import           Data.Text                        (Text)
-
 import           Data.String.Interpolate.IsString
+import           Data.Text                        (Text)
 
 import           GHC.Generics
 
 import           Prometheus
 import           Prometheus.Metric.GHC
 
-import           RPKI.AppState
 import           RPKI.CommonTypes
-import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
-import           RPKI.Logging
-import           RPKI.Parallel
-import           RPKI.Store.Database
-import           RPKI.TopDown
-
 import           RPKI.AppContext
-import           RPKI.RTR.RtrServer
-import           RPKI.Store.Base.Storage
-import           RPKI.TAL
-import           RPKI.Time
 
-import           RPKI.Store.Base.LMDB
-import           RPKI.Store.AppLmdbStorage
 
+allTAsMetricsName :: Text
+allTAsMetricsName = "alltrustanchors"
 
 data PrometheusMetrics = PrometheusMetrics {
         rrdpCode :: Vector Text Gauge,
@@ -88,16 +73,16 @@ textualMetrics = exportMetricsAsText
 
 updatePrometheus :: (MonadIO m, MonadMonitor m) => AppMetric -> PrometheusMetrics -> m ()
 updatePrometheus AppMetric {..} PrometheusMetrics {..} = do 
-    forM_ (Map.toList $ unMonoidMap$ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do 
+    forM_ (Map.toList $ unMonoidMap $ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.head $ metricPath ^. coerced                
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
 
-    forM_ (Map.toList $ unMonoidMap$ unMetricMap rrdpMetrics) $ \(metricPath, metric) -> do 
+    forM_ (Map.toList $ unMonoidMap $ unMetricMap rrdpMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.head $ metricPath ^. coerced        
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
 
-    forM_ (Map.toList $ unMonoidMap$ unMetricMap validationMetrics) $ \(metricPath, metric) -> do 
+    forM_ (Map.toList $ unMonoidMap $ unMetricMap validationMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.last $ metricPath ^. coerced        
         withLabel vrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpNumber
         let totalCount = metric ^. #validCertNumber + 

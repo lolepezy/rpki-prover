@@ -7,10 +7,6 @@
 module RPKI.AppMonad where
 
 import           Control.Lens
-import           Data.Generics.Labels
-import           Data.Generics.Product.Typed
-
-import           GHC.Generics (Generic)
 
 import           Control.Exception.Lifted
 import           Control.Monad.Except
@@ -19,12 +15,14 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 
 import           Data.Bifunctor             (Bifunctor (first))
-
+import           Data.Generics.Product       (HasField)
+import           Data.Generics.Product.Typed
+import           Data.Proxy
 import           Data.Text                   (Text)
+
 import           RPKI.Reporting
 import           RPKI.Time
-import Data.Proxy
-import Data.Generics.Product (HasField)
+
 
 
 -- Application monad stack

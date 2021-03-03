@@ -37,8 +37,6 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 
-
-
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -95,37 +93,35 @@ data RrdpError = BrokenXml Text |
                 BadVersion Text | 
                 NoPublishURI |
                 BadBase64 Text Text |
-                BadPublish Text |
                 BadURL Text |
                 NoHashInWithdraw |
-                ContentInWithdraw Text |
+                ContentInWithdraw Text Text |
                 LocalSerialBiggerThanRemote Serial Serial |
                 NonConsecutiveDeltaSerials [(Serial, Serial)] |
                 CantDownloadFile Text |
                 CantDownloadNotification Text |
                 CantDownloadSnapshot Text |
                 CantDownloadDelta Text |
-                SnapshotHashMismatch Hash Hash |
+                SnapshotHashMismatch { actualHash :: Hash, expectedHash :: Hash } |
                 SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
                 SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
                 DeltaSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
                 DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
-                DeltaHashMismatch Hash Hash Serial |
+                DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: Serial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType | 
-                RrdpDownloadTimeout | 
+                UnsupportedObjectType Text | 
+                RrdpDownloadTimeout Int64 | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
-                    RsyncRunningError Text |
-                    RsyncDirError Text |               
-                    RsyncDownloadTimeout | 
+                    RsyncRunningError Text |         
+                    RsyncDownloadTimeout Int64 | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -177,7 +173,7 @@ newtype Validations = Validations (Map VPath (Set VProblem))
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
-newtype Path a = Path (NonEmpty Text) 
+newtype Path a = Path { unPath :: NonEmpty Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
@@ -281,16 +277,16 @@ instance Semigroup HttpStatus where
         | not (isHttpSuccess s1) = s1
         | isHttpSuccess s1 = s2    
 
-data RrdpSource = RrdpNothing | RrdpDelta | RrdpSnapshot
+data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
 
 instance Monoid RrdpSource where
-    mempty = RrdpNothing
+    mempty = RrdpNoUpdate
 
 instance Semigroup RrdpSource where
-    RrdpNothing <> r           = r
-    r           <> RrdpNothing = r
+    RrdpNoUpdate <> r           = r
+    r           <> RrdpNoUpdate = r
     _           <> r           = r
 
 

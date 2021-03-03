@@ -8,16 +8,15 @@ table {
 	margin:50px auto;
 }
 
-th { 
-	background: white;
+th { 	
+    background-color: #ebebeb;
 	color: rgb(52, 52, 52); 
 	font-weight: bold; 
 }
 
 td, th { 
 	padding: 8px; 
-	/* border: 1px solid #ccc;  */
-	border: 0px;
+	border: 1px solid rgb(153, 153, 153); 	
 	text-align: left; 
 	font-size: 15px;
 }
@@ -26,15 +25,6 @@ td, th {
 	background-color: #c1c1c1;
 	font-weight: bold;
 	color: rgb(52, 52, 52); 
-}
-
-.label tr td label {
-	display: block;
-}
-
-
-[data-toggle="toggle"] {
-	display: none;
 }
 
 .error-message {
@@ -58,4 +48,75 @@ td, th {
 
 .even-row {
     background-color: #ebebeb;
+}
+
+.pointer-right {
+    cursor: pointer;
+    float: left;
+    width: 20px;
+}
+
+.pointer-up {
+    cursor: pointer;
+    float: left;
+    width: 20px;
+}
+
+.full-path {
+    float: right;
+    width: calc(100% - 20px);
+}
+
+.pointer-right-header {    
+    float: right;
+    width: 20px;
+}
+
+.pointer-up-header {    
+    float: right;
+    width: 20px;
+}
+
+.ta-header {
+    float: left;
+    width: calc(100% - 20px);
+}
+
+.switch {
+    cursor: pointer;
+}
+
+.path-elem {
+    margin: 4px;    
+}
+
+.side-navigation {
+    height: 100%;
+    width: 150px;
+    position: fixed;
+    z-index: 1;
+    top: 0;
+    left: 0;
+    overflow-x: hidden;
+    padding-top: 20px;
+}
+
+.side-navigation a {
+    padding: 6px 6px 6px 32px;
+    text-decoration: none;
+    color: #6b6b6b;
+    display: block;
+}
+
+.side-navigation a:hover {
+    color: #222222;
+}
+
+.main {
+    margin-left: 150px;
+}
+
+.overall { 		
+	margin-left: 7%;
+    margin-top: 10px;
 }
