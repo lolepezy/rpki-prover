@@ -80,6 +80,6 @@ testConfig = Config {
     cacheCleanupInterval      = 60 * 120,
     cacheLifeTime             = 60 * 60 * 12,
     oldVersionsLifetime       = 60 * 60 * 2,
-    storageDefragmentInterval = 60 * 60 * 24,
+    storageCompactionInterval = 60 * 60 * 24,
     lmdbSize                  = Size 2_000_000_000
 }

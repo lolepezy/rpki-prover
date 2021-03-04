@@ -202,7 +202,7 @@ createAppContext CLIOptions{..} logger = do
             -- TODO Think about it, it should be lifetime or we should store N last versions
             oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
 
-            storageDefragmentInterval = Seconds $ 60 * 60 * 12,
+            storageCompactionInterval = Seconds $ 60 * 60 * 12,
 
             lmdbSize = lmdbRealSize
         },

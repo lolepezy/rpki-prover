@@ -35,7 +35,7 @@ data Config = Config {
     cacheCleanupInterval      :: Seconds,
     cacheLifeTime             :: Seconds,
     oldVersionsLifetime       :: Seconds,
-    storageDefragmentInterval :: Seconds,
+    storageCompactionInterval :: Seconds,
     lmdbSize                  :: Size
 } deriving stock (Show, Eq, Ord, Generic)
 

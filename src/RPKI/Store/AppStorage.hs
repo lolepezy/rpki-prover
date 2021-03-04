@@ -10,7 +10,7 @@ class MaintainableStorage s where
     closeStorage :: AppContext s -> IO ()
 
 instance MaintainableStorage LmdbStorage where
-    runMaintenance = defragmentStorageWithTmpDir
+    runMaintenance = compactStorageWithTmpDir
     closeStorage = closeLmdbStorage
 
 instance MaintainableStorage InMemoryStorage where

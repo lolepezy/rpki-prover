@@ -119,8 +119,8 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
 -- On the FS level, it will create another `lmdb.N` directory inside `cache` 
 -- and point the `cache/current` symlink to it.
 -- 
-defragmentStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
-defragmentStorageWithTmpDir AppContext {..} = do      
+compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
+compactStorageWithTmpDir AppContext {..} = do      
     lmdbEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     let cacheDir = config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
@@ -129,15 +129,12 @@ defragmentStorageWithTmpDir AppContext {..} = do
 
     currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 
-    newLmdbDir <- generateLmdbDir cacheDir
-    createDirectory newLmdbDir
-
-    logDebug_ logger [i|Created #{newLmdbDir} for storage copy.|]
+    newLmdbDirName <- generateLmdbDir cacheDir        
 
     let cleanUpAfterException = do 
             -- return Env back to what it was in case of failure
             atomically $ writeTVar (nativeEnv lmdbEnv) currentNativeEnv
-            removePathForcibly newLmdbDir    
+            removePathForcibly newLmdbDirName    
 
     let setEnvToReadOnly = atomically $ do 
             let n = nativeEnv lmdbEnv
@@ -153,22 +150,25 @@ defragmentStorageWithTmpDir AppContext {..} = do
                 ROEnv nn -> pure nn
 
             
-    let copyToNewEnvironmentAndSwap = do                        
+    let copyToNewEnvironmentAndSwap = do                          
             oldNativeEnv <- setEnvToReadOnly
 
-            -- create new native LMDB environment in the temporary directory
-            newLmdb   <- mkLmdb newLmdbDir (config ^. #lmdbSize) maxReadersDefault
+            -- create new native LMDB environment
+            createDirectory newLmdbDirName
+            logDebug_ logger [i|Created #{newLmdbDirName} for storage copy.|]
+
+            newLmdb      <- mkLmdb newLmdbDirName (config ^. #lmdbSize) maxReadersDefault
             newNativeEnv <- atomically $ getNativeEnv newLmdb
 
             stats <- copyEnv oldNativeEnv newNativeEnv
             forM_ stats $ \(name, bytes) -> 
                 logDebug_ logger [i|Copied #{bytes} bytes for the map '#{name}'.|]
-            logDebug_ logger [i|Copied all data to #{newLmdbDir}.|]
+            logDebug_ logger [i|Copied all data to #{newLmdbDirName}.|]
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
 
             -- create a new symlink first and only then atomically rename it into "current"
-            createSymbolicLink newLmdbDir $ cacheDir </> "current.new"
+            createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
             newDB <- createDatabase newLmdb
@@ -193,12 +193,13 @@ defragmentStorageWithTmpDir AppContext {..} = do
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
     if fileSizeMb > (3 * dataSizeMb)    
         then do 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will de-fragment.|]
-            copyToNewEnvironmentAndSwap `catch` (\(e :: SomeException) -> do
+            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
+            copyToNewEnvironmentAndSwap `catch` (
+                \(e :: SomeException) -> do
                     logError_ logger [i|ERROR: #{e}.|]        
                     cleanUpAfterException)            
         else 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, de-fragmentation is not needed yet.|]        
+            logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, compaction is not needed yet.|]        
         
         
 generateLmdbDir :: MonadIO m => FilePath -> m FilePath
