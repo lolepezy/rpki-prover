@@ -458,7 +458,8 @@ validateCARecursively
                     z <- mconcat <$> validateWaitingList waitingListForThesePPs                    
                     pure $! z & typed %~ (<> validations)
 
-            let noFurtherValidation = pure mempty
+            let noFurtherValidation validations = 
+                    pure $ mempty & typed %~ (<> validations)
 
             let Now now' = now
             case fetchResult of
@@ -469,7 +470,7 @@ validateCARecursively
                     case everSucceeded pps $ getRpkiURL r of
                         Never -> do 
                             logWarn_ logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
-                            noFurtherValidation
+                            noFurtherValidation validations
                         AtLeastOnce -> do                             
                             logWarn_ logger  
                                 [i|Repository #{getRpkiURL r} failed, but it succeeded before, so cached objects will be used |]
