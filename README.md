@@ -25,7 +25,7 @@ There are two options to use the program:
 
 ## Building from sources
 
-The software is a daemon written in Haskell and can be built using Haskell Stack.
+The software is a daemon written in Haskell and can be built using `stack`.
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
