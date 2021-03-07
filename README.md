@@ -2,30 +2,28 @@
 
 Implementation of the RPKI relying party software with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
 
-At the moment it is only the daemon written in Haskell and there's some work planned for the UI.
-
 Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked here https://github.com/lolepezy/rpki-prover/issues
 
-Currently implemented features are
+Implemented features are
 
 - Fetching from both rsync and RRDP repositories
 - X509 validation and validation of EE certificates 
 - Validation of resource sets, including support for RFC8360 "validation reconsidered"
 - Output of VRPs in CSV and JSON formats
 - Output of found problems
-- Cache cleanup, scheduled revalidation
+- Cache cleanup, scheduled revalidation, cache compaction, etc.
 - Support for RTR protocol, both version 0 and 1
 - Docker image
+- Basic UI for reporting metrics and found problems
 
 Current and future work
 - Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
 - Static binaries (at least for linux)
 - SLURM support
-- Fancy UI
 
 There are two options to install the program:
 
-### Building from sources
+## Building from sources
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
@@ -45,11 +43,11 @@ Normally it prints quite a lot of logs about what it's doing to the stdout. Afte
 
 Main page http://localhost:9999 currently contains a bunch of links to available API end-points.
 
-### Use Docker image
+## Use Docker image
 
 Dockerfile is available and the image exposes port 9999 for HTTP API.
 
-### Prometheus metrics 
+## Prometheus metrics 
 
 Prometheus metrics are accessible via the standard `/metrics` path.
 
