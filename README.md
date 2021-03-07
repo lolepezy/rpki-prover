@@ -1,6 +1,6 @@
 # rpki-prover
 
-Implementation of the RPKI relying party software with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
+Implementation of the RPKI relying party software (https://rpki.readthedocs.io/en/latest/tools.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
 
 Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked here https://github.com/lolepezy/rpki-prover/issues
 
@@ -21,9 +21,11 @@ Current and future work
 - Static binaries (at least for linux)
 - SLURM support
 
-There are two options to install the program:
+There are two options to use the program:
 
 ## Building from sources
+
+The software is a daemon written in Haskell and can be built using Haskell Stack.
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
