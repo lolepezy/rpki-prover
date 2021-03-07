@@ -139,6 +139,35 @@ createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
     VerifiedRS $ toPrefixesAndAsns $ withRFC certificate resources
 
+
+            
+validateMutlipleTAs :: Storage s => 
+                    AppContext s 
+                    -> WorldVersion 
+                    -> [TAL]
+                    -> IO [TopDownResult]
+validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
+    database' <- readTVarIO database 
+    storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')    
+
+    rs <- forConcurrently tals $ \tal -> do 
+        repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
+        (r@TopDownResult{..}, elapsed) <- timedMS $ 
+                validateTA appContext tal worldVersion repositoryContext 
+        logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+        pure (r, repositoryContext)
+
+    mapException (AppException . storageError) $ do
+        rwTx database' $ \tx -> do                             
+            pubPointAfterTopDown <- liftIO $ atomically $ do 
+                    mconcat . map (^. typed @PublicationPoints) <$> mapM (readTVar . snd) rs 
+                    -- pps <- readTVar repositoryContext                
+                    -- pure $ pps ^. typed @PublicationPoints
+            savePublicationPoints tx (repositoryStore database') pubPointAfterTopDown                        
+
+    pure $ map fst rs
+
+
 -- | It is the main entry point for the top-down validation. 
 -- Validates TA starting from its TAL.
 --
@@ -272,12 +301,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
             embedState validationState
                         
             database' <- liftIO $ readTVarIO database
-            rwAppTxEx database' storageError $ \tx -> do                 
-                -- get publication points from the topDownContext and save it to the database
-                pubPointAfterTopDown <- liftIO $ atomically $ do 
-                        pps <- readTVar repositoryContext                
-                        pure $ pps ^. typed @PublicationPoints
-                savePublicationPoints tx (repositoryStore database') pubPointAfterTopDown                        
+            
 
             pure vrps
 
@@ -475,8 +499,7 @@ validateCARecursively
                             logWarn_ logger  
                                 [i|Repository #{getRpkiURL r} failed, but it succeeded before, so cached objects will be used |]
                             proceedWithValidation validations
-                            
-                                 
+
 
         -- Resume tree validation starting from every certificate on the waiting list.
         -- 
@@ -871,19 +894,19 @@ addTotalValidationMetric totalValidationResult =
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 
     go $ NonEmpty.toList $ certLocations tal
-    where
-        go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
-        go (u : uris) = fetchTaCert `catchError` goToNext 
-            where 
-                goToNext e = do            
-                    let message = [i|Failed to fetch #{getURL u}: #{e}|]
-                    logErrorM logger message
-                    validatorWarning $ VWarning e
-                    go uris
+  where
+    go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
+    go (u : uris) = fetchTaCert `catchError` goToNext 
+      where 
+        goToNext e = do            
+            let message = [i|Failed to fetch #{getURL u}: #{e}|]
+            logErrorM logger message
+            validatorWarning $ VWarning e
+            go uris
 
-                fetchTaCert = do                     
-                    logInfoM logger [i|Fetching TA certiicate from #{getURL u}..|]
-                    ro <- case u of 
-                        RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
-                        RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
-                    pure (u, ro)
+        fetchTaCert = do                     
+            logInfoM logger [i|Fetching TA certicate from #{getURL u}..|]
+            ro <- case u of 
+                RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
+                RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
+            pure (u, ro)

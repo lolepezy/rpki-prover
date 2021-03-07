@@ -97,7 +97,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 newWorldVersion <- updateWorldVerion appState
                 logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]                
                 atomically $ do 
-                    writeCQueue globalQueue (validateTAs prometheusMetrics newWorldVersion)                    
+                    writeCQueue globalQueue (validateAllTAs prometheusMetrics newWorldVersion)                    
                     pure Repeat
 
             atomically $ closeCQueue globalQueue
@@ -121,42 +121,30 @@ runWorkflow appContext@AppContext {..} tals = do
             go = do 
                 z <- atomically (readCQueue globalQueue)
                 ifJust z $ \task -> task >> go
-
-        validateTAs prometheusMetrics worldVersion = do
+        
+        validateAllTAs prometheusMetrics worldVersion = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
             database' <- readTVarIO database 
             executeOrDie
                 (processTALs database' tals)
-                (\tdResult elapsed -> do 
-                    uniqueVrps <- saveTopDownResult database' tdResult                                
-                    logInfoM logger [i|Validated all TAs, got #{length uniqueVrps} VRPs, took #{elapsed}ms|])
+                (\vrps elapsed ->                    
+                    logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
             where 
-                processTALs database' tals = do                    
-                    storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
-                    repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
+                processTALs database' tals = do
+                    results <- validateMutlipleTAs appContext worldVersion tals    
+                    let totalResult@TopDownResult {..} = addTotalValidationMetric $ mconcat results
 
-                    rs <- forConcurrently tals $ \tal -> do 
-                        (r@TopDownResult{..}, elapsed) <- timedMS $ 
-                                validateTA appContext tal worldVersion repositoryContext 
-                        logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-                        pure r
-
-                    let metrics = addTotalValidationMetric $ mconcat rs
-                    let appMetrics = metrics ^. typed @ValidationState . typed @AppMetric
-                    updatePrometheus appMetrics prometheusMetrics
-                    pure $! metrics
-
-                saveTopDownResult database' TopDownResult {..} = 
-                    rwTx database' $ \tx -> do
-                        let uniqueVrps = vrps
+                    updatePrometheus (tdValidations ^. typed) prometheusMetrics                    
+                    
+                    rwTx database' $ \tx -> do                                           
                         putValidations tx (validationsStore database') worldVersion (tdValidations ^. typed)
                         putMetrics tx (metricStore database') worldVersion (tdValidations ^. typed)
-                        putVrps tx database' (Set.toList uniqueVrps) worldVersion
+                        putVrps tx database' (Set.toList vrps) worldVersion
                         completeWorldVersion tx database' worldVersion
                         atomically $ do 
                             completeCurrentVersion appState                                    
-                            writeTVar (appState ^. #currentVrps) uniqueVrps
-                        pure uniqueVrps
+                            writeTVar (appState ^. #currentVrps) vrps
+                        pure vrps
 
         cacheGC worldVersion = do
             let now = versionToMoment worldVersion
