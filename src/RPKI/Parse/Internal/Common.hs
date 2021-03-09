@@ -110,7 +110,7 @@ getBitString f m = getNext >>= \case
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
 getAddressFamily m = getNext >>= \case 
     (OctetString familyType) -> 
-        case familyType of 
+        case BS.take 2 familyType of 
             "\NUL\SOH" -> pure $ Right Ipv4F
             "\NUL\STX" -> pure $ Right Ipv6F
             af         -> pure $ Left af 
