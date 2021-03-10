@@ -10,7 +10,6 @@ module RPKI.Resources.Resources where
 import           Prelude                              hiding (subtract)
 
 import qualified Data.ByteString                      as BS
-import qualified Data.ByteString.Short                as BSS
 
 import           Data.Bits
 import qualified Data.List                            as List
@@ -33,7 +32,7 @@ instance WithSetOps Ipv4Prefix where
     intersection p1 p2 = ipRangesIntersection p1 p2 endsV4 (map Ipv4Prefix . V4.rangeToBlocks)
     normalise = normalisePrefixes
     subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
-        where
+      where
         (!f1, !l1, !f2, !l2) = endsV4 p1 p2          
 
 instance Prefix Ipv4Prefix where
@@ -54,7 +53,7 @@ instance WithSetOps Ipv6Prefix where
     intersection p1 p2 = ipRangesIntersection p1 p2 endsV6 (map Ipv6Prefix . V6.rangeToBlocks)  
     normalise = normalisePrefixes
     subtract p1 p2 = subtractRange f1 l1 f2 l2 p1 toPrefixes  
-        where
+      where
         (!f1, !l1, !f2, !l2) = endsV6 p1 p2
 
 instance Interval Ipv6Prefix where
@@ -109,26 +108,26 @@ ipRangesIntersection p1 p2 getEnds fromRange =
           _ | l1 < f2  -> []
             | f1 > l2  -> []
             | otherwise -> fromRange (Range (max f1 f2) (min l1 l2))
-    where
-        (!f1, !l1, !f2, !l2) = getEnds p1 p2
+  where
+    (!f1, !l1, !f2, !l2) = getEnds p1 p2
 {-# INLINE ipRangesIntersection #-}    
 
 endsV4 :: Ipv4Prefix -> Ipv4Prefix -> (V4.IpAddress, V4.IpAddress, V4.IpAddress, V4.IpAddress)
 endsV4 (Ipv4Prefix ip1) (Ipv4Prefix ip2) = (f1, l1, f2, l2)
-    where
-        f1 = V4.firstIpAddress ip1
-        l1 = V4.lastIpAddress ip1
-        f2 = V4.firstIpAddress ip2
-        l2 = V4.lastIpAddress ip2
+  where
+    f1 = V4.firstIpAddress ip1
+    l1 = V4.lastIpAddress ip1
+    f2 = V4.firstIpAddress ip2
+    l2 = V4.lastIpAddress ip2
 {-# INLINE endsV4 #-}    
 
 endsV6 :: Ipv6Prefix -> Ipv6Prefix -> (V6.IpAddress, V6.IpAddress, V6.IpAddress, V6.IpAddress)
 endsV6 (Ipv6Prefix ip1) (Ipv6Prefix ip2) = (f1, l1, f2, l2)
-    where
-        f1 = V6.firstIpAddress ip1
-        l1 = V6.lastIpAddress ip1
-        f2 = V6.firstIpAddress ip2
-        l2 = V6.lastIpAddress ip2
+  where
+    f1 = V6.firstIpAddress ip1
+    l1 = V6.lastIpAddress ip1
+    f2 = V6.firstIpAddress ip2
+    l2 = V6.lastIpAddress ip2
 {-# INLINE endsV6 #-}    
 
 between :: Ord a => a -> (a, a) -> Bool
@@ -154,44 +153,43 @@ normaliseAsns asns =
     mergeAsRanges 
         $ List.sortOn rangeStart 
         $ map simplify asns
-    where
-        mergeAsRanges []  = []
-        mergeAsRanges [r] = [r]        
-        mergeAsRanges (r0 : r1 : rs) =  
-            case tryMerge r0 r1 of
-                Nothing     -> r0 : mergeAsRanges (r1 : rs)
-                Just merged -> mergeAsRanges (merged : rs)      
-            where
-                tryMerge (AS a0) (AS a1) 
-                    | a0      == a1 = Just $ AS a0
-                    | succ a0 == a1 = Just $ ASRange a0 a1
-                    | otherwise = Nothing          
+  where
+    mergeAsRanges []  = []
+    mergeAsRanges [r] = [r]        
+    mergeAsRanges (r0 : r1 : rs) =  
+        case tryMerge r0 r1 of
+            Nothing     -> r0 : mergeAsRanges (r1 : rs)
+            Just merged -> mergeAsRanges (merged : rs)      
+      where
+        tryMerge (AS a0) (AS a1) 
+            | a0      == a1 = Just $ AS a0
+            | succ a0 == a1 = Just $ ASRange a0 a1
+            | otherwise     = Nothing          
 
-                tryMerge (AS a0) r@(ASRange a10 a11) 
-                    | a0 >= a10 && a0 <= a11 = Just r
-                    | succ a0 == a10         = Just $ ASRange a0 a11
-                    | otherwise              = Nothing 
+        tryMerge (AS a0) r@(ASRange a10 a11) 
+            | a0 >= a10 && a0 <= a11 = Just r
+            | succ a0 == a10         = Just $ ASRange a0 a11
+            | otherwise              = Nothing 
 
-                tryMerge r@(ASRange a00 a01) (AS a1) 
-                    | a1 >= a00 && a1 <= a01 = Just r        
-                    | succ a01 == a1 = Just $ ASRange a00 a1
-                    | otherwise = Nothing 
+        tryMerge r@(ASRange a00 a01) (AS a1) 
+            | a1 >= a00 && a1 <= a01 = Just r        
+            | succ a01 == a1         = Just $ ASRange a00 a1
+            | otherwise              = Nothing 
 
-                tryMerge (ASRange a00 a01) (ASRange a10 a11) 
-                    | succ a01 >= a10 = Just $ ASRange a00 (max a01 a11)
-                    | otherwise = Nothing 
-                {-# INLINE tryMerge #-}
+        tryMerge (ASRange a00 a01) (ASRange a10 a11) 
+            | succ a01 >= a10 = Just $ ASRange a00 (max a01 a11)
+            | otherwise       = Nothing         
 
-        rangeStart = \case
-            AS a        -> a 
-            ASRange a _ -> a
-        {-# INLINE rangeStart #-}
+    rangeStart = \case
+        AS a        -> a 
+        ASRange a _ -> a
+    {-# INLINE rangeStart #-}
 
-        simplify = \case
-            AS a -> AS a 
-            r@(ASRange a b) | a == b    -> AS a
-                            | otherwise -> r
-        {-# INLINE simplify #-}
+    simplify = \case
+        AS a -> AS a 
+        r@(ASRange a b) | a == b    -> AS a
+                        | otherwise -> r
+    {-# INLINE simplify #-}
         
     
 
@@ -266,10 +264,9 @@ subtractAsn (ASRange a0 a1) (ASRange b0 b1) =
         go
             | a1 < b0 || a0 > b1   = [ASRange a0 a1]
             | b0 <= a0 && b1 >= a1 = []
-            | b0 <= a0 && b1 < a1 = [ASRange (succ b1) a1]
-            | b0 > a0 && b1 < a1  = [ASRange a0 (pred b0), ASRange (succ b1) a1]
-            | b0 > a0 && b1 >= a1 = [ASRange a0 (pred b0)]
-
+            | b0 <= a0 && b1 < a1  = [ASRange (succ b1) a1]
+            | b0 > a0 && b1 < a1   = [ASRange a0 (pred b0), ASRange (succ b1) a1]
+            | b0 > a0 && b1 >= a1  = [ASRange a0 (pred b0)]
 {-# INLINE subtractAsn #-}    
 
 optimiseAsns :: [AsResource] -> [AsResource]
@@ -291,9 +288,8 @@ fourW8sToW32 = \case
     [w1, w2]              -> toW32 w1 24 .|. toW32 w2 16
     [w1, w2, w3]          -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8
     w1 : w2 : w3 : w4 : _ -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8 .|. fromIntegral w4
-    where
-        {-# INLINE toW32 #-}
-        toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
+  where        
+    toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
 {-# INLINE fourW8sToW32 #-}
 
 someW8ToW128 :: [Word8] -> (Word32, Word32, Word32, Word32)
@@ -303,11 +299,11 @@ someW8ToW128 w8s = (
         fourW8sToW32 (take 4 drop8),
         fourW8sToW32 (take 4 drop12)
     ) 
-    where 
-        unpacked = rightPad 16 0 w8s  
-        drop4 = drop 4 unpacked
-        drop8 = drop 4 drop4
-        drop12 = drop 4 drop8
+  where 
+    unpacked = rightPad 16 0 w8s  
+    drop4 = drop 4 unpacked
+    drop8 = drop 4 drop4
+    drop12 = drop 4 drop8
 
 rightPad :: Int -> a -> [a] -> [a]
 rightPad n a = go 0

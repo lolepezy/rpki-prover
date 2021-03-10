@@ -48,45 +48,45 @@ findFullIntersections a is@(IntervalSet v) =
                 [] -> goBinarySearch 0 lastIndex
                 _  -> goBackwards lastIndex
             _  -> goForward 0
-    where 
-        goBinarySearch b e
-            | e <= b = []
-            | otherwise =           
-                case middle `intersection` a of
-                    [] -> 
-                        case compare (start a) (start middle) of
-                            LT -> goBinarySearch b middleIndex 
-                            GT -> goBinarySearch (middleIndex + 1) e
-                            -- this will never happen
-                            EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-                    _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-            where                  
-                middle = V.unsafeIndex v middleIndex
-                middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
-                    where
-                        word n = fromIntegral n :: Word
-                        {-# INLINE word #-}
-    
-        goForward index 
-            | index >= len = []
-            | otherwise = 
-                case big `intersection` a of
-                    [] -> []
-                    is' -> (is', big) : goForward (index + 1)
+  where 
+    goBinarySearch b e
+        | e <= b = []
+        | otherwise =           
+            case middle `intersection` a of
+                [] -> 
+                    case compare (start a) (start middle) of
+                        LT -> goBinarySearch b middleIndex 
+                        GT -> goBinarySearch (middleIndex + 1) e
+                        -- this will never happen
+                        EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
+                _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
+      where                  
+        middle = V.unsafeIndex v middleIndex
+        middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
             where
-                big = V.unsafeIndex v index
-        
-        goBackwards index
-            | index <= 0 = []
-            | otherwise = 
-                case big `intersection` a of
-                    [] -> []
-                    is -> goBackwards (index - 1) <> [(is, big)]
-            where
-                big = V.unsafeIndex v index
+                word n = fromIntegral n :: Word
+                {-# INLINE word #-}
 
-        len = V.length v
-        lastIndex = len - 1        
+    goForward index 
+        | index >= len = []
+        | otherwise = 
+            case big `intersection` a of
+                [] -> []
+                is' -> (is', big) : goForward (index + 1)
+      where
+        big = V.unsafeIndex v index
+    
+    goBackwards index
+        | index <= 0 = []
+        | otherwise = 
+            case big `intersection` a of
+                [] -> []
+                is -> goBackwards (index - 1) <> [(is, big)]
+      where
+        big = V.unsafeIndex v index
+
+    len = V.length v
+    lastIndex = len - 1        
 
 
 type ResourceCheckResult a = Either 

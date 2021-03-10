@@ -96,8 +96,8 @@ updatePrometheus AppMetric {..} PrometheusMetrics {..} = do
         setValidObjects url "crl" $ metric ^. #validCrlNumber
         setValidObjects url "grb" $ metric ^. #validGbrNumber
         setValidObjects url "allobjects" totalCount        
-        where 
-            setValidObjects url tag count = withLabel validObjectNumber (url, tag) 
-                    $ flip setGauge 
-                    $ fromIntegral $ unCount count
+  where 
+    setValidObjects url tag count = withLabel validObjectNumber (url, tag) 
+            $ flip setGauge 
+            $ fromIntegral $ unCount count
     

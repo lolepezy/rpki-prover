@@ -33,22 +33,21 @@ import           RPKI.Parse.Internal.Common
 parseResourceCertificate :: BS.ByteString ->
                             ParseResult (RpkiURL -> CerObject)
 parseResourceCertificate bs = do
-    certificate <- mapParseErr $ decodeSignedObject bs  
-    let signedCertificate = unifyCert certificate
-    (rc, ski_, aki_) <- toResourceCert signedCertificate    
+    cert <- mapParseErr $ decodeSignedObject bs      
+    (rc, ski_, aki_) <- toResourceCert $ unifyCert cert
     pure $ \location -> newCert location aki_ ski_ (U.sha256s bs) rc
 
 
 toResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, SKI, Maybe AKI)
-toResourceCert certificate = do  
-  let exts = getExtsSign certificate
+toResourceCert cert = do  
+  let exts = getExtsSign cert
   case extVal exts id_subjectKeyId of
     Just s  -> do
-      rc <- parseResources certificate    
+      rc <- parseResources cert    
       ki <- parseKI s
       aki' <- case extVal exts id_authorityKeyId of
-            Nothing -> pure Nothing
-            Just a  -> Just . AKI <$> parseKI a
+                Nothing -> pure Nothing
+                Just a  -> Just . AKI <$> parseKI a
       pure (rc, SKI ki, aki')
     Nothing -> Left $ fmtErr "No SKI extension"
 
@@ -110,51 +109,54 @@ parseIpExt asns = mapParseErr $
     pure $ IpResources $ IpResourceSet
       (rs [ af | Left  af <- afs ]) 
       (rs [ af | Right af <- afs ])
-    where
-      rs []       = R.emptyRS
-      rs (af : _) = af
-      addrFamily = onNextContainer Sequence $
+  where
+    rs []       = R.emptyRS
+    rs (af : _) = af
+    addrFamily = onNextContainer Sequence $
         getAddressFamily "Expected an address family here" >>= \case
-          Right Ipv4F -> Left  <$> ipResourceSet ipv4Address
-          Right Ipv6F -> Right <$> ipResourceSet ipv6Address
-          Left af        -> throwParseError $ "Unsupported address family " <> show af
-        where
-          ipResourceSet address =
+            Right Ipv4F -> Left  <$> ipResourceSet ipv4Address
+            Right Ipv6F -> Right <$> ipResourceSet ipv6Address
+            Left af     -> throwParseError $ "Unsupported address family " <> show af
+      where
+        ipResourceSet address =
             getNull_ (pure Inherit) <|>
             onNextContainer Sequence (R.toRS . mconcat <$> getMany address)
 
-      ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
-      ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
+    ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
+    ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 
-      makeOneIP bs nz = [make bs (fromIntegral nz)]
+    makeOneIP bs nz = [make bs (fromIntegral nz)]
 
-      ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
+    ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
         getNextContainerMaybe Sequence >>= \case
-          Nothing -> getNext >>= \case
-            (BitString (BitArray nzBits bs)) ->
-              pure $ makePrefix bs nzBits
-            s -> throwParseError ("Unexpected prefix representation: " <> show s)
-          Just [
-              BitString (BitArray _       bs1),
-              BitString (BitArray nzBits2 bs2)
-            ] ->
-              let w1 = wToAddr $ BS.unpack bs1
-                  w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
-                        (fromIntegral nzBits2) fullLength
-                in pure $ rangeToPrefixes w1 w2
+            Nothing -> getNext >>= \case
+                (BitString (BitArray nzBits bs)) ->
+                    pure $ makePrefix bs nzBits
+                s -> throwParseError ("Unexpected prefix representation: " <> show s)
+            Just [
+                BitString (BitArray _       bs1),
+                BitString (BitArray nzBits2 bs2)
+                ] ->
+                    let w1 = wToAddr $ BS.unpack bs1
+                        w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
+                            (fromIntegral nzBits2) fullLength
+                    in pure $ rangeToPrefixes w1 w2
 
-          s -> throwParseError ("Unexpected address representation: " <> show s)
+            s -> throwParseError ("Unexpected address representation: " <> show s)
 
-
-      setLowerBitsToOne ws setBitsNum allBitsNum =
+    --
+    -- Set all the bits to `1` starting from `setBitsNum`
+    -- `allBitsNum` is the total number of bits.
+    --
+    setLowerBitsToOne ws setBitsNum allBitsNum =
         R.rightPad (allBitsNum `div` 8) 0xFF $
-          List.zipWith (curry setBits) ws (map (*8) [0..])
+            List.zipWith setBits ws (map (*8) [0..])
         where
-          setBits (w8, i) | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
-                          | i < setBitsNum = w8
-                          | otherwise = 0xFF
-          extra lastBitsNum =
-            List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
+            setBits w8 i | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
+                         | i < setBitsNum = w8
+                         | otherwise = 0xFF
+            extra lastBitsNum =
+                List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum-1]
 
 
 {-
@@ -199,6 +201,7 @@ parseAsnExt asnBlocks = mapParseErr $ flip runParseASN1 asnBlocks $
 
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
+--
 subjectPublicKeyInfo :: Certificate -> EncodedBase64
 subjectPublicKeyInfo cert = EncodedBase64 $ B64.encodeBase64' $ 
   encodeASN1' DER $ (toASN1 $ certPubKey cert) []

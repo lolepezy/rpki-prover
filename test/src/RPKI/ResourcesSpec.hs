@@ -65,8 +65,10 @@ prefixPropertyGroup = testGroup "Prefix properties tests"
                     check as = normalise (IS.findIntersections as intervalSet) == [as]
                     in List.all check sub
 
-        -- [Ipv4Prefix 221.128.0.0/10,Ipv4Prefix 41.112.29.0/26,Ipv4Prefix 221.176.0.0/12]
-        -- [Ipv4Prefix 221.176.0.0/12]
+        {- 
+        [ASRange (ASN 0) (ASN 1),AS (ASN 0),AS (ASN 0)]
+        [AS (ASN 0)]        
+        -}
 
         intersectionAndOverclaimedAreComplimentary xs = 
             QC.forAll (sublistOf xs) $ \subXs ->
