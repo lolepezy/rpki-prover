@@ -468,16 +468,7 @@ validateCARecursively
                         let pps' = updateStatuses (r ^. #publicationPoints) [statusUpdate]     
                         writeTVar repositoryContext $ r { publicationPoints = pps' }
                         pure pps'
-
-            proceedUsingGracePeriod pps waitingListForThesePPs fetchResult                        
-
-
-        -- Decide what to do with the result of PP fetching
-        -- * if it succeeded validate the tree
-        -- * if it failed
-        --   - if we are still within the grace period, then validate the tree
-        --   - if grace period is expired, stop here
-        proceedUsingGracePeriod pps waitingListForThesePPs fetchResult = do            
+    
             let proceedWithValidation validations = do 
                     z <- mconcat <$> validateWaitingList waitingListForThesePPs                    
                     pure $! z & typed %~ (<> validations)
@@ -485,7 +476,6 @@ validateCARecursively
             let noFurtherValidation validations = 
                     pure $ mempty & typed %~ (<> validations)
 
-            let Now now' = now
             case fetchResult of
                 FetchSuccess _ _ validations ->                    
                     proceedWithValidation validations
