@@ -107,20 +107,22 @@ validationMetricsHtml validationMetricMap =
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((path, vm), index) -> do 
                 let ta = NonEmpty.head $ unPath path
-                metricRow index ta vm      
+                metricRow index ta True vm      
             ifJust (allTaMetricPath `Map.lookup` rawMap) 
-                $ metricRow (Map.size rawMap) ("Total" :: Text)
+                $ metricRow (Map.size rawMap) ("Total" :: Text) False
 
   where
-    metricRow index ta vm = do 
+    metricRow index ta showValidationTime vm = do 
         let totalCount = vm ^. #validCertNumber + 
                          vm ^. #validRoaNumber +
                          vm ^. #validMftNumber +
                          vm ^. #validCrlNumber +
                          vm ^. #validGbrNumber
         htmlRow index $ do 
-            td $ toHtml ta                        
-            td $ toHtml $ vm ^. #totalTimeMs
+            td $ toHtml ta                                    
+            td $ if showValidationTime 
+                    then toHtml $ vm ^. #totalTimeMs
+                    else toHtml $ text "-"
             td $ toHtml $ show $ vm ^. #vrpNumber
             td $ toHtml $ show totalCount
             td $ toHtml $ show $ vm ^. #validRoaNumber
