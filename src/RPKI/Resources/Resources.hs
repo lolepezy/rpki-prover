@@ -255,8 +255,9 @@ subtractAsn (AS a) (ASRange b0 b1)
     | otherwise          = [AS a]          
 
 subtractAsn (ASRange a0 a1) (AS b)
-    | a0 <= b && b <= a1 = optimiseAsns [ASRange a0 (pred b), ASRange (succ b) a1]
-    | otherwise          = []
+    | a0 == b           = optimiseAsns [ASRange (succ a0) a1]
+    | a0 < b && b <= a1 = optimiseAsns [ASRange a0 (pred b), ASRange (succ b) a1]
+    | otherwise         = []
 
 subtractAsn (ASRange a0 a1) (ASRange b0 b1) = 
     optimiseAsns go 
