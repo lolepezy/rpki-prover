@@ -256,18 +256,19 @@ subtractAsn (AS a) (ASRange b0 b1)
 
 subtractAsn (ASRange a0 a1) (AS b)
     | a0 == b           = optimiseAsns [ASRange (succ a0) a1]
+    | a1 == b           = optimiseAsns [ASRange a0 (pred b) ]
     | a0 < b && b <= a1 = optimiseAsns [ASRange a0 (pred b), ASRange (succ b) a1]
     | otherwise         = []
 
 subtractAsn (ASRange a0 a1) (ASRange b0 b1) = 
     optimiseAsns go 
-    where 
-        go
-            | a1 < b0 || a0 > b1   = [ASRange a0 a1]
-            | b0 <= a0 && b1 >= a1 = []
-            | b0 <= a0 && b1 < a1  = [ASRange (succ b1) a1]
-            | b0 > a0 && b1 < a1   = [ASRange a0 (pred b0), ASRange (succ b1) a1]
-            | b0 > a0 && b1 >= a1  = [ASRange a0 (pred b0)]
+  where 
+    go
+        | a1 < b0 || a0 > b1   = [ASRange a0 a1]
+        | b0 <= a0 && b1 >= a1 = []
+        | b0 <= a0 && b1 < a1  = [ASRange (succ b1) a1]
+        | b0 > a0 && b1 < a1   = [ASRange a0 (pred b0), ASRange (succ b1) a1]
+        | b0 > a0 && b1 >= a1  = [ASRange a0 (pred b0)]
 {-# INLINE subtractAsn #-}    
 
 optimiseAsns :: [AsResource] -> [AsResource]
