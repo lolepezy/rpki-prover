@@ -25,7 +25,7 @@ At the moment there are two options to use the program: building from sources an
 
 ## Building from sources
 
-The software is a daemon written in Haskell and can be built using `stack` (https://docs.haskellstack.org/en/stable/README/).
+The software is a daemon written in Haskell and can be built using [`stack`](https://docs.haskellstack.org/en/stable/README/).
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
@@ -33,7 +33,7 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
       - On linux using apt-get, that will be : `sudo apt-get install libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
       - On MacOS using brew, that will be: `brew install lmdb xz expat` 
       - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers
-   - Install `stack` as described here `https://docs.haskellstack.org/en/stable/install_and_upgrade/`
+   - Install `stack` as described [here](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
    - Clone https://github.com/lolepezy/rpki-prover/
    - Run `stack install rpki-prover:rpki-prover` inside of the rpki-prover. It should take quite some time (30-50 minutes as it has to build all the required libraries)
    - Run `mkdirs.sh` script. It will create some directory structure inside of ~/.rpki and download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
