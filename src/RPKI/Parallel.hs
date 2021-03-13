@@ -94,88 +94,27 @@ txFoldPipeline poolSize stream withTx consume accum0 =
                 Just a' -> consume tx a' accum >>= go tx
 
 
--- | The same as `txFoldPipeline` but transaction is divided into chunks.
---
-txFoldPipelineChunked :: (MonadBaseControl IO m, MonadIO m) =>
-            Natural ->                                     -- ^ Amount of queue element to be processed within one transaction
-            Stream (Of q) (ValidatorTCurried m) () ->
-            ((tx -> ValidatorT m r) -> ValidatorT m r) ->  -- ^ transaction in which all consumerers are wrapped
-            Natural -> 
-            (tx -> q -> r -> ValidatorT m r) ->    -- ^ consumer, called for every item of the traversed argument
-            r ->                                   -- ^ fold initial value
-            ValidatorT m r
-txFoldPipelineChunked poolSize stream withTx chunkSize consume accum0 =
-    snd <$> bracketChanClosable
-                (atLeastOne poolSize)
-                writeAll 
-                readAll 
-                (\_ -> pure ())
-  where
-    writeAll queue = S.mapM_ toQueue stream
-      where 
-        toQueue = liftIO . atomically . writeCQueue queue
-
-    readAll queue = 
-        go Nothing chunkSize accum0
-      where
-        go maybeTx leftToRead accum = do 
-            n <- liftIO $ atomically $ readCQueue queue                            
-            case n of
-                Nothing      -> pure accum
-                Just nextOne ->
-                    case maybeTx of
-                        Nothing -> do 
-                            accum' <- withTx $ \tx -> work tx nextOne
-                            go Nothing chunkSize accum' 
-                        Just tx -> work tx nextOne
-          where                    
-            work tx element = do 
-                accum' <- consume tx element accum
-                case leftToRead of
-                    0 -> pure accum'
-                    _ -> go (Just tx) (leftToRead - 1) accum'
-
-
-bracketChanClosableVT :: (MonadBaseControl IO m, MonadIO m) =>
-                Natural ->
-                (ClosableQueue t -> ValidatorT m b) ->
-                (ClosableQueue t -> ValidatorT m c) ->
-                (t -> ValidatorT m w) ->
-                ValidatorT m (b, c)
-bracketChanClosableVT size produce consume kill = 
-    bracketChanClosableImpl size produce consume kill concurrentTasks
-    
+-- 
+-- | Created two threads and queue between then. Calls
+-- 'produce' in one thread and 'consume' in the other thread,
+-- 'kill' is used to kill an item in the queue in case
+-- the whole thing is interrupted with an exception.
+--    
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
                 Natural ->
                 (ClosableQueue t -> m b) ->
                 (ClosableQueue t -> m c) ->
                 (t -> m w) ->
                 m (b, c)
-bracketChanClosable size produce consume kill = 
-    bracketChanClosableImpl size produce consume kill concurrently
-
-
--- 
--- | Created two threads and queue between then. Calls
--- 'produce' in one thread and 'consume' in the other thread,
--- 'kill' is used to kill an item in the queue in case
--- the whole thing is interrupted with an exception.
---
-bracketChanClosableImpl :: (MonadBaseControl IO m, MonadIO m) =>
-                Natural 
-                -> (ClosableQueue t -> m b) 
-                -> (ClosableQueue t -> m c) 
-                -> (t -> m w) 
-                -> (m b -> m c -> m (b, c)) 
-                -> m (b, c)
-bracketChanClosableImpl size produce consume kill concurrentRun = do        
+bracketChanClosable size produce consume kill = do     
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
-    concurrentRun
+    concurrently
             (produce queue `finally` closeQ) 
             (consume queue `finally` closeQ)
         `finally`
-            killAll queue kill
+            killAll queue kill    
+
 
 data QState = QWorks | QClosed
     deriving (Show, Eq)

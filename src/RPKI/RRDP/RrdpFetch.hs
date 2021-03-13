@@ -354,7 +354,7 @@ saveDelta :: Storage s =>
             -> LBS.ByteString 
             -> ValidatorT IO ()
 saveDelta appContext repoUri notification currentSerial deltaContent = do        
-    worldVersion  <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
+    worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
     doSaveObjects worldVersion
   where
     doSaveObjects worldVersion = do
