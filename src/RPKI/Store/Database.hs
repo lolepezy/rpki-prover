@@ -427,12 +427,23 @@ data DBStats = DBStats {
     versionStats    :: SStats,
     sequenceStats   :: SStats
 } deriving stock (Show, Eq, Generic)
+data TotalDBStats = TotalDBStats {
+    dbStats         :: DBStats,
+    total :: SStats    
+} deriving stock (Show, Eq, Generic)
 
+
+getTotalDbStats :: (MonadIO m, Storage s) => 
+                    DB s -> m TotalDBStats
+getTotalDbStats db = do 
+    dbStats <- getDbStats db
+    let total = totalStats dbStats
+    pure TotalDBStats {..}
 
 -- Compute database stats
-dbStats :: (MonadIO m, Storage s) => 
-        DB s -> m DBStats
-dbStats db@DB {..} = liftIO $ roTx db $ \tx ->    
+getDbStats :: (MonadIO m, Storage s) => 
+              DB s -> m DBStats
+getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->    
     DBStats <$>
         (let TAStore sm = taStore in M.stats tx sm) <*>
         repositoryStats tx <*>
@@ -465,18 +476,22 @@ dbStats db@DB {..} = liftIO $ roTx db $ \tx ->
 -- | Return total amount of bytes taken by the data in the DB
 -- 
 totalSpace :: DBStats -> Size
-totalSpace DBStats {..} = 
-    let fullStat = taStats 
-                <> (let RepositoryStats{..} = repositoryStats 
-                    in rrdpStats <> rsyncStats <> lastSStats) 
-                <> (let RpkiObjectStats {..} = rpkiObjectStats
-                    in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats)
-                <> resultsStats vResultStats 
-                <> vrpStats 
-                <> versionStats 
-                <> sequenceStats
-        in statKeyBytes fullStat + statValueBytes fullStat
+totalSpace dbStats1 = 
+    let SStats {..} = totalStats dbStats1
+    in statKeyBytes + statValueBytes
 
+
+totalStats :: DBStats -> SStats
+totalStats DBStats {..} = 
+       taStats 
+    <> (let RepositoryStats{..} = repositoryStats 
+        in rrdpStats <> rsyncStats <> lastSStats) 
+    <> (let RpkiObjectStats {..} = rpkiObjectStats
+        in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats)
+    <> resultsStats vResultStats 
+    <> vrpStats 
+    <> versionStats 
+    <> sequenceStats
 
 
 -- All of the stores of the application in one place

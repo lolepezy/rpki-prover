@@ -114,8 +114,8 @@ toVR :: (Path a, Set.Set VProblem) -> ValidationResult
 toVR (Path path, problems) = 
     ValidationResult (Set.toList problems) (NonEmpty.toList path)    
 
-getStats :: (MonadIO m, Storage s) => AppContext s -> m DBStats
-getStats AppContext {..} = liftIO $ dbStats =<< readTVarIO database             
+getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
+getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             
 
 getRpkiObject :: (MonadIO m, Storage s, MonadError ServerError m) 
                 => AppContext s 

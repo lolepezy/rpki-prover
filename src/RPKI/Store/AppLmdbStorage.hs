@@ -187,7 +187,7 @@ compactStorageWithTmpDir AppContext {..} = do
             sizes <- forM lmdbFiles $ \f -> getFileSize $ currentCache </> f
             pure $! sum sizes
     
-    Size dataSize <- fmap DB.totalSpace $ DB.dbStats =<< readTVarIO database
+    Size dataSize <- fmap DB.totalSpace $ DB.getDbStats =<< readTVarIO database
 
     let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)

@@ -37,7 +37,7 @@ type API = "api" :> (
             :<|> "vrps.json" :> Get '[JSON] [VrpDto]
             :<|> "validation-results" :> Get '[JSON] [ValidationResult]
             :<|> "app-metrics"    :> Get '[JSON] AppMetric
-            :<|> "lmdb-stats" :> Get '[JSON] DBStats
+            :<|> "lmdb-stats" :> Get '[JSON] TotalDBStats
             :<|> "object"     :> QueryParam "uri" Text 
                               :> QueryParam "hash" Text 
                               :> Get '[JSON] (Maybe RObject)                        

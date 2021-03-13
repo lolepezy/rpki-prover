@@ -188,6 +188,7 @@ instance ToJSON RpkiObjectStats
 instance ToJSON VResultStats
 instance ToJSON RepositoryStats
 instance ToJSON DBStats
+instance ToJSON TotalDBStats
 instance ToJSON AppMetric
 instance ToJSON a => ToJSON (MetricMap a)
 instance (ToJSONKey k, ToJSON v) => ToJSON (MonoidMap k v)
