@@ -65,11 +65,6 @@ prefixPropertyGroup = testGroup "Prefix properties tests"
                     check as = normalise (IS.findIntersections as intervalSet) == [as]
                     in List.all check sub
 
-        {- 
-        [ASRange (ASN 0) (ASN 1),AS (ASN 0),AS (ASN 0)]
-        [AS (ASN 0)]        
-        -}
-
         intersectionAndOverclaimedAreComplimentary xs = 
             QC.forAll (sublistOf xs) $ \subXs ->
                 let biggerSet  = IS.fromList xs
