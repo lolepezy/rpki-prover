@@ -53,7 +53,19 @@ Dockerfile is available and the image exposes port 9999 for HTTP API.
 
 Prometheus metrics are accessible via the standard `/metrics` path.
 
+## Resources consumption
 
+Cold start, i.e. the first start without cache takes about 2 minutes and consumer around 3 minutes of CPU time. This time can be reduced by setting higher `--cpu-count` value in case multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and cannot be reduced drastically.
 
+With default settings RPKI Prover consumes less than 1 hour of CPU time every 12 hours on a typical modern CPU.
+
+The amount of memory needed for a smooth run for the current state of the repositories (5 trust anchors, ~220K of VRPs in total) is somewhere around 1.5GB. What can be confusing about memory usage is the figures given by top/htop.
+
+An example of a server, running for a few weeks:
+```
+VIRT  RES    SHR
+1.0T  4122M  2942M
+```
+Here `SHR` is largely domminated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `4122-2942=1180M`.
 
  
