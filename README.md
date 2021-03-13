@@ -21,11 +21,11 @@ Current and future work
 - Static binaries (at least for linux)
 - SLURM support
 
-There are two options to use the program:
+At the moment there are two options to use the program: building from sources and building a docker image. It is planed to have staticly-linked binaries for Linux in the future.
 
 ## Building from sources
 
-The software is a daemon written in Haskell and can be built using `stack`.
+The software is a daemon written in Haskell and can be built using `stack` (https://docs.haskellstack.org/en/stable/README/).
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
     
