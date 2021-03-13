@@ -13,7 +13,6 @@ import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.Trans
-import           Control.Monad.IO.Class
 import           Control.Monad.Reader     (ask)
 import qualified Control.Monad.State as St
 import           Control.Monad.Trans.Control
@@ -63,10 +62,6 @@ data ROMeta = ROMeta {
         validatedBy :: Maybe WorldVersion
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (Serialise)
-
-newtype MftMonotonousNumber = MftMonotonousNumber Int64 
-    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
 
 data MftTimingMark = MftTimingMark Instant Instant 
@@ -476,8 +471,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
 -- | Return total amount of bytes taken by the data in the DB
 -- 
 totalSpace :: DBStats -> Size
-totalSpace dbStats1 = 
-    let SStats {..} = totalStats dbStats1
+totalSpace stats = 
+    let SStats {..} = totalStats stats
     in statKeyBytes + statValueBytes
 
 
