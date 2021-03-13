@@ -68,4 +68,10 @@ VIRT  RES    SHR
 ```
 Here `SHR` is largely domminated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `4122-2942=1180M`.
 
- 
+ ## Why Haskell?
+
+- Relatively small code-base. Currently the size of it is around 10KLOC, including a lot of functionality implemented from scratch, such as CMS-parsing.
+- Fast prototyping and smooth refactoring.
+- Ease of introducing changes and very short time-to-market.
+- Reasonable performance while the language is very high-level (GC, immutable data, powerful type system).
+- Original motivation was "because it's cool", everything else came later.
