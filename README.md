@@ -53,7 +53,7 @@ Dockerfile is available and the image exposes port 9999 for HTTP API.
 
 Prometheus metrics are accessible via the standard `/metrics` path.
 
-## Resources consumption
+## Resource consumption
 
 Cold start, i.e. the first start without cache takes about 2 minutes and consumer around 3 minutes of CPU time. This time can be reduced by setting higher `--cpu-count` value in case multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and cannot be reduced drastically.
 
