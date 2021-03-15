@@ -59,7 +59,7 @@ Cold start, i.e. the first start without cache takes about 2 minutes and consume
 
 With default settings RPKI Prover consumes less than 1 hour of CPU time every 12 hours on a typical modern CPU.
 
-The amount of memory needed for a smooth run for the current state of the repositories (5 trust anchors, ~220K of VRPs in total) is somewhere around 1.5GB. What can be confusing about memory usage is the figures given by `top/htop`.
+The amount of memory needed for a smooth run for the current state of the repositories (5 trust anchors, ~220K of VRPs in total) is somewhere around 1.5GB. Adding [AS0 trust anchor](https://www.apnic.net/community/security/resource-certification/tal-archive/), can make increase it to 2GB or so.  What can be confusing about memory usage is the figures given by `top/htop`.
 
 An example of a server, running for a few weeks:
 ```
