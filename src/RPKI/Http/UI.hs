@@ -21,6 +21,7 @@ import qualified Data.Map.Strict             as Map
 
 import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
+import qualified Data.List                   as List
 
 import           Servant.API
 import           Servant.HTML.Blaze
@@ -190,13 +191,18 @@ validaionDetailsHtml result =
             H.tbody ! A.class_ "labels" $ do 
                 tr $ td ! colspan "2" $                                         
                     H.div ! class_ "flex switch" $ do                        
-                        H.div ! class_ "ta-header" $ toHtml ta >> space
+                        H.div ! class_ "ta-header" $ do 
+                            toHtml ta
+                            space >> space >> space
+                            let (e, w) = countProblems vrs
+                            toHtml e >> " errors, "
+                            toHtml w >> " warnings"
                         H.div ! class_ "pointer-up-header" $ arrowUp >> space
                         H.div ! class_ "pointer-right-header" ! A.style "display: none;" $ arrowRight >> space                        
             tbody ! class_ "hide" $ do 
                 forM_ (zip vrs [1 :: Int ..]) vrHtml
 
-  where
+  where      
     vrHtml (ValidationResult{..}, index) = do 
         let objectUrl = Prelude.head context         
         forM_ problems $ \pr -> do                    
@@ -218,6 +224,13 @@ validaionDetailsHtml result =
                         H.div ! class_ "full-path" $ do
                             forM_ context $ \pathUrl -> do            
                                 H.div ! A.class_ "path-elem" $ objectLink pathUrl
+
+    countProblems = 
+        List.foldl' countP (0 :: Int, 0 :: Int)
+        where
+            countP z ValidationResult {..} = List.foldl' countEW z problems
+            countEW (e, w) (VErr _)  = (e + 1, w)
+            countEW (e, w) (VWarn _) = (e, w + 1)
                 
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
