@@ -87,7 +87,7 @@ testSnapshotLoad = do
             let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (Serial 673)
             void $ forever $ do 
                 (_, t) <- timedMS $ runValidatorT (newValidatorPath "snapshot") $ 
-                            saveSnapshotSeq appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
+                            saveSnapshot appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
                 logDebug_ logger [i|Saved snapshot in #{t}ms |]  
 
 testDeltaLoad :: IO ()

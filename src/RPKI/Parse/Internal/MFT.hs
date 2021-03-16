@@ -11,6 +11,7 @@ import           Data.Bifunctor (first)
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
+import           Data.Tuple.Strict
 
 import           RPKI.Domain
 import           RPKI.CommonTypes

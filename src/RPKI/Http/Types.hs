@@ -24,6 +24,7 @@ import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
 import           Data.Csv                    (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord, (.=))
 import qualified Data.Csv                    as Csv
+import           Data.Tuple.Strict
 import           GHC.Generics                (Generic)
 
 import qualified Crypto.PubKey.Curve25519    as C25519

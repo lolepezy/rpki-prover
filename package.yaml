@@ -84,6 +84,7 @@ dependencies:
 - split
 - stm
 - streaming
+- strict-tuple
 - string-conversions
 - text
 - typed-process

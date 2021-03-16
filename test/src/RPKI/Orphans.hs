@@ -27,6 +27,7 @@ import           Data.ASN1.Types
 import           Data.Bits
 import           Data.Word
 import           Data.X509                            as X509
+import           Data.Tuple.Strict
 
 import           HaskellWorks.Data.Network.Ip.Ipv4    as V4
 import           HaskellWorks.Data.Network.Ip.Ipv6    as V6

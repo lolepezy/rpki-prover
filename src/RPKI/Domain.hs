@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE AllowAmbiguousTypes        #-}
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
@@ -23,6 +23,7 @@ import           Data.Int                 (Int16)
 import           Data.Hourglass
 import           Data.Kind                (Type)
 import           Data.List.NonEmpty
+import           Data.Tuple.Strict
 
 import           GHC.Generics
 

@@ -1,5 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveAnyClass    #-}
+
 module RPKI.Orphans.Serialise where
 
 import qualified Data.ByteString as BS
@@ -16,6 +18,9 @@ import Data.X509 as X509
 
 import Data.Hourglass
 import Data.ASN1.BitArray
+
+import Data.Tuple.Strict
+
 import Crypto.Error
 import Crypto.PubKey.RSA.Types (PublicKey(..))
 import Crypto.PubKey.DSA (PublicKey(..), Params(..))
@@ -89,3 +94,7 @@ decodePK :: (BS.ByteString -> CryptoFailable b) -> Decoder s b
 decodePK f = f <$> decodeBytes >>= \case 
     CryptoPassed p -> pure p
     CryptoFailed e -> fail $ show e
+
+
+deriving instance (Serialise a, Serialise b) => Serialise (T2 a b)
+deriving instance (Serialise a, Serialise b, Serialise c) => Serialise (T3 a b c)

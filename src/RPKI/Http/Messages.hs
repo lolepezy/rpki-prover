@@ -38,6 +38,7 @@ import           Crypto.PubKey.RSA.Types     (PublicKey (..))
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
 import           Data.X509                   as X509
+import           Data.Tuple.Strict
 
 import           RPKI.Domain                 as Domain
 import           RPKI.Config

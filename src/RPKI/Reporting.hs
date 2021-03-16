@@ -19,6 +19,7 @@ import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Monoid
 import           Data.Text                   (Text)
+import           Data.Tuple.Strict
 
 import           Codec.Serialise
 import qualified Data.List                   as List

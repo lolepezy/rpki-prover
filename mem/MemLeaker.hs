@@ -55,7 +55,7 @@ main = do
     logger <- createLogger
     z <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
     case z of 
-        (Left e, x) -> do 
+        (Left e, _) -> do 
             putStrLn $ "Error: " <> show e        
             
         (Right appContext, _) -> do             
@@ -90,10 +90,7 @@ main = do
                 let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
                 validateTA appContext' tal worldVersion repositoryContext 
                 ((deleted, kept), elapsed) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
-                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]                
-            pure ()
-
-
+                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
 
 
 -- Auxilliary functions

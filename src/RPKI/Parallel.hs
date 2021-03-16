@@ -322,44 +322,44 @@ inParallelVT bottleneck as f = do
                 (readAll queue `finally` closeQ queue)
             `finally`
                 killAll queue cancel        
-    where                
-        closeQ q = liftIO $ atomically $ closeCQueue q
-        writeAll env queue = appLift $ go as  
-            where 
-                go [] = pure ()
-                go (s : ss) = do 
-                    slot <- liftIO $ newTVarIO Free
-            
-                    -- It is important to create the async first and then try to acquire 
-                    -- the slot in the bottleneck, otherwise there's potential for 
-                    -- deadlock in the system.            
-                    a <- async $ do                     
-                        z <- runValidatorT env (f s)
-                                `finally` 
-                             liftIO (atomically $ parallelReleaseSlot bottleneck slot)
-                        pure $! z
+  where                
+    closeQ q = liftIO $ atomically $ closeCQueue q
+    writeAll env queue = appLift $ go as  
+      where 
+        go [] = pure ()
+        go (s : ss) = do 
+            slot <- liftIO $ newTVarIO Free
+    
+            -- It is important to create the async first and then try to acquire 
+            -- the slot in the bottleneck, otherwise there's potential for 
+            -- deadlock in the system.            
+            a <- async $ do                     
+                z <- runValidatorT env (f s)
+                        `finally` 
+                        liftIO (atomically $ parallelReleaseSlot bottleneck slot)
+                pure $! z
 
-                    queueClosed <- 
-                        liftIO (atomically $ parallePutToTheQueueWhenReady queue bottleneck slot a)
-                            `onException` 
-                        cancel a
+            queueClosed <- 
+                liftIO (atomically $ parallePutToTheQueueWhenReady queue bottleneck slot a)
+                    `onException` 
+                cancel a
 
-                    unless queueClosed $ go ss                          
-        
-        readAll queue =
-            liftIO (atomically $ readCQueue queue) >>= \case            
-                Nothing -> pure []
-                Just t  -> do                     
-                    r <- appLift $ wait t
-                    case r of 
-                        (Left e, vs) -> do 
-                            closeQ queue
-                            embedState vs
-                            appError e
-                        (Right z, vs) -> do 
-                            embedState vs
-                            rest <- readAll queue 
-                            pure $! z : rest
+            unless queueClosed $ go ss                          
+    
+    readAll queue =
+        liftIO (atomically $ readCQueue queue) >>= \case            
+            Nothing -> pure []
+            Just t  -> do                     
+                r <- appLift $ wait t
+                case r of 
+                    (Left e, vs) -> do 
+                        closeQ queue
+                        embedState vs
+                        appError e
+                    (Right z, vs) -> do 
+                        embedState vs
+                        rest <- readAll queue 
+                        pure $! z : rest
 
 
 inParallel :: Bottleneck 

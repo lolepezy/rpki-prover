@@ -34,6 +34,7 @@ import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
+import           Data.Tuple.Strict
 import           Data.Proxy
 
 import           RPKI.AppContext
@@ -59,6 +60,7 @@ import           RPKI.CommonTypes
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
+import           RPKI.Fetch
 import           RPKI.Metrics
 
 import           Data.Hourglass
@@ -314,11 +316,6 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
                 Nothing -> appError $ UnspecifiedE "Failed to fetch initial repositories." (convert $ show broken)
 
 
-data FetchResult = 
-    FetchSuccess Repository Instant ValidationState | 
-    FetchFailure Repository Instant ValidationState
-    deriving stock (Show, Eq, Generic)
-
 -- | Download repository, either rsync or RRDP.
 fetchRepository :: (MonadIO m, Storage s) => 
                 AppContext s -> ValidatorPath -> Now -> Repository -> m FetchResult
@@ -367,13 +364,9 @@ fetchRepository
                     pure $! FetchSuccess resultRepo now v
 
 
-fetchTimeout :: Config -> RpkiURL -> Seconds
-fetchTimeout config (RrdpU _)  = config ^. typed @RrdpConf .  #rrdpTimeout
-fetchTimeout config (RsyncU _) = config ^. typed @RsyncConf . #rsyncTimeout
-
-type RepoTriple = (Repository, Instant, ValidationState)
-
-partitionFailedSuccess :: [FetchResult] -> ([RepoTriple], [RepoTriple])
+partitionFailedSuccess :: [FetchResult] -> 
+                        ([(Repository, Instant, ValidationState)], 
+                         [(Repository, Instant, ValidationState)])
 partitionFailedSuccess = go
     where
         go [] = ([], [])
@@ -429,9 +422,6 @@ validateCARecursively
         extractPPsAndValidateDown discoveredPPs waitingList = do            
             ppsToFetch' <- atomically $ getPPsToFetch repositoryContext discoveredPPs
             let (_, rootToPps) = repositoryHierarchy ppsToFetch'
-            -- forM                
-            --     (Map.keys rootToPps) $ \repo ->
-            --         fetchAndValidateWaitingList rootToPps repo waitingList                    
             inParallel
                 (cpuBottleneck appBottlenecks)
                 (Map.keys rootToPps) $ \repo ->
