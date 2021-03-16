@@ -70,12 +70,13 @@ data MftTimingMark = MftTimingMark Instant Instant
 
 -- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
-    keys        :: Sequence s,
-    objects     :: SMap "objects" s ArtificialKey SValue,
-    hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
-    uriToKey    :: SMap "uri-to-key" s URI ArtificialKey,
-    mftByAKI    :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
-    objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
+    keys         :: Sequence s,
+    objects      :: SMap "objects" s ArtificialKey SValue,
+    hashToKey    :: SMap "hash-to-key" s Hash ArtificialKey,
+    uriToKey     :: SMap "uri-to-key" s URI ArtificialKey,
+    mftByAKI     :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
+    lastValidMft :: SMap "last-valid-mft" s AKI ArtificialKey,
+    objectMetas  :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
 
 
@@ -243,6 +244,12 @@ getMftTimingMark mft = let
     m = getCMSContent $ cmsPayload mft 
     in MftTimingMark (thisTime m) (nextTime m)
 
+
+markLatestValidMft :: (MonadIO m, Storage s) => 
+                    Tx s 'RW -> RpkiObjectStore s -> AKI -> MftObject -> m ()
+markLatestValidMft tx RpkiObjectStore {..} aki mft = liftIO $ do 
+    k <- M.get tx hashToKey $ getHash mft
+    ifJust k $ M.put tx lastValidMft aki
 
 -- TA store functions
 

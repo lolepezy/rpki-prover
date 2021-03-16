@@ -23,6 +23,7 @@ createObjectStore seqMap =
         (SMap InMemoryStorage <$> createMapStore) <*>
         (SMap InMemoryStorage <$> createMapStore) <*>
         (SMultiMap InMemoryStorage <$> createMultiMapStore) <*>
+        (SMap InMemoryStorage <$> createMapStore) <*>   
         (SMap InMemoryStorage <$> createMapStore)    
 
 createRepositoryStore :: IO (RepositoryStore InMemoryStorage)

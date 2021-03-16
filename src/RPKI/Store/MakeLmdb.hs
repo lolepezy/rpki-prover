@@ -28,6 +28,7 @@ createObjectStore e seqMap =
         (SMap lmdb <$> createLmdbStore e) <*>
         (SMap lmdb <$> createLmdbStore e) <*>
         (SMultiMap lmdb <$> createLmdbMultiStore e) <*>
+        (SMap lmdb <$> createLmdbStore e) <*>
         (SMap lmdb <$> createLmdbStore e)
     where 
         lmdb = LmdbStorage e        
