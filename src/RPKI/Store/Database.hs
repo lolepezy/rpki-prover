@@ -206,20 +206,7 @@ findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $
                 Nothing                       -> Just (hash, orderingNum)
                 Just (_, latestNum) 
                     | orderingNum > latestNum -> Just (hash, orderingNum)
-                    | otherwise               -> latest
-
-findMftsByAKI :: (MonadIO m, Storage s) => 
-                Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
-findMftsByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
-    MM.foldS tx mftByAKI aki' f []
-    where
-        f mfts _ (k, _) = do 
-            o <- (fromSValue <$>) <$> M.get tx objects k
-            pure $! accumulate o            
-            where 
-                accumulate (Just (MftRO mft)) = mft : mfts
-                accumulate _                  = mfts            
-    
+                    | otherwise               -> latest    
 
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
@@ -250,6 +237,19 @@ markLatestValidMft :: (MonadIO m, Storage s) =>
 markLatestValidMft tx RpkiObjectStore {..} aki mft = liftIO $ do 
     k <- M.get tx hashToKey $ getHash mft
     ifJust k $ M.put tx lastValidMft aki
+
+
+getLatestValidMftByAKI :: (MonadIO m, Storage s) => 
+                        Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
+getLatestValidMftByAKI tx RpkiObjectStore {..} aki = liftIO $ do
+    M.get tx lastValidMft aki >>= \case 
+        Nothing -> pure Nothing 
+        Just k  -> do
+            o <- (fromSValue <$>) <$> M.get tx objects k
+            pure $! case o of 
+                Just (MftRO mft) -> Just mft
+                _                -> Nothing
+
 
 -- TA store functions
 
