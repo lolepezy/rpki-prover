@@ -18,6 +18,7 @@ import           Control.Monad.Reader
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
+import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
 
@@ -62,6 +63,7 @@ import           RPKI.Metrics
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
+import Data.Generics.Product (HasField)
 
 
 -- List of hashes of certificates, validation contexts and verified resource sets 
@@ -894,6 +896,7 @@ setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 -- Sum up all the validation metrics from all TA to create 
 -- the "alltrustanchors" validation metric
+addTotalValidationMetric :: (HasType ValidationState s, HasField' "vrps" s (Set a)) => s -> s
 addTotalValidationMetric totalValidationResult =
     totalValidationResult & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
   where
