@@ -19,6 +19,7 @@ import qualified Data.Text                        as Text
 import           Data.String.Interpolate.IsString
 
 import           Data.STRef
+import           Data.Tuple.Strict
 
 import           Text.Read                        (readMaybe)
 

@@ -10,7 +10,6 @@
 
 module RPKI.Http.Messages where
 
-
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
@@ -18,7 +17,7 @@ import qualified Data.List          as List
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
-
+import           Data.Tuple.Strict
 import           RPKI.Domain                 as Domain
 import           RPKI.CommonTypes
 

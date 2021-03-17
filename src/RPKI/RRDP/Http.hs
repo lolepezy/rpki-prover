@@ -22,6 +22,7 @@ import Data.Bifunctor (first)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
+import           Data.Tuple.Strict
 
 import GHC.Generics (Generic)
 
