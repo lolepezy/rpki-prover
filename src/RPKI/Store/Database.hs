@@ -183,8 +183,9 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
     ifJust p $ \(k, ro) -> do         
         M.delete tx objects k
         M.delete tx objectMetas k
-        M.delete tx hashToKey h
-        ifJust (getAKI ro) $ \aki' ->
+        M.delete tx hashToKey h            
+        ifJust (getAKI ro) $ \aki' -> do 
+            M.delete tx lastValidMft aki'
             case ro of
                 MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftTimingMark mft)
                 _         -> pure ()        
@@ -233,9 +234,9 @@ getMftTimingMark mft = let
 
 
 markLatestValidMft :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> RpkiObjectStore s -> AKI -> MftObject -> m ()
-markLatestValidMft tx RpkiObjectStore {..} aki mft = liftIO $ do 
-    k <- M.get tx hashToKey $ getHash mft
+                    Tx s 'RW -> RpkiObjectStore s -> AKI -> Hash -> m ()
+markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do 
+    k <- M.get tx hashToKey hash
     ifJust k $ M.put tx lastValidMft aki
 
 
