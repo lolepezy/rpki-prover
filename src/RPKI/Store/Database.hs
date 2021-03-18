@@ -405,10 +405,11 @@ getLastCompletedVersion database tx = do
 
 
 data RpkiObjectStats = RpkiObjectStats {
-    objectsStats    :: SStats,
-    mftByAKIStats   :: SStats,
-    objectMetaStats :: SStats,
-    hashToKeyStats  :: SStats
+    objectsStats       :: SStats,
+    mftByAKIStats      :: SStats,
+    objectMetaStats    :: SStats,
+    hashToKeyStats     :: SStats,
+    lastValidMftStats  :: SStats
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
@@ -462,7 +463,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
                 M.stats tx objects <*>
                 MM.stats tx mftByAKI <*>
                 M.stats tx objectMetas <*>
-                M.stats tx hashToKey
+                M.stats tx hashToKey <*>
+                M.stats tx lastValidMft
 
         repositoryStats tx = 
             let RepositoryStore {..} = repositoryStore
@@ -490,7 +492,7 @@ totalStats DBStats {..} =
     <> (let RepositoryStats{..} = repositoryStats 
         in rrdpStats <> rsyncStats <> lastSStats) 
     <> (let RpkiObjectStats {..} = rpkiObjectStats
-        in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats)
+        in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats <> lastValidMftStats)
     <> resultsStats vResultStats 
     <> vrpStats 
     <> versionStats 
