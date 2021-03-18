@@ -65,7 +65,6 @@ import           RPKI.Metrics
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
-import Data.Generics.Product (HasField)
 
 
 -- List of hashes of certificates, validation contexts and verified resource sets 
@@ -97,7 +96,8 @@ data TopDownContext s = TopDownContext {
         repositoryContext :: TVar RepositoryContext, 
         now               :: Now,
         worldVersion      :: WorldVersion,
-        visitedHashes     :: TVar (Set Hash)
+        visitedHashes     :: TVar (Set Hash),
+        validManifests    :: TVar (Map AKI Hash)
     }
     deriving stock (Generic)
 
@@ -127,10 +127,11 @@ newTopDownContext :: MonadIO m =>
                     -> m (TopDownContext s)
 newTopDownContext worldVersion taName repositoryContext now certificate = 
     liftIO $ atomically $ do    
-        hashes <- newTVar Set.empty   
+        hashes    <- newTVar mempty
+        validMfts <- newTVar mempty
         pure $ TopDownContext 
                 (Just $ createVerifiedResources certificate) 
-                taName repositoryContext now worldVersion hashes
+                taName repositoryContext now worldVersion hashes validMfts
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
 newRepositoryContext publicationPoints = let 
@@ -643,6 +644,7 @@ validateCaCertificate
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
 
             oneMoreMft
+            addValidMft topDownContext childrenAki mft
             pure manifestResult
 
 
@@ -827,18 +829,31 @@ needsFetching r status ValidationConfig {..} (Now now) =
         interval (RrdpU _)  = rrdpRepositoryRefreshInterval
         interval (RsyncU _) = rsyncRepositoryRefreshInterval
 
--- Mark validated objects in the database.
+
+-- Mark validated objects in the database, i.e.
+-- 
+-- - save all the visited hashes together with the current world version
+-- - save all the valid manifests for each CA/AKI
+-- 
 markValidatedObjects :: (MonadIO m, Storage s) => 
                         AppContext s -> TopDownContext s -> m ()
-markValidatedObjects AppContext { .. } TopDownContext {..} = do
-    objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
-    (size, elapsed) <- timedMS $ liftIO $ do 
-            vhs <- readTVarIO visitedHashes        
-            rwTx objectStore' $ \tx -> 
+markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
+    ((visitedSize, validMftsSize), elapsed) <- timedMS $ do 
+            (vhs, vmfts, objectStore') <- atomically $ (,,) <$> 
+                                readTVar visitedHashes <*> 
+                                readTVar validManifests <*>
+                                ((^. #objectStore) <$> readTVar database)
+
+            rwTx objectStore' $ \tx -> do 
                 for_ vhs $ \h -> 
                     markValidated tx objectStore' h worldVersion 
-            pure $! Set.size vhs
-    logDebugM logger [i|Marked #{size} objects as visited, took #{elapsed}ms.|]
+                for_ (Map.toList vmfts) $ \(aki, h) -> 
+                    markLatestValidMft tx objectStore' aki h
+
+            pure (Set.size vhs, Map.size vmfts)
+
+    logDebug_ logger 
+        [i|Marked #{visitedSize} objects as visited, #{validMftsSize} manifests as valid, took #{elapsed}ms.|]
 
 
 -- | Figure out which PPs are to be fetched, based on the global RepositoryContext
@@ -873,6 +888,13 @@ visitObjects :: MonadIO m => TopDownContext s -> [Hash] -> m ()
 visitObjects TopDownContext {..} hashes =
     liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
 
+
+-- Add manifest to the map of the valid ones
+addValidMft :: (MonadIO m, Storage s) => 
+                TopDownContext s -> AKI -> MftObject -> m ()
+addValidMft TopDownContext {..} aki mft = 
+    liftIO $ atomically $ modifyTVar' 
+                validManifests (<> Map.singleton aki (getHash mft))    
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
