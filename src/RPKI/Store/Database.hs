@@ -14,9 +14,6 @@ import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
-import qualified Control.Monad.State as St
-import           Control.Monad.Trans.Control
-
 import           Data.Int
 import           Data.IORef.Lifted
 
@@ -42,7 +39,7 @@ import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
 import           RPKI.Time                (Instant)
-import           RPKI.Util                (fmtEx, increment, ifJust)
+import           RPKI.Util                (increment, ifJust)
 
 import           RPKI.AppMonad
 import           RPKI.Repository
@@ -70,12 +67,13 @@ data MftTimingMark = MftTimingMark Instant Instant
 
 -- | RPKI objects store
 data RpkiObjectStore s = RpkiObjectStore {
-    keys        :: Sequence s,
-    objects     :: SMap "objects" s ArtificialKey SValue,
-    hashToKey   :: SMap "hash-to-key" s Hash ArtificialKey,
-    uriToKey    :: SMap "uri-to-key" s URI ArtificialKey,
-    mftByAKI    :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
-    objectMetas :: SMap "object-meta" s ArtificialKey ROMeta
+    keys         :: Sequence s,
+    objects      :: SMap "objects" s ArtificialKey SValue,
+    hashToKey    :: SMap "hash-to-key" s Hash ArtificialKey,
+    uriToKey     :: SMap "uri-to-key" s URI ArtificialKey,
+    mftByAKI     :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
+    lastValidMft :: SMap "last-valid-mft" s AKI ArtificialKey,
+    objectMetas  :: SMap "object-meta" s ArtificialKey ROMeta
 } deriving stock (Generic)
 
 
@@ -182,8 +180,11 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
     ifJust p $ \(k, ro) -> do         
         M.delete tx objects k
         M.delete tx objectMetas k
-        M.delete tx hashToKey h
-        ifJust (getAKI ro) $ \aki' ->
+        M.delete tx hashToKey h            
+        forM_ (getLocations ro) $ \location -> 
+            M.delete tx uriToKey (getURL location)
+        ifJust (getAKI ro) $ \aki' -> do 
+            M.delete tx lastValidMft aki'
             case ro of
                 MftRO mft -> MM.delete tx mftByAKI aki' (k, getMftTimingMark mft)
                 _         -> pure ()        
@@ -205,20 +206,8 @@ findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $
                 Nothing                       -> Just (hash, orderingNum)
                 Just (_, latestNum) 
                     | orderingNum > latestNum -> Just (hash, orderingNum)
-                    | otherwise               -> latest
+                    | otherwise               -> latest    
 
-findMftsByAKI :: (MonadIO m, Storage s) => 
-                Tx s mode -> RpkiObjectStore s -> AKI -> m [MftObject]
-findMftsByAKI tx RpkiObjectStore {..} aki' = liftIO $ 
-    MM.foldS tx mftByAKI aki' f []
-    where
-        f mfts _ (k, _) = do 
-            o <- (fromSValue <$>) <$> M.get tx objects k
-            pure $! accumulate o            
-            where 
-                accumulate (Just (MftRO mft)) = mft : mfts
-                accumulate _                  = mfts            
-    
 
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
@@ -242,6 +231,25 @@ getMftTimingMark :: MftObject -> MftTimingMark
 getMftTimingMark mft = let 
     m = getCMSContent $ cmsPayload mft 
     in MftTimingMark (thisTime m) (nextTime m)
+
+
+markLatestValidMft :: (MonadIO m, Storage s) => 
+                    Tx s 'RW -> RpkiObjectStore s -> AKI -> Hash -> m ()
+markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do 
+    k <- M.get tx hashToKey hash
+    ifJust k $ M.put tx lastValidMft aki
+
+
+getLatestValidMftByAKI :: (MonadIO m, Storage s) => 
+                        Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
+getLatestValidMftByAKI tx RpkiObjectStore {..} aki = liftIO $ do
+    M.get tx lastValidMft aki >>= \case 
+        Nothing -> pure Nothing 
+        Just k  -> do
+            o <- (fromSValue <$>) <$> M.get tx objects k
+            pure $! case o of 
+                Just (MftRO mft) -> Just mft
+                _                -> Nothing
 
 
 -- TA store functions
@@ -397,10 +405,11 @@ getLastCompletedVersion database tx = do
 
 
 data RpkiObjectStats = RpkiObjectStats {
-    objectsStats    :: SStats,
-    mftByAKIStats   :: SStats,
-    objectMetaStats :: SStats,
-    hashToKeyStats  :: SStats
+    objectsStats       :: SStats,
+    mftByAKIStats      :: SStats,
+    objectMetaStats    :: SStats,
+    hashToKeyStats     :: SStats,
+    lastValidMftStats  :: SStats
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
@@ -454,7 +463,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
                 M.stats tx objects <*>
                 MM.stats tx mftByAKI <*>
                 M.stats tx objectMetas <*>
-                M.stats tx hashToKey
+                M.stats tx hashToKey <*>
+                M.stats tx lastValidMft
 
         repositoryStats tx = 
             let RepositoryStore {..} = repositoryStore
@@ -482,7 +492,7 @@ totalStats DBStats {..} =
     <> (let RepositoryStats{..} = repositoryStats 
         in rrdpStats <> rsyncStats <> lastSStats) 
     <> (let RpkiObjectStats {..} = rpkiObjectStats
-        in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats)
+        in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats <> lastValidMftStats)
     <> resultsStats vResultStats 
     <> vrpStats 
     <> versionStats 

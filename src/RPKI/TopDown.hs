@@ -11,18 +11,18 @@
 module RPKI.TopDown where
 
 import           Control.Concurrent.STM
+import           Control.Concurrent.Async (forConcurrently)
 import           Control.Exception.Lifted
 import           Control.Monad.Except
-import           Control.Monad.Trans.Except
 import           Control.Monad.Reader
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
+import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
 
 import           Data.Either                      (fromRight)
-import           Data.Char                        (toLower)
 import           Data.Foldable
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -65,7 +65,6 @@ import           RPKI.Metrics
 
 import           Data.Hourglass
 import           System.Timeout                   (timeout)
-import Control.Concurrent.Async (forConcurrently)
 
 
 -- List of hashes of certificates, validation contexts and verified resource sets 
@@ -97,7 +96,8 @@ data TopDownContext s = TopDownContext {
         repositoryContext :: TVar RepositoryContext, 
         now               :: Now,
         worldVersion      :: WorldVersion,
-        visitedHashes     :: TVar (Set Hash)
+        visitedHashes     :: TVar (Set Hash),
+        validManifests    :: TVar (Map AKI Hash)
     }
     deriving stock (Generic)
 
@@ -127,10 +127,11 @@ newTopDownContext :: MonadIO m =>
                     -> m (TopDownContext s)
 newTopDownContext worldVersion taName repositoryContext now certificate = 
     liftIO $ atomically $ do    
-        hashes <- newTVar Set.empty   
+        hashes    <- newTVar mempty
+        validMfts <- newTVar mempty
         pure $ TopDownContext 
                 (Just $ createVerifiedResources certificate) 
-                taName repositoryContext now worldVersion hashes
+                taName repositoryContext now worldVersion hashes validMfts
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
 newRepositoryContext publicationPoints = let 
@@ -161,10 +162,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     mapException (AppException . storageError) $ do
         rwTx database' $ \tx -> do                             
-            pubPointAfterTopDown <- liftIO $ atomically $ do 
-                    mconcat . map (^. typed @PublicationPoints) <$> mapM (readTVar . snd) rs 
-                    -- pps <- readTVar repositoryContext                
-                    -- pure $ pps ^. typed @PublicationPoints
+            pubPointAfterTopDown <- liftIO $ atomically $
+                    mconcat . map (^. typed @PublicationPoints) 
+                    <$> mapM (readTVar . snd) rs                     
             savePublicationPoints tx (repositoryStore database') pubPointAfterTopDown                        
 
     pure $ map fst rs
@@ -572,67 +572,97 @@ validateCaCertificate
         
         oneMoreCert            
         visitObject appContext topDownContext (CerRO certificate)
+        
+        -- try to use the latest manifest 
+        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2
+        -- 
+        mft <- findMft childrenAki certLocations'        
+        validateManifestAndGoDown mft childrenAki certLocations'
+            `catchError`
+            -- this "fetch" has failed so we are falling back to a latest valid 
+            -- manifest for this CA
+            fallbackToLatestValidMft childrenAki certLocations'
 
-        mft <- findMft childrenAki certLocations'
-        validateMftLocation mft certificate                    
+      where 
+            
+        validateManifestAndGoDown mft childrenAki certLocations' = do 
+            validateMftLocation mft certificate                    
 
-        manifestResult <- inSubVPath (toText $ NonEmpty.head $ getLocations mft) $ do
-            T2 _ crlHash <- case findCrlOnMft mft of 
-                []    -> vError $ NoCRLOnMFT childrenAki certLocations'
-                [crl] -> pure crl
-                crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
+            manifestResult <- inSubVPath (toText $ NonEmpty.head $ getLocations mft) $ do
+                T2 _ crlHash <- case findCrlOnMft mft of 
+                    []    -> vError $ NoCRLOnMFT childrenAki certLocations'
+                    [crl] -> pure crl
+                    crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations' crls
 
-            objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
-            crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
-            case crlObject of 
-                Nothing -> 
-                    vError $ NoCRLExists childrenAki certLocations'    
+                objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
+                crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                case crlObject of 
+                    Nothing -> 
+                        vError $ NoCRLExists childrenAki certLocations'    
 
-                Just foundCrl@(CrlRO crl) -> do      
-                    visitObject appContext topDownContext foundCrl
-                    -- logDebugM logger [i|crl = #{NonEmpty.head $ getLocations crl} (#{thisUpdateTime $ signCrl crl}, #{nextUpdateTime $ signCrl crl})|]
-                    -- validate CRL and MFT together
-                    validCrl <- inSubVPath (toText $ NonEmpty.head $ getLocations crl) $ 
-                                    vHoist $ do          
-                                        -- checkCrlLocation crl certificate
-                                        validateCrl now crl certificate
-                    oneMoreCrl
+                    Just foundCrl@(CrlRO crl) -> do      
+                        visitObject appContext topDownContext foundCrl
+                        -- logDebugM logger [i|crl = #{NonEmpty.head $ getLocations crl} (#{thisUpdateTime $ signCrl crl}, #{nextUpdateTime $ signCrl crl})|]
+                        -- validate CRL and MFT together
+                        validCrl <- inSubVPath (toText $ NonEmpty.head $ getLocations crl) $ 
+                                        vHoist $ do          
+                                            -- checkCrlLocation crl certificate
+                                            validateCrl now crl certificate
+                        oneMoreCrl
 
-                    -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
-                    void $ vHoist $ validateMft now mft 
-                                        certificate validCrl verifiedResources
-                                        
-                    -- filter out CRL itself
-                    let childrenHashes = filter (\(T2 _ hash') -> getHash crl /= hash') 
-                                $ mftEntries $ getCMSContent $ cmsPayload mft
+                        -- MFT can be revoked by the CRL that is on this MFT -- detect it                                
+                        void $ vHoist $ validateMft now mft 
+                                            certificate validCrl verifiedResources
+                                            
+                        -- filter out CRL itself
+                        let childrenHashes = filter (\(T2 _ hash') -> getHash crl /= hash') 
+                                    $ mftEntries $ getCMSContent $ cmsPayload mft
 
-                    -- Mark all manifest entries as visited to avoid the situation
-                    -- when some of the children are deleted from the cache and some
-                    -- are still there. Do it both in case of successful validation
-                    -- or a validation error.
-                    let markAllEntriesAsVisited = 
-                            visitObjects topDownContext $ map (\(T2 _ h) -> h) childrenHashes                
+                        -- Mark all manifest entries as visited to avoid the situation
+                        -- when some of the children are deleted from the cache and some
+                        -- are still there. Do it both in case of successful validation
+                        -- or a validation error.
+                        let markAllEntriesAsVisited = 
+                                visitObjects topDownContext $ map (\(T2 _ h) -> h) childrenHashes                
 
-                    let processChildren = do
-                            r <- inParallelVT
-                                    (cpuBottleneck appBottlenecks)
-                                    childrenHashes
-                                    $ \(T2 filename hash') -> 
-                                                validateManifestEntry filename hash' validCrl
-                            markAllEntriesAsVisited
-                            pure $! r                                       
+                        let processChildren = do
+                                r <- inParallelVT
+                                        (cpuBottleneck appBottlenecks)
+                                        childrenHashes
+                                        $ \(T2 filename hash') -> 
+                                                    validateManifestEntry filename hash' validCrl
+                                markAllEntriesAsVisited
+                                pure $! r                                       
 
-                    childrenResults <- processChildren `catchError` 
-                                    (\e -> markAllEntriesAsVisited >> throwError e)
+                        childrenResults <- processChildren `catchError` 
+                                        (\e -> markAllEntriesAsVisited >> throwError e)
 
-                    -- Combine PPs and their waiting lists. On top of it, fix the 
-                    -- last successfull validation times for PPs based on their fetch statuses.                        
-                    pure $! mconcat childrenResults & typed @PublicationPoints %~ adjustLastSucceeded                        
+                        -- Combine PPs and their waiting lists. On top of it, fix the 
+                        -- last successfull validation times for PPs based on their fetch statuses.                        
+                        pure $! mconcat childrenResults & typed @PublicationPoints %~ adjustLastSucceeded                        
 
-                Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
+                    Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
 
-        oneMoreMft
-        pure manifestResult
+            oneMoreMft
+            addValidMft topDownContext childrenAki mft
+            pure manifestResult
+
+
+        -- Implementation of the
+        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
+        --  i.e. use the latest valid cached manifest.
+        --         
+        fallbackToLatestValidMft childrenAki certLocations' e = do             
+            z <- liftIO $ do 
+                objectStore' <- (^. #objectStore) <$> readTVarIO database
+                roTx objectStore' $ \tx -> 
+                        findLatestMftByAKI tx objectStore' childrenAki
+            case z of 
+                Nothing          -> throwError e
+                Just latestValid -> do     
+                    appWarn e            
+                    visitObject appContext topDownContext latestValid
+                    validateManifestAndGoDown latestValid childrenAki certLocations'               
 
     --
     -- | Validate an entry of the manifest, i.e. a pair of filename and hash
@@ -799,18 +829,31 @@ needsFetching r status ValidationConfig {..} (Now now) =
         interval (RrdpU _)  = rrdpRepositoryRefreshInterval
         interval (RsyncU _) = rsyncRepositoryRefreshInterval
 
--- Mark validated objects in the database.
+
+-- Mark validated objects in the database, i.e.
+-- 
+-- - save all the visited hashes together with the current world version
+-- - save all the valid manifests for each CA/AKI
+-- 
 markValidatedObjects :: (MonadIO m, Storage s) => 
                         AppContext s -> TopDownContext s -> m ()
-markValidatedObjects AppContext { .. } TopDownContext {..} = do
-    objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
-    (size, elapsed) <- timedMS $ liftIO $ do 
-            vhs <- readTVarIO visitedHashes        
-            rwTx objectStore' $ \tx -> 
+markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
+    ((visitedSize, validMftsSize), elapsed) <- timedMS $ do 
+            (vhs, vmfts, objectStore') <- atomically $ (,,) <$> 
+                                readTVar visitedHashes <*> 
+                                readTVar validManifests <*>
+                                ((^. #objectStore) <$> readTVar database)
+
+            rwTx objectStore' $ \tx -> do 
                 for_ vhs $ \h -> 
                     markValidated tx objectStore' h worldVersion 
-            pure $! Set.size vhs
-    logDebugM logger [i|Marked #{size} objects as visited, took #{elapsed}ms.|]
+                for_ (Map.toList vmfts) $ \(aki, h) -> 
+                    markLatestValidMft tx objectStore' aki h
+
+            pure (Set.size vhs, Map.size vmfts)
+
+    logDebug_ logger 
+        [i|Marked #{visitedSize} objects as visited, #{validMftsSize} manifests as valid, took #{elapsed}ms.|]
 
 
 -- | Figure out which PPs are to be fetched, based on the global RepositoryContext
@@ -846,6 +889,13 @@ visitObjects TopDownContext {..} hashes =
     liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
 
 
+-- Add manifest to the map of the valid ones
+addValidMft :: (MonadIO m, Storage s) => 
+                TopDownContext s -> AKI -> MftObject -> m ()
+addValidMft TopDownContext {..} aki mft = 
+    liftIO $ atomically $ modifyTVar' 
+                validManifests (<> Map.singleton aki (getHash mft))    
+
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
@@ -858,6 +908,7 @@ setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 -- Sum up all the validation metrics from all TA to create 
 -- the "alltrustanchors" validation metric
+addTotalValidationMetric :: (HasType ValidationState s, HasField' "vrps" s (Set a)) => s -> s
 addTotalValidationMetric totalValidationResult =
     totalValidationResult & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
   where

@@ -5,7 +5,8 @@
 
 module RPKI.Orphans where
 
-import Control.Monad
+import           Control.Monad
+
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Base64               as B64
 import qualified Data.ByteString.Short                as BSS
@@ -57,9 +58,9 @@ import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
-import           RPKI.Util       (convert, mkHash)
-import RPKI.CommonTypes
 
+import           RPKI.CommonTypes
+import           RPKI.Util       (convert, mkHash)
 
 
 instance Arbitrary URI where

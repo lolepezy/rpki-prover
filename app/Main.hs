@@ -152,7 +152,7 @@ createAppContext CLIOptions{..} logger = do
     let cpuParallelism = 2 * cpuCount'
     
     -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
-    -- that much IO (http downloads, LMDB reads, etc.) operations at once.
+    -- that many IO operations (http downloads, LMDB reads, etc.) at once.
     let ioParallelism = 64     
 
     appBottlenecks <- liftIO $ AppBottleneck <$> 
