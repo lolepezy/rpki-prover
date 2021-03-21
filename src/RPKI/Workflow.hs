@@ -16,7 +16,6 @@ import           Control.Monad
 import           Control.Lens                     ((^.), (%~), (&))
 import           Data.Generics.Product.Typed
 
-import           Data.Maybe (fromMaybe)
 import           Data.Int                         (Int64)
 import qualified Data.Set                         as Set
 
@@ -234,7 +233,7 @@ periodically (Seconds interval) action = go
         when (executionTimeNs < nanosPerSecond * interval) $ do        
             let timeToWaitNs = nanosPerSecond * interval - executionTimeNs                        
             when (timeToWaitNs > 0) $ 
-                threadDelay $ (fromIntegral timeToWaitNs) `div` 1000         
+                threadDelay $ fromIntegral timeToWaitNs `div` 1000         
         case nextStep of 
             Repeat -> go 
             Done   -> pure ()        

@@ -14,8 +14,6 @@ import           Control.Monad.IO.Class
 
 import           Control.Lens                     ((^.))
 
-import           Data.Int                         (Int64)
-
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -29,7 +27,6 @@ import           RPKI.Store.MakeLmdb
 import           RPKI.Time
 import           RPKI.Util
 
-import           Data.Traversable                 (forM)
 import           RPKI.Config
 import           System.Directory
 import           System.FilePath                  ((</>))
@@ -182,14 +179,12 @@ compactStorageWithTmpDir AppContext {..} = do
     
     currentLinkTarget <- liftIO $ readSymbolicLink currentCache
     
-    fileSize <- do 
-            lmdbFiles <- listDirectory currentLinkTarget
-            sizes <- forM lmdbFiles $ \f -> getFileSize $ currentCache </> f
-            pure $! sum sizes
+    lmdbFileSize <- fmap sum 
+                    $ mapM (getFileSize . (currentCache </>)) =<< listDirectory currentLinkTarget            
     
     Size dataSize <- fmap DB.totalSpace $ DB.getDbStats =<< readTVarIO database
 
-    let fileSizeMb :: Integer = fileSize `div` (1024 * 1024)
+    let fileSizeMb :: Integer = lmdbFileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
     if fileSizeMb > (3 * dataSizeMb)    
         then do 

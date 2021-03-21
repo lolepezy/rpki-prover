@@ -14,9 +14,6 @@ import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
-import qualified Control.Monad.State as St
-import           Control.Monad.Trans.Control
-
 import           Data.Int
 import           Data.IORef.Lifted
 
@@ -42,7 +39,7 @@ import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
 import           RPKI.Time                (Instant)
-import           RPKI.Util                (fmtEx, increment, ifJust)
+import           RPKI.Util                (increment, ifJust)
 
 import           RPKI.AppMonad
 import           RPKI.Repository
@@ -184,6 +181,8 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
         M.delete tx objects k
         M.delete tx objectMetas k
         M.delete tx hashToKey h            
+        forM_ (getLocations ro) $ \location -> 
+            M.delete tx uriToKey (getURL location)
         ifJust (getAKI ro) $ \aki' -> do 
             M.delete tx lastValidMft aki'
             case ro of
@@ -208,6 +207,7 @@ findLatestMftByAKI tx RpkiObjectStore {..} aki' = liftIO $
                 Just (_, latestNum) 
                     | orderingNum > latestNum -> Just (hash, orderingNum)
                     | otherwise               -> latest    
+
 
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
