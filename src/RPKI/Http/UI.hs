@@ -91,20 +91,25 @@ overallHtml (Just worldVersion) = do
 validationMetricsHtml :: MetricMap ValidationMetric -> Html
 validationMetricsHtml validationMetricMap =
     H.table $ do 
-        H.thead $ tr $ do 
-            th $ toHtml ("Trust Anchor" :: Text)
-            th $ toHtml ("Validation time" :: Text)
-            th $ toHtml ("VRPs" :: Text)        
-            th $ toHtml ("Objects" :: Text)        
-            th $ toHtml ("ROAs" :: Text)        
-            th $ toHtml ("Certificates" :: Text)        
-            th $ toHtml ("Manifests" :: Text)        
-            th $ toHtml ("CRLs" :: Text)        
-            th $ toHtml ("GBRs" :: Text)        
         let allTaMetricPath = Path (allTAsMetricsName :| [])
         let rawMap = unMonoidMap $ unMetricMap validationMetricMap
         let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
                             $ Map.toList rawMap
+
+        H.thead $ tr $ do 
+            th $ do 
+                H.text "Trust Anchor ("
+                toHtml $ length taMetrics
+                H.text " in total)" 
+            th $ H.text "Validation time"
+            th $ H.text "VRPs"      
+            th $ H.text "Objects"
+            th $ H.text "ROAs"
+            th $ H.text "Certificates"
+            th $ H.text "Manifests"
+            th $ H.text "CRLs"
+            th $ H.text "GBRs"
+        
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((path, vm), index) -> do 
                 let ta = NonEmpty.head $ unPath path
@@ -136,20 +141,23 @@ validationMetricsHtml validationMetricMap =
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table $ do 
+        let rrdpMap = unMonoidMap $ unMetricMap rrdpMetricMap        
+
         H.thead $ tr $ do 
-            th $ H.text "Repository"
+            th $ do 
+                H.text "Repository (" 
+                toHtml $ Map.size rrdpMap
+                H.text " in total)" 
             th $ H.text "Source"
             th $ H.text "Download time"
             th $ H.text "Added objects"
             th $ H.text "Deleted objects"
             th $ H.text "Last HTTP status"
             th $ H.text "Save time"
-            th $ H.text "Total time"
-                
-        let taMetrics = Map.toList $ unMonoidMap $ unMetricMap rrdpMetricMap
+            th $ H.text "Total time"                    
 
         H.tbody $ do 
-            forM_ (zip taMetrics [1 :: Int ..]) $ \((path, rm), index) -> do 
+            forM_ (zip (Map.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                        
@@ -163,17 +171,20 @@ rrdpMetricsHtml rrdpMetricMap =
 
 
 rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
-rsyncMetricsHtml rrdpMetricMap =
+rsyncMetricsHtml rsyncMetricMap =
     H.table $ do 
+        let rsyncMap = unMonoidMap $ unMetricMap rsyncMetricMap        
+
         H.thead $ tr $ do 
-            th $ H.text "Trust Anchor"
+            th $ do 
+                H.text "Repository ("
+                toHtml $ Map.size rsyncMap
+                H.text " in total)" 
             th $ H.text "Processed objects"
-            th $ H.text "Total time"
-                
-        let taMetrics = Map.toList $ unMonoidMap $ unMetricMap rrdpMetricMap
+            th $ H.text "Total time"                    
 
         H.tbody $
-            forM_ (zip taMetrics [1 :: Int ..]) $ \((path, rm), index) -> do 
+            forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                                    
@@ -185,8 +196,8 @@ validaionDetailsHtml :: [ValidationResult] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
-            th $ H.span $ toHtml ("Problem" :: Text)
-            th $ H.span $ toHtml ("URL/Path" :: Text)        
+            th $ H.span $ H.text "Problem"
+            th $ H.span $ H.text "URL/Path"
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
                 tr $ td ! colspan "2" $                                         
