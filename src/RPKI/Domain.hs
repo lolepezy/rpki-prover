@@ -18,7 +18,6 @@ import           Data.Text                (Text)
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
-import           Data.Int                 (Int16)
 
 import           Data.Hourglass
 import           Data.Kind                (Type)
@@ -38,6 +37,7 @@ import           RPKI.Resources.Resources as RS
 import           RPKI.CommonTypes
 import           RPKI.Resources.Types
 import           RPKI.Time
+import qualified Data.Set as Set
 
 
 
@@ -568,3 +568,16 @@ toShortBS = BSS.toShort
 
 toNormalBS :: BSS.ShortByteString -> BS.ByteString
 toNormalBS = BSS.fromShort
+
+sameLocations :: Locations -> Locations -> Bool 
+sameLocations loc1 loc2 = Set.fromList (toList loc1) == Set.fromList (toList loc2)
+
+mergeLocations :: Locations -> Locations -> Locations
+mergeLocations loc1 loc2 = nub $ loc1 <> loc2 
+
+withLoc :: Locations -> RpkiObject -> RpkiObject
+withLoc loc (CerRO c) = CerRO $ c { locations = loc }
+withLoc loc (MftRO c) = MftRO $ c { locations = loc }
+withLoc loc (RoaRO c) = RoaRO $ c { locations = loc }
+withLoc loc (GbrRO c) = GbrRO $ c { locations = loc }
+withLoc loc (CrlRO c) = CrlRO $ c { locations = loc }

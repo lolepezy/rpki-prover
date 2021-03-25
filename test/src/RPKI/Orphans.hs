@@ -67,7 +67,8 @@ instance Arbitrary URI where
     arbitrary = URI <$> do
         ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
         name <- listOf1 $ elements ['a'..'z']
-        pure $ convert $ "rsync://" <> name <> ext    
+        protocol <- elements ["rsync", "https"]
+        pure $ convert $ protocol <> "://" <> name <> ext    
 
 instance Arbitrary RrdpURL where
     arbitrary = genericArbitrary

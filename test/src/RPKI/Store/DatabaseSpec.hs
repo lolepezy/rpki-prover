@@ -80,9 +80,10 @@ objectStoreGroupMem = withMem $ objectStoreGroup' "mem"
 
 objectStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
 objectStoreGroup' suffix db = testGroup "Object storage test"
-        [
+        [            
             HU.testCase ("Should insert and get back " <> suffix) (shouldInsertAndGetAllBackFromObjectStore db),        
-            HU.testCase ("Should order manifests accoring to their dates " <> suffix) (shouldOrderManifests db)
+            HU.testCase ("Should order manifests accoring to their dates " <> suffix) (shouldOrderManifests db),
+            HU.testCase ("Should merge locations " <> suffix) (shouldMergeObjectLocations db)
         ]        
 
 validationResultStoreGroup :: TestTree
@@ -118,6 +119,44 @@ txGroup = withDB $ \io -> testGroup "App transaction test"
         HU.testCase "Should preserve state from StateT in transactions" (shouldPreserveStateInAppTx io)        
     ]
 
+
+shouldMergeObjectLocations :: Storage s => IO (DB s) -> HU.Assertion
+shouldMergeObjectLocations io = do 
+    
+    DB {..} <- io
+    Now now <- thisInstant 
+
+    let storeIt obj = rwTx objectStore $ \tx ->         
+            putObject tx objectStore (toStorableObject obj) (instantToVersion now)
+
+    let getIt hash = roTx objectStore $ \tx -> getByHash tx objectStore hash
+
+    ro :: RpkiObject <- QC.generate arbitrary    
+    extraLocations :: Locations <- QC.generate arbitrary    
+
+    storeIt ro
+    
+    let newLocations = mergeLocations extraLocations $ getLocations ro
+    let ro' = withLoc newLocations ro
+
+    HU.assertEqual "Same hash" (getHash ro) (getHash ro')
+
+    storeIt ro'
+    Just result <- getIt $ getHash ro
+
+    -- it should update the locations
+    HU.assertBool 
+        "Wrong locations 1" 
+        (sameLocations (getLocations result) newLocations)
+    
+    rwTx objectStore $ \tx -> deleteObject tx objectStore (getHash ro)
+
+    -- make sure there're no URL lefovers
+    storeIt ro
+    Just result' <- getIt $ getHash ro
+    HU.assertBool 
+        "Wrong locations 2" 
+        (sameLocations (getLocations result') (getLocations ro))
 
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion

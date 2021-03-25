@@ -39,7 +39,7 @@ import           RPKI.Store.Sequence
 
 import           RPKI.Parallel
 import           RPKI.Time                (Instant)
-import           RPKI.Util                (increment, ifJust)
+import           RPKI.Util                (increment, ifJust, ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.Repository
@@ -65,12 +65,20 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
 
+
 -- | RPKI objects store
+
+-- Important: 
+-- Locations of an object (URLs where the object was downloaded from) are stored
+-- in a separate pair of maps 'key-to-uri' and 'uri-to-key'. That's why all the
+-- fiddling with locations in putObject, getObjectByKey and deleteObject.
+-- 
 data RpkiObjectStore s = RpkiObjectStore {
     keys         :: Sequence s,
     objects      :: SMap "objects" s ArtificialKey SValue,
     hashToKey    :: SMap "hash-to-key" s Hash ArtificialKey,
     uriToKey     :: SMap "uri-to-key" s URI ArtificialKey,
+    keyToUris    :: SMap "key-to-uri" s ArtificialKey Locations,
     mftByAKI     :: SMultiMap "mft-by-aki" s AKI (ArtificialKey, MftTimingMark),
     lastValidMft :: SMap "last-valid-mft" s AKI ArtificialKey,
     objectMetas  :: SMap "object-meta" s ArtificialKey ROMeta
@@ -131,43 +139,61 @@ getByHash tx store h = (snd <$>) <$> getByHash_ tx store h
 
 getByHash_ :: (MonadIO m, Storage s) => 
               Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (ArtificialKey, RpkiObject))
-getByHash_ tx RpkiObjectStore {..} h = liftIO $
+getByHash_ tx store@RpkiObjectStore {..} h = liftIO $
     M.get tx hashToKey h >>= \case
         Nothing -> pure Nothing 
-        Just k  -> 
-            M.get tx objects k >>= \case 
-                Nothing -> pure Nothing 
-                Just sv -> pure $ Just (k, fromSValue sv)
+        Just k  -> ((k,) <$>) <$> getObjectByKey tx store k
             
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> URI -> m (Maybe RpkiObject)
-getByUri tx RpkiObjectStore {..} uri = liftIO $ do 
+getByUri tx store@RpkiObjectStore {..} uri = liftIO $ do 
     M.get tx uriToKey uri >>= \case 
         Nothing -> pure Nothing 
-        Just k  -> 
-            M.get tx objects k >>= \case 
-                Nothing -> pure Nothing 
-                Just sv -> pure $ Just $ fromSValue sv
+        Just k  -> getObjectByKey tx store k            
+
+
+getObjectByKey :: (MonadIO m, Storage s) => 
+                Tx s mode -> RpkiObjectStore s -> ArtificialKey -> m (Maybe RpkiObject)
+getObjectByKey tx RpkiObjectStore {..} k = liftIO $ do     
+    M.get tx objects k >>= \case 
+        Nothing -> pure Nothing 
+        Just sv -> 
+            fmap (\locations -> withLoc locations $ fromSValue sv) 
+            <$> M.get tx keyToUris k
 
 
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW -> RpkiObjectStore s -> StorableObject RpkiObject -> WorldVersion -> m ()
-putObject tx RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
+putObject tx objectStore@RpkiObjectStore {..} (StorableObject ro sv) wv = liftIO $ do
     let h = getHash ro
-    exists <- M.exists tx hashToKey h
-    -- check if this object is already there, don't insert it twice
-    unless exists $ do     
-        SequenceValue k <- nextValue tx keys
-        let key = ArtificialKey k
-        M.put tx hashToKey h key
-        M.put tx objects key sv   
-        forM_ (getLocations ro) $ \location -> 
+    exists <- M.exists tx hashToKey h    
+    if exists 
+        then do 
+            -- If the object is already there, we probably 
+            -- need to update its locations.            
+            ifJustM (M.get tx hashToKey h) $ \k -> do
+                let newLocations = getLocations ro
+                M.get tx keyToUris k >>= \case
+                    Nothing       -> saveLocations k newLocations                                 
+                    Just existing -> saveLocations k $ mergeLocations newLocations existing
+        else do 
+            SequenceValue k <- nextValue tx keys
+            let key = ArtificialKey k
+            M.put tx hashToKey h key
+            M.put tx objects key sv                           
+            M.put tx objectMetas key (ROMeta wv Nothing)  
+            saveLocations key (getLocations ro)
+            ifJust (getAKI ro) $ \aki' ->
+                case ro of
+                    MftRO mft -> MM.put tx mftByAKI aki' (key, getMftTimingMark mft)
+                    _         -> pure ()
+  where
+    saveLocations key locations = do 
+        M.put tx keyToUris key locations
+        forM_ locations $ \location -> 
             M.put tx uriToKey (getURL location) key
-        M.put tx objectMetas key (ROMeta wv Nothing)  
-        ifJust (getAKI ro) $ \aki' ->
-            case ro of
-                MftRO mft -> MM.put tx mftByAKI aki' (key, getMftTimingMark mft)
-                _         -> pure ()
+
+
 
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
@@ -175,14 +201,15 @@ hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
-deleteObject tx store@RpkiObjectStore {..} h = liftIO $ do
-    p <- getByHash_ tx store h
-    ifJust p $ \(k, ro) -> do         
+deleteObject tx store@RpkiObjectStore {..} h = liftIO $    
+    ifJustM (getByHash_ tx store h) 
+    $ \(k, ro) -> do         
         M.delete tx objects k
-        M.delete tx objectMetas k
-        M.delete tx hashToKey h            
-        forM_ (getLocations ro) $ \location -> 
-            M.delete tx uriToKey (getURL location)
+        M.delete tx objectMetas k        
+        M.delete tx hashToKey h        
+        ifJustM (M.get tx keyToUris k) $ \locations -> do 
+            M.delete tx keyToUris k            
+            mapM_ (M.delete tx uriToKey . getURL) locations
         ifJust (getAKI ro) $ \aki' -> do 
             M.delete tx lastValidMft aki'
             case ro of
@@ -409,7 +436,9 @@ data RpkiObjectStats = RpkiObjectStats {
     mftByAKIStats      :: SStats,
     objectMetaStats    :: SStats,
     hashToKeyStats     :: SStats,
-    lastValidMftStats  :: SStats
+    lastValidMftStats  :: SStats,
+    uriToKeyStat       :: SStats,
+    keyToUriStat       :: SStats    
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
@@ -457,14 +486,16 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
         (let VersionStore sm = versionStore in M.stats tx sm) <*>
         M.stats tx sequences
     where
-        rpkiObjectStats tx = 
+        rpkiObjectStats tx = do 
             let RpkiObjectStore {..} = objectStore
-            in RpkiObjectStats <$>
-                M.stats tx objects <*>
-                MM.stats tx mftByAKI <*>
-                M.stats tx objectMetas <*>
-                M.stats tx hashToKey <*>
-                M.stats tx lastValidMft
+            objectsStats  <- M.stats tx objects
+            mftByAKIStats <- MM.stats tx mftByAKI            
+            objectMetaStats <- M.stats tx objectMetas            
+            hashToKeyStats  <- M.stats tx hashToKey
+            lastValidMftStats <- M.stats tx lastValidMft
+            uriToKeyStat <- M.stats tx uriToKey
+            keyToUriStat <- M.stats tx keyToUris
+            pure RpkiObjectStats {..}
 
         repositoryStats tx = 
             let RepositoryStore {..} = repositoryStore
