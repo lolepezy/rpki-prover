@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
@@ -14,14 +15,19 @@ module RPKI.Domain where
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
-import           Data.Text                (Text)
+import           Data.Text                (Text, singleton)
+import qualified Data.Text                as Text
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
 
 import           Data.Hourglass
+import           Data.Foldable            as F
 import           Data.Kind                (Type)
-import           Data.List.NonEmpty
+import           Data.Set.NonEmpty        (NESet)
+import qualified Data.Set.NonEmpty        as NESet
+import qualified Data.List.NonEmpty       as NonEmpty
+
 import           Data.Tuple.Strict
 
 import           GHC.Generics
@@ -65,19 +71,19 @@ newtype Hash = Hash BSS.ShortByteString
     deriving anyclass Serialise
 
 newtype URI  = URI { unURI :: Text } 
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype RsyncURL  = RsyncURL URI
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype RrdpURL  = RrdpURL URI
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving  (Eq, Ord, Generic)
+    deriving  (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 class WithURL a where
@@ -89,9 +95,9 @@ class WithRpkiURL a where
 instance WithURL URI where
     getURL = id
 
-instance Show RpkiURL where
-    show (RsyncU u) = show u
-    show (RrdpU u) = show u 
+-- instance Show RpkiURL where
+--     show (RsyncU u) = show u
+--     show (RrdpU u) = show u 
 
 instance WithURL RsyncURL where
     getURL (RsyncURL u) = u
@@ -133,16 +139,16 @@ newtype Version = Version Integer
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-type Locations = NonEmpty RpkiURL
+type Locations = NESet RpkiURL
 
-instance Show URI where
-    show (URI u) = show u
+-- instance Show URI where
+--     show (URI u) = show u
 
-instance Show RsyncURL where
-    show (RsyncURL u) = show u
+-- instance Show RsyncURL where
+--     show (RsyncURL u) = show u
 
-instance Show RrdpURL where
-    show (RrdpURL u) = show u
+-- instance Show RrdpURL where
+--     show (RrdpURL u) = show u
 
 instance Show Hash where
     show (Hash b) = hexShow b
@@ -177,7 +183,6 @@ class WithResourceCertificate a where
 
 data CrlObject = CrlObject {
         hash      :: {-# UNPACK #-} Hash,
-        locations :: {-# UNPACK #-} Locations,
         aki       :: {-# UNPACK #-} AKI,
         signCrl   :: SignCRL
     }
@@ -186,7 +191,6 @@ data CrlObject = CrlObject {
 
 data CerObject = CerObject {
         hash      :: {-# UNPACK #-} Hash,
-        locations :: {-# UNPACK #-} Locations,
         ski       :: SKI,
         aki       :: Maybe AKI,
         certificate :: ResourceCertificate
@@ -196,7 +200,6 @@ data CerObject = CerObject {
 
 data CMSBasedObject a = CMSBasedObject {
         hash       :: {-# UNPACK #-} Hash,
-        locations  :: {-# UNPACK #-} Locations,
         cmsPayload :: CMS a
     }
     deriving stock (Show, Eq, Generic)
@@ -227,17 +230,11 @@ data RpkiObject = CerRO CerObject
 instance WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
 
-instance WithLocations CrlObject where
-    getLocations CrlObject {..} = locations
-
 instance WithHash CrlObject where
     getHash CrlObject {..} = hash
 
 instance WithAKI CerObject where
     getAKI CerObject {..} = aki
-
-instance WithLocations CerObject where
-    getLocations CerObject {..} = locations
 
 instance WithHash CerObject where
     getHash CerObject {..} = hash
@@ -247,9 +244,6 @@ instance WithSKI CerObject where
     
 instance WithAKI (CMSBasedObject a) where
     getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
-
-instance WithLocations (CMSBasedObject a) where
-    getLocations CMSBasedObject {..} = locations
 
 instance WithHash (CMSBasedObject a) where
     getHash CMSBasedObject {..} = hash
@@ -281,13 +275,28 @@ instance WithHash RpkiObject where
     getHash (GbrRO c) = getHash c
     getHash (CrlRO c) = getHash c
 
-instance WithLocations RpkiObject where
-    getLocations (CerRO c) = getLocations c
-    getLocations (MftRO c) = getLocations c
-    getLocations (RoaRO c) = getLocations c
-    getLocations (GbrRO c) = getLocations c
-    getLocations (CrlRO c) = getLocations c
+data Located a = Located { 
+        locations      :: Locations,
+        payload :: a
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
+
+instance WithLocations (Located a) where
+    getLocations Located {..} = locations
+
+instance WithAKI a => WithAKI (Located a) where
+    getAKI (Located _ o) = getAKI o    
+
+instance WithHash a => WithHash (Located a) where
+    getHash (Located _ o) = getHash o
+
+instance WithSKI a => WithSKI (Located a) where
+    getSKI (Located _ o) = getSKI o
+
+instance WithResourceCertificate a => WithResourceCertificate (Located a) where    
+    getRC (Located _ o) = getRC o
 
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
@@ -532,18 +541,18 @@ emptyAsResources = AsResources RS.emptyRS
 getMftNumber :: MftObject -> Integer
 getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
 
-newCrl :: RpkiURL -> AKI -> Hash -> SignCRL -> CrlObject
-newCrl u a h sc = CrlObject {
+newCrl :: AKI -> Hash -> SignCRL -> CrlObject
+newCrl a h sc = CrlObject {
         hash = h,    
-        locations = u :| [],
+        -- locations = toLocations u,
         aki = a,
         signCrl = sc
     } 
 
-newCert :: RpkiURL -> Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
-newCert u a s h rc = CerObject {
+newCert :: Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
+newCert a s h rc = CerObject {
         hash = h,    
-        locations = u :| [],
+        -- locations = toLocations u,
         ski = s,
         aki = a,
         certificate = rc
@@ -556,10 +565,10 @@ newEECert a s rc = EECerObject {
         certificate = rc
     }
 
-newCMSObject :: Hash -> Locations -> CMS a -> CMSBasedObject a
-newCMSObject h loc cms = CMSBasedObject {
+newCMSObject :: Hash -> CMS a -> CMSBasedObject a
+newCMSObject h cms = CMSBasedObject {
         hash = h,    
-        locations = loc,
+        -- locations = loc,
         cmsPayload = cms
     }
 
@@ -569,15 +578,27 @@ toShortBS = BSS.toShort
 toNormalBS :: BSS.ShortByteString -> BS.ByteString
 toNormalBS = BSS.fromShort
 
-sameLocations :: Locations -> Locations -> Bool 
-sameLocations loc1 loc2 = Set.fromList (toList loc1) == Set.fromList (toList loc2)
+toLocations :: RpkiURL -> Locations
+toLocations = NESet.singleton
 
-mergeLocations :: Locations -> Locations -> Locations
-mergeLocations loc1 loc2 = nub $ loc1 <> loc2 
+pickLocation :: Locations -> RpkiURL
+pickLocation = NonEmpty.head . NESet.toList
 
-withLoc :: Locations -> RpkiObject -> RpkiObject
-withLoc loc (CerRO c) = CerRO $ c { locations = loc }
-withLoc loc (MftRO c) = MftRO $ c { locations = loc }
-withLoc loc (RoaRO c) = RoaRO $ c { locations = loc }
-withLoc loc (GbrRO c) = GbrRO $ c { locations = loc }
-withLoc loc (CrlRO c) = CrlRO $ c { locations = loc }
+locationsToText :: Locations -> Text
+locationsToText = F.fold
+    . NonEmpty.intersperse ", " 
+    . NonEmpty.map (Text.pack . show) 
+    . NESet.toList
+
+toNESet :: Ord a => [a] -> Maybe (NESet a)
+toNESet = (NESet.fromList <$>) . NonEmpty.nonEmpty
+
+neSetToList :: NESet a -> [a]
+neSetToList = NonEmpty.toList . NESet.toList
+
+-- withLoc :: Locations -> RpkiObject -> RpkiObject
+-- withLoc loc (CerRO c) = CerRO $ c { locations = loc }
+-- withLoc loc (MftRO c) = MftRO $ c { locations = loc }
+-- withLoc loc (RoaRO c) = RoaRO $ c { locations = loc }
+-- withLoc loc (GbrRO c) = GbrRO $ c { locations = loc }
+-- withLoc loc (CrlRO c) = CrlRO $ c { locations = loc }

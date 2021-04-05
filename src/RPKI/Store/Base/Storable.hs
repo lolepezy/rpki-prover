@@ -27,13 +27,13 @@ newtype SKey = SKey { unSKey :: Storable }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
 -- Strictness here is important
-data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
+data StorableUnit a e t = SObject {-# UNPACK #-} (StorableObject a t) | SError e
 
-data StorableObject a = StorableObject a SValue
+data StorableObject a tag = StorableObject { object :: a, storable :: SValue, tag :: tag }
     deriving (Show, Eq, Generic)
 
-toStorableObject :: Serialise a => a -> StorableObject a 
-toStorableObject a = StorableObject a $ force (storableValue a)
+toStorableObject :: Serialise a => a -> t -> StorableObject a t
+toStorableObject a = StorableObject a (force (storableValue a))
 
 toStorable :: Serialise v => v -> Storable
 toStorable = Storable . LBS.toStrict . serialise

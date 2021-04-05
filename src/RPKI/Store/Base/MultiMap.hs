@@ -50,6 +50,11 @@ allForKey tx (SMultiMap _ s) k = reverse <$> S.foldMuForKey tx s (storableKey k)
     where
         f z _ (SValue sv) = pure $! let !q = fromStorable sv in q : z
 
+all :: (Serialise k, Serialise v) =>
+        Tx s m -> SMultiMap name s k v -> IO [(k, v)]
+all tx (SMultiMap _ s) = reverse <$> S.foldMu tx s f []
+    where
+        f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
 stats :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> IO SStats

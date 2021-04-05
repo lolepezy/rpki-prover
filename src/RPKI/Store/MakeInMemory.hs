@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Store.MakeInMemory where
 
@@ -14,18 +15,21 @@ import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
 
 
-
 createObjectStore :: SequenceMap InMemoryStorage -> IO (RpkiObjectStore InMemoryStorage)
-createObjectStore seqMap =
-    RpkiObjectStore 
-        (Sequence "object-key" seqMap) <$>
-        (SMap InMemoryStorage <$> createMapStore) <*>        
-        (SMap InMemoryStorage <$> createMapStore) <*>
-        (SMap InMemoryStorage <$> createMapStore) <*>
-        (SMap InMemoryStorage <$> createMapStore) <*>
-        (SMultiMap InMemoryStorage <$> createMultiMapStore) <*>
-        (SMap InMemoryStorage <$> createMapStore) <*>   
-        (SMap InMemoryStorage <$> createMapStore)    
+createObjectStore seqMap = do 
+    let keys = Sequence "object-key" seqMap
+    objects  <- SMap InMemoryStorage <$> createMapStore
+    mftByAKI <- SMultiMap InMemoryStorage <$> createMultiMapStore
+    objectMetas <- SMap InMemoryStorage <$> createMapStore
+    hashToKey   <- SMap InMemoryStorage <$> createMapStore
+    lastValidMft <- SMap InMemoryStorage <$> createMapStore
+
+    uriToUriKey <- SMap InMemoryStorage <$> createMapStore
+    uriKeyToUri <- SMap InMemoryStorage <$> createMapStore
+    urlKeyToObjectKey  <- SMultiMap InMemoryStorage <$> createMultiMapStore
+    objectKeyToUrlKeys <- SMap InMemoryStorage <$> createMapStore
+    pure RpkiObjectStore {..}
+        
 
 createRepositoryStore :: IO (RepositoryStore InMemoryStorage)
 createRepositoryStore = 

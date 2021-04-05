@@ -14,6 +14,7 @@ import qualified Data.List                            as List
 import qualified Data.Text                            as Text
 
 import           Data.List.NonEmpty                   (NonEmpty)
+import qualified Data.Set.NonEmpty        as NESet
 
 import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
@@ -64,18 +65,20 @@ import           RPKI.Util       (convert, mkHash)
 
 
 instance Arbitrary URI where
-    arbitrary = URI <$> do
+    arbitrary = urlByProtocol =<< elements ["rsync", "https"]          
+        
+urlByProtocol :: [Char] -> Gen URI
+urlByProtocol protocol = URI <$> do
         ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
-        name <- listOf1 $ elements ['a'..'z']
-        protocol <- elements ["rsync", "https"]
+        name <- listOf1 $ elements ['a'..'z']        
         pure $ convert $ protocol <> "://" <> name <> ext    
 
 instance Arbitrary RrdpURL where
-    arbitrary = genericArbitrary
+    arbitrary = RrdpURL <$> urlByProtocol "https"
     shrink = genericShrink
 
 instance Arbitrary RsyncURL where
-    arbitrary = genericArbitrary
+    arbitrary = RsyncURL <$> urlByProtocol "rsync"
     shrink = genericShrink
 
 instance Arbitrary RpkiURL where
@@ -155,6 +158,10 @@ instance Arbitrary a => Arbitrary (X509.Signed a) where
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
+instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary a => Arbitrary (NonEmpty a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -205,6 +212,10 @@ instance Arbitrary ResourceCertificate where
     shrink = genericShrink
 
 instance Arbitrary RpkiObject where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary a => Arbitrary (Located a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -715,8 +726,7 @@ instance Arbitrary ExtExtendedKeyUsage where
     arbitrary = ExtExtendedKeyUsage . List.nub <$> listOf1 arbitrary
 
 instance Arbitrary Certificate where
-    arbitrary = Certificate <$> pure 2
-                            <*> arbitrary
+    arbitrary = Certificate 2 <$>arbitrary
                             <*> arbitrary
                             <*> arbitrary
                             <*> arbitrary
@@ -730,8 +740,7 @@ instance Arbitrary RevokedCertificate where
                                     <*> pure (Extensions Nothing)
 
 instance Arbitrary CRL where
-    arbitrary = CRL <$> pure 1
-                    <*> arbitrary
+    arbitrary = CRL 1 <$> arbitrary
                     <*> arbitrary
                     <*> arbitrary
                     <*> arbitrary

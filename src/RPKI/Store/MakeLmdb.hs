@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Store.MakeLmdb where
 
+import Control.Concurrent.STM
 import Data.Text (Text)
 
 import           RPKI.Store.Base.Map      (SMap (..))
@@ -9,28 +11,31 @@ import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 
 import           Lmdb.Connection
 import           Lmdb.Types hiding (Size)
-import           RPKI.Store.Base.LMDB
 
 import           Data.Int                 (Int64)
+
+import           RPKI.Store.Base.LMDB
+import           RPKI.Config
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
-import Control.Concurrent.STM
-import RPKI.Config
 
 
 
 createObjectStore :: LmdbEnv -> SequenceMap LmdbStorage -> IO (RpkiObjectStore LmdbStorage)
-createObjectStore e seqMap =
-    RpkiObjectStore 
-        (Sequence "object-key" seqMap) <$>
-        (SMap lmdb <$> createLmdbStore e) <*>        
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMultiMap lmdb <$> createLmdbMultiStore e) <*>
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMap lmdb <$> createLmdbStore e)
+createObjectStore e seqMap = do 
+        let keys = Sequence "object-key" seqMap
+        objects  <- SMap lmdb <$> createLmdbStore e
+        mftByAKI <- SMultiMap lmdb <$> createLmdbMultiStore e
+        objectMetas <- SMap lmdb <$> createLmdbStore e
+        hashToKey   <- SMap lmdb <$> createLmdbStore e
+        lastValidMft <- SMap lmdb <$> createLmdbStore e
+
+        uriToUriKey <- SMap lmdb <$> createLmdbStore e
+        uriKeyToUri <- SMap lmdb <$> createLmdbStore e
+        urlKeyToObjectKey  <- SMultiMap lmdb <$> createLmdbMultiStore e
+        objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
+        pure RpkiObjectStore {..}
     where 
         lmdb = LmdbStorage e        
 

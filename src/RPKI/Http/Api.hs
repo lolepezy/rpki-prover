@@ -40,7 +40,7 @@ type API = "api" :> (
             :<|> "lmdb-stats" :> Get '[JSON] TotalDBStats
             :<|> "object"     :> QueryParam "uri" Text 
                               :> QueryParam "hash" Text 
-                              :> Get '[JSON] (Maybe RObject)                        
+                              :> Get '[JSON] [RObject]
         )
 
 type PrometheusAPI = "metrics" :> Get '[PlainText] Text 

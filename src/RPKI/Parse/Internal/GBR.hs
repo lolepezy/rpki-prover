@@ -25,14 +25,12 @@ import RPKI.Parse.Internal.SignedObject
 
 -- | Parse Ghostbusters record (https://tools.ietf.org/html/rfc6493)
 -- 
-parseGbr :: BS.ByteString -> ParseResult (RpkiURL -> GbrObject)
+parseGbr :: BS.ByteString -> ParseResult GbrObject
 parseGbr bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
     signedGbr <- first fmtErr $ runParseASN1 (parseSignedObject parseGbr') asns
-    meta <- getMetaFromSigned signedGbr bs
-    pure $ \url -> let 
-                        (hash', loc) = meta url 
-                    in newCMSObject hash' loc (CMS signedGbr)
+    hash' <- getMetaFromSigned signedGbr bs
+    pure $ newCMSObject hash' (CMS signedGbr)
     where     
         parseGbr' contentType octets = 
             pure $ EncapsulatedContentInfo contentType (Gbr $ toShortBS octets)

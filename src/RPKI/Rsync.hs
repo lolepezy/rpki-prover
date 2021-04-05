@@ -34,7 +34,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
@@ -124,7 +124,7 @@ loadRsyncRepository :: Storage s =>
                         AppContext s ->
                         RsyncURL -> 
                         FilePath -> 
-                        RpkiObjectStore s -> 
+                        DB.RpkiObjectStore s -> 
                         ValidatorT IO ()
 loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
     worldVersion <- liftIO $ getWorldVerionIO appState    
@@ -156,57 +156,58 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                             let uri = pathToUri repositoryUrl rootPath path
                             task <- readAndParseObject path (RsyncU uri) `strictTask` threads                                                                      
                             liftIO $ atomically $ writeCQueue queue (uri, task)
-            where                
-                readAndParseObject :: FilePath 
-                                    -> RpkiURL 
-                                    -> ValidatorT IO (Maybe (StorableUnit RpkiObject AppError))
-                readAndParseObject filePath uri = 
-                    liftIO (getSizeAndContent1 filePath) >>= \case                    
-                        Left e        -> pure $! Just $! SError e
-                        Right (_, bs) -> 
-                            liftIO $ roTx objectStore $ \tx -> do
-                                -- Check if the object is already in the storage
-                                -- before parsing ASN1 and serialising it.
-                                exists <- hashExists tx objectStore (U.sha256s bs)
-                                pure $! if exists 
-                                    then Nothing
-                                    else 
-                                        case first ParseE $ readObject uri bs of
-                                            Left e -> Just $! SError e
-                                            -- All these bangs here make sense because
-                                            -- 
-                                            -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                                            -- force computation of the serialised object and gain some parallelism
-                                            -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                            -- a slow CPU-intensive transaction (verify that it's the case)
-                                            Right ro -> Just $! SObject $ toStorableObject ro
+          where                                
+            readAndParseObject filePath uri = 
+                liftIO (getSizeAndContent1 filePath) >>= \case                    
+                    Left e        -> pure $! Right $! SError e
+                    Right (_, bs) -> 
+                        liftIO $ roTx objectStore $ \tx -> do
+                            -- Check if the object is already in the storage
+                            -- before parsing ASN1 and serialising it.
+                            let hash = U.sha256s bs  
+                            exists <- DB.hashExists tx objectStore hash
+                            pure $! if exists 
+                                then Left (uri, hash)
+                                else 
+                                    case first ParseE $ readObject uri bs of
+                                        Left e -> Right $! SError e
+                                        -- All these bangs here make sense because
+                                        -- 
+                                        -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
+                                        -- force computation of the serialised object and gain some parallelism
+                                        -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
+                                        -- a slow CPU-intensive transaction (verify that it's the case)
+                                        Right ro -> Right $! SObject $ toStorableObject ro uri
         
         saveObjects worldVersion queue = do            
             mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
-                rwAppTx objectStore go
-            where
-                go tx = 
-                    liftIO (atomically (readCQueue queue)) >>= \case 
-                        Nothing       -> pure ()
-                        Just (uri, a) -> do 
-                            r <- try $ waitTask a
-                            process tx uri r
-                            go tx
+                DB.rwAppTx objectStore go
+          where
+            go tx = 
+                liftIO (atomically (readCQueue queue)) >>= \case 
+                    Nothing       -> pure ()
+                    Just (uri, a) -> do 
+                        r <- try $ waitTask a
+                        process tx uri r
+                        go tx
 
-                process tx (RsyncURL uri) = \case
-                    Left (e :: SomeException) -> 
-                        throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
+            process tx rpkiURL@(RsyncURL uri) = \case
+                Left (e :: SomeException) -> 
+                    throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
+                
+                Right (Left (rpkiURL, hash)) -> do
+                    DB.linkObjectToUrl tx objectStore rpkiURL hash worldVersion
 
-                    Right Nothing           -> pure ()
-                    Right (Just (SError e)) -> do
-                        logErrorM logger [i|An error parsing or serialising the object: #{e}|]
-                        appWarn e
+                Right (Right (SError e)) -> do
+                    logErrorM logger [i|An error parsing or serialising the object: #{e}|]
+                    appWarn e
 
-                    Right (Just (SObject so@(StorableObject ro _))) -> do                        
-                        alreadyThere <- hashExists tx objectStore (getHash ro)
-                        unless alreadyThere $ do 
-                            putObject tx objectStore so worldVersion                            
-                            updateMetric @RsyncMetric @_ (& #processed %~ (+1))
+                Right (Right (SObject so@StorableObject {..})) -> do                        
+                    alreadyThere <- DB.hashExists tx objectStore (getHash object)
+                    unless alreadyThere $ do 
+                        DB.putObject tx objectStore so worldVersion                                                 
+                        DB.linkObjectToUrl tx objectStore tag (getHash object) worldVersion   
+                        updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     
 

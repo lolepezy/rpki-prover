@@ -13,6 +13,8 @@ module RPKI.Http.Messages where
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
+import Data.Foldable (toList)
+
 import qualified Data.List          as List
 import qualified Data.List.NonEmpty          as NonEmpty
 
@@ -244,4 +246,4 @@ fmtLocations :: Locations -> Text
 fmtLocations = mconcat . 
                List.intersperse "," . 
                map (Text.pack . show) . 
-               NonEmpty.toList
+               toList

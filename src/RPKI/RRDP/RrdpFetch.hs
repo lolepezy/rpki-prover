@@ -36,7 +36,8 @@ import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.RRDP.Http
-import           RPKI.RRDP.Parse
+import RPKI.RRDP.Parse
+    ( decodeBase64, parseDelta, parseNotification, parseSnapshot )
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
@@ -56,10 +57,10 @@ import qualified RPKI.Util                        as U
 --    - do something appropriate with either of them
 -- 
 downloadAndUpdateRRDP :: AppContext s ->
-                        RrdpRepository ->                 
-                        (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) ->
-                        (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT IO ()) ->
-                        ValidatorT IO RrdpRepository
+                        RrdpRepository 
+                        -> (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
         repo@(RrdpRepository repoUri _ _)      
@@ -301,39 +302,42 @@ saveSnapshot appContext repoUri notification snapshotContent = do
             where 
                 readBlob = case U.parseRpkiURL $ unURI uri of
                     Left e -> 
-                        pure $! Just $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                        pure $! Right $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
                     Right rpkiURL ->
                         case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
-                            Left e -> pure $! Just $ SError $ VErr e
+                            Left e -> pure $! Right $ SError $ VErr e
                             Right (DecodedBase64 decoded) ->
-                                liftIO $ roTx objectStore $ \tx -> do                                    
-                                    exists <- DB.hashExists tx objectStore (U.sha256s decoded)
+                                liftIO $ roTx objectStore $ \tx -> do     
+                                    let hash = U.sha256s decoded  
+                                    exists <- DB.hashExists tx objectStore hash
                                     pure $! if exists 
                                     -- The object is already in cache. Do not parse-serialise
                                     -- anything, just skip it. We are not afraid of possible 
                                     -- race-conditions here, it's not a problem to double-insert
                                     -- an object and delete-insert race will never happen in practice.
-                                        then Nothing
+                                        then Left (rpkiURL, hash)
                                         else
                                             case first ParseE $ readObject rpkiURL decoded of 
-                                                Left e   -> Just $! SError $ VErr e
-                                                Right ro -> Just $! SObject $ toStorableObject ro
+                                                Left e   -> Right $! SError $ VErr e
+                                                Right ro -> Right $! SObject $ toStorableObject ro rpkiURL
                                         
         saveStorable objectStore _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
 
         saveStorable objectStore tx (Right (uri, a)) _ =           
             waitTask a >>= \case     
-                Nothing -> pure ()                   
-                Just (SError (VWarn (VWarning e))) -> do                    
+                Left (rpkiURL, hash) ->
+                    DB.linkObjectToUrl tx objectStore rpkiURL hash worldVersion
+                Right (SError (VWarn (VWarning e))) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appWarn e 
-                Just (SError (VErr e)) -> do                    
+                Right (SError (VErr e)) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appError e                 
-                Just (SObject so) -> do 
-                    DB.putObject tx objectStore so worldVersion
+                Right (SObject so@StorableObject {..}) -> do 
+                    DB.putObject tx objectStore so worldVersion                    
+                    DB.linkObjectToUrl tx objectStore tag (getHash object) worldVersion
                     addedObject                    
 
     logger         = appContext ^. typed @AppLogger           
@@ -431,8 +435,8 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 SError (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appError e 
-                SObject so@(StorableObject ro _) -> do
-                    alreadyThere <- DB.hashExists tx objectStore (getHash ro)
+                SObject so@StorableObject {..} -> do
+                    alreadyThere <- DB.hashExists tx objectStore (getHash object)
                     unless alreadyThere $ do
                         DB.putObject tx objectStore so worldVersion                      
                         addedObject
@@ -445,7 +449,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 SError (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appError e 
-                SObject so@(StorableObject ro _) -> do        
+                SObject so@StorableObject {..} -> do        
                     oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
                     if oldOneIsAlreadyThere 
                         then do 
@@ -456,7 +460,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                             inSubVPath (unURI uri) $ 
                                 appError $ RrdpE $ NoObjectToReplace uri oldHash
 
-                    newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
+                    newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash object)
                     unless newOneIsAlreadyThere $ do                            
                         DB.putObject tx objectStore so worldVersion
                         addedObject
@@ -472,11 +476,11 @@ addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))
 deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
 
 
-parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject VProblem
+parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject VProblem RpkiURL 
 parseAndProcess u b64 =     
     case parsed of
         Left e   -> SError $ VErr e
-        Right ro -> SObject $! toStorableObject ro                    
+        Right ro -> SObject $! toStorableObject ro u
     where
         parsed = do
             DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u

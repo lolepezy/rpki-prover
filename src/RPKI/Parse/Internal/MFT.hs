@@ -21,12 +21,12 @@ import           RPKI.Parse.Internal.SignedObject
 import           RPKI.Util (mkHash)
 
 
-parseMft :: BS.ByteString -> ParseResult (RpkiURL -> MftObject)
+parseMft :: BS.ByteString -> ParseResult MftObject
 parseMft bs = do
-    asns         <- first (fmtErr . show) $ decodeASN1' BER bs
-    signedMft    <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
-    meta <- getMetaFromSigned signedMft bs
-    pure $ \url -> let (hash, loc) = meta url in newCMSObject hash loc (CMS signedMft)
+    asns      <- first (fmtErr . show) $ decodeASN1' BER bs
+    signedMft <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
+    hash' <- getMetaFromSigned signedMft bs
+    pure $ newCMSObject hash' (CMS signedMft)
     where
         parseManifest :: ParseASN1 Manifest
         parseManifest = onNextContainer Sequence $
