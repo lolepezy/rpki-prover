@@ -71,19 +71,19 @@ newtype Hash = Hash BSS.ShortByteString
     deriving anyclass Serialise
 
 newtype URI  = URI { unURI :: Text } 
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype RsyncURL  = RsyncURL URI
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype RrdpURL  = RrdpURL URI
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving  (Show, Eq, Ord, Generic)
+    deriving  (Eq, Ord, Generic)
     deriving anyclass Serialise
 
 class WithURL a where
@@ -95,9 +95,9 @@ class WithRpkiURL a where
 instance WithURL URI where
     getURL = id
 
--- instance Show RpkiURL where
---     show (RsyncU u) = show u
---     show (RrdpU u) = show u 
+instance Show RpkiURL where
+    show (RsyncU u) = show u
+    show (RrdpU u) = show u 
 
 instance WithURL RsyncURL where
     getURL (RsyncURL u) = u
@@ -141,14 +141,14 @@ newtype Version = Version Integer
 
 type Locations = NESet RpkiURL
 
--- instance Show URI where
---     show (URI u) = show u
+instance Show URI where
+    show (URI u) = show u
 
--- instance Show RsyncURL where
---     show (RsyncURL u) = show u
+instance Show RsyncURL where
+    show (RsyncURL u) = show u
 
--- instance Show RrdpURL where
---     show (RrdpURL u) = show u
+instance Show RrdpURL where
+    show (RrdpURL u) = show u
 
 instance Show Hash where
     show (Hash b) = hexShow b
@@ -587,7 +587,7 @@ pickLocation = NonEmpty.head . NESet.toList
 locationsToText :: Locations -> Text
 locationsToText = F.fold
     . NonEmpty.intersperse ", " 
-    . NonEmpty.map (Text.pack . show) 
+    . NonEmpty.map (unURI . getURL) 
     . NESet.toList
 
 toNESet :: Ord a => [a] -> Maybe (NESet a)
@@ -595,10 +595,3 @@ toNESet = (NESet.fromList <$>) . NonEmpty.nonEmpty
 
 neSetToList :: NESet a -> [a]
 neSetToList = NonEmpty.toList . NESet.toList
-
--- withLoc :: Locations -> RpkiObject -> RpkiObject
--- withLoc loc (CerRO c) = CerRO $ c { locations = loc }
--- withLoc loc (MftRO c) = MftRO $ c { locations = loc }
--- withLoc loc (RoaRO c) = RoaRO $ c { locations = loc }
--- withLoc loc (GbrRO c) = GbrRO $ c { locations = loc }
--- withLoc loc (CrlRO c) = CrlRO $ c { locations = loc }

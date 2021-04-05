@@ -436,10 +436,15 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appError e 
                 SObject so@StorableObject {..} -> do
-                    alreadyThere <- DB.hashExists tx objectStore (getHash object)
-                    unless alreadyThere $ do
-                        DB.putObject tx objectStore so worldVersion                      
-                        addedObject
+                    let hash' = getHash object
+                    alreadyThere <- DB.hashExists tx objectStore hash'
+                    if alreadyThere 
+                        then 
+                            DB.linkObjectToUrl tx objectStore tag hash' worldVersion
+                        else do                                    
+                            DB.putObject tx objectStore so worldVersion                      
+                            DB.linkObjectToUrl tx objectStore tag hash' worldVersion
+                            addedObject
 
         replaceObject objectStore tx uri a oldHash = do            
             waitTask a >>= \case
@@ -460,10 +465,15 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                             inSubVPath (unURI uri) $ 
                                 appError $ RrdpE $ NoObjectToReplace uri oldHash
 
-                    newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash object)
-                    unless newOneIsAlreadyThere $ do                            
-                        DB.putObject tx objectStore so worldVersion
-                        addedObject
+                    let hash' = getHash object
+                    newOneIsAlreadyThere <- DB.hashExists tx objectStore hash'
+                    if newOneIsAlreadyThere
+                        then 
+                            DB.linkObjectToUrl tx objectStore tag hash' worldVersion
+                        else do                            
+                            DB.putObject tx objectStore so worldVersion
+                            DB.linkObjectToUrl tx objectStore tag hash' worldVersion
+                            addedObject
                                                                                   
 
     logger          = appContext ^. typed @AppLogger           
