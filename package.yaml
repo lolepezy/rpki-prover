@@ -71,6 +71,7 @@ dependencies:
 - monad-control
 - mtl
 - network
+- nonempty-containers
 - optparse-generic
 - pipes
 - primitive
