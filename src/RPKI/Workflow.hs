@@ -150,8 +150,9 @@ runWorkflow appContext@AppContext {..} tals = do
             database' <- readTVarIO database 
             executeOrDie 
                 (cleanObjectCache database' $ versionIsOld now cacheLifeTime)
-                (\(deleted, kept) elapsed -> 
-                    logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|])
+                (\CleanUpResult {..} elapsed -> 
+                    logInfo_ logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <> 
+                                      [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms|])
 
         cleanOldVersions worldVersion = do
             let now = versionToMoment worldVersion

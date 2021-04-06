@@ -66,19 +66,19 @@ import RPKI.Store.Base.InMemory
 storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
-        objectStoreGroup
-        -- validationResultStoreGroup,
-        -- repositoryStoreGroup,
-        -- txGroup
+        objectStoreGroup,
+        validationResultStoreGroup,
+        repositoryStoreGroup,
+        txGroup
     ]
 
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [            
-        -- dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromObjectStore,        
-        -- dbTestCase "Should order manifests accoring to their dates" shouldOrderManifests,
-        dbTestCase "Should merge locations" shouldMergeObjectLocations
-        -- dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
+        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromObjectStore,        
+        dbTestCase "Should order manifests accoring to their dates" shouldOrderManifests,
+        dbTestCase "Should merge locations" shouldMergeObjectLocations,
+        dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
     ]        
 
 validationResultStoreGroup :: TestTree
@@ -119,16 +119,16 @@ shouldMergeObjectLocations io = do
     let getIt hash = roTx objectStore $ \tx -> getByHash tx objectStore hash    
 
     let printMaps = do
-        uriToUriKey <- roTx objectStore $ \tx -> M.all tx (uriToUriKey objectStore)
-        uriKeyToUri <- roTx objectStore $ \tx -> M.all tx (uriKeyToUri objectStore)
-        objectKeyToUrlKeys <- roTx objectStore $ \tx -> M.all tx (objectKeyToUrlKeys objectStore)
-        urlKeyToObjectKey <- roTx objectStore $ \tx -> MM.all tx (urlKeyToObjectKey objectStore)
+            uriToUriKey <- roTx objectStore $ \tx -> M.all tx (uriToUriKey objectStore)
+            uriKeyToUri <- roTx objectStore $ \tx -> M.all tx (uriKeyToUri objectStore)
+            objectKeyToUrlKeys <- roTx objectStore $ \tx -> M.all tx (objectKeyToUrlKeys objectStore)
+            urlKeyToObjectKey <- roTx objectStore $ \tx -> MM.all tx (urlKeyToObjectKey objectStore)
 
-        putStrLn "####################################"
-        putStrLn $ "uriToUriKey = " <> show uriToUriKey
-        putStrLn $ "uriKeyToUri = " <> show uriKeyToUri
-        putStrLn $ "objectKeyToUrlKeys = " <> show objectKeyToUrlKeys
-        putStrLn $ "urlKeyToObjectKey = " <> show urlKeyToObjectKey
+            putStrLn "####################################"
+            putStrLn $ "uriToUriKey = " <> show uriToUriKey
+            putStrLn $ "uriKeyToUri = " <> show uriKeyToUri
+            putStrLn $ "objectKeyToUrlKeys = " <> show objectKeyToUrlKeys
+            putStrLn $ "urlKeyToObjectKey = " <> show urlKeyToObjectKey
 
     storeIt ro url1
     

@@ -70,13 +70,13 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving anyclass (Serialise)
 
 newtype UrlKey = UrlKey ArtificialKey
-    deriving (Show, Eq, Generic, Serialise)
+    deriving (Show, Eq, Ord, Generic, Serialise)
 
 newtype ObjectKey = ObjectKey ArtificialKey
-    deriving (Show, Eq, Generic, Serialise)
+    deriving (Show, Eq, Ord, Generic, Serialise)
 
 newtype ArtificialKey = ArtificialKey Int64
-    deriving (Show, Eq, Generic, Serialise)
+    deriving (Show, Eq, Ord, Generic, Serialise)
 
 
 -- | RPKI objects store
@@ -252,11 +252,8 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $
         M.delete tx hashToKey h        
         ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
             M.delete tx objectKeyToUrlKeys objectKey            
-            forM_ urlKeys $ \urlKey -> do 
-                MM.delete tx urlKeyToObjectKey urlKey objectKey
-                ifJustM (M.get tx uriKeyToUri urlKey) $ \url -> do
-                    M.delete tx uriToUriKey url        
-                    M.delete tx uriKeyToUri urlKey                
+            forM_ urlKeys $ \urlKey ->
+                MM.delete tx urlKeyToObjectKey urlKey objectKey                
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
             ifJust (getAKI ro) $ \aki' -> do 
                 M.delete tx lastValidMft aki'
@@ -275,13 +272,13 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
             pure $! case o of 
                 Just z@(Located loc (MftRO mft)) -> Just $ Located loc mft
                 _                                -> Nothing
-    where
-        chooseMaxNum latest _ (hash, orderingNum) = 
-            pure $! case latest of 
-                Nothing                       -> Just (hash, orderingNum)
-                Just (_, latestNum) 
-                    | orderingNum > latestNum -> Just (hash, orderingNum)
-                    | otherwise               -> latest    
+  where
+    chooseMaxNum latest _ (hash, orderingNum) = 
+        pure $! case latest of 
+            Nothing                       -> Just (hash, orderingNum)
+            Just (_, latestNum) 
+                | orderingNum > latestNum -> Just (hash, orderingNum)
+                | otherwise               -> latest    
 
 
 markValidated :: (MonadIO m, Storage s) => 
@@ -399,15 +396,22 @@ metricsForVersion tx MetricsStore {..} wv =
 
 -- More complicated operations
 
+data CleanUpResult = CleanUpResult {
+    deletedObjects :: Int,
+    keptObjects :: Int,
+    deletedURLs :: Int
+}
+
 -- Delete all the objects from the objectStore if they were 
 -- visited longer than certain time ago.
 cleanObjectCache :: Storage s => 
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that decides if the object is too old to stay in cache
-                    IO (Int, Int)
+                    IO CleanUpResult
 cleanObjectCache DB {..} tooOld = do
-    kept    <- newIORef (0 :: Int)
-    deleted <- newIORef (0 :: Int)
+    kept        <- newIORef (0 :: Int)
+    deleted     <- newIORef (0 :: Int)
+    deletedURLs <- newIORef (0 :: Int)
     
     let readOldObjects queue =
             roTx objectStore $ \tx ->
@@ -434,7 +438,41 @@ cleanObjectCache DB {..} tooOld = do
                 (liftIO . deleteObjects)
                 (const $ pure ())    
                     
-    (,) <$> readIORef deleted <*> readIORef kept
+    -- clean up URLs that don't have any objects referring to them
+    mapException (AppException . storageError) 
+        $ voidRun "cleanOrphanURLs" $ do 
+            referencedUrlKeys <- liftIO 
+                $ roTx objectStore 
+                $ \tx ->                 
+                    Set.fromList <$>
+                        M.fold tx (objectKeyToUrlKeys objectStore) 
+                            (\allUrlKey _ urlKeys -> pure $! urlKeys <> allUrlKey)
+                            []
+            
+            let readUrls queue = 
+                    roTx objectStore $ \tx ->
+                        M.traverse tx (uriKeyToUri objectStore) $ \urlKey url ->
+                            when (urlKey `Set.notMember` referencedUrlKeys) $
+                                atomically (writeCQueue queue (urlKey, url))
+            
+            let deleteUrls queue = 
+                    readQueueChunked queue chunkSize $ \quuElems ->
+                        rwTx objectStore $ \tx ->
+                            forM_ quuElems $ \(urlKey, url) -> do 
+                                M.delete tx (uriKeyToUri objectStore) urlKey
+                                M.delete tx (uriToUriKey objectStore) url
+                                increment deletedURLs
+
+            bracketChanClosable 
+                (2 * chunkSize)
+                (liftIO . readUrls)
+                (liftIO . deleteUrls)
+                (const $ pure ())            
+
+    CleanUpResult <$> 
+        readIORef deleted <*> 
+        readIORef kept <*> 
+        readIORef deletedURLs
 
 
 -- Clean up older versions and delete everything associated with the version, i,e.
