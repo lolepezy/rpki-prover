@@ -66,13 +66,6 @@ getTaCertURL RFC_TAL {..}       = pickLocation certificateLocations
 newLocation :: Text.Text -> NonEmpty RpkiURL
 newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 
--- newLocations :: NonEmpty RpkiURL -> NonEmpty RpkiURL
--- newLocations = NonEmpty.sortWith urlOrder
---   where
---     urlOrder u = case u of
---         RrdpU _ -> (0 :: Int, u)
---         _       -> (1, u)
-
 -- | Parse TAL object from raw text
 parseTAL :: Text.Text -> Either TALError TAL
 parseTAL bs = 
