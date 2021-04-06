@@ -61,7 +61,7 @@ import           RPKI.CommonTypes
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
-import           RPKI.Fetch
+-- import           RPKI.Fetch
 import           RPKI.Metrics
 
 import           Data.Hourglass
@@ -363,6 +363,11 @@ fetchRepository
                     logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
                     pure $! FetchSuccess resultRepo now v
 
+
+data FetchResult = 
+    FetchSuccess Repository Instant ValidationState | 
+    FetchFailure Repository Instant ValidationState
+    deriving stock (Show, Eq, Generic)
 
 partitionFailedSuccess :: [FetchResult] -> 
                         ([(Repository, Instant, ValidationState)], 
