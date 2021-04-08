@@ -48,38 +48,10 @@ import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
+
 import           RPKI.Util       (convert, mkHash)
 import RPKI.CommonTypes
 
 
 testConfig :: Config
-testConfig = Config {
-    talDirectory = "",
-    tmpDirectory = "",
-    cacheDirectory = "",
-    parallelism = Parallelism 8 8,
-    rsyncConf = RsyncConf {
-        rsyncRoot    = "",
-        rsyncTimeout = 300
-    },
-    rrdpConf = RrdpConf {
-        tmpRoot = "",
-        maxSize = Size 1_000_000_000,
-        rrdpTimeout = 300
-    },
-    validationConfig = ValidationConfig {
-        revalidationInterval           = 600,
-        rrdpRepositoryRefreshInterval  = 120,
-        rsyncRepositoryRefreshInterval = 600,    
-        dontFetch                      = False
-    },
-    httpApiConf = HttpApiConfig {
-        port = 9988
-    },
-    rtrConfig                 = Nothing,
-    cacheCleanupInterval      = 60 * 120,
-    cacheLifeTime             = 60 * 60 * 12,
-    oldVersionsLifetime       = 60 * 60 * 2,
-    storageCompactionInterval = 60 * 60 * 24,
-    lmdbSize                  = Size 2_000_000_000
-}
+testConfig = defaultConfig
