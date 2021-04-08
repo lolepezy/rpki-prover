@@ -9,7 +9,8 @@
 module Main where
     
 import           Colog
-import           Colog.Concurrent
+import           Control.Lens ((^.), (.~), (&))
+import           Control.Lens.Setter
 import           Control.Concurrent.STM (readTVarIO)
 import           Control.Concurrent.STM.TVar (newTVarIO)
 
@@ -58,11 +59,10 @@ import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
 import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
-import qualified RPKI.Store.MakeInMemory as Mem
+
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Workflow
-
 
 main :: IO ()
 main = do
@@ -163,53 +163,38 @@ createAppContext CLIOptions{..} logger = do
     -- httpContext <- liftIO newHttpContext
     
     let rtrConfig = if withRtr
-            then Just $ RtrConfig { 
-                    rtrAddress = rtrAddress `orDefault` "localhost",
-                    rtrPort    = rtrPort `orDefault` 8283
-                }
-            else Nothing     
+            then Just $ defaultRtrConfig
+                        & maybeSet #rtrPort rtrPort
+                        & maybeSet #rtrAddress rtrAddress 
+            else Nothing    
+             
 
     appState <- liftIO newAppState    
     tvarDatabase <- liftIO $ newTVarIO database
 
     let appContext = AppContext {        
-        logger = logger,
-        config = Config {
-            talDirectory = tald,
-            tmpDirectory = tmpd,
-            cacheDirectory = cached,
-            parallelism  = Parallelism cpuParallelism ioParallelism,
-            rsyncConf    = RsyncConf rsyncd (Seconds $ rsyncTimeout `orDefault` (7 * 60)),
-            rrdpConf     = RrdpConf { 
-                tmpRoot = tmpd,
-                -- Do not download files bigger than 1Gb, it's fishy
-                maxSize = Size 1024 * 1024 * 1024,
-                rrdpTimeout = Seconds $ rrdpTimeout `orDefault` (5 * 60)
-            },
-            validationConfig = ValidationConfig {
-                revalidationInterval           = Seconds $ revalidationInterval `orDefault` (13 * 60),
-                rrdpRepositoryRefreshInterval  = Seconds $ rrdpRefreshInterval `orDefault` 120,
-                rsyncRepositoryRefreshInterval = Seconds $ rsyncRefreshInterval `orDefault` (11 * 60),
-                dontFetch = dontFetch
-            },
-            httpApiConf = HttpApiConfig {
-                port = httpApiPort `orDefault` 9999
-            },
-            rtrConfig = rtrConfig,
-            cacheCleanupInterval = 120 * 60,
-            cacheLifeTime = Seconds $ 60 * 60 * (cacheLifetimeHours `orDefault` 72),
-
-            -- TODO Think about it, it should be lifetime or we should store N last versions
-            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
-
-            storageCompactionInterval = Seconds $ 60 * 60 * 12,
-
-            lmdbSize = lmdbRealSize
-        },
         appState = appState,
         database = tvarDatabase,
-        appBottlenecks = appBottlenecks
-    }    
+        appBottlenecks = appBottlenecks,
+        logger = logger,
+        config = defaultConfig 
+                & #talDirectory .~ tald 
+                & #tmpDirectory .~ tmpd 
+                & #cacheDirectory .~ cached 
+                & #parallelism .~ Parallelism cpuParallelism ioParallelism
+                & #rsyncConf . #rsyncRoot .~ rsyncd                
+                & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+                & #rrdpConf . #tmpRoot .~ tmpd
+                & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+                & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
+                & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+                & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+                & #validationConfig . #dontFetch .~ dontFetch                
+                & maybeSet (#httpApiConf . #port) httpApiPort
+                & #rtrConfig .~ rtrConfig
+                & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> rsyncRefreshInterval)
+                & #lmdbSize .~ lmdbRealSize        
+    }
 
     logDebugM logger [i|Created application context: #{config appContext}|]
     pure appContext    
@@ -217,6 +202,9 @@ createAppContext CLIOptions{..} logger = do
 
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
+
+maybeSet :: ASetter s s a b -> Maybe b -> s -> s
+maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 
 createLogger :: IO AppLogger
 createLogger = do 
@@ -258,6 +246,8 @@ createSubDirectoryIfNeeded root sub = do
     pure $ Right subDirectory
 
 
+type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
+
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
     rpkiRootDirectory :: wrapped ::: Maybe FilePath <?> 
@@ -271,40 +261,34 @@ data CLIOptions wrapped = CLIOptions {
 
     revalidationInterval :: wrapped ::: Maybe Int64 <?>          
         ("Re-validation interval in seconds, i.e. how often to re-download repositories are " 
-        `AppendSymbol` "updated and certificate tree is re-validated. "
-        `AppendSymbol` "Default is 13 minutes, i.e. 780 seconds."),
+       +++ "updated and certificate tree is re-validated. "
+       +++ "Default is 13 minutes, i.e. 780 seconds."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?> 
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>          
         ("Period of time after which an RRDP repository must be updated," 
-        `AppendSymbol` "in seconds (default is 120 seconds)"),
+       +++ "in seconds (default is 120 seconds)"),
 
     rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>         
         ("Period of time after which an rsync repository must be updated, "
-        `AppendSymbol`  "in seconds (default is 11 minutes, i.e. 660 seconds)"),
+       +++ "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?> 
         ("Timeout for RRDP repositories, in seconds. If fetching of a repository does not "
-        `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?> 
         ("Timeout for rsync repositories, in seconds. If fetching of a repository does not "
-        `AppendSymbol` "finish within this timeout, the repository is considered unavailable"),
-
-    repositoryGracePeriod :: wrapped ::: Maybe Int64 <?> 
-        ("Period of time in seconds for which a repository is 'allowed' to be unavailable, "
-        `AppendSymbol` "before its cached objects are ignored. "
-        `AppendSymbol` "The default is zero, so repository objects are ignored immediately "
-        `AppendSymbol` "after the repository could not be successfully downloaded."),
+       +++ "finish within this timeout, the repository is considered unavailable"),
 
     httpApiPort :: wrapped ::: Maybe Word16 <?> 
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 
-        ("Maximal LMDB cache size in MBs (default is 2048mb). Note that about 1Gb of cache is "
-        `AppendSymbol` "required for every extra day of cache life time"),    
+        ("Maximal LMDB cache size in MBs (default is 8192mb). Note that about 1Gb of cache is "
+       +++ "required for every extra 24 hours of cache life time"),    
 
     withRtr :: wrapped ::: Bool <?> 
         "Start RTR server (default is false)",
@@ -313,7 +297,7 @@ data CLIOptions wrapped = CLIOptions {
         "Address to bind to for the RTR server (default is localhost)",
 
     rtrPort :: wrapped ::: Maybe Int16 <?> 
-        "Port to listen to for the RTR server (default is 8282)",
+        "Port to listen to for the RTR server (default is 8283)",
 
     dontFetch :: wrapped ::: Bool <?> 
         "Don't fetch repositories, mostly used for testing (default is false)."
@@ -325,3 +309,5 @@ instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
 
 deriving instance Show (CLIOptions Unwrapped)
+
+
