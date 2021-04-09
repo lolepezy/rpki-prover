@@ -544,7 +544,6 @@ getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
 newCrl a h sc = CrlObject {
         hash = h,    
-        -- locations = toLocations u,
         aki = a,
         signCrl = sc
     } 
@@ -552,7 +551,6 @@ newCrl a h sc = CrlObject {
 newCert :: Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
 newCert a s h rc = CerObject {
         hash = h,    
-        -- locations = toLocations u,
         ski = s,
         aki = a,
         certificate = rc

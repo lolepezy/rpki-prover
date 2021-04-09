@@ -20,7 +20,8 @@ createObjectStore seqMap = do
     let keys = Sequence "object-key" seqMap
     objects  <- SMap InMemoryStorage <$> createMapStore
     mftByAKI <- SMultiMap InMemoryStorage <$> createMultiMapStore
-    objectMetas <- SMap InMemoryStorage <$> createMapStore
+    objectInsertedBy  <- SMap InMemoryStorage <$> createMapStore
+    objectValidatedBy <- SMap InMemoryStorage <$> createMapStore
     hashToKey   <- SMap InMemoryStorage <$> createMapStore
     lastValidMft <- SMap InMemoryStorage <$> createMapStore
 

@@ -27,7 +27,8 @@ createObjectStore e seqMap = do
         let keys = Sequence "object-key" seqMap
         objects  <- SMap lmdb <$> createLmdbStore e
         mftByAKI <- SMultiMap lmdb <$> createLmdbMultiStore e
-        objectMetas <- SMap lmdb <$> createLmdbStore e
+        objectInsertedBy <- SMap lmdb <$> createLmdbStore e
+        objectValidatedBy <- SMap lmdb <$> createLmdbStore e        
         hashToKey   <- SMap lmdb <$> createLmdbStore e
         lastValidMft <- SMap lmdb <$> createLmdbStore e
 

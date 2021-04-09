@@ -95,8 +95,10 @@ data RpkiObjectStore s = RpkiObjectStore {
     objects        :: SMap "objects" s ObjectKey SValue,
     hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
     mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
-    lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,
-    objectMetas    :: SMap "object-meta" s ObjectKey ROMeta,
+    lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
+
+    objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
+    objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
 
     -- Object URL mapping
     uriToUriKey    :: SMap "uri-to-uri-key" s RpkiURL UrlKey,
@@ -201,7 +203,7 @@ putObject tx objectStore@RpkiObjectStore {..} StorableObject {..} wv = liftIO $ 
         let objectKey = ObjectKey $ ArtificialKey k
         M.put tx hashToKey h objectKey
         M.put tx objects objectKey storable                           
-        M.put tx objectMetas objectKey (ROMeta wv Nothing)          
+        M.put tx objectInsertedBy objectKey wv
         ifJust (getAKI object) $ \aki' ->
             case object of
                 MftRO mft -> MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
@@ -248,7 +250,8 @@ deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash 
 deleteObject tx store@RpkiObjectStore {..} h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey -> do               
         M.delete tx objects objectKey
-        M.delete tx objectMetas objectKey        
+        M.delete tx objectInsertedBy objectKey        
+        M.delete tx objectValidatedBy objectKey        
         M.delete tx hashToKey h        
         ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
             M.delete tx objectKeyToUrlKeys objectKey            
@@ -283,12 +286,10 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
 
 markValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
-markValidated tx RpkiObjectStore {..} hash wv = liftIO $ do
-    k <- M.get tx hashToKey hash
-    ifJust k $ \key -> do 
-        ifJustM (M.get tx objectMetas key) $ \meta -> let 
-            m = meta { validatedBy = Just wv }
-            in M.put tx objectMetas key m                        
+markValidated tx RpkiObjectStore {..} hash wv = liftIO $    
+    ifJustM (M.get tx hashToKey hash) $ \key -> 
+        M.put tx objectValidatedBy key wv                                
+
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [Located RpkiObject]
@@ -397,10 +398,11 @@ metricsForVersion tx MetricsStore {..} wv =
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {
-    deletedObjects :: Int,
-    keptObjects :: Int,
-    deletedURLs :: Int
-}
+        deletedObjects :: Int,
+        keptObjects :: Int,
+        deletedURLs :: Int
+    }
+    deriving (Show, Eq, Ord, Generic)
 
 -- Delete all the objects from the objectStore if they were 
 -- visited longer than certain time ago.
@@ -416,9 +418,10 @@ cleanObjectCache DB {..} tooOld = do
     let readOldObjects queue =
             roTx objectStore $ \tx ->
                 M.traverse tx (hashToKey objectStore) $ \hash key -> do
-                    r <- M.get tx (objectMetas objectStore) key
-                    ifJust r $ \ROMeta {..} -> do
-                        let cutoffVersion = fromMaybe insertedBy validatedBy
+                    z <- M.get tx (objectValidatedBy objectStore) key >>= \case 
+                            Just validatedBy -> pure $ Just validatedBy
+                            Nothing          -> M.get tx (objectInsertedBy objectStore) key                                                                        
+                    ifJust z $ \cutoffVersion -> 
                         if tooOld cutoffVersion
                             then increment deleted >> atomically (writeCQueue queue hash)
                             else increment kept
@@ -520,14 +523,15 @@ getLastCompletedVersion database tx = do
 
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,
-    mftByAKIStats      :: SStats,
-    objectMetaStats    :: SStats,
+    mftByAKIStats      :: SStats,    
     hashToKeyStats     :: SStats,
     lastValidMftStats  :: SStats,
     uriToUriKeyStat    :: SStats,
     uriKeyToUriStat    :: SStats,
     uriKeyToObjectKeyStat  :: SStats,
-    objectKeyToUrlKeysStat :: SStats    
+    objectKeyToUrlKeysStat :: SStats,
+    objectInsertedByStats  :: SStats,
+    objectValidtedByStats  :: SStats    
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
@@ -578,8 +582,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
         rpkiObjectStats tx = do 
             let RpkiObjectStore {..} = objectStore
             objectsStats  <- M.stats tx objects
-            mftByAKIStats <- MM.stats tx mftByAKI            
-            objectMetaStats <- M.stats tx objectMetas            
+            mftByAKIStats <- MM.stats tx mftByAKI                                    
             hashToKeyStats  <- M.stats tx hashToKey
             lastValidMftStats <- M.stats tx lastValidMft
 
@@ -587,6 +590,9 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
             uriKeyToUriStat <- M.stats tx uriKeyToUri
             uriKeyToObjectKeyStat <- MM.stats tx urlKeyToObjectKey
             objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
+
+            objectInsertedByStats <- M.stats tx objectInsertedBy
+            objectValidtedByStats <- M.stats tx objectValidatedBy            
             pure RpkiObjectStats {..}
 
         repositoryStats tx = 
@@ -615,7 +621,9 @@ totalStats DBStats {..} =
     <> (let RepositoryStats{..} = repositoryStats 
         in rrdpStats <> rsyncStats <> lastSStats) 
     <> (let RpkiObjectStats {..} = rpkiObjectStats
-        in objectsStats <> mftByAKIStats <> objectMetaStats <> hashToKeyStats <> lastValidMftStats)
+        in objectsStats <> mftByAKIStats 
+        <> objectInsertedByStats <> objectValidtedByStats 
+        <> hashToKeyStats <> lastValidMftStats)
     <> resultsStats vResultStats 
     <> vrpStats 
     <> versionStats 
