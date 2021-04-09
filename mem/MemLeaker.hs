@@ -6,7 +6,7 @@
 import Colog hiding (extract)
 
 import Control.Concurrent.STM
-import Control.Lens
+import           Control.Lens ((^.), (.~), (&))
 import Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Concurrent.Lifted
@@ -35,7 +35,6 @@ import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 
-import           Data.Hourglass
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB hiding (getEnv)
 
@@ -68,7 +67,7 @@ main = do
                 $ updateObjectForRrdpRepository appContext repository   
 
             let tal = RFC_TAL {
-                certificateLocations = newLocation "https://rpki.ripe.net/ta/ripe-ncc-ta.cer",
+                certificateLocations = toLocations $ RrdpU $ RrdpURL $ URI "https://rpki.ripe.net/ta/ripe-ncc-ta.cer",
                 publicKeyInfo = EncodedBase64 $
                     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0URYSGqUz2myBsOzeW1j" <>
                     "Q6NsxNvlLMyhWknvnl8NiBCs/T/S2XuNKQNZ+wBZxIgPPV2pFBFeQAvoH/WK83Hw" <>
@@ -85,12 +84,12 @@ main = do
 
             -- Don't update data
             let appContext' = appContext & typed @Config . typed @ValidationConfig . #dontFetch .~ True
-            forever $ do                
+            replicateM_ 20 $ do                
                 let now = versionToMoment worldVersion
                 let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
                 validateTA appContext' tal worldVersion repositoryContext 
-                ((deleted, kept), elapsed) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
-                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
+                (z, elapsed) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
+                logInfo_ logger [i|Done with cache GC, #{z}, took #{elapsed}ms|]
 
 
 -- Auxilliary functions
@@ -130,38 +129,12 @@ createAppContext logger = do
 
     let appContext = AppContext {        
         logger = logger,
-        config = Config {
-            talDirectory = rootDir </> "tals",
-            tmpDirectory = tmpd,            
-            cacheDirectory = rootDir </> "cache",
-            parallelism  = Parallelism cpuParallelism ioParallelism,
-            rsyncConf    = RsyncConf rsyncd (Seconds 600),
-            rrdpConf     = RrdpConf { 
-                tmpRoot = tmpd,
-                -- Do not download files bigger than 1Gb, it's fishy
-                maxSize = Size 1024 * 1024 * 1024,
-                rrdpTimeout = Seconds (5 * 60)
-            },
-            validationConfig = ValidationConfig {
-                revalidationInterval           = Seconds (13 * 60),
-                rrdpRepositoryRefreshInterval  = Seconds 120,
-                rsyncRepositoryRefreshInterval = Seconds (11 * 60),
-                dontFetch = False
-            },
-            httpApiConf = HttpApiConfig {
-                port = 9999
-            },
-            rtrConfig = Nothing,
-            cacheCleanupInterval = 120 * 60,
-            cacheLifeTime = Seconds $ 60 * 60 * 2,
-
-            -- TODO Think about it, it should be lifetime or we should store N last versions
-            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
-
-            storageCompactionInterval = Seconds $ 60 * 60 * 12,
-
-            lmdbSize = 2000
-        },
+        config = defaultConfig 
+                    & #talDirectory .~ rootDir </> "tals"
+                    & #tmpDirectory .~ tmpd 
+                    & #cacheDirectory .~ rootDir </> "cache" 
+                    & #parallelism .~ Parallelism cpuParallelism ioParallelism            
+                    & #rrdpConf . #tmpRoot .~ tmpd, 
         appState = appState,
         database = tvarDatabase,
         appBottlenecks = appBottlenecks
