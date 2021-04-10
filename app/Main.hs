@@ -304,10 +304,8 @@ data CLIOptions wrapped = CLIOptions {
 
 } deriving (Generic)
 
-
 instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
 
 deriving instance Show (CLIOptions Unwrapped)
-
 

@@ -678,7 +678,7 @@ validateCaCertificate
                         void $ vHoist $ validateMft now mft 
                                             certificate validCrl verifiedResources
                                             
-                        -- filter out CRL itself
+                        -- Validate entry list and filter out CRL itself
                         nonCrlChildren <- validateMftEntries mft (getHash crl)
 
                         -- Mark all manifest entries as visited to avoid the situation

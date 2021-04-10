@@ -22,6 +22,7 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString                  as BS
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
+import           Data.Tuple.Strict
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -49,6 +50,7 @@ import           System.Process.Typed
 import           System.IO.Posix.MMap             (unsafeMMapFile)
 import           System.Mem                       (performGC)
 import Data.Proxy
+import Data.Functor ((<&>))
 
 
 
@@ -158,8 +160,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                             liftIO $ atomically $ writeCQueue queue (uri, task)
           where                                
             readAndParseObject filePath uri = 
-                liftIO (getSizeAndContent1 filePath) >>= \case                    
-                    Left e        -> pure $! Right $! SError e
+                liftIO (getSizeAndContent filePath) >>= \case                    
+                    Left e        -> pure $! T2 uri (Right $! SError e)
                     Right (_, bs) -> 
                         liftIO $ roTx objectStore $ \tx -> do
                             -- Check if the object is already in the storage
@@ -167,17 +169,17 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                             let hash = U.sha256s bs  
                             exists <- DB.hashExists tx objectStore hash
                             pure $! if exists 
-                                then Left (uri, hash)
+                                then T2 uri (Left hash)
                                 else 
                                     case first ParseE $ readObject uri bs of
-                                        Left e -> Right $! SError e
+                                        Left e -> T2 uri (Right $! SError e)
                                         -- All these bangs here make sense because
                                         -- 
                                         -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
                                         -- force computation of the serialised object and gain some parallelism
                                         -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
                                         -- a slow CPU-intensive transaction (verify that it's the case)
-                                        Right ro -> Right $! SObject $ toStorableObject ro uri
+                                        Right ro -> T2 uri (Right $! SObject $ toStorableObject ro)
         
         saveObjects worldVersion queue = do            
             mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
@@ -195,18 +197,18 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 Left (e :: SomeException) -> 
                     throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
                 
-                Right (Left (rpkiURL, hash)) -> do
-                    DB.linkObjectToUrl tx objectStore rpkiURL hash worldVersion
+                Right (T2 rpkiURL (Left hash)) -> do
+                    DB.linkObjectToUrl tx objectStore rpkiURL hash
 
-                Right (Right (SError e)) -> do
-                    logErrorM logger [i|An error parsing or serialising the object: #{e}|]
+                Right (T2 rpkiURL (Right (SError e))) -> do
+                    logErrorM logger [i|An error parsing or serialising the object #{rpkiURL}: #{e}|]
                     appWarn e
 
-                Right (Right (SObject so@StorableObject {..})) -> do                        
+                Right (T2 rpkiURL (Right (SObject so@StorableObject {..}))) -> do                        
                     alreadyThere <- DB.hashExists tx objectStore (getHash object)
                     unless alreadyThere $ do 
                         DB.putObject tx objectStore so worldVersion                                                 
-                        DB.linkObjectToUrl tx objectStore tag (getHash object) worldVersion   
+                        DB.linkObjectToUrl tx objectStore rpkiURL (getHash object)   
                         updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     
@@ -224,7 +226,6 @@ rsyncProcess (RsyncURL (URI uri)) destination rsyncMode =
             RsyncOneFile   -> []
             RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]        
 
--- TODO Make it generate shorter filenames
 rsyncDestination :: FilePath -> RsyncURL -> FilePath
 rsyncDestination root u = let
     RsyncURL (URI urlText) = u
@@ -237,24 +238,11 @@ fileContent path = do
     r <- try $ unsafeMMapFile path
     case r of
         Right bs                  -> pure bs
-        Left (_ :: SomeException) -> BS.readFile path
-
-getSizeAndContent :: FilePath -> IO (Integer, Either AppError BS.ByteString)
-getSizeAndContent path = 
-    withFile path ReadMode $ \h -> do
-        size <- hFileSize h
-        case validateSize size of
-            Left e  -> pure (size, Left $ ValidationE e)
-            Right _ -> do
-                -- read small files in memory and mmap bigger ones 
-                r <- try $ if size < 10_000 
-                            then BS.hGetContents h 
-                            else fileContent path
-                pure (size, first (RsyncE . FileReadError . U.fmtEx) r)                                
+        Left (_ :: SomeException) -> BS.readFile path                              
 
 
-getSizeAndContent1 :: FilePath -> IO (Either AppError (Integer, BS.ByteString))
-getSizeAndContent1 path = do 
+getSizeAndContent :: FilePath -> IO (Either AppError (Integer, BS.ByteString))
+getSizeAndContent path = do 
     r <- first (RsyncE . FileReadError . U.fmtEx) <$> readSizeAndContet
     pure $ r >>= \case 
                 (_, Left e)  -> Left e
@@ -271,8 +259,6 @@ getSizeAndContent1 path = do
                                 then BS.hGetContents h 
                                 else fileContent path
                     pure (size, Right r)
-
-
 
 getFileSize :: FilePath -> IO Integer
 getFileSize path = withFile path ReadMode hFileSize 

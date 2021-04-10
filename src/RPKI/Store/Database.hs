@@ -193,7 +193,7 @@ getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW 
             -> RpkiObjectStore s 
-            -> StorableObject RpkiObject RpkiURL
+            -> StorableObject RpkiObject
             -> WorldVersion -> m ()
 putObject tx objectStore@RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
     let h = getHash object
@@ -215,8 +215,8 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> RpkiObjectStore s 
                 -> RpkiURL
                 -> Hash
-                -> WorldVersion -> m ()
-linkObjectToUrl tx objectStore@RpkiObjectStore {..} rpkiURL hash worldVersion = liftIO $ do    
+                -> m ()
+linkObjectToUrl tx objectStore@RpkiObjectStore {..} rpkiURL hash = liftIO $ do    
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
         z <- M.get tx uriToUriKey rpkiURL 
         urlKey <- maybe (saveUrl rpkiURL) pure z                

@@ -49,13 +49,13 @@ traverse tx m f = fold tx m (\_ k v -> f k v) ()
 
 all :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> IO [(k, v)]
-all tx (SMap _ s) = reverse <$> S.foldS tx s f []
+all tx (SMap _ s) = S.foldS tx s f []
     where
         f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
 keys :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> IO [k]
-keys tx (SMap _ s) = reverse <$> S.foldS tx s f []
+keys tx (SMap _ s) = S.foldS tx s f []
     where
         f z (SKey sk) _ = pure $! fromStorable sk : z
 
