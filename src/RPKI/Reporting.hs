@@ -67,7 +67,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         CertificateIsInTheFuture { before :: Instant, after :: Instant } |
                         CertificateIsExpired { before :: Instant, after :: Instant } |
                         AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
-                        ManifestEntryDontExist Hash Text |
+                        ManifestEntryDoesn'tExist Hash Text |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         UnknownUriType URI | 

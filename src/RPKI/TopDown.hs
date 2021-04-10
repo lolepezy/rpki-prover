@@ -564,13 +564,17 @@ validateCaCertificate
                             else validateThisCertAndGoDown                    
 
     -- Here we do the detailed algorithm
-    --  * get manifest
-    --  * find CRL on it
-    --  * make sure they both are valid
-    --  * go through the manifest children and either 
+    -- 
+    --  1) get the latest manifest
+    --  2) find CRL on it
+    --  3) make sure they both are valid
+    --  4) go through the manifest children and either 
     --     + validate them as signed objects
     --     + or valdiate them recursively as CAcertificates
     -- 
+    -- If anything falled, try to fetch previously latest cached 
+    -- valid manifest and repeat (2) - (4) for it.
+
     -- Everything else is either extra checks or metrics.
     -- 
     validateThisCertAndGoDown = do            
@@ -578,23 +582,69 @@ validateCaCertificate
         
         oneMoreCert            
         visitObject appContext topDownContext (CerRO $ certificate ^. #payload)
-        
-        -- try to use the latest manifest 
-        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2
-        -- 
-        mft <- findMft childrenAki certLocations'        
-        validateManifestAndGoDown mft childrenAki certLocations'
-            `catchError`
-            -- this "fetch" has failed so we are falling back to a latest valid 
-            -- manifest for this CA
-            fallbackToLatestValidMft childrenAki certLocations'
+                
 
-      where 
-            
-        validateManifestAndGoDown locatedMft childrenAki certLocations' = do 
-            validateMftLocation locatedMft certificate
+        let tryManifest mft =
+                validateManifestAndItsChildren mft childrenAki certLocations'
+                    `finallyError`
+                    -- manifest should be marked as visited regardless of its validitity
+                    visitObject appContext topDownContext mft   
 
+        let tryLatestValidCachedManifest latestMft e = do
+                -- this "fetch" has failed so we are falling back to a latest valid 
+                -- cached manifest for this CA               
+                -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
+                --
+                fetchCachedLatestValidMft childrenAki >>= \case
+                    Nothing             -> do 
+                        -- logDebugM logger [i|00000, e = #{e}.|]        
+                        throwError e
+                    Just latestValidMft ->                         
+                        case latestMft of 
+                            Nothing -> do 
+                                appWarn e
+                                -- logDebugM logger [i|1111, e = #{e}.|]        
+                                tryManifest latestValidMft                                
+                            Just latestMft'
+                                | getHash latestMft' == getHash latestValidMft 
+                                    -- it doesn't make sense to try the same manifest again
+                                    -- just re-trow the error
+                                    -> do 
+                                        -- logDebugM logger [i|2222, e = #{e}.|]
+                                        throwError e
+                                | otherwise -> do 
+                                    appWarn e
+                                    -- logDebugM logger [i|33333, e = #{e}.|]
+                                    tryManifest latestValidMft
+                                    
+
+        -- first try to use the latest manifest 
+        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
+        fetchLatestMft childrenAki >>= \case                        
+            Nothing -> 
+                -- Use awkward appError + catchError to force the error to 
+                -- get into the ValidationResult in the state.
+                vError (NoMFT childrenAki certLocations')
+                    `catchError`
+                    tryLatestValidCachedManifest Nothing 
+                
+            Just mft -> 
+                tryManifest mft 
+                    `catchError` 
+                    tryLatestValidCachedManifest (Just mft)
+
+      where                       
+
+        validateManifestAndItsChildren locatedMft childrenAki certLocations' = do                         
             let mft = locatedMft ^. #payload
+
+            visitedObjects <- liftIO $ readTVarIO visitedHashes            
+            when (getHash mft `Set.member` visitedObjects) $                 
+                -- we have already visited this object before, so 
+                -- there're some circular references in the objects
+                vError $ CircularReference (getHash mft) (locatedMft ^. #locations)
+
+            validateMftLocation locatedMft certificate
 
             manifestResult <- inSubVPath (locationsToText $ getLocations locatedMft) $ do
                 T2 _ crlHash <- 
@@ -634,17 +684,14 @@ validateCaCertificate
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map (\(T2 _ h) -> h) childrenHashes                
 
-                        let processChildren = do
-                                r <- inParallelVT
-                                        (cpuBottleneck appBottlenecks)
-                                        childrenHashes
-                                        $ \(T2 filename hash') -> 
-                                                    validateManifestEntry filename hash' validCrl
-                                markAllEntriesAsVisited
-                                pure $! r                                       
+                        let processChildren =
+                                inParallelVT
+                                    (cpuBottleneck appBottlenecks)
+                                    childrenHashes
+                                    $ \(T2 filename hash') -> 
+                                                validateManifestEntry filename hash' validCrl
 
-                        childrenResults <- processChildren `catchError` 
-                                        (\e -> markAllEntriesAsVisited >> throwError e)
+                        childrenResults <- processChildren `finallyError` markAllEntriesAsVisited
 
                         -- Combine PPs and their waiting lists. On top of it, fix the 
                         -- last successfull validation times for PPs based on their fetch statuses.                        
@@ -654,52 +701,29 @@ validateCaCertificate
 
             oneMoreMft
             addValidMft topDownContext childrenAki mft
-            pure manifestResult
-
-
-        -- Implementation of the
-        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
-        --  i.e. use the latest valid cached manifest.
-        --         
-        fallbackToLatestValidMft childrenAki certLocations' e = do             
-            z <- liftIO $ do 
-                objectStore' <- (^. #objectStore) <$> readTVarIO database
-                roTx objectStore' $ \tx -> 
-                        findLatestMftByAKI tx objectStore' childrenAki
-            case z of 
-                Nothing          -> throwError e
-                Just latestValid -> do     
-                    appWarn e            
-                    visitObject appContext topDownContext latestValid
-                    validateManifestAndGoDown latestValid childrenAki certLocations'               
+            pure manifestResult            
 
     --
     -- | Validate an entry of the manifest, i.e. a pair of filename and hash
     -- 
     validateManifestEntry filename hash' validCrl = do                    
-        validateMftFileName
-        visitedObjects <- liftIO $ readTVarIO visitedHashes
+        validateMftFileName        
 
         objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
         ro <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
         case ro of 
             Nothing -> 
-                vError $ ManifestEntryDontExist hash' filename
-            Just ro'
-                | Set.member hash' visitedObjects ->
-                    -- we have already visited this object before, so 
-                    -- there're some circular references in the objects
-                    vError $ CircularReference hash' (getLocations ro')
-                | otherwise -> do
-                    -- warn about names on the manifest mismatching names in the object URLs
-                    let objectLocations = getLocations ro'
-                    let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) objectLocations
-                    when (null nameMatches) $ 
-                        vWarn $ ManifestLocationMismatch filename objectLocations
+                vError $ ManifestEntryDoesn'tExist hash' filename
+            Just ro' -> do
+                -- warn about names on the manifest mismatching names in the object URLs
+                let objectLocations = getLocations ro'
+                let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) objectLocations
+                when (null nameMatches) $ 
+                    vWarn $ ManifestLocationMismatch filename objectLocations
 
-                    -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
-                    -- or recursively validate CA if the child is a certificate.                           
-                    validateChild validCrl ro'
+                -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
+                -- or recursively validate CA if the child is a certificate.                           
+                validateChild validCrl ro'
       where 
         allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
         validateMftFileName =                
@@ -713,7 +737,7 @@ validateCaCertificate
                         let badChars = Text.filter (`notElem` allowedMftFileNameCharacters) mainName
                         vError $ BadFileNameOnMFT filename 
                                     ("Unsupported characters in filename: '" <> badChars <> "'")
-                somethgingElse -> 
+                somethingElse -> 
                     vError $ BadFileNameOnMFT filename 
                                 "Filename doesn't have exactly one DOT"            
 
@@ -783,19 +807,20 @@ validateCaCertificate
                     isRevokedCertError _ = False
 
 
-    findMft childrenAki locations = do
-        objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
-        mft' <- liftIO $ roTx objectStore' $ \tx -> 
+    fetchLatestMft childrenAki = liftIO $ do 
+        objectStore' <- (^. #objectStore) <$> readTVarIO database
+        roTx objectStore' $ \tx -> 
             findLatestMftByAKI tx objectStore' childrenAki
-        case mft' of
-            Nothing  -> vError $ NoMFT childrenAki locations
-            Just mft -> do
-                visitObject appContext topDownContext mft
-                pure $! mft
+
+    fetchCachedLatestValidMft childrenAki = liftIO $ do 
+        objectStore' <- (^. #objectStore) <$> readTVarIO database
+        roTx objectStore' $ \tx -> 
+            getLatestValidMftByAKI tx objectStore' childrenAki
 
     -- TODO Is there a more reliable way to find it?
     findCrlOnMft mft = filter (\(T2 name _) -> ".crl" `Text.isSuffixOf` name) $
         mftEntries $ getCMSContent $ cmsPayload mft
+
 
     -- Check that manifest URL in the certificate is the same as the one 
     -- the manifest was actually fetched from.
@@ -877,9 +902,9 @@ getPPsToFetch repositoryContext discoveredPPs = do
     let urisToTakeCareOf = Set.difference discoveredURIs takenCareOf
 
     writeTVar repositoryContext $ RepositoryContext { 
-        takenCareOf       = takenCareOf <> discoveredURIs,
-        publicationPoints = newGlobalPPs
-    }
+            takenCareOf       = takenCareOf <> discoveredURIs,
+            publicationPoints = newGlobalPPs
+        }
     pure $ newGlobalPPs `shrinkTo` urisToTakeCareOf
 
 
@@ -950,3 +975,17 @@ fetchTACertificate appContext@AppContext {..} tal =
                 RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
             pure (u, ro)
+
+
+
+finallyError :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
+finallyError tryF finallyF = 
+    tryIt `catchError` catchIt
+  where
+    tryIt = do  
+        z <- tryF 
+        finallyF
+        pure z
+    catchIt e = do
+        finallyF
+        throwError e

@@ -315,15 +315,15 @@ markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do
 
 
 getLatestValidMftByAKI :: (MonadIO m, Storage s) => 
-                        Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe MftObject)
-getLatestValidMftByAKI tx RpkiObjectStore {..} aki = liftIO $ do
+                        Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe (Located MftObject))
+getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $ do
     M.get tx lastValidMft aki >>= \case 
         Nothing -> pure Nothing 
-        Just k  -> do
-            o <- (fromSValue <$>) <$> M.get tx objects k
+        Just k -> do 
+            o <- getLocatedByKey tx store k
             pure $! case o of 
-                Just (MftRO mft) -> Just mft
-                _                -> Nothing
+                Just z@(Located loc (MftRO mft)) -> Just $ Located loc mft
+                _                                -> Nothing
 
 
 -- TA store functions
@@ -450,14 +450,14 @@ cleanObjectCache DB {..} tooOld = do
                     Set.fromList <$>
                         M.fold tx (objectKeyToUrlKeys objectStore) 
                             (\allUrlKey _ urlKeys -> pure $! urlKeys <> allUrlKey)
-                            []
-            
+                            mempty
+
             let readUrls queue = 
                     roTx objectStore $ \tx ->
                         M.traverse tx (uriKeyToUri objectStore) $ \urlKey url ->
                             when (urlKey `Set.notMember` referencedUrlKeys) $
                                 atomically (writeCQueue queue (urlKey, url))
-            
+
             let deleteUrls queue = 
                     readQueueChunked queue chunkSize $ \quuElems ->
                         rwTx objectStore $ \tx ->

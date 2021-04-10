@@ -208,7 +208,7 @@ toValidationMessage = \case
       (AKIIsNotEqualsToParentSKI childAKI parentSKI) ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
 
-      ManifestEntryDontExist hash filename -> 
+      ManifestEntryDoesn'tExist hash filename -> 
           [i|Manifest entry #{filename} with hash #{hash} not found.|]
 
       OverclaimedResources resources -> 
