@@ -108,7 +108,7 @@ getMetrics AppContext {..} = do
                 lastVersion <- MaybeT $ getLastCompletedVersion database tx
                 MaybeT $ metricsForVersion tx metricStore lastVersion                        
     case metrics of 
-        Nothing -> throwError err404
+        Nothing -> throwError err404 { errBody = "Working, please hold still!" }
         Just m  -> pure m
     
 toVR :: (Path a, Set.Set VProblem) -> ValidationResult
