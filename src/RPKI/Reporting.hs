@@ -57,6 +57,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |
+                        NonUniqueManifestEntries [(Hash, [Text])] |
                         NoCRLExists AKI Locations |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |

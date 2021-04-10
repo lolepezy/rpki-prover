@@ -178,6 +178,9 @@ toValidationMessage = \case
       BadFileNameOnMFT filename message -> 
             [i|File #{filename} is malformed #{message}.|]
 
+      NonUniqueManifestEntries nonUniqueEntries -> 
+            [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
+
       NoCRLExists aki locations -> 
             [i|No CRL exists with AKI #{aki} for CA #{fmtLocations locations}.|]
 
@@ -240,6 +243,10 @@ toValidationMessage = \case
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 
                     map (\(T2 t h) -> t <> Text.pack (":" <> show h))
+
+    fmtBrokenMftEntries = mconcat . 
+                    List.intersperse "," . 
+                    map (\(h, fs) -> Text.pack $ "Hash: " <> show h <> " -> " <> show fs)
 
 
 fmtLocations :: Locations -> Text

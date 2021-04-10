@@ -640,8 +640,13 @@ validateCaCertificate
 
             visitedObjects <- liftIO $ readTVarIO visitedHashes            
             when (getHash mft `Set.member` visitedObjects) $                 
-                -- we have already visited this object before, so 
-                -- there're some circular references in the objects
+                -- We have already visited this manifest before, so 
+                -- there're some circular references in the objects.
+                -- 
+                -- NOTE: We are limiting cycle detection only to manfests
+                -- to minimise the false positives where the same object
+                -- is referenced from multiple manifests and we are treating 
+                -- it as a cycle.
                 vError $ CircularReference (getHash mft) (locatedMft ^. #locations)
 
             validateMftLocation locatedMft certificate
@@ -674,20 +679,19 @@ validateCaCertificate
                                             certificate validCrl verifiedResources
                                             
                         -- filter out CRL itself
-                        let childrenHashes = filter (\(T2 _ hash') -> getHash crl /= hash') 
-                                    $ mftEntries $ getCMSContent $ cmsPayload mft
+                        nonCrlChildren <- validateMftEntries mft (getHash crl)
 
                         -- Mark all manifest entries as visited to avoid the situation
                         -- when some of the children are deleted from the cache and some
                         -- are still there. Do it both in case of successful validation
                         -- or a validation error.
                         let markAllEntriesAsVisited = 
-                                visitObjects topDownContext $ map (\(T2 _ h) -> h) childrenHashes                
+                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                
 
                         let processChildren =
                                 inParallelVT
                                     (cpuBottleneck appBottlenecks)
-                                    childrenHashes
+                                    nonCrlChildren
                                     $ \(T2 filename hash') -> 
                                                 validateManifestEntry filename hash' validCrl
 
@@ -703,6 +707,29 @@ validateCaCertificate
             addValidMft topDownContext childrenAki mft
             pure manifestResult            
 
+
+    -- Check manifest entries as a whole, without doing anything 
+    -- with the objects they are pointing to.    
+    validateMftEntries mft crlHash = do         
+        let children = mftEntries $ getCMSContent $ cmsPayload mft
+        let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') children
+                    
+        -- Make sure all the entries are unique
+        let entryMap = Map.fromListWith (<>) $ map (\(T2 f h) -> (h, [f])) nonCrlChildren
+        let nonUniqueEntries = Map.filter longerThenOne entryMap
+
+        -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
+        -- about uniqueness of manifest entries.
+        unless (Map.null nonUniqueEntries) $ 
+            vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
+
+        pure nonCrlChildren
+        where
+            longerThenOne [_] = False
+            longerThenOne []  = False            
+            longerThenOne _   = True
+        
+        
     --
     -- | Validate an entry of the manifest, i.e. a pair of filename and hash
     -- 
