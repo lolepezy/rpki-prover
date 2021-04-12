@@ -11,6 +11,7 @@ import Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Concurrent.Lifted
 import           Data.Bifunctor
+import qualified Data.Set as Set
 import           Data.String.Interpolate.IsString
 
 import           System.Directory                 (removeFile, doesDirectoryExist, getDirectoryContents, listDirectory,
@@ -87,9 +88,10 @@ main = do
             replicateM_ 20 $ do                
                 let now = versionToMoment worldVersion
                 let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
-                validateTA appContext' tal worldVersion repositoryContext 
-                (z, elapsed) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
-                logInfo_ logger [i|Done with cache GC, #{z}, took #{elapsed}ms|]
+                (TopDownResult {..}, elapsed) <- timedMS $ validateTA appContext' tal worldVersion repositoryContext 
+                logInfo_ logger [i|Validated GC, #{Set.size vrps} VRPs, took #{elapsed}ms|]
+                (cleanup, elapsed2) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
+                logInfo_ logger [i|Done with cache GC, #{cleanup}, took #{elapsed2}ms|]
 
 
 -- Auxilliary functions
