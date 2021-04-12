@@ -152,6 +152,7 @@ instance Storage s => WithStorage s (VersionStore s) where
     storage (VersionStore s) = storage s
 
 
+
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
 getByHash tx store h = (snd <$>) <$> getByHash_ tx store h    
@@ -185,9 +186,9 @@ getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do
     object    <- MaybeT $ getObjectByKey tx store k
     uriKeys   <- MaybeT $ M.get tx objectKeyToUrlKeys k
     locations <- MaybeT 
-                    $ fmap (toNESet . catMaybes)
+                    $ (toNESet . catMaybes <$>)
                     $ mapM (M.get tx uriKeyToUri) uriKeys             
-    pure $ Located locations object
+    pure $ Located (Locations locations) object
 
 
 putObject :: (MonadIO m, Storage s) => 
@@ -238,9 +239,6 @@ linkObjectToUrl tx objectStore@RpkiObjectStore {..} rpkiURL hash = liftIO $ do
         pure urlKey
 
 
-catMaybesNE :: NonEmpty (Maybe a) -> Maybe (NonEmpty a)
-catMaybesNE = NonEmpty.nonEmpty . catMaybes . NonEmpty.toList
-
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
 hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
@@ -268,7 +266,7 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe (Located MftObject))
 findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $ 
-    MM.foldS tx mftByAKI aki' chooseMaxNum Nothing >>= \case
+    MM.foldS tx mftByAKI aki' chooseLatest Nothing >>= \case
         Nothing     -> pure Nothing
         Just (k, _) -> do 
             o <- getLocatedByKey tx store k
@@ -276,7 +274,7 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
                 Just z@(Located loc (MftRO mft)) -> Just $ Located loc mft
                 _                                -> Nothing
   where
-    chooseMaxNum latest _ (hash, orderingNum) = 
+    chooseLatest latest _ (hash, orderingNum) = 
         pure $! case latest of 
             Nothing                       -> Just (hash, orderingNum)
             Just (_, latestNum) 

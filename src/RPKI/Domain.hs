@@ -139,7 +139,9 @@ newtype Version = Version Integer
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-type Locations = NESet RpkiURL
+newtype Locations = Locations { unLocations :: NESet RpkiURL } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 instance Show URI where
     show (URI u) = show u
@@ -577,16 +579,17 @@ toNormalBS :: BSS.ShortByteString -> BS.ByteString
 toNormalBS = BSS.fromShort
 
 toLocations :: RpkiURL -> Locations
-toLocations = NESet.singleton
+toLocations = Locations . NESet.singleton
 
 pickLocation :: Locations -> RpkiURL
-pickLocation = NonEmpty.head . NESet.toList
+pickLocation = NonEmpty.head . NESet.toList . unLocations
 
 locationsToText :: Locations -> Text
 locationsToText = F.fold
     . NonEmpty.intersperse ", " 
     . NonEmpty.map (unURI . getURL) 
-    . NESet.toList
+    . NESet.toList 
+    . unLocations
 
 toNESet :: Ord a => [a] -> Maybe (NESet a)
 toNESet = (NESet.fromList <$>) . NonEmpty.nonEmpty

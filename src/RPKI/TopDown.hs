@@ -744,7 +744,7 @@ validateCaCertificate
             Just ro' -> do
                 -- warn about names on the manifest mismatching names in the object URLs
                 let objectLocations = getLocations ro'
-                let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) objectLocations
+                let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
                 when (null nameMatches) $ 
                     vWarn $ ManifestLocationMismatch filename objectLocations
 
@@ -856,7 +856,7 @@ validateCaCertificate
             Nothing     -> vError $ NoMFTSIA $ getLocations certficate
             Just mftSIA -> do 
                 let mftLocations = getLocations mft
-                when (Set.null $ NESet.filter ((mftSIA ==) . getURL) mftLocations) $ 
+                when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
                     vWarn $ MFTOnDifferentLocation mftSIA mftLocations                    
 
     -- Check that CRL URL in the certificate is the same as the one 
@@ -985,7 +985,7 @@ addTotalValidationMetric totalValidationResult =
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 
-    go $ neSetToList $ certLocations tal
+    go $ neSetToList $ unLocations $ certLocations tal
   where
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
     go (u : uris) = fetchTaCert `catchError` goToNext 

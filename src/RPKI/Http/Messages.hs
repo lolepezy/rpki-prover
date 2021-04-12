@@ -253,4 +253,5 @@ fmtLocations :: Locations -> Text
 fmtLocations = mconcat . 
                List.intersperse "," . 
                map (Text.pack . show) . 
-               toList
+               toList . 
+               unLocations

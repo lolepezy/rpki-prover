@@ -121,6 +121,7 @@ instance ToJSON AppError
 instance ToJSON InitError
 instance ToJSON  a => ToJSON (ParseError a)
 instance ToJSON ValidationError
+instance ToJSON Locations
 instance ToJSON StorageError
 instance ToJSON RsyncError
 instance ToJSON RrdpError

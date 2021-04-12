@@ -13,8 +13,8 @@ import qualified Data.ByteString.Short                as BSS
 import qualified Data.List                            as List
 import qualified Data.Text                            as Text
 
-import           Data.List.NonEmpty                   (NonEmpty)
-import qualified Data.Set.NonEmpty        as NESet
+import           Data.List.NonEmpty                   (NonEmpty(..))
+import qualified Data.Set.NonEmpty                    as NESet
 
 import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
@@ -163,7 +163,10 @@ instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (NonEmpty a) where
-    arbitrary = genericArbitrary
+    arbitrary = do 
+        x :: a    <- arbitrary 
+        xs :: [a] <- arbitrary
+        pure $ x :| xs
     shrink = genericShrink
 
 instance Arbitrary AKI where
@@ -217,6 +220,10 @@ instance Arbitrary RpkiObject where
 
 instance Arbitrary a => Arbitrary (Located a) where
     arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Locations where
+    arbitrary = Locations . NESet.fromList <$> arbitrary        
     shrink = genericShrink
 
 instance Arbitrary CerObject where

@@ -106,7 +106,7 @@ parseTAL bs =
                         Just uris -> 
                             case NonEmpty.nonEmpty (Text.splitOn "," uris) of
                                 Nothing    -> Left $ TALError [i|Empty list of TA certificate URLs in #{propertyName}|]
-                                Just uris' -> bimap TALError NESet.fromList $ mapM parseRpkiURL uris'
+                                Just uris' -> bimap TALError (Locations . NESet.fromList) $ mapM parseRpkiURL uris'
                     where
                         propertyName = "certificate.location" :: Text.Text
 
@@ -126,7 +126,7 @@ parseTAL bs =
                                             mapM parseRpkiURL $ 
                                             NonEmpty.map Text.strip uris'
                             pure $ RFC_TAL {
-                                certificateLocations = NESet.fromList locations,
+                                certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
                                     Text.concat $ filter (not . Text.null) $ map Text.strip base64
                             }
