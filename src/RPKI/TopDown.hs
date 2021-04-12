@@ -191,9 +191,9 @@ validateTA appContext@AppContext {..} tal worldVersion repositories = do
 
     case r of 
         (Left e, vs) -> 
-            pure $! TopDownResult mempty vs
+            pure $ TopDownResult mempty vs
         (Right vrps, vs) ->            
-            pure $! TopDownResult vrps vs
+            pure $ TopDownResult vrps vs
     where                     
         taContext = newValidatorPath taNameText
         TaName taNameText = getTaName tal
@@ -358,10 +358,10 @@ fetchRepository
             case r of
                 Left e -> do                        
                     logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
-                    pure $! FetchFailure repo now (vState (mError vContext' e) <> v)
+                    pure $ FetchFailure repo now (vState (mError vContext' e) <> v)
                 Right resultRepo -> do
                     logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-                    pure $! FetchSuccess resultRepo now v
+                    pure $ FetchSuccess resultRepo now v
 
 
 data FetchResult = 
@@ -415,10 +415,10 @@ validateCARecursively
             validateCaCertificate appContext topDownContext certificate
     case r of
         Left e -> 
-            pure $! T2 mempty validations
+            pure $ T2 mempty validations
         Right (T3 discoveredPPs waitingList vrps) -> do             
             results <- extractPPsAndValidateDown discoveredPPs waitingList
-            pure $! mconcat results <> T2 vrps validations         
+            pure $ mconcat results <> T2 vrps validations         
 
     where
         -- From the set of discovered PPs figure out which ones must be fetched, 
@@ -466,7 +466,7 @@ validateCARecursively
     
             let proceedWithValidation validations = do 
                     z <- mconcat <$> validateWaitingList waitingListForThesePPs                    
-                    pure $! z & typed %~ (<> validations)
+                    pure $ z & typed %~ (<> validations)
 
             let noFurtherValidation validations = 
                     pure $ mempty & typed %~ (<> validations)
@@ -540,7 +540,7 @@ validateCaCertificate
                 let stopDescend = do 
                         -- remember to come back to this certificate when the PP is fetched
                         vContext' <- ask
-                        pure $! T3 
+                        pure $ T3 
                                 (asIfItIsMerged `shrinkTo` Set.singleton url) 
                                 (toWaitingList
                                     (getRpkiURL discoveredPP) 
@@ -699,7 +699,7 @@ validateCaCertificate
 
                         -- Combine PPs and their waiting lists. On top of it, fix the 
                         -- last successfull validation times for PPs based on their fetch statuses.                        
-                        pure $! mconcat childrenResults & typed @PublicationPoints %~ adjustLastSucceeded                        
+                        pure $ mconcat childrenResults & typed @PublicationPoints %~ adjustLastSucceeded                        
 
                     Just _  -> vError $ CRLHashPointsToAnotherObject crlHash certLocations'   
 
@@ -801,7 +801,7 @@ validateCaCertificate
                 --     --           in T3 emptyPublicationPoints mempty (fromValidations childCaError)
                 --     -- because we want to ignore all the errors down the tree when reporting up, they can be confusing.
                 embedState validationState
-                pure $! fromRight mempty r                    
+                pure $ fromRight mempty r                    
 
             RoaRO roa -> inSubVPath (locationsToText locations) $ 
                             allowRevoked $ do
@@ -810,13 +810,13 @@ validateCaCertificate
                                 
                                 let vrps = getCMSContent $ cmsPayload roa
                                 -- logDebugM logger [i|roa #{NonEmpty.head $ getLocations ro}, vrps = #{vrps}.|]
-                                pure $! T3 mempty mempty $ Set.fromList vrps
+                                pure $ T3 mempty mempty $ Set.fromList vrps
 
             GbrRO gbr -> inSubVPath (locationsToText locations) $ 
                             allowRevoked $ do
                                 void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                                 oneMoreGbr
-                                pure $! mempty
+                                pure $ mempty
 
             -- TODO Anything else?
             _ -> pure mempty
@@ -828,7 +828,7 @@ validateCaCertificate
             allowRevoked f =                
                 catchAndEraseError f isRevokedCertError $ do 
                     vWarn RevokedResourceCertificate
-                    pure $! mempty
+                    pure mempty
                 where                 
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
