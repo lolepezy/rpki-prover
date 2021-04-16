@@ -26,6 +26,8 @@ import qualified Data.ByteString.Lazy             as BSL
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
+import qualified Data.List                         as List
+import Data.Ord
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
@@ -446,11 +448,27 @@ respondToPdu
 diffPayloadPdus :: VrpDiff -> [Pdu]
 diffPayloadPdus Diff {..} = 
     map (toPdu Withdrawal) (Set.toList deleted) <>
-    map (toPdu Announcement) (Set.toList added)  
+    map (toPdu Announcement) (sortVrps $ Set.toList added)  
     
 currentCachePayloadPdus :: Set Vrp -> [Pdu]
 currentCachePayloadPdus vrps =
-    map (toPdu Announcement) $ Set.toList vrps
+    map (toPdu Announcement) $ sortVrps $ Set.toList vrps  
+    
+
+-- Sort VRPs to before sending them to routers
+-- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-02#section-11
+-- 
+sortVrps :: [Vrp] -> [Vrp] 
+sortVrps = List.sortBy compareVrps 
+  where
+    compareVrps vrp1@(Vrp asn1 p1 ml1) vrp2@(Vrp asn2 p2 ml2) = 
+        compare asn1 asn2 <> 
+        -- Sorti prefixes backwards since it automatically means that 
+        -- smaller prefixes will be in front of larger ones.
+        compare (Down p1) (Down p2) <> 
+        -- smaller max length should precede?
+        compare ml1 ml2
+    
 
 toPdu :: Flags -> Vrp -> Pdu
 toPdu flags (Vrp asn prefix maxLength) = 
