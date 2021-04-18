@@ -31,7 +31,7 @@ import Data.Ord
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
-import           Network.Socket                   hiding (recv, recvFrom)
+import           Network.Socket                   
 import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 
 import           RPKI.AppContext
@@ -280,7 +280,7 @@ responseAction logger peer session rtrState currentVrps pduBytes =
         
         logError = maybe mempty (logError_ logger) message
 
-        errorResponse = maybe mempty (:[]) errorPdu
+        errorResponse = maybe mempty (: []) errorPdu
                 
         response pdu = let 
             r = respondToPdu 
@@ -461,7 +461,7 @@ currentCachePayloadPdus vrps =
 sortVrps :: [Vrp] -> [Vrp] 
 sortVrps = List.sortBy compareVrps 
   where
-    compareVrps vrp1@(Vrp asn1 p1 ml1) vrp2@(Vrp asn2 p2 ml2) = 
+    compareVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
         compare asn1 asn2 <> 
         -- Sorti prefixes backwards since it automatically means that 
         -- smaller prefixes will be in front of larger ones.

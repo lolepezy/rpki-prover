@@ -1,15 +1,17 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings         #-}
 
 module RPKI.Logging where
 
 import Colog
 
+import Data.Text (Text)
+
 import Control.Monad.IO.Class
-import Control.Concurrent.Lifted
 
-import GHC.Stack (callStack, withFrozenCallStack)
-
-import Data.Text
+import GHC.Stack (callStack)
+import System.IO (BufferMode (..), hSetBuffering, stdout)
 
 class Logger logger where
     logError_ :: logger -> Text -> IO ()
@@ -18,18 +20,16 @@ class Logger logger where
     logDebug_ :: logger -> Text -> IO ()
 
 
-data AppLogger = AppLogger !(LogAction IO Message) !(MVar Bool)
+newtype AppLogger = AppLogger (LogAction IO Message)
 
 instance Logger AppLogger where
-    logError_ (AppLogger la lock) = logWhat E la lock
-    logWarn_  (AppLogger la lock) = logWhat W la lock
-    logInfo_  (AppLogger la lock) = logWhat I la lock
-    logDebug_ (AppLogger la lock) = logWhat D la lock
+    logError_ (AppLogger la) = logWhat E la
+    logWarn_  (AppLogger la) = logWhat W la
+    logInfo_  (AppLogger la) = logWhat I la
+    logDebug_ (AppLogger la) = logWhat D la
 
-logWhat :: Severity -> LogAction IO Message -> MVar Bool -> Text -> IO ()
-logWhat sev la lock textMessage = 
-    withMVar lock $ \_ -> withFrozenCallStack $ la <& Msg sev callStack textMessage
-
+logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
+logWhat sev la textMessage = la <& Msg sev callStack textMessage    
 
 logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => 
                                             logger -> Text -> m ()
@@ -37,3 +37,15 @@ logErrorM logger t = liftIO $ logError_ logger t
 logWarnM logger t  = liftIO $ logWarn_ logger t
 logInfoM logger t  = liftIO $ logInfo_ logger t
 logDebugM logger t = liftIO $ logDebug_ logger t
+
+
+withAppLogger :: (AppLogger -> LoggerT Text IO a) -> IO a
+withAppLogger f = do     
+    hSetBuffering stdout LineBuffering
+    withBackgroundLogger
+        defCapacity
+        logTextStdout
+        (\logg -> usingLoggerT logg $ f $ AppLogger $ fullMessageAction logg)
+    where
+        fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
+            cmapM fmtRichMessageDefault logg
