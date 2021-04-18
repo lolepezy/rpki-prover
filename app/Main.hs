@@ -8,24 +8,23 @@
 
 module Main where
     
-import           Colog
-import           Control.Lens ((^.), (.~), (&))
+
+import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent.STM (readTVarIO)
 import           Control.Concurrent.STM.TVar (newTVarIO)
 
-import           Control.Lens ((^.))
 import           Control.Monad
 import           Control.Monad.IO.Class
 
 import           Control.Concurrent.Async.Lifted
-import           Control.Concurrent.Lifted
 import           Control.Exception.Lifted
 
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
+
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
 import qualified Data.List                        as List
@@ -42,7 +41,6 @@ import qualified Network.Wai.Handler.Warp         as Warp
 import           System.Directory                 
 import           System.Environment
 import           System.FilePath                  ((</>))
-import           System.IO               (BufferMode (..), hSetBuffering, stdout)
 
 import           Options.Generic
 
@@ -67,20 +65,20 @@ import           RPKI.Workflow
 main :: IO ()
 main = do
     -- load config file and apply command line options    
-    logger <- createLogger
+    -- logger <- createLogger
+    withAppLogger $ \logger -> liftIO $ do 
+        cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
-
-    (appContext, validations) <- 
-        runValidatorT (newValidatorPath "configuration") 
-        $ createAppContext cliOptions logger
-    case appContext of
-        Left e ->
-            logError_ logger [i|Couldn't initialise: #{e}|]
-        Right appContext' -> 
-            void $ race
-                (runHttpApi appContext')
-                (runValidatorApp appContext')
+        (appContext, validations) <- 
+            runValidatorT (newValidatorPath "configuration") 
+            $ createAppContext cliOptions logger
+        case appContext of
+            Left e ->
+                logError_ logger [i|Couldn't initialise: #{e}|]
+            Right appContext' -> 
+                void $ race
+                    (runHttpApi appContext')
+                    (runValidatorApp appContext')
 
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
@@ -206,15 +204,7 @@ m `orDefault` d = fromMaybe d m
 maybeSet :: ASetter s s a b -> Maybe b -> s -> s
 maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 
-createLogger :: IO AppLogger
-createLogger = do 
-    -- TODO Use colog-concurrent instead of this
-    lock <- newMVar True
-    hSetBuffering stdout LineBuffering
-    pure $ AppLogger fullMessageAction lock
-    where
-        fullMessageAction = upgradeMessageAction defaultFieldMap $ 
-            cmapM fmtRichMessageDefault logTextStdout  
+        
 
 listTALFiles :: FilePath -> IO [FilePath]
 listTALFiles talDirectory = do     
@@ -222,8 +212,7 @@ listTALFiles talDirectory = do
     pure $ map (talDirectory </>) $ 
             filter (".tal" `List.isSuffixOf`) $ 
             filter (`notElem` [".", ".."]) names
-
-            
+        
 
 talsDir, rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
