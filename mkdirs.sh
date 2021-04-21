@@ -1,6 +1,10 @@
 #!/bin/sh
 
-ROOT=$1
+DEFAULT_ROOT=${HOME}/.rpki/
+
+ROOT=${1:-$DEFAULT_ROOT}
+
+echo "Creating directory layout in $ROOT"
 
 mkdir -p ${ROOT}/cache
 mkdir -p ${ROOT}/tmp

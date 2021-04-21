@@ -28,15 +28,20 @@ At the moment there are two options to use the program: building from sources an
 The software is a daemon written in Haskell and can be built using [`stack`](https://docs.haskellstack.org/en/stable/README/).
 
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
-    
-   - Install libraries for: `lmdb`, `lzma`, `expat` and some others, like `gmp`.
-      - On linux using apt-get, that will be : `sudo apt-get install libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
-      - On MacOS using brew, that will be: `brew install lmdb xz expat` 
-      - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers
+
+   - The prerequisites are a few libraries (`lmdb`, `lzma`, `expat` and `gmp`) and the `rsync` client. It can be done    
+      - On linux using apt-get, that will be : `sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
+      - On MacOS using brew, that will be: `brew install rsync lmdb xz expat` 
+      - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers   
+
    - Install `stack` as described [here](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
+
    - Clone https://github.com/lolepezy/rpki-prover/
-   - Run `stack install rpki-prover:rpki-prover` inside of the rpki-prover. It should take quite some time (30-50 minutes as it has to build all the required libraries)
-   - Run `mkdirs.sh` script. It will create some directory structure inside of ~/.rpki and download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
+
+   - Run `stack install rpki-prover:rpki-prover` inside of the `rpki-prover` directory. It should take quite some time (30-50 minutes as it has to build all the required libraries)
+
+   - Run `mkdirs.sh` script. This script accept an argument -- directory where `rpki-prover` will store the TAL files, cache, rsync mirror and different temporary files. If the argument is not set the default "$HOME/.rpki" will be used. After creating directory structure it will download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
+
    - Run `rpki-prover` from the `~/.local/bin`
 
 Running Run `rpki-prover --help` gives some help on the CLI options.
