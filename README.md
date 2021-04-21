@@ -1,6 +1,6 @@
 # rpki-prover
 
-Implementation of the [RPKI relying party software](https://rpki.readthedocs.io/en/latest/tools.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
+Implementation of the [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
 
 Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues).
 
