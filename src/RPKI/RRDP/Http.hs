@@ -41,8 +41,6 @@ import qualified RPKI.Util as U
 import qualified Crypto.Hash.SHA256 as S256
 
 import System.IO (Handle, hClose)
-import qualified System.IO.Posix.MMap as Mmap
-import qualified System.IO.Posix.MMap.Lazy as MmapLazy
 import System.IO.Temp (withTempFile)
 
 import RPKI.CommonTypes
@@ -67,17 +65,14 @@ instance Blob BS.ByteString where
 -- enough so that we don't want to keep them in memory.
 --
 -- NOTE: The file will be deleted from the temporary directory by withTempFile, 
--- but the descriptor taken by mmap/readFile will stay until the byte string it GC-ed, 
+-- but the descriptor taken by readFile will stay until the byte string it GC-ed, 
 -- so it's safe to use them after returning from this function.
 --
 downloadToBS :: (Blob bs, MonadIO m) => 
                 Config ->
                 URI -> 
                 m (bs, Size, HttpStatus)
-downloadToBS config uri@(URI u) = liftIO $ do
-    -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
-    -- to minimize the heap. Snapshots can be pretty big, so we don't want 
-    -- a spike in heap usage.
+downloadToBS config uri@(URI u) = liftIO $ do    
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = config ^. #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
@@ -103,7 +98,7 @@ downloadHashedBS :: (Blob bs, MonadIO m) =>
                     (Hash -> Either e (bs, Size, HttpStatus)) ->
                     m (Either e (bs, Size, HttpStatus))
 downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
-    -- Download xml file to a temporary file and MMAP it to a lazy bytestring 
+    -- Download xml file to a temporary file and read it as a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
@@ -140,12 +135,10 @@ fetchRpkiObject appContext uri = do
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
-lazyFsRead = MmapLazy.unsafeMMapFile 
--- lazyFsRead = LBS.readFile
+lazyFsRead = LBS.readFile
 
 fsRead :: FilePath -> IO BS.ByteString
-fsRead = Mmap.unsafeMMapFile 
--- fsRead = BS.readFile 
+fsRead = BS.readFile 
 
 data OversizedDownloadStream = OversizedDownloadStream URI Size 
     deriving stock (Show, Eq, Ord, Generic)    

@@ -20,6 +20,7 @@ import           Control.Exception.Lifted
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Text                        (Text)
@@ -60,7 +61,6 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.Base.LMDB hiding (getEnv)
 
-import qualified System.IO.Posix.MMap.Lazy        as MmapLazy
 import RPKI.RRDP.Types
 import qualified RPKI.Store.MakeLmdb as Lmdb
 import Control.Concurrent.STM
@@ -95,7 +95,7 @@ testDeltaLoad = do
     logger <- createLogger
     (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
     deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
-    deltaContents <- forM deltas $ \d -> MmapLazy.unsafeMMapFile $ "../tmp/test-data/" </> d
+    deltaContents <- forM deltas $ \d -> LBS.readFile $ "../tmp/test-data/" </> d
     logDebug_ logger [i|Starting |]    
     -- void $ runValidatorT (vContext "snapshot") $ mapM (saveDelta appContext) deltaContents    
 

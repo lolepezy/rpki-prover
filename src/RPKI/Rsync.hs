@@ -47,7 +47,6 @@ import           System.Exit
 import           System.IO
 import           System.Process.Typed
 
-import           System.IO.Posix.MMap             (unsafeMMapFile)
 import           System.Mem                       (performGC)
 import Data.Proxy
 import Data.Functor ((<&>))
@@ -234,15 +233,21 @@ rsyncDestination root u = let
     
 
 fileContent :: FilePath -> IO BS.ByteString 
-fileContent path = do
-    r <- try $ unsafeMMapFile path
-    case r of
-        Right bs                  -> pure bs
-        Left (_ :: SomeException) -> BS.readFile path                              
+fileContent = BS.readFile
+
+getSizeAndContent :: FilePath -> IO (Integer, Either AppError BS.ByteString)
+getSizeAndContent path = 
+    withFile path ReadMode $ \h -> do
+        size <- hFileSize h
+        case validateSize size of
+            Left e  -> pure (size, Left $ ValidationE e)
+            Right _ -> do
+                r <- try $ BS.hGetContents h
+                pure (size, first (RsyncE . FileReadError . U.fmtEx) r)                                
 
 
-getSizeAndContent :: FilePath -> IO (Either AppError (Integer, BS.ByteString))
-getSizeAndContent path = do 
+getSizeAndContent1 :: FilePath -> IO (Either AppError (Integer, BS.ByteString))
+getSizeAndContent1 path = do 
     r <- first (RsyncE . FileReadError . U.fmtEx) <$> readSizeAndContet
     pure $ r >>= \case 
                 (_, Left e)  -> Left e
@@ -254,10 +259,7 @@ getSizeAndContent path = do
             case validateSize size of
                 Left e  -> pure (size, Left $ ValidationE e)
                 Right _ -> do
-                    -- read small files in memory and mmap bigger ones 
-                    r <- if size < 10_000 
-                                then BS.hGetContents h 
-                                else fileContent path
+                    r <- BS.hGetContents h                                
                     pure (size, Right r)
 
 getFileSize :: FilePath -> IO Integer
