@@ -381,7 +381,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                     f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
         -- Propagate exceptions from here, anything that can happen here 
-        -- (storage failure, mmap failure) should stop the validation and 
+        -- (storage failure, file read failure) should stop the validation and 
         -- probably stop the whole program.
         txFoldPipeline 
                 cpuParallelism
