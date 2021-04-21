@@ -30,9 +30,9 @@ The software is a daemon written in Haskell and can be built using [`stack`](htt
 The instruction below is for linux, but it can work equally for \*BSD or Mac (Windows support is not planned or tested).
 
    - The prerequisites are a few libraries (`lmdb`, `lzma`, `expat` and `gmp`) and the `rsync` client. It can be done    
-      - On linux using apt-get, that will be : `sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
-      - On MacOS using brew, that will be: `brew install rsync lmdb xz expat` 
-      - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers   
+      - On Linux using apt-get, that will be : `sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
+      - On MacOS using brew, that will be: `brew install rsync lmdb xz expat`.
+      - It should be trivial to find the corresponding commands for other UNIX-like OSes or package managers.
 
    - Install `stack` as described [here](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
 
