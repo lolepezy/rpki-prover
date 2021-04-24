@@ -530,7 +530,7 @@ data RpkiObjectStats = RpkiObjectStats {
     uriKeyToObjectKeyStat  :: SStats,
     objectKeyToUrlKeysStat :: SStats,
     objectInsertedByStats  :: SStats,
-    objectValidtedByStats  :: SStats    
+    objectValidatedByStats  :: SStats    
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
@@ -591,7 +591,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
             objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
 
             objectInsertedByStats <- M.stats tx objectInsertedBy
-            objectValidtedByStats <- M.stats tx objectValidatedBy            
+            objectValidatedByStats <- M.stats tx objectValidatedBy            
             pure RpkiObjectStats {..}
 
         repositoryStats tx = 
@@ -621,7 +621,7 @@ totalStats DBStats {..} =
         in rrdpStats <> rsyncStats <> lastSStats) 
     <> (let RpkiObjectStats {..} = rpkiObjectStats
         in objectsStats <> mftByAKIStats 
-        <> objectInsertedByStats <> objectValidtedByStats 
+        <> objectInsertedByStats <> objectValidatedByStats 
         <> hashToKeyStats <> lastValidMftStats)
     <> resultsStats vResultStats 
     <> vrpStats 
