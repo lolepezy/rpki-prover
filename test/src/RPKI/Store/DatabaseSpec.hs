@@ -66,10 +66,10 @@ import RPKI.Store.Base.InMemory
 storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
-        objectStoreGroup
-        -- validationResultStoreGroup,
-        -- repositoryStoreGroup,
-        -- txGroup
+        objectStoreGroup,
+        validationResultStoreGroup,
+        repositoryStoreGroup,
+        txGroup
     ]
 
 objectStoreGroup :: TestTree
