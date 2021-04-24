@@ -580,6 +580,8 @@ validateCaCertificate
     validateThisCertAndGoDown = do            
         let (childrenAki, certLocations') = (toAKI $ getSKI certificate, getLocations certificate)        
         
+        validateObjectLocations certificate
+
         oneMoreCert            
         visitObject appContext topDownContext (CerRO $ certificate ^. #payload)
                 
@@ -638,6 +640,8 @@ validateCaCertificate
         validateManifestAndItsChildren locatedMft childrenAki certLocations' = do                         
             let mft = locatedMft ^. #payload
 
+            validateObjectLocations locatedMft
+
             visitedObjects <- liftIO $ readTVarIO visitedHashes            
             when (getHash mft `Set.member` visitedObjects) $                 
                 -- We have already visited this manifest before, so 
@@ -646,7 +650,7 @@ validateCaCertificate
                 -- NOTE: We are limiting cycle detection only to manfests
                 -- to minimise the false positives where the same object
                 -- is referenced from multiple manifests and we are treating 
-                -- it as a cycle.
+                -- it as a cycle (which it obviously is not).
                 vError $ CircularReference (getHash mft) (locatedMft ^. #locations)
 
             validateMftLocation locatedMft certificate
@@ -665,9 +669,9 @@ validateCaCertificate
                         vError $ NoCRLExists childrenAki certLocations'    
 
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
-                        visitObject appContext topDownContext foundCrl
-                        -- logDebugM logger [i|crl = #{NonEmpty.head $ getLocations crl} (#{thisUpdateTime $ signCrl crl}, #{nextUpdateTime $ signCrl crl})|]
+                        visitObject appContext topDownContext foundCrl                        
                         -- validate CRL and MFT together
+                        validateObjectLocations foundCrl
                         validCrl <- inSubVPath (locationsToText crlLocations) $ 
                                         vHoist $ do          
                                             -- checkCrlLocation crl certificate
@@ -769,7 +773,7 @@ validateCaCertificate
                                 "Filename doesn't have exactly one DOT"            
 
     
-    validateChild validCrl (Located locations ro) = do
+    validateChild validCrl child@(Located locations ro) = do
         -- At the moment of writing RFC 6486-bis 
         -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#page-12) 
         -- prescribes to consider the manifest invalid if any of the objects 
@@ -778,8 +782,8 @@ validateCaCertificate
         -- That's why recursive validation of the child CA happens in the separate   
         -- runValidatorT (...) call, but all the other objects are supposed to be 
         -- validated within the same context of ValidatorT, i.e. have short-circuit
-        -- logic implemented by ExceptT.
-        parentContext <- ask
+        -- logic implemented by ExceptT.        
+        parentContext <- ask        
         case ro of
             CerRO childCert -> do 
                 let TopDownContext{..} = topDownContext
@@ -803,7 +807,9 @@ validateCaCertificate
                 embedState validationState
                 pure $ fromRight mempty r                    
 
-            RoaRO roa -> inSubVPath (locationsToText locations) $ 
+            RoaRO roa -> do 
+                        validateObjectLocations child
+                        inSubVPath (locationsToText locations) $ 
                             allowRevoked $ do
                                 void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
                                 oneMoreRoa
@@ -812,11 +818,13 @@ validateCaCertificate
                                 -- logDebugM logger [i|roa #{NonEmpty.head $ getLocations ro}, vrps = #{vrps}.|]
                                 pure $ T3 mempty mempty $ Set.fromList vrps
 
-            GbrRO gbr -> inSubVPath (locationsToText locations) $ 
+            GbrRO gbr -> do                
+                        validateObjectLocations child
+                        inSubVPath (locationsToText locations) $ 
                             allowRevoked $ do
                                 void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                                 oneMoreGbr
-                                pure $ mempty
+                                pure mempty
 
             -- TODO Anything else?
             _ -> pure mempty
@@ -873,6 +881,15 @@ validateCaCertificate
     --             in case NonEmpty.filter ((crlDP ==) . getURL) crlLocations of 
     --                 [] -> vWarn $ CRLOnDifferentLocation crlDP crlLocations
     --                 _ ->  pure ()
+
+    -- Validate that the object has only one location: if not, 
+    -- it's generally is a warning, not really an error.
+    validateObjectLocations (getLocations -> locs@(Locations locSet)) =
+        inSubVPath (locationsToText locs) $ 
+            when (NESet.size locSet > 1) $ 
+                vWarn ObjectHasMultipleLocations
+        
+
 
 
 -- | Check if an URL need to be re-fetched, based on fetch status and current time.

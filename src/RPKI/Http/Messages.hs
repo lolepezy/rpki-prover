@@ -160,6 +160,8 @@ toValidationMessage = \case
           
       CertWrongPolicyExtension b -> [i|Certificate policy extension is broken: #{b}.|]
 
+      ObjectHasMultipleLocations-> [i|The same object has multiple locations, this is suspicious.|]
+
       NoMFT aki _ -> 
           [i|No manifest found for #{aki}.|]
 
