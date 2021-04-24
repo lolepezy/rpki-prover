@@ -247,20 +247,21 @@ hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
 deleteObject tx store@RpkiObjectStore {..} h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey -> do               
-        M.delete tx objects objectKey
-        M.delete tx objectInsertedBy objectKey        
-        M.delete tx objectValidatedBy objectKey        
-        M.delete tx hashToKey h        
-        ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
-            M.delete tx objectKeyToUrlKeys objectKey            
-            forM_ urlKeys $ \urlKey ->
-                MM.delete tx urlKeyToObjectKey urlKey objectKey                
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
-            ifJust (getAKI ro) $ \aki' -> do 
-                M.delete tx lastValidMft aki'
-                case ro of
-                    MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                    _         -> pure ()        
+            M.delete tx objects objectKey
+            M.delete tx objectInsertedBy objectKey        
+            M.delete tx objectValidatedBy objectKey        
+            M.delete tx hashToKey h        
+            ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
+                M.delete tx objectKeyToUrlKeys objectKey            
+                forM_ urlKeys $ \urlKey ->
+                    MM.delete tx urlKeyToObjectKey urlKey objectKey                
+            
+                ifJust (getAKI ro) $ \aki' -> do 
+                    M.delete tx lastValidMft aki'
+                    case ro of
+                        MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                        _         -> pure ()        
 
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
@@ -274,11 +275,11 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
                 Just z@(Located loc (MftRO mft)) -> Just $ Located loc mft
                 _                                -> Nothing
   where
-    chooseLatest latest _ (hash, orderingNum) = 
+    chooseLatest latest _ (k, timingMark) = do 
         pure $! case latest of 
-            Nothing                       -> Just (hash, orderingNum)
-            Just (_, latestNum) 
-                | orderingNum > latestNum -> Just (hash, orderingNum)
+            Nothing                       -> Just (k, timingMark)
+            Just (_, latestMark) 
+                | timingMark > latestMark -> Just (k, timingMark)
                 | otherwise               -> latest    
 
 

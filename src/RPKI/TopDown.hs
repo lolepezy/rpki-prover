@@ -492,7 +492,7 @@ validateCARecursively
             objectStore <- objectStore <$> readTVarIO database
             -- forM
             inParallel
-                (cpuBottleneck appBottlenecks)
+                (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
                 waitingList $ \(T3 hash certVContext verifiedResources') -> do
                     o <- roTx objectStore $ \tx -> getByHash tx objectStore hash
                     case o of 
@@ -690,7 +690,7 @@ validateCaCertificate
 
                         let processChildren =
                                 inParallelVT
-                                    (cpuBottleneck appBottlenecks)
+                                    (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
                                     nonCrlChildren
                                     $ \(T2 filename hash') -> 
                                                 validateManifestEntry filename hash' validCrl

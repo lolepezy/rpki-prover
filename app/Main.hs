@@ -190,7 +190,7 @@ createAppContext CLIOptions{..} logger = do
                 & #validationConfig . #dontFetch .~ dontFetch                
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
-                & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> rsyncRefreshInterval)
+                & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
                 & #lmdbSize .~ lmdbRealSize        
     }
 
@@ -205,20 +205,20 @@ maybeSet :: ASetter s s a b -> Maybe b -> s -> s
 maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 
         
-
 listTALFiles :: FilePath -> IO [FilePath]
 listTALFiles talDirectory = do     
     names <- getDirectoryContents talDirectory
     pure $ map (talDirectory </>) $ 
             filter (".tal" `List.isSuffixOf`) $ 
             filter (`notElem` [".", ".."]) names
-        
+
 
 talsDir, rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
 rsyncDir root = createSubDirectoryIfNeeded root "rsync"
 tmpDir root   = createSubDirectoryIfNeeded root "tmp"
 cacheDir root = createSubDirectoryIfNeeded root "cache"
+
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do

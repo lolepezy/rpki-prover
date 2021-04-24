@@ -142,6 +142,7 @@ newtype Version = Version Integer
 newtype Locations = Locations { unLocations :: NESet RpkiURL } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving newtype (Semigroup)
 
 instance Show URI where
     show (URI u) = show u
