@@ -86,6 +86,7 @@ dependencies:
 - streaming
 - strict-tuple
 - string-conversions
+- store
 - text
 - typed-process
 - transformers

@@ -28,9 +28,6 @@ import qualified Streaming.Prelude               as S
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
--- 
--- TODO Refactor it so that is shared code with "txFoldPipeline"
-
 -- Consume a stream, map each element and put asyncs in the queue.
 -- Read the queue and consume asyncs on the other end.
 foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>

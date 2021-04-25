@@ -19,6 +19,7 @@ import           Data.Text                (Text, singleton)
 import qualified Data.Text                as Text
 
 import           Codec.Serialise
+import           Data.Store
 import           Data.ByteString.Base16   as Hex
 
 import           Data.Hourglass
@@ -69,22 +70,27 @@ forRFC (WithReconsidered_ (WithRFC a)) _ g = g a
 newtype Hash = Hash BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype URI  = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype RsyncURL  = RsyncURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype RrdpURL  = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving  (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 class WithURL a where
     getURL :: a -> URI
@@ -118,30 +124,37 @@ toText = unURI . getURL
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype SKI  = SKI KI 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype AKI  = AKI KI   
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype SessionId = SessionId BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype Serial = Serial Integer 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype Version = Version Integer 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype Locations = Locations { unLocations :: NESet RpkiURL } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
     deriving newtype (Semigroup)
 
 instance Show URI where
@@ -167,6 +180,7 @@ hexShow = show . Hex.encode . BSS.fromShort
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 class WithAKI a where
     getAKI :: a -> Maybe AKI
@@ -191,6 +205,7 @@ data CrlObject = CrlObject {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data CerObject = CerObject {
         hash      :: {-# UNPACK #-} Hash,
@@ -200,6 +215,7 @@ data CerObject = CerObject {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data CMSBasedObject a = CMSBasedObject {
         hash       :: {-# UNPACK #-} Hash,
@@ -207,6 +223,7 @@ data CMSBasedObject a = CMSBasedObject {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
@@ -219,6 +236,7 @@ data EECerObject = EECerObject {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise   
+    deriving anyclass Store
 
     
 data RpkiObject = CerRO CerObject 
@@ -228,6 +246,7 @@ data RpkiObject = CerRO CerObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 instance WithAKI CrlObject where
@@ -284,6 +303,7 @@ data Located a = Located {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 instance WithLocations (Located a) where
@@ -309,10 +329,12 @@ data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data Vrp = Vrp 
     {-# UNPACK #-} !ASN 
@@ -320,6 +342,7 @@ data Vrp = Vrp
     {-# UNPACK #-} !PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data Manifest = Manifest {
         mftNumber   :: Integer, 
@@ -330,6 +353,7 @@ data Manifest = Manifest {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
@@ -342,11 +366,13 @@ data SignCRL = SignCRL {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 data Gbr = Gbr BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 
@@ -359,6 +385,7 @@ data SignedObject a = SignedObject {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 data CertificateWithSignature = CertificateWithSignature {
@@ -369,6 +396,7 @@ data CertificateWithSignature = CertificateWithSignature {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 {- 
     SignedData ::= SEQUENCE {
@@ -392,6 +420,7 @@ data SignedData a = SignedData {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 {- 
     EncapsulatedContentInfo ::= SEQUENCE {
@@ -404,6 +433,7 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 {-
     SignerInfo ::= SEQUENCE {
@@ -425,34 +455,42 @@ data SignerInfos = SignerInfos {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
@@ -460,6 +498,7 @@ newtype SignatureValue = SignatureValue BSS.ShortByteString
 data SignedAttributes = SignedAttributes [Attribute] BSS.ShortByteString
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest BSS.ShortByteString
@@ -468,26 +507,31 @@ data Attribute = ContentTypeAttr ContentType
             | UnknownAttribute OID [ASN1]
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 
 -- Subject Public Key Info
 newtype SPKI = SPKI EncodedBase64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 newtype EncodedBase64 = EncodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
     deriving newtype (Monoid, Semigroup)
 
 newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
 
 instance Show TaName where
     show = show . unTaName
@@ -500,6 +544,7 @@ data TA = TA {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
+    deriving anyclass Store
   
 
 -- Small utility functions that don't have anywhere else to go

@@ -26,7 +26,7 @@ newtype SValue = SValue { unSValue :: Storable }
 newtype SKey = SKey { unSKey :: Storable }
     deriving (Show, Eq, Ord, Generic, NFData, Serialise)
 
--- Strictness here is important
+-- TODO Remove this one
 data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
 
 data StorableObject a = StorableObject { object :: a, storable :: SValue }
