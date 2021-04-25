@@ -6,11 +6,12 @@
 import Colog hiding (extract)
 
 import Control.Concurrent.STM
-import Control.Lens
+import           Control.Lens ((^.), (.~), (&))
 import Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Concurrent.Lifted
 import           Data.Bifunctor
+import qualified Data.Set as Set
 import           Data.String.Interpolate.IsString
 
 import           System.Directory                 (removeFile, doesDirectoryExist, getDirectoryContents, listDirectory,
@@ -35,7 +36,6 @@ import           RPKI.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 
-import           Data.Hourglass
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB hiding (getEnv)
 
@@ -46,6 +46,7 @@ import RPKI.Store.Database
 import RPKI.Workflow
 import RPKI.Time
 import Data.Generics.Product.Typed
+import Control.Concurrent.Async
 
 
 
@@ -59,16 +60,45 @@ main = do
             putStrLn $ "Error: " <> show e        
             
         (Right appContext, _) -> do             
-            let repository = RrdpRepository {
-                    uri      = RrdpURL $ URI "https://rrdp.ripe.net/notification.xml",
-                    rrdpMeta = Nothing,
-                    status   = Pending
-                } 
-            runValidatorT (newValidatorPath "download-rrdp") 
-                $ updateObjectForRrdpRepository appContext repository   
 
-            let tal = RFC_TAL {
-                certificateLocations = newLocation "https://rpki.ripe.net/ta/ripe-ncc-ta.cer",
+            database' <- readTVarIO (appContext ^. #database)
+            worldVersion <- updateWorldVerion (appContext ^. #appState)
+            storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
+
+            forConcurrently_ sources $ \(repository, _) -> do
+                    runValidatorT (newValidatorPath "download-rrdp") 
+                        $ updateObjectForRrdpRepository appContext repository    
+                
+
+            -- Don't update data
+            let appContext' = appContext & typed @Config . typed @ValidationConfig . #dontFetch .~ True
+            replicateM_ 30 $ do                
+                let now = versionToMoment worldVersion
+                let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
+                (results, elapsed) <- timedMS $
+                    inParallel
+                        (appContext ^. #appBottlenecks . #cpuBottleneck 
+                         <> appContext ^. #appBottlenecks . #ioBottleneck) 
+                    -- forConcurrently
+                        sources 
+                        $ \(_, tal) -> do 
+                            repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
+                            validateTA appContext' tal worldVersion repositoryContext 
+
+                let TopDownResult {..} = mconcat results
+                logInfo_ logger [i|Validated GC, #{Set.size vrps} VRPs, took #{elapsed}ms|]
+                (cleanup, elapsed2) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
+                logInfo_ logger [i|Done with cache GC, #{cleanup}, took #{elapsed2}ms|]
+
+    where
+        sources = let 
+            ripeRrdp = RrdpRepository {
+                uri      = RrdpURL $ URI "https://rrdp.ripe.net/notification.xml",
+                rrdpMeta = Nothing,
+                status   = Pending
+            } 
+            ripeTAL = RFC_TAL {
+                certificateLocations = toLocations $ RrdpU $ RrdpURL $ URI "https://rpki.ripe.net/ta/ripe-ncc-ta.cer",
                 publicKeyInfo = EncodedBase64 $
                     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0URYSGqUz2myBsOzeW1j" <>
                     "Q6NsxNvlLMyhWknvnl8NiBCs/T/S2XuNKQNZ+wBZxIgPPV2pFBFeQAvoH/WK83Hw" <>
@@ -77,20 +107,62 @@ main = do
                     "kE6DoclHhF/NlSllXubASQ9KUWqJ0+Ot3QCXr4LXECMfkpkVR2TZT+v5v658bHVs" <>
                     "6ZxRD1b6Uk1uQKAyHUbn/tXvP8lrjAibGzVsXDT2L0x4Edx+QdixPgOji3gBMyL2" <>
                     "VwIDAQAB"
-            }
-            database' <- readTVarIO (appContext ^. #database)
-            worldVersion <- updateWorldVerion (appContext ^. #appState)
-            storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
-            repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
+            }       
+            apnicAs0Rrdp = RrdpRepository {
+                uri      = RrdpURL $ URI "https://rrdp-as0.apnic.net/notification.xml",
+                rrdpMeta = Nothing,
+                status   = Pending
+            }             
+            apnicAS0TAL = RFC_TAL {
+                certificateLocations = toLocations $ RrdpU $ RrdpURL $ 
+                    URI "https://rpki-as0-web.apnic.net/repository/APNIC-AS0-AP/apnic-rpki-root-as0-origin.cer",
+                publicKeyInfo = EncodedBase64 $
+                    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7xn+C9dYQDHGaEIqFteu" <>
+                    "EnW3r9KJOajc6Jl2ZdgB7qps+dvij1ZAhK/FTKBNGgzM7zLLg2dcDiZRBYd7bgFB" <>
+                    "C+nZouOCsm/o6JRSZqk84bNqNcxuWuyt0iIBc9n0rZIo4YoJOh1Xjs1lq6B6MikR" <>
+                    "2iTC1aApFC/haZAS1/i1awNcvAb9xfVdp0/MpI0Ip8rmJix33NCWtaORkn21JgTr" <>
+                    "E3H0Ov8oAxYfbHLZQ8sI8gI7yrpipCDok8cCVi7+F579ROXvSpZUFF5a/rtWABoN" <>
+                    "fXT5nFYMAZJoGoAazBIFBiCUaxUJsaTVChDdAw10qFQu7ZPKyTdoHh+LD0r8Sro7" <>
+                    "qwIDAQAB"
+            }                     
+            apnicRrdp = RrdpRepository {
+                uri      = RrdpURL $ URI "https://rrdp.apnic.net/notification.xml",
+                rrdpMeta = Nothing,
+                status   = Pending
+            }             
+            apnicTAL = RFC_TAL {
+                certificateLocations = toLocations $ RrdpU $ RrdpURL $ URI "https://tal.apnic.net/apnic.cer",
+                publicKeyInfo = EncodedBase64 $
+                    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx9RWSL61YAAYumEiU8z8" <>
+                    "qH2ETVIL01ilxZlzIL9JYSORMN5Cmtf8V2JblIealSqgOTGjvSjEsiV73s67zYQI" <>
+                    "7C/iSOb96uf3/s86NqbxDiFQGN8qG7RNcdgVuUlAidl8WxvLNI8VhqbAB5uSg/Mr" <>
+                    "LeSOvXRja041VptAxIhcGzDMvlAJRwkrYK/Mo8P4E2rSQgwqCgae0ebY1CsJ3Cjf" <>
+                    "i67C1nw7oXqJJovvXJ4apGmEv8az23OLC6Ki54Ul/E6xk227BFttqFV3YMtKx42H" <>
+                    "cCcDVZZy01n7JjzvO8ccaXmHIgR7utnqhBRNNq5Xc5ZhbkrUsNtiJmrZzVlgU6Ou" <>
+                    "0wIDAQAB"
+            }                     
+            arinRrdp = RrdpRepository {
+                uri      = RrdpURL $ URI "https://rrdp.arin.net/notification.xml",
+                rrdpMeta = Nothing,
+                status   = Pending
+            }             
+            arinTAL = RFC_TAL {
+                certificateLocations = toLocations $ RrdpU $ RrdpURL $ 
+                    URI "https://rrdp.arin.net/arin-rpki-ta.cer",
+                publicKeyInfo = EncodedBase64 $
+                    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3lZPjbHvMRV5sDDqfLc/685th5FnreHMJjg8" <>
+                    "pEZUbG8Y8TQxSBsDebbsDpl3Ov3Cj1WtdrJ3CIfQODCPrrJdOBSrMATeUbPC+JlNf2SRP3UB+VJFgtTj" <>
+                    "0RN8cEYIuhBW5t6AxQbHhdNQH+A1F/OJdw0q9da2U29Lx85nfFxvnC1EpK9CbLJS4m37+RlpNbT1cba+" <>
+                    "b+loXpx0Qcb1C4UpJCGDy7uNf5w6/+l7RpATAHqqsX4qCtwwDYlbHzp2xk9owF3mkCxzl0HwncO+sEHH" <>
+                    "eaL3OjtwdIGrRGeHi2Mpt+mvWHhtQqVG+51MHTyg+nIjWFKKGx1Q9+KDx4wJStwveQIDAQAB"
+            }                     
+            in [
+                (ripeRrdp, ripeTAL), 
+                (apnicAs0Rrdp, apnicAS0TAL), 
+                (arinRrdp, arinTAL), 
+                (apnicRrdp, apnicTAL)
+            ]
 
-            -- Don't update data
-            let appContext' = appContext & typed @Config . typed @ValidationConfig . #dontFetch .~ True
-            forever $ do                
-                let now = versionToMoment worldVersion
-                let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
-                validateTA appContext' tal worldVersion repositoryContext 
-                ((deleted, kept), elapsed) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
-                logInfo_ logger [i|Done with cache GC, deleted #{deleted} objects, kept #{kept}, took #{elapsed}ms|]
 
 
 -- Auxilliary functions
@@ -130,38 +202,12 @@ createAppContext logger = do
 
     let appContext = AppContext {        
         logger = logger,
-        config = Config {
-            talDirectory = rootDir </> "tals",
-            tmpDirectory = tmpd,            
-            cacheDirectory = rootDir </> "cache",
-            parallelism  = Parallelism cpuParallelism ioParallelism,
-            rsyncConf    = RsyncConf rsyncd (Seconds 600),
-            rrdpConf     = RrdpConf { 
-                tmpRoot = tmpd,
-                -- Do not download files bigger than 1Gb, it's fishy
-                maxSize = Size 1024 * 1024 * 1024,
-                rrdpTimeout = Seconds (5 * 60)
-            },
-            validationConfig = ValidationConfig {
-                revalidationInterval           = Seconds (13 * 60),
-                rrdpRepositoryRefreshInterval  = Seconds 120,
-                rsyncRepositoryRefreshInterval = Seconds (11 * 60),
-                dontFetch = False
-            },
-            httpApiConf = HttpApiConfig {
-                port = 9999
-            },
-            rtrConfig = Nothing,
-            cacheCleanupInterval = 120 * 60,
-            cacheLifeTime = Seconds $ 60 * 60 * 2,
-
-            -- TODO Think about it, it should be lifetime or we should store N last versions
-            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
-
-            storageCompactionInterval = Seconds $ 60 * 60 * 12,
-
-            lmdbSize = 2000
-        },
+        config = defaultConfig 
+                    & #talDirectory .~ rootDir </> "tals"
+                    & #tmpDirectory .~ tmpd 
+                    & #cacheDirectory .~ rootDir </> "cache" 
+                    & #parallelism .~ Parallelism cpuParallelism ioParallelism            
+                    & #rrdpConf . #tmpRoot .~ tmpd, 
         appState = appState,
         database = tvarDatabase,
         appBottlenecks = appBottlenecks

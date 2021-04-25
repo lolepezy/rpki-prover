@@ -57,7 +57,8 @@ import Data.Set (Set)
 
 
 
-
+defaultRtrPort :: Num p => p
+defaultRtrPort = 8283
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -91,7 +92,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             setSocketOption sock ReuseAddr 1
-            withFdSocket sock $ setCloseOnExecIfNeeded
+            withFdSocket sock setCloseOnExecIfNeeded
             bind sock $ addrAddress addr
             listen sock 1024
             pure sock
@@ -330,7 +331,7 @@ analyzePdu peer pduBytes = \case
                     -- Do no send an error PDU as a response to an error PDU, it's prohibited by RFC                        
                     (Nothing, Just message, Nothing)                            
 
-        Right (VersionedPdu errorPdu@(ErrorPdu {}) _) ->
+        Right (VersionedPdu errorPdu@ErrorPdu {} _) ->
             (Nothing, Just [i|Received an error from #{peer}: #{errorPdu}.|], Nothing)                
 
         Right versionedPdu -> (Nothing, Nothing, Just versionedPdu)

@@ -53,6 +53,6 @@ readObject objectURL content = do
         ".gbr" -> parse_ objectURL parseGbr GbrRO content            
         _      -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
-            parse_ u parse constructor bs = do
-                f <- parse bs
-                pure $ constructor (f u)
+            parse_ u parse constructor bs = 
+                constructor <$> parse bs
+                

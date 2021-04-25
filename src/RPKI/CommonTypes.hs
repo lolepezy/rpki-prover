@@ -12,6 +12,7 @@ import           Data.Monoid.Generic
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict                  as Map
 
+
 newtype MonoidMap k v = MonoidMap { unMonoidMap :: Map k v }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise

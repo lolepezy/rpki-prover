@@ -20,6 +20,7 @@ import Data.Hourglass
 import Data.ASN1.BitArray
 
 import Data.Tuple.Strict
+import Data.Set.NonEmpty
 
 import Crypto.Error
 import Crypto.PubKey.RSA.Types (PublicKey(..))
@@ -98,3 +99,5 @@ decodePK f = f <$> decodeBytes >>= \case
 
 deriving instance (Serialise a, Serialise b) => Serialise (T2 a b)
 deriving instance (Serialise a, Serialise b, Serialise c) => Serialise (T3 a b c)
+
+deriving instance (Ord a, Serialise a) => Serialise (NESet a)

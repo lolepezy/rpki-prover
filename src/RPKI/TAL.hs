@@ -6,7 +6,7 @@
 
 module RPKI.TAL where
 
-import Data.Bifunctor (first, second)
+import Data.Bifunctor (first, second, bimap)
 
 import           Control.Monad
 
@@ -15,6 +15,7 @@ import           Codec.Serialise
 import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
+import qualified Data.Set.NonEmpty                as NESet
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
@@ -51,26 +52,19 @@ certLocations RFC_TAL {..}       = certificateLocations
 
 getTaName :: TAL -> TaName
 getTaName tal = case tal of 
-    PropertiesTAL {..} -> maybe (uri2TaName $ NonEmpty.head certificateLocation) TaName caName
-    RFC_TAL {..}       -> uri2TaName $ NonEmpty.head certificateLocations
+    PropertiesTAL {..} -> maybe (uri2TaName $ pickLocation certificateLocation) TaName caName
+    RFC_TAL {..}       -> uri2TaName $ pickLocation certificateLocations
     where 
         uri2TaName u = 
             let URI t = getURL u
             in TaName t
 
 getTaCertURL :: TAL -> RpkiURL
-getTaCertURL PropertiesTAL {..} = NonEmpty.head certificateLocation
-getTaCertURL RFC_TAL {..}       = NonEmpty.head certificateLocations
+getTaCertURL PropertiesTAL {..} = pickLocation certificateLocation
+getTaCertURL RFC_TAL {..}       = pickLocation certificateLocations
 
 newLocation :: Text.Text -> NonEmpty RpkiURL
 newLocation t =  RrdpU (RrdpURL $ URI t) :| []
-
-newLocations :: NonEmpty RpkiURL -> NonEmpty RpkiURL
-newLocations = NonEmpty.sortWith urlOrder
-  where
-    urlOrder u = case u of
-        RrdpU _ -> (0 :: Int, u)
-        _       -> (1, u)
 
 -- | Parse TAL object from raw text
 parseTAL :: Text.Text -> Either TALError TAL
@@ -112,8 +106,7 @@ parseTAL bs =
                         Just uris -> 
                             case NonEmpty.nonEmpty (Text.splitOn "," uris) of
                                 Nothing    -> Left $ TALError [i|Empty list of TA certificate URLs in #{propertyName}|]
-                                Just uris' -> first TALError $ second newLocations $ mapM parseRpkiURL uris'
-                                    -- 
+                                Just uris' -> bimap TALError (Locations . NESet.fromList) $ mapM parseRpkiURL uris'
                     where
                         propertyName = "certificate.location" :: Text.Text
 
@@ -129,12 +122,11 @@ parseTAL bs =
                     case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
                         Just uris' -> do 
-                            locations <- first TALError $ 
-                                            second newLocations $ 
+                            locations <- first TALError $                                             
                                             mapM parseRpkiURL $ 
                                             NonEmpty.map Text.strip uris'
                             pure $ RFC_TAL {
-                                certificateLocations = locations,
+                                certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
                                     Text.concat $ filter (not . Text.null) $ map Text.strip base64
                             }

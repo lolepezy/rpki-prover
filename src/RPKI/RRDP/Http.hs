@@ -155,7 +155,7 @@ downloadConduit :: (MonadIO m, MonadUnliftIO m) =>
                     -> m (t, HttpStatus)
 downloadConduit (URI u) fileHandle sink = do 
     req <- liftIO $ parseRequest $ Text.unpack u    
-    let req' = req { requestHeaders = (hUserAgent, userAgent) : (requestHeaders req) }
+    let req' = req { requestHeaders = (hUserAgent, userAgent) : requestHeaders req }
     status <- liftIO $ newIORef mempty
     let getSrc r = do         
             liftIO $ writeIORef status $ HttpStatus $ getResponseStatusCode r         
@@ -168,7 +168,7 @@ downloadConduit (URI u) fileHandle sink = do
     (z,) <$> liftIO (readIORef status)
 
 userAgent :: BS.ByteString
-userAgent = U.convert $ "rpki-prover-" <> (showVersion Autogen.version)
+userAgent = U.convert $ "rpki-prover-" <> showVersion Autogen.version
 
 -- | Calculate size and extra arbitrary function of the sinked stream
 -- | and throw and exception is the size gets too big.

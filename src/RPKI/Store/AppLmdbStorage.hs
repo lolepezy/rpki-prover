@@ -186,7 +186,7 @@ compactStorageWithTmpDir AppContext {..} = do
 
     let fileSizeMb :: Integer = lmdbFileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
-    if fileSizeMb > (3 * dataSizeMb)    
+    if fileSizeMb > (2 * dataSizeMb)    
         then do 
             logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
             copyToNewEnvironmentAndSwap `catch` (

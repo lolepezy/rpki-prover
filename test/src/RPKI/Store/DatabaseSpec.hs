@@ -22,6 +22,7 @@ import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
+import qualified Data.Set.NonEmpty                 as NESet
 import           Data.Maybe
 import           Data.Ord
 import           Data.Proxy
@@ -44,6 +45,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
+import qualified RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
@@ -51,6 +53,7 @@ import           RPKI.Store.Repository
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
 import qualified RPKI.Store.MakeInMemory as Mem
+
 import           RPKI.Time
 
 import           RPKI.RepositorySpec
@@ -64,60 +67,114 @@ storeGroup :: TestTree
 storeGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
-        -- objectStoreGroupMem,
         validationResultStoreGroup,
-        -- validationResultStoreGroupMem,
         repositoryStoreGroup,
-        -- repositoryStoreGroupMem,
         txGroup
     ]
 
 objectStoreGroup :: TestTree
-objectStoreGroup = withDB $ \io -> objectStoreGroup' "lmdb" $ snd <$> io    
-
-objectStoreGroupMem :: TestTree
-objectStoreGroupMem = withMem $ objectStoreGroup' "mem"
-
-objectStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
-objectStoreGroup' suffix db = testGroup "Object storage test"
-        [
-            HU.testCase ("Should insert and get back " <> suffix) (shouldInsertAndGetAllBackFromObjectStore db),        
-            HU.testCase ("Should order manifests accoring to their dates " <> suffix) (shouldOrderManifests db)
-        ]        
+objectStoreGroup = testGroup "Object storage test"
+    [                    
+        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromObjectStore,        
+        dbTestCase "Should order manifests accoring to their dates" shouldOrderManifests,
+        dbTestCase "Should merge locations" shouldMergeObjectLocations
+        -- dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
+    ]        
 
 validationResultStoreGroup :: TestTree
-validationResultStoreGroup = withDB $ \io -> validationResultStoreGroup' "db" $ snd <$> io    
-
-validationResultStoreGroupMem :: TestTree
-validationResultStoreGroupMem = withMem $ validationResultStoreGroup' "mem"
-        
-validationResultStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
-validationResultStoreGroup' suffix db = testGroup "Validation result storage test"
-        [
-            HU.testCase ("Should insert and get back " <> suffix) (shouldInsertAndGetAllBackFromValidationResultStore db),
-            HU.testCase ("Should insert and get back " <> suffix) (shouldGetAndSaveRepositories db)        
-        ]
-
-repositoryStoreGroup :: TestTree
-repositoryStoreGroup = withDB $ \io -> repositoryStoreGroup' "db" $ snd <$> io    
-
-repositoryStoreGroupMem :: TestTree
-repositoryStoreGroupMem = withMem $ repositoryStoreGroup' "mem"
-
-repositoryStoreGroup' :: Storage s => String -> IO (DB s) -> TestTree
-repositoryStoreGroup' suffix db = testGroup "Repository LMDB storage test"
-        [
-            HU.testCase ("Should insert and get a repository " <> suffix) (shouldInsertAndGetAllBackFromRepositoryStore db)
-            -- HU.testCase "Should use repository change set properly" (should_read_create_change_set_and_apply_repository_store io)
-        ]        
-
-txGroup :: TestTree
-txGroup = withDB $ \io -> testGroup "App transaction test"
+validationResultStoreGroup = testGroup "Validation result storage test"
     [
-        HU.testCase "Should rollback App transactions properly" (shouldRollbackAppTx io),        
-        HU.testCase "Should preserve state from StateT in transactions" (shouldPreserveStateInAppTx io)        
+        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore,
+        dbTestCase "Should insert and get back" shouldGetAndSaveRepositories
     ]
 
+repositoryStoreGroup :: TestTree
+repositoryStoreGroup = testGroup "Repository LMDB storage test"
+    [
+        dbTestCase "Should insert and get a repository" shouldInsertAndGetAllBackFromRepositoryStore
+    ]        
+
+txGroup :: TestTree
+txGroup = testGroup "App transaction test"
+    [
+        ioTestCase "Should rollback App transactions properly" shouldRollbackAppTx,        
+        ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx
+    ]
+
+
+shouldMergeObjectLocations :: Storage s => IO (DB s) -> HU.Assertion
+shouldMergeObjectLocations io = do 
+    
+    db@DB {..} <- io
+    Now now <- thisInstant 
+
+    [url1, url2, url3] :: [RpkiURL] <- take 3 . List.nub <$> replicateM 10 (QC.generate arbitrary)
+
+    ro1 :: RpkiObject <- QC.generate arbitrary    
+    ro2 :: RpkiObject <- QC.generate arbitrary        
+    extraLocations :: Locations <- QC.generate arbitrary    
+
+    let storeIt obj url = rwTx objectStore $ \tx -> do        
+            putObject tx objectStore (toStorableObject obj) (instantToVersion now)
+            linkObjectToUrl tx objectStore url (getHash obj)
+
+    let getIt hash = roTx objectStore $ \tx -> getByHash tx objectStore hash    
+
+
+    storeIt ro1 url1
+    storeIt ro1 url2
+    storeIt ro1 url3
+
+    storeIt ro2 url3
+
+    Just (Located loc1 _) <- getIt (getHash ro1)
+    HU.assertEqual "Wrong locations 1" loc1 (toLocations url1 <> toLocations url2 <> toLocations url3)
+
+    Just (Located loc2 _) <- getIt (getHash ro2)
+    HU.assertEqual "Wrong locations 2" loc2 (toLocations url3)    
+
+    verifyUrlCount objectStore "1" 3    
+
+    rwTx objectStore $ \tx ->
+        deleteObject tx objectStore (getHash ro1)    
+
+    verifyUrlCount objectStore "2" 3
+
+    -- should only clean up URLs
+    cleanObjectCache db (const False)
+
+    verifyUrlCount objectStore "3" 1
+
+    Just (Located loc2 _) <- getIt (getHash ro2)
+    HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
+    where 
+        verifyUrlCount objectStore s count = do 
+            uriToUriKey <- roTx objectStore $ \tx -> M.all tx (uriToUriKey objectStore)
+            uriKeyToUri <- roTx objectStore $ \tx -> M.all tx (uriKeyToUri objectStore)
+            HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
+            HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
+
+
+shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
+shouldCreateAndDeleteAllTheMaps io = do 
+    
+    DB {..} <- io
+    Now now <- thisInstant 
+
+    url :: RpkiURL <- QC.generate arbitrary    
+    ros :: [RpkiObject] <- generateSome
+
+    rwTx objectStore $ \tx -> 
+        for_ ros $ \ro -> 
+            putObject tx objectStore (toStorableObject ro) (instantToVersion now)
+
+    -- roTx objectStore $ \tx -> 
+    --     forM ros $ \ro -> do 
+    --         Just ro' <- getByHash tx objectStore (getHash ro)
+    --         HU.assertEqual "Not the same objects" ro ro'
+    
+
+    pure ()
 
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
@@ -125,60 +182,62 @@ shouldInsertAndGetAllBackFromObjectStore io = do
     DB {..} <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
-    ros :: [RpkiObject] <- removeMftNumberDuplicates <$> generateSome
+    ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
 
     let (firstHalf, secondHalf) = List.splitAt (List.length ros `div` 2) ros
 
-    let ros1 = List.map (replaceAKI aki1) firstHalf
-    let ros2 = List.map (replaceAKI aki2) secondHalf
+    let ros1 = List.map (& typed @RpkiObject %~ replaceAKI aki1) firstHalf
+    let ros2 = List.map (& typed @RpkiObject %~ replaceAKI aki2) secondHalf
     let ros' = ros1 <> ros2 
 
-    Now now <- thisInstant 
+    Now now <- thisInstant     
 
     rwTx objectStore $ \tx -> 
-        for_ ros' $ \ro -> 
+        for_ ros' $ \(Located (Locations locations) ro) -> do             
             putObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            forM_ locations $ \url -> 
+                linkObjectToUrl tx objectStore url (getHash ro)
 
     allObjects <- roTx objectStore $ \tx -> getAll tx objectStore
     HU.assertEqual 
         "Not the same objects" 
-        (List.sortOn getHash allObjects) 
-        (List.sortOn getHash ros')
-    
-    compareLatestMfts objectStore ros1 aki1
+        (List.sortOn (getHash . payload) allObjects) 
+        (List.sortOn (getHash . payload) ros')
+        
+    compareLatestMfts objectStore ros1 aki1    
     compareLatestMfts objectStore ros2 aki2  
     
     let (toDelete, toKeep) = List.splitAt (List.length ros1 `div` 2) ros1
 
     rwTx objectStore $ \tx -> 
-        forM_ toDelete $ \ro -> 
+        forM_ toDelete $ \(Located _ ro) -> 
             deleteObject tx objectStore (getHash ro)
-
+    
+    compareLatestMfts objectStore ros2 aki2      
     compareLatestMfts objectStore toKeep aki1
-    compareLatestMfts objectStore ros2 aki2  
+    
+  where
+    removeMftNumberDuplicates = List.nubBy $ \ro1 ro2 ->
+            case (ro1, ro2) of
+                (Located _ (MftRO mft1), Located _ (MftRO mft2)) -> 
+                    getMftTimingMark mft1 == getMftTimingMark mft2
+                _ -> False
 
-    where
-        removeMftNumberDuplicates = List.nubBy sameMftNumber
-            where 
-                sameMftNumber ro1 ro2 = 
-                    case (ro1, ro2) of
-                        (MftRO mft1, MftRO mft2) -> getMftTimingMark mft1 == getMftTimingMark mft2
-                        _ -> False
-
-        compareLatestMfts objectStore ros a = do
-            mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore a         
-            
-            let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
-                    [ mft | MftRO mft <- ros, getAKI mft == Just a ]
-                
-            HU.assertEqual "Not the same manifests" mftLatest mftLatest'
+    compareLatestMfts objectStore ros a = do
+        mftLatest <- roTx objectStore $ \tx -> 
+                        findLatestMftByAKI tx objectStore a         
+        
+        let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
+                [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
+        
+        HU.assertEqual "Not the same manifests" ((^. #payload) <$> mftLatest) mftLatest'                    
 
 
 shouldOrderManifests :: Storage s => IO (DB s) -> HU.Assertion
 shouldOrderManifests io = do  
     DB {..} <- io
-    Right mft1 <- readObjectFromFile "./test/data/afrinic_mft1.mft"
-    Right mft2 <- readObjectFromFile "./test/data/afrinic_mft2.mft"
+    (url1, Right mft1) <- readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (url2, Right mft2) <- readObjectFromFile "./test/data/afrinic_mft2.mft"
 
     Now now <- thisInstant 
     let worldVersion = instantToVersion now
@@ -186,10 +245,12 @@ shouldOrderManifests io = do
     rwTx objectStore $ \tx -> do        
             putObject tx objectStore (toStorableObject mft1) worldVersion
             putObject tx objectStore (toStorableObject mft2) worldVersion
+            linkObjectToUrl tx objectStore url1 (getHash mft1)
+            linkObjectToUrl tx objectStore url2 (getHash mft2)
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
-    Just mftLatest <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki1
+    Just (Located _ mftLatest) <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki1
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
@@ -286,6 +347,7 @@ rrdpSubMap pps = do
     keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
     pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
 
+
 shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
     ((_, env), DB {..}) <- io
@@ -326,7 +388,7 @@ shouldPreserveStateInAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    let addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))    
+    let addedObject = updateMetric @RrdpMetric @_ (& #added %~ (+1))    
 
     (_, ValidationState { validations = Validations validationMap, .. }) 
         <- runValidatorT (newValidatorPath "root") $ 
@@ -373,14 +435,17 @@ stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> met
 stripTime = (& #totalTimeMs .~ TimeMs 0)
 
 generateSome :: Arbitrary a => IO [a]
-generateSome = forM [1 :: Int .. 1000] $ const $ QC.generate arbitrary      
+generateSome = replicateM 1000 $ QC.generate arbitrary      
 
 withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
 withDB = withResource (makeLmdbStuff Lmdb.createDatabase) releaseLmdb
 
-withMem :: (IO (DB InMemoryStorage) -> TestTree) -> TestTree
-withMem = withResource Mem.createDatabase (const $ pure ())
 
+ioTestCase :: TestName -> (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion) -> TestTree
+ioTestCase s f = withDB $ \io -> HU.testCase s (f io)
+
+dbTestCase :: TestName -> (IO (DB LmdbStorage) -> HU.Assertion) -> TestTree
+dbTestCase s f = ioTestCase s $ f . (snd <$>)
 
 makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
 makeLmdbStuff mkStore = do 
@@ -394,10 +459,11 @@ releaseLmdb ((dir, e), _) = do
     Lmdb.closeLmdb e
     removeDirectoryRecursive dir
 
-readObjectFromFile :: FilePath -> IO (ParseResult RpkiObject)
+readObjectFromFile :: FilePath -> IO (RpkiURL, ParseResult RpkiObject)
 readObjectFromFile path = do 
     bs <- BS.readFile path
-    pure $! readObject (RsyncU $ RsyncURL $ URI $ Text.pack path) bs
+    let url = RsyncU $ RsyncURL $ URI $ Text.pack path
+    pure (url, readObject url bs)
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = \case 

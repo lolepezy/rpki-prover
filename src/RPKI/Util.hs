@@ -70,8 +70,8 @@ instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAs
 
 normalizeUri :: Text.Text -> Text.Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
-    where
-        isOkForAFile c = isAlpha c || isDigit c || c == '.'
+  where
+    isOkForAFile c = isAlpha c || isDigit c || c == '.'
 
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
@@ -114,5 +114,11 @@ parseRpkiURL t
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
 
+decrement :: (MonadIO m, Num a) => IORef a -> m ()
+decrement counter = liftIO $ atomicModifyIORef' counter $ \c -> (c - 1, ())        
+
 ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
 ifJust a f = maybe (pure ()) f a
+
+ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
+ifJustM a f = maybe (pure ()) f =<< a

@@ -46,6 +46,6 @@ withAppLogger f = do
         defCapacity
         logTextStdout
         (\logg -> usingLoggerT logg $ f $ AppLogger $ fullMessageAction logg)
-    where
-        fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
-            cmapM fmtRichMessageDefault logg
+  where
+    fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
+        cmapM fmtRichMessageDefault logg

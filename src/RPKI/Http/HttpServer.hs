@@ -19,6 +19,7 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe)
 import qualified Data.Set                         as Set
 import           Data.Text                       (Text)
+import           Data.Maybe (maybeToList)
 
 import           Data.String.Interpolate.IsString
 import           RPKI.AppContext
@@ -107,7 +108,7 @@ getMetrics AppContext {..} = do
                 lastVersion <- MaybeT $ getLastCompletedVersion database tx
                 MaybeT $ metricsForVersion tx metricStore lastVersion                        
     case metrics of 
-        Nothing -> throwError err404
+        Nothing -> throwError err404 { errBody = "Working, please hold still!" }
         Just m  -> pure m
     
 toVR :: (Path a, Set.Set VProblem) -> ValidationResult
@@ -121,17 +122,21 @@ getRpkiObject :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s 
                 -> Maybe Text 
                 -> Maybe Text 
-                -> m (Maybe RObject)
+                -> m [RObject]
 getRpkiObject AppContext {..} uri hash =
     case (uri, hash) of 
         (Nothing,  Nothing) -> 
             throwError $ err400 { errBody = "'uri' or 'hash' must be provided." }
 
-        (Just uri', Nothing) -> 
-            liftIO $ do 
-                DB {..} <- readTVarIO database 
-                roTx objectStore $ \tx -> 
-                    (RObject <$>) <$> getByUri tx objectStore (URI uri')
+        (Just u, Nothing) -> do 
+            case parseRpkiURL u of 
+                Left e -> 
+                    throwError $ err400 { errBody = "'uri' is not a valid object URL." }
+
+                Right rpkiUrl -> liftIO $ do 
+                    DB {..} <- readTVarIO database 
+                    roTx objectStore $ \tx -> 
+                        (RObject <$>) <$> getByUri tx objectStore rpkiUrl
 
         (Nothing, Just hash') -> 
             case parseHash hash' of 
@@ -139,7 +144,7 @@ getRpkiObject AppContext {..} uri hash =
                 Right h -> liftIO $ do 
                     DB {..} <- readTVarIO database 
                     roTx objectStore $ \tx -> 
-                        (RObject <$>) <$> getByHash tx objectStore h                                      
+                        (RObject <$>) . maybeToList <$> getByHash tx objectStore h                                      
 
         (Just _, Just _) -> 
             throwError $ err400 { errBody = 

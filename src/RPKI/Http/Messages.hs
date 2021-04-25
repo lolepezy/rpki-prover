@@ -13,6 +13,8 @@ module RPKI.Http.Messages where
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
+import Data.Foldable (toList)
+
 import qualified Data.List          as List
 import qualified Data.List.NonEmpty          as NonEmpty
 
@@ -158,6 +160,8 @@ toValidationMessage = \case
           
       CertWrongPolicyExtension b -> [i|Certificate policy extension is broken: #{b}.|]
 
+      ObjectHasMultipleLocations-> [i|The same object has multiple locations, this is suspicious.|]
+
       NoMFT aki _ -> 
           [i|No manifest found for #{aki}.|]
 
@@ -175,6 +179,9 @@ toValidationMessage = \case
 
       BadFileNameOnMFT filename message -> 
             [i|File #{filename} is malformed #{message}.|]
+
+      NonUniqueManifestEntries nonUniqueEntries -> 
+            [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
 
       NoCRLExists aki locations -> 
             [i|No CRL exists with AKI #{aki} for CA #{fmtLocations locations}.|]
@@ -206,7 +213,7 @@ toValidationMessage = \case
       (AKIIsNotEqualsToParentSKI childAKI parentSKI) ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
 
-      ManifestEntryDontExist hash filename -> 
+      ManifestEntryDoesn'tExist hash filename -> 
           [i|Manifest entry #{filename} with hash #{hash} not found.|]
 
       OverclaimedResources resources -> 
@@ -239,9 +246,14 @@ toValidationMessage = \case
                     List.intersperse "," . 
                     map (\(T2 t h) -> t <> Text.pack (":" <> show h))
 
+    fmtBrokenMftEntries = mconcat . 
+                    List.intersperse "," . 
+                    map (\(h, fs) -> Text.pack $ "Hash: " <> show h <> " -> " <> show fs)
+
 
 fmtLocations :: Locations -> Text
 fmtLocations = mconcat . 
                List.intersperse "," . 
                map (Text.pack . show) . 
-               NonEmpty.toList
+               toList . 
+               unLocations

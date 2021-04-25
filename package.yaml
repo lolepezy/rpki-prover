@@ -70,6 +70,7 @@ dependencies:
 - monad-control
 - mtl
 - network
+- nonempty-containers
 - optparse-generic
 - pipes
 - primitive
@@ -176,7 +177,7 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N4"'
+    - '"-with-rtsopts=-A24m -AL128m -N8"'
     - -Wall
     - -O2
     dependencies:

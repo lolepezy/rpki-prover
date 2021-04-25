@@ -51,12 +51,14 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension BS.ByteString |
+                        ObjectHasMultipleLocations |
                         NoMFT AKI Locations |
                         NoCRLOnMFT AKI Locations |
                         MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |
+                        NonUniqueManifestEntries [(Hash, [Text])] |
                         NoCRLExists AKI Locations |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash Locations |
@@ -67,7 +69,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         CertificateIsInTheFuture { before :: Instant, after :: Instant } |
                         CertificateIsExpired { before :: Instant, after :: Instant } |
                         AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
-                        ManifestEntryDontExist Hash Text |
+                        ManifestEntryDoesn'tExist Hash Text |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         UnknownUriType URI | 

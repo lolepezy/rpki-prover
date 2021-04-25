@@ -29,11 +29,11 @@ newtype SKey = SKey { unSKey :: Storable }
 -- Strictness here is important
 data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
 
-data StorableObject a = StorableObject a SValue
+data StorableObject a = StorableObject { object :: a, storable :: SValue }
     deriving (Show, Eq, Generic)
 
-toStorableObject :: Serialise a => a -> StorableObject a 
-toStorableObject a = StorableObject a $ force (storableValue a)
+toStorableObject :: Serialise a => a -> StorableObject a
+toStorableObject a = StorableObject a (force (storableValue a))
 
 toStorable :: Serialise v => v -> Storable
 toStorable = Storable . LBS.toStrict . serialise

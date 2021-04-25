@@ -20,7 +20,7 @@ import           RPKI.Parse.Internal.Common
 import qualified RPKI.Util                  as U
 
 
-parseCrl :: BS.ByteString -> ParseResult (RpkiURL -> CrlObject)
+parseCrl :: BS.ByteString -> ParseResult CrlObject
 parseCrl bs = do
     asns                <- first (fmtErr . show) $ decodeASN1' BER bs
     (extensions, signCrlF) <- first fmtErr $ runParseASN1 getCrl asns      
@@ -40,8 +40,7 @@ parseCrl bs = do
     numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
     crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
-    pure $ \location -> newCrl 
-        location 
+    pure $ newCrl         
         (AKI $ mkKI aki') 
         (U.sha256s bs) 
         (signCrlF crlNumber' )        

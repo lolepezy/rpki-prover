@@ -149,11 +149,10 @@ pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
 pureErrorIfNot b e = if b then pure () else vPureError e
 
 fromEither :: Either AppError r -> PureValidatorT r
-fromEither (Left e) = pureError e
-fromEither (Right r) = pure r
+fromEither = lift . ExceptT . pure
 
 vFromEither :: Either ValidationError r -> PureValidatorT r
-vFromEither e = fromEither $ first ValidationE e
+vFromEither = fromEither . first ValidationE
 
 valid :: Applicative m =>
         m (Either AppError (), Validations)

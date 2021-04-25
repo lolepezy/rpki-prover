@@ -148,8 +148,8 @@ parseSignedObject contentBinaryParse =
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
 
-getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult (RpkiURL -> (Hash, Locations))
-getMetaFromSigned _ bs = pure $ \location -> (U.sha256s bs, location :| [])
+getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult Hash
+getMetaFromSigned _ bs = pure $ U.sha256s bs
 
 
 parseSignedContent :: ParseASN1 a -> ContentType -> BS.ByteString -> ParseASN1 (EncapsulatedContentInfo a)

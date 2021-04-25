@@ -72,7 +72,7 @@ data VrpDto = VrpDto {
     maxLength :: PrefixLength
 } deriving stock (Eq, Show, Generic)
 
-newtype RObject = RObject RpkiObject
+newtype RObject = RObject (Located RpkiObject)
     deriving stock (Eq, Show, Generic)
 
 
@@ -121,6 +121,7 @@ instance ToJSON AppError
 instance ToJSON InitError
 instance ToJSON  a => ToJSON (ParseError a)
 instance ToJSON ValidationError
+instance ToJSON Locations
 instance ToJSON StorageError
 instance ToJSON RsyncError
 instance ToJSON RrdpError
@@ -215,6 +216,7 @@ instance ToJSON EECerObject
 instance ToJSON CerObject
 instance ToJSON CrlObject
 instance ToJSON RpkiObject
+instance ToJSON a => ToJSON (Located a)
 instance ToJSON a => ToJSON (CMSBasedObject a)
 instance ToJSON a => ToJSON (CMS a)
 instance ToJSON a => ToJSON (SignedObject a)

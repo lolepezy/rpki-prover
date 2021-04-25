@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
+import           Data.Tuple.Strict
 
 import           GHC.Generics
 
@@ -56,10 +57,10 @@ import qualified RPKI.Util                        as U
 --    - do something appropriate with either of them
 -- 
 downloadAndUpdateRRDP :: AppContext s ->
-                        RrdpRepository ->                 
-                        (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) ->
-                        (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT IO ()) ->
-                        ValidatorT IO RrdpRepository
+                        RrdpRepository 
+                        -> (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
         repo@(RrdpRepository repoUri _ _)      
@@ -131,8 +132,11 @@ downloadAndUpdateRRDP
 
     useDeltas sortedDeltas notification = do
         let repoURI = getURL $ repo ^. #uri
-        unless (minSerial == maxSerial) $ 
-            logDebugM logger [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
+        let message = if minSerial == maxSerial 
+                then [i|#{repoURI}: downloading delta #{minSerial}.|]
+                else [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
+        
+        logDebugM logger message
 
         -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
         -- otherwise they will hold too much files open.
@@ -282,60 +286,67 @@ saveSnapshot appContext repoUri notification snapshotContent = do
 
         void $ txFoldPipeline 
                     cpuParallelism
-                    (S.mapM (newStorable objectStore) $ S.each snapshotItems)
+                    (S.mapM (newStorable1 objectStore) $ S.each snapshotItems)
                     (savingTx sessionId serial)
-                    (saveStorable objectStore)
+                    (saveStorable1 objectStore)
                     (mempty :: ())
       where        
 
-        newStorable objectStore (SnapshotPublish uri encodedb64) =             
+        newStorable1 objectStore (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
                     task <- readBlob `strictTask` bottleneck
                     pure $ Right (uri, task)
                 else
                     pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
-            where 
-                readBlob = case U.parseRpkiURL $ unURI uri of
-                    Left e -> 
-                        pure $! Just $ SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+          where 
+            readBlob = case U.parseRpkiURL $ unURI uri of
+                Left e -> 
+                    pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
-                    Right rpkiURL ->
-                        case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
-                            Left e -> pure $! Just $ SError $ VErr e
-                            Right (DecodedBase64 decoded) ->
-                                liftIO $ roTx objectStore $ \tx -> do                                    
-                                    exists <- DB.hashExists tx objectStore (U.sha256s decoded)
-                                    pure $! if exists 
-                                    -- The object is already in cache. Do not parse-serialise
-                                    -- anything, just skip it. We are not afraid of possible 
-                                    -- race-conditions here, it's not a problem to double-insert
-                                    -- an object and delete-insert race will never happen in practice.
-                                        then Nothing
-                                        else
-                                            case first ParseE $ readObject rpkiURL decoded of 
-                                                Left e   -> Just $! SError $ VErr e
-                                                Right ro -> Just $! SObject $ toStorableObject ro
+                Right rpkiURL ->
+                    case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                        Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
+                        Right (DecodedBase64 decoded) ->
+                            liftIO $ roTx objectStore $ \tx -> do     
+                                let hash = U.sha256s decoded  
+                                exists <- DB.hashExists tx objectStore hash
+                                pure $! if exists 
+                                -- The object is already in cache. Do not parse-serialise
+                                -- anything, just skip it. We are not afraid of possible 
+                                -- race-conditions here, it's not a problem to double-insert
+                                -- an object and delete-insert race will never happen in practice.
+                                    then HashExists rpkiURL hash
+                                    else
+                                        case first ParseE $ readObject rpkiURL decoded of 
+                                            Left e   -> ASN1ParsingTrouble rpkiURL (VErr e)
+                                            Right ro -> Success rpkiURL (toStorableObject ro)
                                         
-        saveStorable objectStore _ (Left (e, uri)) _ = 
+        saveStorable1 objectStore _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
 
-        saveStorable objectStore tx (Right (uri, a)) _ =           
+        saveStorable1 objectStore tx (Right (uri, a)) _ =           
             waitTask a >>= \case     
-                Nothing -> pure ()                   
-                Just (SError (VWarn (VWarning e))) -> do                    
+                HashExists rpkiURL hash ->
+                    DB.linkObjectToUrl tx objectStore rpkiURL hash
+                UnparsableRpkiURL uri (VWarn (VWarning e)) -> do                    
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appWarn e 
-                Just (SError (VErr e)) -> do                    
+                DecodingTrouble rpkiUrl (VErr e) -> do
+                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
+                ASN1ParsingTrouble rpkiUrl (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    inSubVPath (unURI uri) $ appError e                 
-                Just (SObject so) -> do 
-                    DB.putObject tx objectStore so worldVersion
-                    addedObject                    
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
+                Success rpkiUrl so@StorableObject {..} -> do 
+                    DB.putObject tx objectStore so worldVersion                    
+                    DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
+                    addedObject                                      
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
     bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
+
 
 
 {-
@@ -343,8 +354,8 @@ saveSnapshot appContext repoUri notification snapshotContent = do
 
     NOTE: Delta application is more strict; we require complete consistency, 
     i.e. applying delta is considered failed if it tries to withdraw or replace
-    a non-existent object, or place an existent one. In all these cases, we
-    fall back to downloading the snapshot.
+    a non-existent object, or add an existing one. In all these cases, we
+    emit an error and fall back to downloading snapshot.
 -}
 saveDelta :: Storage s => 
             AppContext s 
@@ -390,73 +401,103 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 (saveStorable objectStore)
                 (mempty :: ())
       where        
-        newStorable (DP (DeltaPublish uri hash encodedb64)) =
-            if supportedExtension $ U.convert uri 
-                then do 
-                    task <- readBlob `pureTask` bottleneck
-                    pure $ Right $ maybe (Add uri task) (Replace uri task) hash
-                else 
-                    pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
-            where 
-                readBlob = case U.parseRpkiURL $ unURI uri of
-                    Left e        -> SError $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
-                    Right rpkiURL -> parseAndProcess rpkiURL encodedb64
 
-        newStorable (DW (DeltaWithdraw uri hash)) = 
-            pure $ Right $ Delete uri hash
-        
-        saveStorable objectStore _ (Left (e, uri)) _ = 
-            inSubVPath (unURI uri) $ appWarn e             
-
-        saveStorable objectStore tx (Right op) _ =
-            case op of
-                Delete uri existingHash -> do
-                    -- Ignore withdraws and just use the time-based garbage collection
-                    existsLocally <- DB.hashExists tx objectStore existingHash
-                    if existsLocally
-                        then deletedObject
-                        else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
+        newStorable item = do 
+            case item of
+                DP (DeltaPublish uri hash encodedb64) -> 
+                    processSupportedTypes uri $ do 
+                        task <- readBlob uri encodedb64 `pureTask` bottleneck
+                        pure $ Right $ maybe (Add uri task) (Replace uri task) hash
                         
-                Add uri async'             -> addObject objectStore tx uri async'                
-                Replace uri async' oldHash -> replaceObject objectStore tx uri async' oldHash                    
+                DW (DeltaWithdraw uri hash) -> 
+                    processSupportedTypes uri $                     
+                        pure $ Right $ Delete uri hash                    
+          where
+            processSupportedTypes uri f = 
+                if supportedExtension $ U.convert uri 
+                    then f
+                    else    
+                        pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
+
+            readBlob uri encodedb64 = case U.parseRpkiURL $ unURI uri of
+                Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                Right rpkiURL -> do 
+                    case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                        Left e   -> DecodingTrouble rpkiURL (VErr e)
+                        Right (DecodedBase64 decoded) -> 
+                            case first ParseE $ readObject rpkiURL decoded of 
+                                Left e   -> ASN1ParsingTrouble rpkiURL (VErr e)
+                                Right ro -> Success rpkiURL (toStorableObject ro)            
+
+        saveStorable objectStore tx r _ = 
+          case r of 
+            Left (e, uri)                         -> inSubVPath (unURI uri) $ appWarn e             
+            Right (Add uri task)                  -> addObject objectStore tx uri task 
+            Right (Replace uri task existingHash) -> replaceObject objectStore tx uri task existingHash
+            Right (Delete uri existingHash)       -> deleteObject objectStore tx uri existingHash                                        
         
+
+        deleteObject objectStore tx uri existingHash = do 
+            existsLocally <- DB.hashExists tx objectStore existingHash
+            if existsLocally
+                -- Ignore withdraws and just use the time-based garbage collection
+                then deletedObject
+                else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
+            
+
         addObject objectStore tx uri a =
             waitTask a >>= \case
-                SError (VWarn (VWarning e)) -> do                    
+                UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appWarn e 
-                SError (VErr e) -> do                    
+                DecodingTrouble rpkiUrl (VErr e) -> do
+                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                     
+                ASN1ParsingTrouble rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    inSubVPath (unURI uri) $ appError e 
-                SObject so@(StorableObject ro _) -> do
-                    alreadyThere <- DB.hashExists tx objectStore (getHash ro)
-                    unless alreadyThere $ do
-                        DB.putObject tx objectStore so worldVersion                      
-                        addedObject
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
+                Success rpkiUrl so@StorableObject {..} -> do 
+                    let hash' = getHash object
+                    alreadyThere <- DB.hashExists tx objectStore hash'
+                    if alreadyThere 
+                        then 
+                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                        else do                                    
+                            DB.putObject tx objectStore so worldVersion                      
+                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                            addedObject
 
         replaceObject objectStore tx uri a oldHash = do            
             waitTask a >>= \case
-                SError (VWarn (VWarning e)) -> do                    
+                UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appWarn e 
-                SError (VErr e) -> do                    
+                DecodingTrouble rpkiUrl (VErr e) -> do
+                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                     
+                ASN1ParsingTrouble rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    inSubVPath (unURI uri) $ appError e 
-                SObject so@(StorableObject ro _) -> do        
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
+                Success rpkiUrl so@StorableObject {..} -> do 
                     oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
                     if oldOneIsAlreadyThere 
                         then do 
                             -- Ignore withdraws and just use the time-based garbage collection
                             deletedObject
                         else do 
-                            logWarnM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
+                            logErrorM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
                             inSubVPath (unURI uri) $ 
                                 appError $ RrdpE $ NoObjectToReplace uri oldHash
 
-                    newOneIsAlreadyThere <- DB.hashExists tx objectStore (getHash ro)
-                    unless newOneIsAlreadyThere $ do                            
-                        DB.putObject tx objectStore so worldVersion
-                        addedObject
+                    let hash' = getHash object
+                    newOneIsAlreadyThere <- DB.hashExists tx objectStore hash'
+                    if newOneIsAlreadyThere
+                        then 
+                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                        else do                            
+                            DB.putObject tx objectStore so worldVersion
+                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                            addedObject
                                                                                   
 
     logger          = appContext ^. typed @AppLogger           
@@ -469,20 +510,14 @@ addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))
 deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
 
 
-parseAndProcess :: RpkiURL -> EncodedBase64 -> StorableUnit RpkiObject VProblem
-parseAndProcess u b64 =     
-    case parsed of
-        Left e   -> SError $ VErr e
-        Right ro -> SObject $! toStorableObject ro                    
-    where
-        parsed = do
-            DecodedBase64 b <- first RrdpE $ decodeBase64 b64 u
-            first ParseE $ readObject u b    
-
+data ObjectProcessingResult =           
+          UnparsableRpkiURL URI VProblem
+        | DecodingTrouble RpkiURL VProblem
+        | HashExists RpkiURL Hash
+        | ASN1ParsingTrouble RpkiURL VProblem
+        | Success RpkiURL (StorableObject RpkiObject)
 
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Task m a) 
                 | Replace URI (Task m a) Hash
-data DeltaOp1 a = Delete1 URI Hash 
-                | Add1 URI a
-                | Replace1 URI a Hash
+
