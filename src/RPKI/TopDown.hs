@@ -42,6 +42,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Fetch
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -88,6 +89,8 @@ data RepositoryContext = RepositoryContext {
         takenCareOf        :: Set RpkiURL
     } 
     deriving stock (Generic)  
+    deriving Semigroup via GenericSemigroup RepositoryContext   
+    deriving Monoid    via GenericMonoid RepositoryContext
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -95,6 +98,7 @@ data TopDownContext s = TopDownContext {
         verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns),    
         taName            :: TaName, 
         repositoryContext :: TVar RepositoryContext, 
+        fetchTasks        :: FetchTasks,
         now               :: Now,
         worldVersion      :: WorldVersion,
         visitedHashes     :: TVar (Set Hash),
@@ -122,17 +126,17 @@ fromValidations validationState = TopDownResult {
 newTopDownContext :: MonadIO m => 
                     WorldVersion 
                     -> TaName 
-                    -> TVar RepositoryContext
+                    -> FetchTasks
                     -> Now 
                     -> CerObject 
                     -> m (TopDownContext s)
-newTopDownContext worldVersion taName repositoryContext now certificate = 
+newTopDownContext worldVersion taName fetchTasks now certificate = 
     liftIO $ atomically $ do    
-        hashes    <- newTVar mempty
-        validMfts <- newTVar mempty
-        pure $ TopDownContext 
-                (Just $ createVerifiedResources certificate) 
-                taName repositoryContext now worldVersion hashes validMfts
+        let verifiedResources = Just $ createVerifiedResources certificate
+        repositoryContext <- newTVar mempty
+        visitedHashes     <- newTVar mempty
+        validManifests    <- newTVar mempty        
+        pure $ TopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
 newRepositoryContext publicationPoints = let 
@@ -154,18 +158,16 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
     database' <- readTVarIO database 
     storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')    
 
-    rs <- forConcurrently tals $ \tal -> do 
-        repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
-        (r@TopDownResult{..}, elapsed) <- timedMS $ 
-                validateTA appContext tal worldVersion repositoryContext 
+    fetchTasks <- newFetchTasksIO      
+    rs <- forConcurrently tals $ \tal -> do           
+        ((r@TopDownResult{..}, rs), elapsed) <- timedMS $ 
+                validateTA appContext tal worldVersion fetchTasks 
         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-        pure (r, repositoryContext)
+        pure (r, rs)
 
     mapException (AppException . storageError) $ do
         rwTx database' $ \tx -> do                             
-            pubPointAfterTopDown <- liftIO $ atomically $
-                    mconcat . map (^. typed @PublicationPoints) 
-                    <$> mapM (readTVar . snd) rs                     
+            let pubPointAfterTopDown = mconcat $ map ((^. typed @PublicationPoints) . snd) rs
             savePublicationPoints tx (repositoryStore database') pubPointAfterTopDown                        
 
     pure $ map fst rs
@@ -178,22 +180,29 @@ validateTA :: Storage s =>
             AppContext s 
             -> TAL 
             -> WorldVersion 
-            -> TVar RepositoryContext
-            -> IO TopDownResult
-validateTA appContext@AppContext {..} tal worldVersion repositories = do    
+            -> FetchTasks
+            -> IO (TopDownResult, RepositoryContext)
+validateTA appContext@AppContext {..} tal worldVersion fetchTasks = do    
     r <- runValidatorT taContext $
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 logDebugM logger [i|Fetched and validated TA certficate #{certLocations tal}, took #{elapsed}ms.|]        
-                vrps <- validateFromTACert appContext (getTaName tal) taCert repos worldVersion repositories
+
+                -- this will be used as the "now" in all subsequent time and period validations 
+                let now = Now $ versionToMoment worldVersion
+                topDownContext <- newTopDownContext worldVersion 
+                                (getTaName tal) 
+                                fetchTasks now  (taCert ^. #payload)                
+                vrps <- validateFromTACert appContext topDownContext repos taCert
                 setVrpNumber $ Count $ fromIntegral $ Set.size vrps
-                pure vrps
+                rs <- liftIO $ readTVarIO $ topDownContext ^. #repositoryContext
+                pure (vrps, rs)
 
     case r of 
         (Left e, vs) -> 
-            pure $ TopDownResult mempty vs
-        (Right vrps, vs) ->            
-            pure $ TopDownResult vrps vs
+            pure (TopDownResult mempty vs, mempty)
+        (Right (vrps, rs), vs) ->            
+            pure (TopDownResult vrps vs, rs)
     where                     
         taContext = newValidatorPath taNameText
         TaName taNameText = getTaName tal
@@ -242,16 +251,17 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 -- | This function doesn't throw exceptions.
 validateFromTACert :: Storage s =>
                     AppContext s -> 
-                    TaName -> 
-                    Located CerObject -> 
+                    TopDownContext s ->                                        
                     NonEmpty Repository -> 
-                    WorldVersion -> 
-                    TVar RepositoryContext -> 
+                    Located CerObject ->                     
                     ValidatorT IO (Set Vrp)
-validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldVersion repositoryContext = do  
-    -- this will be used as the "now" in all subsequent time and period validations 
-    let now = Now $ versionToMoment worldVersion
-
+validateFromTACert 
+    appContext@AppContext {..} 
+    topDownContext@TopDownContext { .. } 
+    initialRepos 
+    taCert 
+    = do  
+    
     let taURIContext = newValidatorPath $ locationsToText $ taCert ^. #locations
 
     storedPubPoints <- (^. typed @PublicationPoints) <$> liftIO (readTVarIO repositoryContext)    
@@ -273,7 +283,7 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
             else inParallelVT
                     (ioBottleneck appBottlenecks)
                     reposToFetch 
-                    (fetchRepository appContext taURIContext now)
+                    (fetchRepository appContext fetchTasks taURIContext now)
             -- else forM
             --         reposToFetch 
             --         (fetchRepository appContext taURIContext now)
@@ -294,13 +304,10 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
 
             -- merge the publication points that we have just fetched in the global context.
             liftIO $ atomically $ modifyTVar' repositoryContext 
-                                    (& typed @PublicationPoints %~ (<> fetchUpdatedPPs))
-
-            topDownContext <- newTopDownContext worldVersion taName' repositoryContext now 
-                                (taCert ^. #payload)
+                                    (& typed @PublicationPoints %~ (<> fetchUpdatedPPs))            
 
             -- Do the tree descend, gather validation results and VRPs            
-            T2 vrps validationState <- fromTry (\e -> UnspecifiedE (unTaName taName') (fmtEx e)) $
+            T2 vrps validationState <- fromTry (\e -> UnspecifiedE (unTaName taName) (fmtEx e)) $
                 validateCA appContext taURIContext topDownContext taCert                    
 
             embedState validationState
@@ -315,59 +322,6 @@ validateFromTACert appContext@AppContext {..} taName' taCert initialRepos worldV
                 -- Failed to download and no idea why        
                 Nothing -> appError $ UnspecifiedE "Failed to fetch initial repositories." (convert $ show broken)
 
-
--- | Download repository, either rsync or RRDP.
-fetchRepository :: (MonadIO m, Storage s) => 
-                AppContext s -> ValidatorPath -> Now -> Repository -> m FetchResult
-fetchRepository 
-    appContext@AppContext {..} 
-    parentContext 
-    (Now now) 
-    repo = liftIO $ do
-        let (Seconds maxDduration, timeoutError) = case repoURL of
-                RrdpU _  -> 
-                    (config ^. typed @RrdpConf . #rrdpTimeout, 
-                     RrdpE $ RrdpDownloadTimeout maxDduration)
-                RsyncU _ -> 
-                    (config ^. typed @RsyncConf . #rsyncTimeout, 
-                     RsyncE $ RsyncDownloadTimeout maxDduration)
-                
-        r <- timeout (1_000_000 * fromIntegral maxDduration) fetchIt
-        case r of 
-            Nothing -> do 
-                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDduration}s.|]
-                pure $ FetchFailure repo now (vState $ mError vContext' timeoutError)
-            Just z -> pure z        
-    where 
-        repoURL      = getRpkiURL repo
-        childContext = validatorSubPath (toText repoURL) parentContext
-        vContext'    = childContext ^. typed @VPath
-
-        fetchIt = do        
-            logDebugM logger [i|Fetching repository #{getURL repoURL}.|]    
-            ((r, v), elapsed) <- timedMS $ runValidatorT childContext $                 
-                case repo of
-                    RsyncR r -> do 
-                            RsyncR <$> fromTryM 
-                                    (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (updateObjectForRsyncRepository appContext r)                             
-                    RrdpR r -> do                         
-                        RrdpR <$> fromTryM 
-                                    (RrdpE . UnknownRrdpProblem . fmtEx)
-                                    (updateObjectForRrdpRepository appContext r) 
-            case r of
-                Left e -> do                        
-                    logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
-                    pure $ FetchFailure repo now (vState (mError vContext' e) <> v)
-                Right resultRepo -> do
-                    logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-                    pure $ FetchSuccess resultRepo now v
-
-
-data FetchResult = 
-    FetchSuccess Repository Instant ValidationState | 
-    FetchFailure Repository Instant ValidationState
-    deriving stock (Show, Eq, Generic)
 
 partitionFailedSuccess :: [FetchResult] -> 
                         ([(Repository, Instant, ValidationState)], 
@@ -452,7 +406,7 @@ validateCARecursively
                                 []             -> vc
                                 T3 _ vc' _ : _ -> vc'
 
-            fetchResult <- liftIO $ fetchRepository appContext waitingPath now repo            
+            fetchResult <- liftIO $ fetchRepository appContext fetchTasks waitingPath now repo            
 
             let statusUpdate = case fetchResult of
                             FetchFailure r t _ -> (r, FailedAt t)
