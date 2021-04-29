@@ -126,18 +126,18 @@ fetchRepository_
     parentContext 
     (Now now) 
     repo = liftIO $ do
-        let (Seconds maxDduration, timeoutError) = case repoURL of
+        let (Seconds maxDuration, timeoutError) = case repoURL of
                 RrdpU _  -> 
                     (config ^. typed @RrdpConf . #rrdpTimeout, 
-                     RrdpE $ RrdpDownloadTimeout maxDduration)
+                     RrdpE $ RrdpDownloadTimeout maxDuration)
                 RsyncU _ -> 
                     (config ^. typed @RsyncConf . #rsyncTimeout, 
-                     RsyncE $ RsyncDownloadTimeout maxDduration)
+                     RsyncE $ RsyncDownloadTimeout maxDuration)
                 
-        r <- timeout (1_000_000 * fromIntegral maxDduration) fetchIt
+        r <- timeout (1_000_000 * fromIntegral maxDuration) fetchIt
         case r of 
             Nothing -> do 
-                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDduration}s.|]
+                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
                 pure $ FetchFailure repo now (vState $ mError vContext' timeoutError)
             Just z -> pure z        
     where 
