@@ -127,13 +127,13 @@ newTopDownContext :: MonadIO m =>
                     WorldVersion 
                     -> TaName 
                     -> FetchTasks
+                    -> TVar RepositoryContext
                     -> Now 
                     -> CerObject 
                     -> m (TopDownContext s)
-newTopDownContext worldVersion taName fetchTasks now certificate = 
+newTopDownContext worldVersion taName fetchTasks repositoryContext now certificate = 
     liftIO $ atomically $ do    
-        let verifiedResources = Just $ createVerifiedResources certificate
-        repositoryContext <- newTVar mempty
+        let verifiedResources = Just $ createVerifiedResources certificate        
         visitedHashes     <- newTVar mempty
         validManifests    <- newTVar mempty        
         pure $ TopDownContext {..}
@@ -156,12 +156,13 @@ validateMutlipleTAs :: Storage s =>
                     -> IO [TopDownResult]
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
     database' <- readTVarIO database 
-    storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')    
+    storedPubPoints <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')    
 
-    fetchTasks <- newFetchTasksIO      
+    fetchTasks        <- newFetchTasksIO      
+    repositoryContext <- newTVarIO $ newRepositoryContext storedPubPoints
     rs <- forConcurrently tals $ \tal -> do           
         ((r@TopDownResult{..}, rs), elapsed) <- timedMS $ 
-                validateTA appContext tal worldVersion fetchTasks 
+                validateTA appContext tal worldVersion fetchTasks repositoryContext
         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
         pure (r, rs)
 
@@ -181,8 +182,9 @@ validateTA :: Storage s =>
             -> TAL 
             -> WorldVersion 
             -> FetchTasks
+            -> TVar RepositoryContext
             -> IO (TopDownResult, RepositoryContext)
-validateTA appContext@AppContext {..} tal worldVersion fetchTasks = do    
+validateTA appContext@AppContext {..} tal worldVersion fetchTasks repositoryContext = do    
     r <- runValidatorT taContext $
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
@@ -192,7 +194,9 @@ validateTA appContext@AppContext {..} tal worldVersion fetchTasks = do
                 let now = Now $ versionToMoment worldVersion
                 topDownContext <- newTopDownContext worldVersion 
                                 (getTaName tal) 
-                                fetchTasks now  (taCert ^. #payload)                
+                                fetchTasks 
+                                repositoryContext
+                                now  (taCert ^. #payload)                
                 vrps <- validateFromTACert appContext topDownContext repos taCert
                 setVrpNumber $ Count $ fromIntegral $ Set.size vrps
                 rs <- liftIO $ readTVarIO $ topDownContext ^. #repositoryContext
@@ -674,7 +678,7 @@ validateCaCertificate
                     
         -- Make sure all the entries are unique
         let entryMap = Map.fromListWith (<>) $ map (\(T2 f h) -> (h, [f])) nonCrlChildren
-        let nonUniqueEntries = Map.filter longerThenOne entryMap
+        let nonUniqueEntries = Map.filter longerThanOne entryMap
 
         -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
         -- about uniqueness of manifest entries.
@@ -683,9 +687,9 @@ validateCaCertificate
 
         pure nonCrlChildren
         where
-            longerThenOne [_] = False
-            longerThenOne []  = False            
-            longerThenOne _   = True
+            longerThanOne [_] = False
+            longerThanOne []  = False            
+            longerThanOne _   = True
         
         
     --
