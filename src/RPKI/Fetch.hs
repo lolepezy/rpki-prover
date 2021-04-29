@@ -62,22 +62,23 @@ data FetchResult =
     deriving stock (Show, Eq, Generic)
 
 data FetchTasks = FetchTasks {
-    tasks :: TVar (Map RpkiURL FetchTask),
-    cache :: TVar (Map RpkiURL FetchResult)
+    tasks :: TVar (Map RpkiURL FetchTask)    
 }
 
-data FetchTask = Stub | Fetching (Async FetchResult)
-
+data FetchTask = Stub 
+                | Fetching (Async FetchResult) 
+                | Done FetchResult
 
 newFetchTasks :: STM FetchTasks
-newFetchTasks = do 
-    tasks <- newTVar mempty 
-    cache <- newTVar mempty 
-    pure FetchTasks {..}
+newFetchTasks = FetchTasks <$> newTVar mempty         
            
 newFetchTasksIO :: IO FetchTasks
 newFetchTasksIO = atomically newFetchTasks
 
+
+-- Main entry point: fetch reposiutory using the cache of tasks.
+-- It is guaranteed that every fetch happens only once.
+-- 
 fetchRepository :: (MonadIO m, Storage s) => 
                     AppContext s 
                 -> FetchTasks 
@@ -88,44 +89,41 @@ fetchRepository :: (MonadIO m, Storage s) =>
 fetchRepository appContext@AppContext {..} FetchTasks {..} parentContext now repo = liftIO $ do 
     let rpkiUrl = getRpkiURL repo
     join $ atomically $ do 
-        c <- readTVar cache
-        case Map.lookup rpkiUrl c of 
-            Just fr -> pure $ pure fr
+        t <- readTVar tasks
+        case Map.lookup rpkiUrl t of 
+
+            Just Stub -> retry
+
+            Just (Done f) -> 
+                pure $ pure f
+                                
+            Just (Fetching a) -> 
+                pure $ wait a                    
+
             Nothing -> do 
-                t <- readTVar tasks
-                case Map.lookup rpkiUrl t of 
-
-                    Just Stub -> retry
-                    
-                    Just (Fetching a) -> 
-                        pure $ wait a                    
-
-                    Nothing -> do 
-                        modifyTVar' tasks $ Map.insert rpkiUrl Stub
-                        
-                        pure $ bracketOnError 
-                            (async $ do 
-                                f <- fetchRepository_ appContext parentContext now repo
-                                atomically $ do 
-                                    modifyTVar' cache $ Map.insert rpkiUrl f
-                                    modifyTVar' tasks $ Map.delete rpkiUrl
-                                pure f) 
-                            (\a -> do 
-                                cancel a
-                                atomically $ modifyTVar' tasks $ Map.delete rpkiUrl)
-                            (\a -> do 
-                                atomically $ modifyTVar' tasks $ Map.insert rpkiUrl (Fetching a)
-                                wait a)                                           
+                modifyTVar' tasks $ Map.insert rpkiUrl Stub
+                
+                pure $ bracketOnError 
+                    (async $ do 
+                        f <- fetchRepository_ appContext parentContext now repo
+                        atomically $ modifyTVar' tasks $ Map.insert rpkiUrl (Done f)
+                        pure f) 
+                    (\a -> do 
+                        cancel a
+                        atomically $ modifyTVar' tasks $ Map.delete rpkiUrl)
+                    (\a -> do 
+                        atomically $ modifyTVar' tasks $ Map.insert rpkiUrl (Fetching a)
+                        wait a)                                           
 
 
 
-fetchRepository_ :: (MonadIO m, Storage s) => 
-                AppContext s -> ValidatorPath -> Now -> Repository -> m FetchResult
+fetchRepository_ :: (Storage s) => 
+                    AppContext s -> ValidatorPath -> Now -> Repository -> IO FetchResult
 fetchRepository_ 
     appContext@AppContext {..} 
     parentContext 
     (Now now) 
-    repo = liftIO $ do
+    repo = do
         let (Seconds maxDuration, timeoutError) = case repoURL of
                 RrdpU _  -> 
                     (config ^. typed @RrdpConf . #rrdpTimeout, 
