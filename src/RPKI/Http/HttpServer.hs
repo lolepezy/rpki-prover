@@ -16,10 +16,9 @@ import           FileEmbedLzma
 import           Servant hiding (URI)
 
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Maybe                       (fromMaybe)
+import           Data.Maybe                       (fromMaybe, maybeToList)
 import qualified Data.Set                         as Set
 import           Data.Text                       (Text)
-import           Data.Maybe (maybeToList)
 
 import           Data.String.Interpolate.IsString
 import           RPKI.AppContext
