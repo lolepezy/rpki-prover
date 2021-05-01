@@ -632,7 +632,7 @@ validateCaCertificate
                         validateObjectLocations foundCrl
                         validCrl <- inSubVPath (locationsToText crlLocations) $ 
                                         vHoist $ do          
-                                            -- checkCrlLocation crl certificate
+                                            checkCrlLocation foundCrl (getEECert $ unCMS $ cmsPayload mft)
                                             validateCrl now crl certificate
                         oneMoreCrl
 
@@ -828,17 +828,13 @@ validateCaCertificate
     -- Check that CRL URL in the certificate is the same as the one 
     -- the CRL was actually fetched from. 
     -- 
-    -- TODO Figure out if it's even needeed -- it generates a lot of useless warnings.
-    -- checkCrlLocation crl certficate = 
-    --     case getCrlDistributionPoint $ cwsX509certificate $ getCertWithSignature certficate of
-    --         -- TODO TA certificate don't have CRL DP so don't emit errors/warnings here.
-    --         -- But if CRL DP does present it needs to be equal to (one of) the CRL locations.
-    --         Nothing    -> pure ()
-    --         Just crlDP -> let 
-    --             crlLocations = getLocations crl
-    --             in case NonEmpty.filter ((crlDP ==) . getURL) crlLocations of 
-    --                 [] -> vWarn $ CRLOnDifferentLocation crlDP crlLocations
-    --                 _ ->  pure ()
+    checkCrlLocation crl eeCert = 
+        case getCrlDistributionPoint $ cwsX509certificate eeCert of
+            Nothing    -> pure ()
+            Just crlDP -> do
+                let crlLocations = getLocations crl
+                when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
+                    vError $ CRLOnDifferentLocation crlDP crlLocations
 
     -- Validate that the object has only one location: if not, 
     -- it's generally is a warning, not really an error.
