@@ -1,0 +1,58 @@
+name: Haskell CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-haskell@v1
+      with:
+        ghc-version: '8.10.4'
+    - name: Cache
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-stack
+      with:
+        path: ~/.stack
+        key:
+          ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/*.cabal') }}
+        restore-keys: |
+          ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/stack.yaml') }}
+          ${{ runner.os }}-build-${{ env.cache-name }}-
+          ${{ runner.os }}-build-
+          ${{ runner.os }}-
+    - name: Compile and test
+      run:
+        stack --system-ghc --no-install-ghc
+        test
+        rpki-prover:lib rpki-prover:test:rpki-prover-test
+# --pedantic
+# --ghc-options=-Wincomplete-record-updates
+# --ghc-options=-Wincomplete-uni-patterns
+# --ghc-options=-Wredundant-constraints        
+
+    # - name: Install stack
+    #   run:
+    #     - mkdir -p ~/.local/bin
+    #     - export PATH=$HOME/.local/bin:$PATH
+    #     - |
+    #       if which stack; then
+    #         stack --version
+    #       else
+    #         curl -sSL https://get.haskellstack.org/ | sh
+    #     - export STACK="stack --no-terminal --install-ghc"
+
+    # - name: Install dependencies
+    #   run: stack build --test --only-dependencies
+    # - name: Build
+    #   run: stack build
+    # - name: Run tests
+    #   run: stack test
