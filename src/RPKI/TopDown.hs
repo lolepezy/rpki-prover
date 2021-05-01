@@ -631,8 +631,9 @@ validateCaCertificate
                         -- validate CRL and MFT together
                         validateObjectLocations foundCrl
                         validCrl <- inSubVPath (locationsToText crlLocations) $ 
-                                        vHoist $ do          
-                                            checkCrlLocation foundCrl (getEECert $ unCMS $ cmsPayload mft)
+                                        vHoist $ do        
+                                            let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                                            checkCrlLocation foundCrl mftEECert
                                             validateCrl now crl certificate
                         oneMoreCrl
 

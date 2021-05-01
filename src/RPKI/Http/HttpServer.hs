@@ -25,7 +25,6 @@ import           Data.String.Interpolate.IsString
 import           RPKI.AppContext
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Logging
 import           RPKI.Metrics
 import           RPKI.Time
 import           RPKI.Reporting

@@ -15,8 +15,7 @@ module RPKI.Domain where
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
-import           Data.Text                (Text, singleton)
-import qualified Data.Text                as Text
+import           Data.Text                (Text)
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
@@ -40,11 +39,8 @@ import           Data.ASN1.Types
 import           Data.Set                 (Set)
 
 import           RPKI.Resources.Resources as RS
-import           RPKI.CommonTypes
 import           RPKI.Resources.Types
 import           RPKI.Time
-import qualified Data.Set as Set
-
 
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)

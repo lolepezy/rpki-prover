@@ -16,13 +16,10 @@ import qualified Data.Text                   as Text
 import Data.Foldable (toList)
 
 import qualified Data.List          as List
-import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
 import           RPKI.Domain                 as Domain
-import           RPKI.CommonTypes
-
 import           RPKI.Reporting
 
 
@@ -82,7 +79,7 @@ toRrdpMessage = \case
 
     NoHashInWithdraw -> [i|No "hash" attribute in a "withdraw" element.|]  
 
-    ContentInWithdraw url content -> 
+    ContentInWithdraw url _ -> 
         [i|Content inside of "withdraw" element with url #{url}.|]  
 
     LocalSerialBiggerThanRemote local remote -> 
@@ -234,7 +231,7 @@ toValidationMessage = \case
       ManifestLocationMismatch filename locations -> 
           [i|Object has manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]
 
-      InvalidVCardFormatInGbr e -> [i|InvalidVCard format: #[e}.|]
+      InvalidVCardFormatInGbr e -> [i|Invalid VCard format: #{e}.|]
 
       RoaPrefixIsOutsideOfResourceSet roaPrefix resources -> 
           [i|ROA prefix #{roaPrefix} is not inside of the EE certificate resources #{resources}.|]
