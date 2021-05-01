@@ -73,6 +73,13 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
+data RepositoryEx = 
+        RrdpEx RrdpRepository | 
+        RsyncEx RsyncRepository | 
+        BothEx RrdpRepository RsyncRepository
+    deriving (Show, Eq, Ord, Generic) 
+    deriving anyclass Serialise        
+
 data Repository = RrdpR RrdpRepository | 
                   RsyncR RsyncRepository
     deriving (Show, Eq, Ord, Generic) 

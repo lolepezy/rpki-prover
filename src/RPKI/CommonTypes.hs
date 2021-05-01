@@ -8,7 +8,7 @@ module RPKI.CommonTypes where
 
 import           Codec.Serialise
 import GHC.Generics
-import           Data.Monoid.Generic
+
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict                  as Map
 
