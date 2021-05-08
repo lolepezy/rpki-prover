@@ -102,6 +102,25 @@ newFetchTasksIO :: IO FetchTasks
 newFetchTasksIO = atomically newFetchTasks
 
 
+fRepository :: FetchResult -> Repository 
+fRepository (FetchSuccess r _) = r
+fRepository (FetchFailure r _) = r
+
+fValidationState :: FetchResult -> ValidationState 
+fValidationState (FetchSuccess _ vs) = vs
+fValidationState (FetchFailure _ vs) = vs
+
+-- This is pretty ad-hoc
+mergeFetch :: FetchResult -> FetchResult -> FetchResult
+mergeFetch f1 f2 = 
+    let vs = fValidationState f1 <> fValidationState f2
+    in case (f1, f2) of
+        (FetchFailure {}, FetchFailure {}) -> FetchFailure (fRepository f2) vs
+        (FetchSuccess {}, FetchFailure {}) -> FetchSuccess (fRepository f1) vs
+        (FetchFailure {}, FetchSuccess {}) -> FetchSuccess (fRepository f2) vs
+        (FetchSuccess {}, FetchSuccess {}) -> FetchSuccess (fRepository f2) vs
+
+
 -- Main entry point: fetch reposiutory using the cache of tasks.
 -- It is guaranteed that every fetch happens only once.
 -- 
@@ -208,7 +227,7 @@ fetchRepositoryWithFallback
     parentContext 
     now 
     (RepositoryAccess repositories) = liftIO $ 
-  do       
+  do
     let rpkiUrl = getRpkiURL $ NonEmpty.head repositories
     join $ atomically $ do 
         t <- readTVar fetchTasks
@@ -249,9 +268,7 @@ fetchRepositoryWithFallback
             f <- fetchWithFallback [r]
             case f of 
                 FetchSuccess {} -> pure f  
-                FetchFailure {} -> fetchWithFallback rs            
-        
-
+                FetchFailure {} -> mergeFetch f <$> fetchWithFallback rs            
 
 
 -- | Fetch TA certificate based on TAL location(s)
