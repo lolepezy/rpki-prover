@@ -44,10 +44,11 @@ data FetchEverSucceeded = Never | AtLeastOnce
 
 instance Monoid FetchEverSucceeded where
     mempty = Never
+
 instance Semigroup FetchEverSucceeded where
-    _           <> AtLeastOnce = AtLeastOnce
-    AtLeastOnce <> _           = AtLeastOnce
     Never       <> Never       = Never
+    _           <> _           = AtLeastOnce    
+    
 
 data FetchStatus
   = Pending
@@ -73,10 +74,9 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-data RepositoryEx = 
-        RrdpEx RrdpRepository | 
-        RsyncEx RsyncRepository | 
-        BothEx RrdpRepository RsyncRepository
+newtype RepositoryAccess = RepositoryAccess {
+        unRepositoryAccess :: NonEmpty Repository
+    }
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise        
 
@@ -119,13 +119,6 @@ newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid)
-
-
-data CAAccess = CAAccess {
-        accessMethods :: NonEmpty RpkiURL
-    } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
 
 
 instance WithRpkiURL PublicationPoint where
@@ -222,7 +215,7 @@ findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =
         go u' =
             Map.lookup u' m >>= \case            
                 ParentURI parentUri -> go parentUri
-                Root status       -> pure (u, status)
+                Root status         -> pure (u, status)
 
 
 repositoryHierarchy :: PublicationPoints -> 

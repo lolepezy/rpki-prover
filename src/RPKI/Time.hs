@@ -22,7 +22,7 @@ instance Show Instant where
     show (Instant d) = timePrint ISO8601_DateAndTime d
 
 -- | Current time that is to be passed into the environment of validating functions
-newtype Now = Now Instant
+newtype Now = Now { unNow :: Instant }
     deriving stock (Show, Eq, Ord)
 
 thisInstant :: MonadIO m => m Now

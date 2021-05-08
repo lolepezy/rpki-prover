@@ -216,3 +216,15 @@ getPureMetric = do
     metricMap  <- gets (^. typed . metricLens)
     pure $ lookupMetric metricPath metricMap
             
+
+finallyError :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
+finallyError tryF finallyF = 
+    tryIt `catchError` catchIt
+  where
+    tryIt = do  
+        z <- tryF 
+        finallyF
+        pure z
+    catchIt e = do
+        finallyF
+        throwError e            

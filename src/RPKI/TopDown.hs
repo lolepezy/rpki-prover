@@ -84,14 +84,6 @@ toWaitingList rpkiUrl hash vc resources =
     WaitingList $ MonoidMap $ Map.singleton rpkiUrl (Set.singleton (T3 hash vc resources))
 
 
-data RepositoryContext = RepositoryContext {
-        publicationPoints  :: PublicationPoints,
-        takenCareOf        :: Set RpkiURL
-    } 
-    deriving stock (Generic)  
-    deriving Semigroup via GenericSemigroup RepositoryContext   
-    deriving Monoid    via GenericMonoid RepositoryContext
-
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext s = TopDownContext {    
@@ -299,8 +291,8 @@ validateFromTACert
             embedState (fetchStatuses2ValidationState fetchStatuses)
 
             let flattenedStatuses = flip map fetchStatuses $ \case 
-                    FetchFailure r s _ -> (r, FailedAt s)
-                    FetchSuccess r s _ -> (r, FetchedAt s)
+                    FetchFailure r _ -> (r, FailedAt $ unNow now)
+                    FetchSuccess r _ -> (r, FetchedAt $ unNow now)
 
             -- use publication points taken from the DB and updated with the 
             -- the fetchStatuses of the fetches that we just performed
@@ -321,25 +313,25 @@ validateFromTACert
         (broken, _) -> do
             let brokenUrls = map (getRpkiURL . (^. _1)) broken
             logErrorM logger [i|Will not proceed, repositories '#{brokenUrls}' failed to download.|]
-            case findError $ mconcat $ map (^. _3 . typed) broken of                
+            case findError $ mconcat $ map (^. _2 . typed) broken of                
                 Just e  -> appError e    
                 -- Failed to download and no idea why        
                 Nothing -> appError $ UnspecifiedE "Failed to fetch initial repositories." (convert $ show broken)
 
 
 partitionFailedSuccess :: [FetchResult] -> 
-                        ([(Repository, Instant, ValidationState)], 
-                         [(Repository, Instant, ValidationState)])
+                        ([(Repository, ValidationState)], 
+                         [(Repository, ValidationState)])
 partitionFailedSuccess = go
     where
         go [] = ([], [])
-        go (FetchSuccess r rs v : frs) = let (fs, ss) = go frs in (fs, (r, rs, v) : ss)
-        go (FetchFailure r rs v : frs) = let (fs, ss) = go frs in ((r, rs, v) : fs, ss)
+        go (FetchSuccess r v : frs) = let (fs, ss) = go frs in (fs, (r, v) : ss)
+        go (FetchFailure r v : frs) = let (fs, ss) = go frs in ((r, v) : fs, ss)
 
 fetchStatuses2ValidationState :: [FetchResult] -> ValidationState
 fetchStatuses2ValidationState r = mconcat $ flip map r $ \case 
-    FetchSuccess _ _ v -> v
-    FetchFailure _ _ v -> v  
+    FetchSuccess _ v -> v
+    FetchFailure _ v -> v  
                 
 
 -- | Validate CA starting from its certificate.
@@ -413,8 +405,8 @@ validateCARecursively
             fetchResult <- liftIO $ fetchRepository appContext fetchTasks waitingPath now repo            
 
             let statusUpdate = case fetchResult of
-                            FetchFailure r t _ -> (r, FailedAt t)
-                            FetchSuccess r t _ -> (r, FetchedAt t)                      
+                            FetchFailure r _ -> (r, FailedAt $ unNow now)
+                            FetchSuccess r _ -> (r, FetchedAt $ unNow now)                      
             
             pps <- liftIO $ atomically $ do  
                         r <- readTVar repositoryContext
@@ -430,15 +422,15 @@ validateCARecursively
                     pure $ mempty & typed %~ (<> validations)
 
             case fetchResult of
-                FetchSuccess _ _ validations ->                    
+                FetchSuccess _ validations ->                    
                     proceedWithValidation validations
 
-                FetchFailure r _ validations -> 
+                FetchFailure r validations -> 
                     case everSucceeded pps $ getRpkiURL r of
                         Never -> do 
                             logWarn_ logger [i|Repository #{getRpkiURL r} failed, it never succeeded to fetch so tree validation will not proceed for it.|]    
                             noFurtherValidation validations
-                        AtLeastOnce -> do                             
+                        AtLeastOnce -> do                                
                             logWarn_ logger  
                                 [i|Repository #{getRpkiURL r} failed, but it succeeded before, so cached objects will be used |]
                             proceedWithValidation validations
@@ -448,7 +440,6 @@ validateCARecursively
         -- 
         validateWaitingList waitingList = do 
             objectStore <- objectStore <$> readTVarIO database
-            -- forM
             inParallel
                 (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
                 waitingList $ \(T3 hash certVContext verifiedResources') -> do
@@ -485,7 +476,7 @@ validateCaCertificate
     
     if appContext ^. typed @Config . typed @ValidationConfig . #dontFetch 
         -- Don't add anything to the awaited repositories
-        -- Just expect all the objects to be already cached
+        -- Just expect all the objects to be already cached        
         then validateThisCertAndGoDown 
         else checkPublicationPointsFirstAndDecide globalPPs
 
@@ -494,6 +485,11 @@ validateCaCertificate
         case publicationPointsFromCertObject (certificate ^. #payload) of
             Left e                    -> appError $ ValidationE e
             Right (url, discoveredPP) -> do
+                case discoveredPP of 
+                    RsyncPP rsync -> 
+                        logDebugM logger [i|rsync = #{rsync}.|]      
+                    _ -> pure ()
+
                 let asIfItIsMerged = discoveredPP `mergePP` globalPPs
                 let stopDescend = do 
                         -- remember to come back to this certificate when the PP is fetched
@@ -555,7 +551,7 @@ validateCaCertificate
                 -- cached manifest for this CA               
                 -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
                 --
-                fetchCachedLatestValidMft childrenAki >>= \case
+                findCachedLatestValidMft childrenAki >>= \case
                     Nothing             -> do 
                         -- logDebugM logger [i|00000, e = #{e}.|]        
                         throwError e
@@ -580,7 +576,7 @@ validateCaCertificate
 
         -- first try to use the latest manifest 
         -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
-        fetchLatestMft childrenAki >>= \case                        
+        findLatestMft childrenAki >>= \case                        
             Nothing -> 
                 -- Use awkward appError + catchError to force the error to 
                 -- get into the ValidationResult in the state.
@@ -608,7 +604,7 @@ validateCaCertificate
                 -- NOTE: We are limiting cycle detection only to manfests
                 -- to minimise the false positives where the same object
                 -- is referenced from multiple manifests and we are treating 
-                -- it as a cycle (which it obviously is not).
+                -- it as a cycle.
                 vError $ CircularReference (getHash mft) (locatedMft ^. #locations)
 
             validateMftLocation locatedMft certificate
@@ -628,7 +624,6 @@ validateCaCertificate
 
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
                         visitObject appContext topDownContext foundCrl                        
-                        -- validate CRL and MFT together
                         validateObjectLocations foundCrl
                         validCrl <- inSubVPath (locationsToText crlLocations) $ 
                                         vHoist $ do        
@@ -801,12 +796,12 @@ validateCaCertificate
                     isRevokedCertError _ = False
 
 
-    fetchLatestMft childrenAki = liftIO $ do 
+    findLatestMft childrenAki = liftIO $ do 
         objectStore' <- (^. #objectStore) <$> readTVarIO database
         roTx objectStore' $ \tx -> 
             findLatestMftByAKI tx objectStore' childrenAki
 
-    fetchCachedLatestValidMft childrenAki = liftIO $ do 
+    findCachedLatestValidMft childrenAki = liftIO $ do 
         objectStore' <- (^. #objectStore) <$> readTVarIO database
         roTx objectStore' $ \tx -> 
             getLatestValidMftByAKI tx objectStore' childrenAki
@@ -953,38 +948,3 @@ addTotalValidationMetric totalValidationResult =
             #validationMetrics . 
             #unMetricMap . 
             #unMonoidMap                    
-
--- | Fetch TA certificate based on TAL location(s)
-fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
-fetchTACertificate appContext@AppContext {..} tal = 
-    go $ neSetToList $ unLocations $ certLocations tal
-  where
-    go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
-    go (u : uris) = fetchTaCert `catchError` goToNext 
-      where 
-        goToNext e = do            
-            let message = [i|Failed to fetch #{getURL u}: #{e}|]
-            logErrorM logger message
-            validatorWarning $ VWarning e
-            go uris
-
-        fetchTaCert = do                     
-            logInfoM logger [i|Fetching TA certicate from #{getURL u}..|]
-            ro <- case u of 
-                RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
-                RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
-            pure (u, ro)
-
-
-
-finallyError :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
-finallyError tryF finallyF = 
-    tryIt `catchError` catchIt
-  where
-    tryIt = do  
-        z <- tryF 
-        finallyF
-        pure z
-    catchIt e = do
-        finallyF
-        throwError e
