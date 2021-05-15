@@ -14,7 +14,7 @@ import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
-import           Control.Lens                     ((%~), (&), (+=), (^.))
+import           Control.Lens
 import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
@@ -40,6 +40,7 @@ import qualified Data.Map.Strict                  as Map
 
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+import  Data.Maybe (maybeToList)
 
 import GHC.Generics (Generic)
 
@@ -82,16 +83,16 @@ data RepositoryContext = RepositoryContext {
     deriving Monoid    via GenericMonoid RepositoryContext
 
 data FetchTasks = FetchTasks {
-    tasks :: TVar (Map RpkiURL FetchTask)    
+    tasks :: TVar (Map RpkiURL (FetchTask FetchResult))    
 }
 
-data FetchTask = Stub 
-                | Fetching (Async FetchResult) 
-                | Done FetchResult
+data FetchTask a = Stub 
+                | Fetching (Async a) 
+                | Done a
 
 
-data RepositoryProcessing = RepositoryProcessing {
-    fetchTasks :: TVar (Map RpkiURL FetchTask),
+data RepositoryProcessing a = RepositoryProcessing {
+    fetchTasks :: TVar (Map RpkiURL a),
     repos      :: TVar RepositoryContext
 }
 
@@ -211,64 +212,86 @@ fetchRepository_
 
 
 
--- -- Main entry point: fetch reposiutory using the cache of tasks.
--- -- It is guaranteed that every fetch happens only once.
--- -- 
-fetchRepositoryWithFallback :: (MonadIO m, Storage s) => 
-                                AppContext s 
-                            -> RepositoryProcessing 
-                            -> ValidatorPath 
-                            -> Now 
-                            -> RepositoryAccess  
-                            -> m FetchResult
-fetchRepositoryWithFallback 
+-- Main entry point: fetch reposiutory using the cache of tasks.
+-- It is guaranteed that every fetch happens only once.
+--
+fetchPPWithFallback :: (MonadIO m, Storage s) => 
+                            AppContext s 
+                        -> RepositoryProcessing (FetchTask (Maybe FetchResult))
+                        -> ValidatorPath 
+                        -> Now 
+                        -> PublicationPointAccess  
+                        -> m ValidationState
+fetchPPWithFallback 
     appContext@AppContext {..} 
     RepositoryProcessing {..} 
     parentContext 
     now 
-    (RepositoryAccess repositories) = liftIO $ 
-  do
-    let rpkiUrl = getRpkiURL $ NonEmpty.head repositories
-    join $ atomically $ do 
-        t <- readTVar fetchTasks
-        case Map.lookup rpkiUrl t of 
+    (PublicationPointAccess pps) = liftIO $ do         
+        frs <- fetchWithFallback $ NonEmpty.toList pps
+        pure $ mconcat $ map fValidationState frs
 
-            Just Stub -> retry
+  where    
+    fetchWithFallback ::[PublicationPoint] -> IO [FetchResult]
+    fetchWithFallback [pp] = maybeToList <$> tryOne pp
 
-            Just (Done f) -> 
-                pure $ pure f
-                                
-            Just (Fetching a) -> 
-                pure $ wait a                    
+    fetchWithFallback (pp : pps') = do 
+        f <- fetchWithFallback [pp]
+        case f of 
+            []                -> pure []
+            [FetchSuccess {}] -> pure f  
+            [FetchFailure {}] -> (f <>) <$> fetchWithFallback pps'                
 
-            Nothing -> do 
-                modifyTVar' fetchTasks $ Map.insert rpkiUrl Stub
-                
-                pure $ bracketOnError 
-                    (async $ do 
-                        f <- tryAll
-                        atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Done f)
-                        pure f) 
-                    (\a -> do 
-                        cancel a
-                        atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
-                    (\a -> do 
-                        atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Fetching a)
-                        wait a)                          
-  where
-    tryAll = do 
-        let r :| rs = repositories
-        case rs of 
-            [] -> fetchWithFallback [r]
-            _  -> fetchWithFallback (r : rs)
+    tryOne :: PublicationPoint -> IO (Maybe FetchResult)
+    tryOne pp =
+        join $ atomically $ do 
+            RepositoryContext {..} <- readTVar repos
+            let asIfItIsMerged = pp `mergePP` publicationPoints
+            let rpkiUrl = getRpkiURL pp
+            let needAFetch = 
+                    case findPublicationPointStatus rpkiUrl asIfItIsMerged of  
+                        Nothing     -> True
+                        Just status -> needsFetching pp status (config ^. typed) now                
+            
+            -- `repo` will always be there, since `asIfItIsMerged` would always 
+            -- produce some repository for the `pp`
+            let Just repo = repositoryFromPP asIfItIsMerged (getRpkiURL pp)                        
+
+            if needAFetch 
+                then do 
+                    t <- readTVar fetchTasks
+                    
+                    case Map.lookup rpkiUrl t of 
+                        Just Stub           -> retry
+                        Just (Fetching a)   -> pure $ wait a
+                        Just (Done f)       -> pure $ pure f
+
+                        Nothing -> do 
+                            modifyTVar' fetchTasks $ Map.insert rpkiUrl Stub
+                            pure $ Just <$> fetchIt repo rpkiUrl
+                else 
+                    pure $ pure Nothing
+
       where
-        fetchWithFallback [r] = fetchRepository_ appContext parentContext now r
+        fetchIt repo rpkiUrl = bracketOnError 
+            (async $ do                                     
+                f <- fetchRepository_ appContext parentContext now repo
+                atomically $ do  
+                    let newStatus = case f of
+                            FetchFailure r _ -> FailedAt $ unNow now
+                            FetchSuccess r _ -> FetchedAt $ unNow now
+                    let updatedRepos r = updateStatuses r [(repo, newStatus)]
+                    modifyTVar' repos (& typed @PublicationPoints %~ updatedRepos)
+                    modifyTVar' fetchTasks $ Map.delete rpkiUrl
+                pure f) 
+            (\a -> do 
+                cancel a
+                atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+            (\a -> do 
+                atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Fetching $ Just <$> a)
+                wait a)                                                                   
+                                       
 
-        fetchWithFallback (r : rs) = do 
-            f <- fetchWithFallback [r]
-            case f of 
-                FetchSuccess {} -> pure f  
-                FetchFailure {} -> mergeFetch f <$> fetchWithFallback rs            
 
 
 -- | Fetch TA certificate based on TAL location(s)
@@ -292,3 +315,20 @@ fetchTACertificate appContext@AppContext {..} tal =
                 RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
             pure (u, ro)
+
+
+
+-- | Check if an URL need to be re-fetched, based on fetch status and current time.
+--
+needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
+needsFetching r status ValidationConfig {..} (Now now) = 
+    case status of
+        Pending         -> True
+        FetchedAt time  -> tooLongAgo time
+        FailedAt time   -> tooLongAgo time
+  where
+    tooLongAgo momendTnThePast = 
+        not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
+      where 
+        interval (RrdpU _)  = rrdpRepositoryRefreshInterval
+        interval (RsyncU _) = rsyncRepositoryRefreshInterval            

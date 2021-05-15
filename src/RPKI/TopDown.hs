@@ -485,10 +485,10 @@ validateCaCertificate
         case publicationPointsFromCertObject (certificate ^. #payload) of
             Left e                    -> appError $ ValidationE e
             Right (url, discoveredPP) -> do
-                case discoveredPP of 
-                    RsyncPP rsync -> 
-                        logDebugM logger [i|rsync = #{rsync}.|]      
-                    _ -> pure ()
+                -- case discoveredPP of 
+                --     RsyncPP rsync -> 
+                --         logDebugM logger [i|rsync = #{rsync}.|]      
+                --     _ -> pure ()
 
                 let asIfItIsMerged = discoveredPP `mergePP` globalPPs
                 let stopDescend = do 
@@ -512,10 +512,10 @@ validateCaCertificate
                     -- if the PP is fresh enough, proceed with the tree descend                
                     Just status -> let 
                         validationConfig = appContext ^. typed @Config . typed               
-                        needToRefetch = needsFetching discoveredPP status validationConfig now                    
+                        needToRefetch = needsFetching discoveredPP status validationConfig now
                         in if needToRefetch
                             then stopDescend 
-                            else validateThisCertAndGoDown                    
+                            else validateThisCertAndGoDown
 
     -- Here we do the detailed algorithm
     -- 
@@ -839,23 +839,6 @@ validateCaCertificate
             when (NESet.size locSet > 1) $ 
                 vWarn ObjectHasMultipleLocations
         
-
-
-
--- | Check if an URL need to be re-fetched, based on fetch status and current time.
---
-needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
-needsFetching r status ValidationConfig {..} (Now now) = 
-    case status of
-        Pending         -> True
-        FetchedAt time  -> tooLongAgo time
-        FailedAt time   -> tooLongAgo time
-  where
-    tooLongAgo momendTnThePast = 
-        not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
-      where 
-        interval (RrdpU _)  = rrdpRepositoryRefreshInterval
-        interval (RsyncU _) = rsyncRepositoryRefreshInterval
 
 
 -- Mark validated objects in the database, i.e.

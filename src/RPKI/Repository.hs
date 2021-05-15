@@ -18,7 +18,7 @@ import           Data.Ord
 
 import           Data.X509                   (Certificate)
 
-import           Data.List.NonEmpty          (NonEmpty (..))
+import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 
 import qualified Data.List                   as List
 import           Data.Map.Strict             (Map)
@@ -76,6 +76,12 @@ data PublicationPoint = RrdpPP  RrdpRepository |
 
 newtype RepositoryAccess = RepositoryAccess {
         unRepositoryAccess :: NonEmpty Repository
+    }
+    deriving (Show, Eq, Ord, Generic) 
+    deriving anyclass Serialise        
+
+newtype PublicationPointAccess = PublicationPointAccess {
+        unRepositoryAccess :: NonEmpty PublicationPoint
     }
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise        
@@ -155,7 +161,7 @@ instance Semigroup FetchStatus where
     (<>) = max
 
 instance Semigroup RsyncMap where
-    rs1 <> rs2 = rs1 `mergeRsyncs` rs2
+    (<>) = mergeRsyncs
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
@@ -240,6 +246,18 @@ repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =
             Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
             ParentURI parentUri  -> findRoot parentUri        
                 
+
+repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
+repositoryFromPP (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) rpkiUrl = 
+    case rpkiUrl of
+        RrdpU u  -> RrdpR <$> Map.lookup u rrdps
+        RsyncU u -> RsyncR <$> findRoot u    
+  where    
+    findRoot u = 
+        Map.lookup u rsyncs >>= \case             
+            Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
+            ParentURI parentUri  -> findRoot parentUri  
+
 
 -- | Merge two rsync repository maps
 -- It's a commutative and associative operation
@@ -395,6 +413,27 @@ publicationPointsFromCert cert =
 publicationPointsFromCertObject :: CerObject -> Either ValidationError (RpkiURL, PublicationPoint)
 publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
+
+-- | Get publication points of the certificate.
+-- 
+getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromCert cert = do 
+    rrdp <- case getRrdpNotifyUri cert of 
+                Just rrdpNotifyUri
+                    | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]
+                    | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
+                Nothing -> Right []
+
+    rsync <- case getRepositoryUri cert of 
+                Just repositoryUri
+                    | isRsyncURI repositoryUri -> Right [rsyncPP $ RsyncURL repositoryUri]
+                    | otherwise                -> Left $ UnknownUriType repositoryUri
+                Nothing -> Right []
+
+    case nonEmpty (rrdp <> rsync) of 
+        Nothing -> Left CertificateDoesntHaveSIA
+        Just ne -> Right $ PublicationPointAccess ne
+    
 
 data Change a = Put a | Remove a 
     deriving stock (Show, Eq, Ord, Generic)
