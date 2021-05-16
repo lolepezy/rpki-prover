@@ -102,6 +102,11 @@ newFetchTasks = FetchTasks <$> newTVar mempty
 newFetchTasksIO :: IO FetchTasks
 newFetchTasksIO = atomically newFetchTasks
 
+newRepositoryProcessing :: STM (RepositoryProcessing a)
+newRepositoryProcessing = RepositoryProcessing <$> newTVar mempty <*> newTVar mempty
+
+newRepositoryProcessingIO :: IO (RepositoryProcessing a)
+newRepositoryProcessingIO = atomically newRepositoryProcessing
 
 fRepository :: FetchResult -> Repository 
 fRepository (FetchSuccess r _) = r
@@ -232,8 +237,8 @@ fetchPPWithFallback
         pure $ mconcat $ map fValidationState frs
 
   where    
-    fetchWithFallback ::[PublicationPoint] -> IO [FetchResult]
-    fetchWithFallback [pp] = maybeToList <$> tryOne pp
+    fetchWithFallback :: [PublicationPoint] -> IO [FetchResult]
+    fetchWithFallback [pp] = maybeToList <$> tryPP pp
 
     fetchWithFallback (pp : pps') = do 
         f <- fetchWithFallback [pp]
@@ -242,35 +247,36 @@ fetchPPWithFallback
             [FetchSuccess {}] -> pure f  
             [FetchFailure {}] -> (f <>) <$> fetchWithFallback pps'                
 
-    tryOne :: PublicationPoint -> IO (Maybe FetchResult)
-    tryOne pp =
+    tryPP :: PublicationPoint -> IO (Maybe FetchResult)
+    tryPP pp = do 
+        let rpkiUrl = getRpkiURL pp
         join $ atomically $ do 
-            RepositoryContext {..} <- readTVar repos
-            let asIfItIsMerged = pp `mergePP` publicationPoints
-            let rpkiUrl = getRpkiURL pp
-            let needAFetch = 
-                    case findPublicationPointStatus rpkiUrl asIfItIsMerged of  
-                        Nothing     -> True
-                        Just status -> needsFetching pp status (config ^. typed) now                
-            
-            -- `repo` will always be there, since `asIfItIsMerged` would always 
-            -- produce some repository for the `pp`
-            let Just repo = repositoryFromPP asIfItIsMerged (getRpkiURL pp)                        
+            z <- readTVar fetchTasks                                
+            case Map.lookup rpkiUrl z of 
+                Just Stub           -> retry
+                Just (Fetching a)   -> pure $ wait a
+                Just (Done f)       -> pure $ pure f
 
-            if needAFetch 
-                then do 
-                    t <- readTVar fetchTasks
+                Nothing -> do 
+                    RepositoryContext {..} <- readTVar repos
+                    let asIfItIsMerged = pp `mergePP` publicationPoints
                     
-                    case Map.lookup rpkiUrl t of 
-                        Just Stub           -> retry
-                        Just (Fetching a)   -> pure $ wait a
-                        Just (Done f)       -> pure $ pure f
+                    let needAFetch = 
+                            case findPublicationPointStatus rpkiUrl asIfItIsMerged of  
+                                Nothing     -> True
+                                Just status -> needsFetching pp status (config ^. #validationConfig) now                
+                    
+                    -- `repo` will always be there, since `asIfItIsMerged` would always 
+                    -- produce some repository for the `pp`
+                    let Just repo = repositoryFromPP asIfItIsMerged (getRpkiURL pp)                        
 
-                        Nothing -> do 
+                    if needAFetch 
+                        then do 
                             modifyTVar' fetchTasks $ Map.insert rpkiUrl Stub
                             pure $ Just <$> fetchIt repo rpkiUrl
-                else 
-                    pure $ pure Nothing
+                        else 
+                            -- we just don't need to fetching anything because it's already up-to-date
+                            pure $ pure Nothing
 
       where
         fetchIt repo rpkiUrl = bracketOnError 
@@ -280,9 +286,17 @@ fetchPPWithFallback
                     let newStatus = case f of
                             FetchFailure r _ -> FailedAt $ unNow now
                             FetchSuccess r _ -> FetchedAt $ unNow now
-                    let updatedRepos r = updateStatuses r [(repo, newStatus)]
-                    modifyTVar' repos (& typed @PublicationPoints %~ updatedRepos)
-                    modifyTVar' fetchTasks $ Map.delete rpkiUrl
+                    let updatedRepo r = updateStatuses r [(repo, newStatus)]
+                    modifyTVar' repos (& typed @PublicationPoints %~ updatedRepo)
+                    modifyTVar' fetchTasks $ Map.insert rpkiUrl (Done $ Just f)
+
+                -- It is a funky way to say "schedule deletion to 10 seconds from now".
+                -- All the other threads waiting on the same url will most likely
+                -- be aware of all the updates after 10 seconds.
+                forkFinally 
+                    (threadDelay 10_000_000)                    
+                    (\_ -> atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+
                 pure f) 
             (\a -> do 
                 cancel a
