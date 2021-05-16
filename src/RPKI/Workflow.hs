@@ -140,9 +140,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         putMetrics tx (metricStore database') worldVersion (tdValidations ^. typed)
                         putVrps tx database' (Set.toList vrps) worldVersion
                         completeWorldVersion tx database' worldVersion
-                        atomically $ do 
-                            completeCurrentVersion appState                                    
-                            writeTVar (appState ^. #currentVrps) vrps
+                        atomically $ completeCurrentVersion appState vrps                            
                         pure vrps
 
         cacheGC worldVersion = do
@@ -208,9 +206,8 @@ loadStoredAppState AppContext {..} = do
                     (vrps, elapsed) <- timedMS $ do             
                         -- TODO It takes 350ms, which is pretty strange, profile it.           
                         !vrps <- getVrps tx database' lastVersion
-                        atomically $ do
-                            completeCurrentVersion appState                            
-                            writeTVar (appState ^. #currentVrps) (Set.fromList vrps)                        
+                        --
+                        atomically $ completeCurrentVersion appState (Set.fromList vrps)                        
                         pure vrps
                     logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
                                       [i|current state (#{length vrps} VRPs), took #{elapsed}ms.|]
@@ -221,6 +218,7 @@ versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
 versionIsOld now period (WorldVersion nanos) =
     let validatedAt = fromNanoseconds nanos
     in not $ closeEnoughMoments validatedAt now period
+
 
 -- | Execute an IO action every N seconds
 periodically :: Seconds -> IO NextStep -> IO ()

@@ -19,8 +19,8 @@ import           RPKI.Domain
 import           RPKI.Time
 
 
--- It's some sequence of versions that is equal to the current 
--- timestamp in nanoseconds.
+-- It's a sequence of versions that is equal to some monotonic  
+-- clock timestamp in nanoseconds.
 newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
@@ -54,9 +54,10 @@ updateWorldVerion AppState {..} = do
     atomically $ writeTVar world $ WorldState wolrdVersion NewVersion
     pure wolrdVersion
 
-completeCurrentVersion :: AppState -> STM ()
-completeCurrentVersion AppState {..} = 
+completeCurrentVersion :: AppState -> Set Vrp -> STM ()
+completeCurrentVersion AppState {..} vrps = do 
     modifyTVar' world (& typed @VersionState .~ CompletedVersion)
+    writeTVar currentVrps vrps
 
 getWorldVerionIO :: AppState -> IO WorldVersion
 getWorldVerionIO = atomically . getWorldVerion
