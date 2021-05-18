@@ -49,6 +49,7 @@ import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Reporting
+import           RPKI.Repository
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -65,7 +66,6 @@ import           RPKI.Workflow
 main :: IO ()
 main = do
     -- load config file and apply command line options    
-    -- logger <- createLogger
     withAppLogger $ \logger -> liftIO $ do 
         cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
@@ -169,12 +169,14 @@ createAppContext CLIOptions{..} logger = do
 
     appState <- liftIO newAppState    
     tvarDatabase <- liftIO $ newTVarIO database
+    repositoryProcessing <- liftIO newRepositoryProcessingIO
 
     let appContext = AppContext {        
         appState = appState,
-        database = tvarDatabase,
+        database = tvarDatabase,        
         appBottlenecks = appBottlenecks,
         logger = logger,
+        repositoryProcessing = repositoryProcessing,
         config = defaultConfig 
                 & #talDirectory .~ tald 
                 & #tmpDirectory .~ tmpd 

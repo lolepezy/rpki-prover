@@ -69,11 +69,6 @@ import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
 
-data FetchResult = 
-    FetchSuccess Repository ValidationState | 
-    FetchFailure Repository ValidationState
-    deriving stock (Show, Eq, Generic)
-
 data RepositoryContext = RepositoryContext {
         publicationPoints  :: PublicationPoints,
         takenCareOf        :: Set RpkiURL
@@ -86,27 +81,11 @@ data FetchTasks = FetchTasks {
     tasks :: TVar (Map RpkiURL (FetchTask FetchResult))    
 }
 
-data FetchTask a = Stub 
-                | Fetching (Async a) 
-                | Done a
-
-
-data RepositoryProcessing a = RepositoryProcessing {
-    fetchTasks :: TVar (Map RpkiURL a),
-    repos      :: TVar RepositoryContext
-}
-
 newFetchTasks :: STM FetchTasks
 newFetchTasks = FetchTasks <$> newTVar mempty         
            
 newFetchTasksIO :: IO FetchTasks
 newFetchTasksIO = atomically newFetchTasks
-
-newRepositoryProcessing :: STM (RepositoryProcessing a)
-newRepositoryProcessing = RepositoryProcessing <$> newTVar mempty <*> newTVar mempty
-
-newRepositoryProcessingIO :: IO (RepositoryProcessing a)
-newRepositoryProcessingIO = atomically newRepositoryProcessing
 
 fRepository :: FetchResult -> Repository 
 fRepository (FetchSuccess r _) = r
@@ -221,24 +200,22 @@ fetchRepository_
 -- It is guaranteed that every fetch happens only once.
 --
 fetchPPWithFallback :: (MonadIO m, Storage s) => 
-                            AppContext s 
-                        -> RepositoryProcessing (FetchTask (Maybe FetchResult))
+                            AppContext s                         
                         -> ValidatorPath 
                         -> Now 
                         -> PublicationPointAccess  
-                        -> m ValidationState
+                        -> m ([FetchResult], ValidationState)
 fetchPPWithFallback 
-    appContext@AppContext {..} 
-    RepositoryProcessing {..} 
+    appContext@AppContext {..}     
     parentContext 
     now 
-    (PublicationPointAccess pps) = liftIO $ do         
+    (PublicationPointAccess pps) = liftIO $ do                 
         frs <- fetchWithFallback $ NonEmpty.toList pps
-        pure $ mconcat $ map fValidationState frs
+        pure (frs, mconcat $ map fValidationState frs)
 
   where    
     fetchWithFallback :: [PublicationPoint] -> IO [FetchResult]
-    fetchWithFallback [pp] = maybeToList <$> tryPP pp
+    fetchWithFallback [pp] = (:[]) <$> tryPP pp
 
     fetchWithFallback (pp : pps') = do 
         f <- fetchWithFallback [pp]
@@ -247,19 +224,19 @@ fetchPPWithFallback
             [FetchSuccess {}] -> pure f  
             [FetchFailure {}] -> (f <>) <$> fetchWithFallback pps'                
 
-    tryPP :: PublicationPoint -> IO (Maybe FetchResult)
+    tryPP :: PublicationPoint -> IO FetchResult
     tryPP pp = do 
         let rpkiUrl = getRpkiURL pp
         join $ atomically $ do 
-            z <- readTVar fetchTasks                                
+            z <- readTVar (repositoryProcessing ^. #fetchTasks)                                
             case Map.lookup rpkiUrl z of 
                 Just Stub           -> retry
                 Just (Fetching a)   -> pure $ wait a
                 Just (Done f)       -> pure $ pure f
 
                 Nothing -> do 
-                    RepositoryContext {..} <- readTVar repos
-                    let asIfItIsMerged = pp `mergePP` publicationPoints
+                    pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+                    let asIfItIsMerged = pp `mergePP` pps
                     
                     let needAFetch = 
                             case findPublicationPointStatus rpkiUrl asIfItIsMerged of  
@@ -272,40 +249,64 @@ fetchPPWithFallback
 
                     if needAFetch 
                         then do 
-                            modifyTVar' fetchTasks $ Map.insert rpkiUrl Stub
-                            pure $ Just <$> fetchIt repo rpkiUrl
-                        else 
-                            -- we just don't need to fetching anything because it's already up-to-date
-                            pure $ pure Nothing
+                            modifyTVar' (repositoryProcessing ^. #fetchTasks) $ Map.insert rpkiUrl Stub
+                            pure $ fetchIt repo rpkiUrl
+                        else                         
+                            pure $ pure FetchUpToDate
 
       where
-        fetchIt repo rpkiUrl = bracketOnError 
-            (async $ do                                     
-                f <- fetchRepository_ appContext parentContext now repo
-                atomically $ do  
-                    let newStatus = case f of
-                            FetchFailure r _ -> FailedAt $ unNow now
-                            FetchSuccess r _ -> FetchedAt $ unNow now
-                    let updatedRepo r = updateStatuses r [(repo, newStatus)]
-                    modifyTVar' repos (& typed @PublicationPoints %~ updatedRepo)
-                    modifyTVar' fetchTasks $ Map.insert rpkiUrl (Done $ Just f)
+        fetchIt repo rpkiUrl = do 
+            let fetchTasks = repositoryProcessing ^. #fetchTasks
+            let publicationPoints = repositoryProcessing ^. #publicationPoints
+            bracketOnError 
+                (async $ do                                     
+                    f <- fetchRepository_ appContext parentContext now repo
+                    atomically $ do  
+                        let newStatus = case f of
+                                FetchFailure r _ -> FailedAt $ unNow now
+                                FetchSuccess r _ -> FetchedAt $ unNow now
+                        let updatedRepo r = updateStatuses r [(repo, newStatus)]
 
-                -- It is a funky way to say "schedule deletion to 10 seconds from now".
-                -- All the other threads waiting on the same url will most likely
-                -- be aware of all the updates after 10 seconds.
-                forkFinally 
-                    (threadDelay 10_000_000)                    
-                    (\_ -> atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+                        modifyTVar' fetchTasks (Map.insert rpkiUrl (Done f))
 
-                pure f) 
-            (\a -> do 
-                cancel a
-                atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
-            (\a -> do 
-                atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Fetching $ Just <$> a)
-                wait a)                                                                   
+                        modifyTVar' publicationPoints $ 
+                                          adjustSucceedUrl rpkiUrl 
+                                        . (& typed @PublicationPoints %~ updatedRepo)                        
+
+                    -- TODO Remove it, it is actually not needed.
+                    -- 
+                    -- It is a funky way to say "schedule deletion to 10 seconds from now".
+                    -- All the other threads waiting on the same url will most likely
+                    -- be aware of all the updates after 10 seconds.
+                    forkFinally 
+                        (threadDelay 10_000_000)                    
+                        (\_ -> atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+
+                    pure f) 
+                (\a -> do 
+                    cancel a
+                    atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+                (\a -> do 
+                    atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Fetching a)
+                    wait a)                                                                   
                                        
 
+
+anySuccess :: [FetchResult] -> Bool
+anySuccess [] = False
+anySuccess r = not $ null [ () | FetchSuccess{} <- r ]
+
+
+fetchEverSucceeded :: (MonadIO m, Storage s) => 
+                    AppContext s
+                -> PublicationPointAccess 
+                -> m FetchEverSucceeded 
+fetchEverSucceeded 
+    appContext@AppContext {..}         
+    (PublicationPointAccess ppAccess) = liftIO $ do
+        let publicationPoints = repositoryProcessing ^. #publicationPoints
+        pps <- readTVarIO publicationPoints
+        pure $ everSucceeded pps $ getRpkiURL $ NonEmpty.head ppAccess
 
 
 -- | Fetch TA certificate based on TAL location(s)

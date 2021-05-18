@@ -9,6 +9,10 @@ module RPKI.Repository where
 
 import           Codec.Serialise
 import           Control.Lens
+
+import           Control.Concurrent.STM
+import           Control.Concurrent.Async
+
 import           GHC.Generics
 
 import           Data.Bifunctor
@@ -127,6 +131,22 @@ newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
     deriving newtype (Monoid)
 
 
+data FetchResult = 
+    FetchSuccess Repository ValidationState | 
+    FetchFailure Repository ValidationState |
+    FetchUpToDate
+    deriving stock (Show, Eq, Generic)
+
+data FetchTask a = Stub 
+                | Fetching (Async a) 
+                | Done a
+
+data RepositoryProcessing a = RepositoryProcessing {
+        fetchTasks         :: TVar (Map RpkiURL a),
+        publicationPoints  :: TVar PublicationPoints
+    }
+    deriving stock (Eq, Generic)
+
 instance WithRpkiURL PublicationPoint where
     getRpkiURL (RrdpPP RrdpRepository {..})        = RrdpU uri
     getRpkiURL (RsyncPP (RsyncPublicationPoint uri)) = RsyncU uri    
@@ -169,6 +189,12 @@ instance Semigroup EverSucceededMap where
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
     
+
+newRepositoryProcessing :: STM (RepositoryProcessing a)
+newRepositoryProcessing = RepositoryProcessing <$> newTVar mempty <*> newTVar mempty
+
+newRepositoryProcessingIO :: IO (RepositoryProcessing a)
+newRepositoryProcessingIO = atomically newRepositoryProcessing
 
 rsyncR :: RsyncURL -> Repository
 rrdpR  :: RrdpURL  -> Repository
@@ -374,28 +400,29 @@ mergePPs repos pps = foldr mergeRepo pps repos
 -- | Prefer RRDP to rsync for everything.
 -- | URI of the repository is supposed to be a "real" one, i.e. where
 -- | repository can actually be downloaded from.
-createRepositoriesFromTAL :: TAL -> CerObject -> Either ValidationError (NonEmpty Repository)
-createRepositoriesFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+publicationPointsFromTAL :: TAL -> CerObject -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
     case tal of 
         PropertiesTAL {..} -> do 
             (certUri, publicationPoint) <- publicationPointsFromCert cert
-            let uniquePrefetchRepos = map 
+            let uniquePrefetchRepos :: [PublicationPoint] = map 
                     (snd . fromURI) $ filter (/= certUri) prefetchUris
 
             let prefetchReposToUse = 
-                    case [ r | r@(RrdpR _) <- uniquePrefetchRepos ] of
+                    case [ r | r@(RrdpPP _) <- uniquePrefetchRepos ] of
                         []    -> uniquePrefetchRepos
                         rrdps -> rrdps
 
-            pure $ toRepository publicationPoint :| prefetchReposToUse 
+            pure $ PublicationPointAccess $ publicationPoint :| prefetchReposToUse 
 
-        RFC_TAL {..} -> 
-            (\(_, r) -> toRepository r :| []) <$> publicationPointsFromCert cert            
+        RFC_TAL {..} -> do 
+            (_, pp) <- publicationPointsFromCert cert            
+            pure $ PublicationPointAccess $ pp :| []
   where        
     fromURI r = 
         case r of
-            RrdpU u  -> (r, rrdpR u)
-            RsyncU u -> (r, rsyncR u)    
+            RrdpU u  -> (r, rrdpPP u)
+            RsyncU u -> (r, rsyncPP u)    
         
 
 -- | Create repository from the publication points of the certificate.
@@ -416,6 +443,9 @@ publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate
 
 -- | Get publication points of the certificate.
 -- 
+getPublicationPointsFromCertObject :: CerObject -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
+
 getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCert cert = do 
     rrdp <- case getRrdpNotifyUri cert of 
@@ -561,3 +591,10 @@ adjustLastSucceeded
 everSucceeded :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
 everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u = 
     fromMaybe Never $ Map.lookup u m
+
+
+adjustSucceedUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
+adjustSucceedUrl u pps = 
+    case findPublicationPointStatus u pps of 
+        Nothing     -> pps
+        Just status -> pps & typed %~ succeededFromStatus u status

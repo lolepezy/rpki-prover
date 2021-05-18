@@ -55,7 +55,7 @@ data StorableTA = StorableTA {
     tal                 :: TAL,
     taCert              :: CerObject,
     fetchStatus         :: FetchStatus,
-    initialRepositories :: NonEmpty Repository
+    initialRepositories :: PublicationPointAccess
 } deriving (Show, Eq, Generic, Serialise)
 
 data ROMeta = ROMeta {

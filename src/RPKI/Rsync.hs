@@ -120,7 +120,7 @@ updateObjectForRsyncRepository
 -- | Recursively traverse given directory and save all the parseable 
 -- | objects into the storage.
 -- 
--- | Is not supposed to throw exceptions, only report errors through Either.
+-- | Is not supposed to throw exceptions.
 loadRsyncRepository :: Storage s =>                         
                         AppContext s ->
                         RsyncURL -> 
@@ -261,11 +261,11 @@ getFileSize path = withFile path ReadMode hFileSize
 pathToUri :: RsyncURL -> FilePath -> FilePath -> RsyncURL
 pathToUri (RsyncURL (URI rsyncBaseUri)) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
     let 
-        rsyncRoot' = if Text.isSuffixOf "/" rsyncRoot 
+        rsyncRoot' = if "/" `Text.isSuffixOf` rsyncRoot 
             then rsyncRoot
             else rsyncRoot <> "/"
 
-        rsyncBaseUri' = if Text.isSuffixOf "/" rsyncBaseUri 
+        rsyncBaseUri' = if "/" `Text.isSuffixOf` rsyncBaseUri 
             then rsyncBaseUri
             else rsyncBaseUri <> "/"
         in 

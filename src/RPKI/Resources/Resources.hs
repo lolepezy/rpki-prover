@@ -7,7 +7,7 @@
 
 module RPKI.Resources.Resources where
 
-import           Prelude                              hiding (subtract)
+import           Prelude                              hiding (subtract, last)
 
 import qualified Data.ByteString                      as BS
 
