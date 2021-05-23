@@ -189,6 +189,9 @@ instance Semigroup EverSucceededMap where
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
     
+getFetchStatus :: Repository -> FetchStatus
+getFetchStatus (RrdpR r)  = r ^. #status
+getFetchStatus (RsyncR r) = r ^. #status
 
 newRepositoryProcessing :: STM (RepositoryProcessing a)
 newRepositoryProcessing = RepositoryProcessing <$> newTVar mempty <*> newTVar mempty
@@ -593,8 +596,9 @@ everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u =
     fromMaybe Never $ Map.lookup u m
 
 
-adjustSucceedUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
-adjustSucceedUrl u pps = 
+adjustSucceededUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
+adjustSucceededUrl u pps =     
     case findPublicationPointStatus u pps of 
         Nothing     -> pps
         Just status -> pps & typed %~ succeededFromStatus u status
+

@@ -73,6 +73,7 @@ closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds 
     timeDiff secondMoment firstMoment < intervalSeconds
 
 
+uiDateFormat :: Instant -> String
 uiDateFormat (Instant d) = timePrint format d
   where 
     format = TimeFormatString [

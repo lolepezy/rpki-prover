@@ -87,23 +87,10 @@ newFetchTasks = FetchTasks <$> newTVar mempty
 newFetchTasksIO :: IO FetchTasks
 newFetchTasksIO = atomically newFetchTasks
 
-fRepository :: FetchResult -> Repository 
-fRepository (FetchSuccess r _) = r
-fRepository (FetchFailure r _) = r
-
 fValidationState :: FetchResult -> ValidationState 
 fValidationState (FetchSuccess _ vs) = vs
 fValidationState (FetchFailure _ vs) = vs
-
--- This is pretty ad-hoc
-mergeFetch :: FetchResult -> FetchResult -> FetchResult
-mergeFetch f1 f2 = 
-    let vs = fValidationState f1 <> fValidationState f2
-    in case (f1, f2) of
-        (FetchFailure {}, FetchFailure {}) -> FetchFailure (fRepository f2) vs
-        (FetchSuccess {}, FetchFailure {}) -> FetchSuccess (fRepository f1) vs
-        (FetchFailure {}, FetchSuccess {}) -> FetchSuccess (fRepository f2) vs
-        (FetchSuccess {}, FetchSuccess {}) -> FetchSuccess (fRepository f2) vs
+fValidationState FetchUpToDate = mempty
 
 
 -- Main entry point: fetch reposiutory using the cache of tasks.
@@ -209,7 +196,13 @@ fetchPPWithFallback
     appContext@AppContext {..}     
     parentContext 
     now 
-    (PublicationPointAccess pps) = liftIO $ do                 
+    (PublicationPointAccess pps) = liftIO $ do 
+        -- Merge them all in first, all these PPs will be stored 
+        -- in `#publicationPoints` with the status 'Pending'
+        -- atomically $ modifyTVar' 
+        --     (repositoryProcessing ^. #publicationPoints) 
+        --     (\pubPoints -> foldr mergePP pubPoints pps)  
+
         frs <- fetchWithFallback $ NonEmpty.toList pps
         pure (frs, mconcat $ map fValidationState frs)
 
@@ -221,38 +214,32 @@ fetchPPWithFallback
         f <- fetchWithFallback [pp]
         case f of 
             []                -> pure []
+            [FetchUpToDate]   -> pure f  
             [FetchSuccess {}] -> pure f  
             [FetchFailure {}] -> (f <>) <$> fetchWithFallback pps'                
 
     tryPP :: PublicationPoint -> IO FetchResult
     tryPP pp = do 
-        let rpkiUrl = getRpkiURL pp
         join $ atomically $ do 
-            z <- readTVar (repositoryProcessing ^. #fetchTasks)                                
-            case Map.lookup rpkiUrl z of 
-                Just Stub           -> retry
-                Just (Fetching a)   -> pure $ wait a
-                Just (Done f)       -> pure $ pure f
+            pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+            let asIfMerged = mergePP pp pps            
+            let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
+            let rpkiUrl = getRpkiURL repo
 
-                Nothing -> do 
-                    pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-                    let asIfItIsMerged = pp `mergePP` pps
-                    
-                    let needAFetch = 
-                            case findPublicationPointStatus rpkiUrl asIfItIsMerged of  
-                                Nothing     -> True
-                                Just status -> needsFetching pp status (config ^. #validationConfig) now                
-                    
-                    -- `repo` will always be there, since `asIfItIsMerged` would always 
-                    -- produce some repository for the `pp`
-                    let Just repo = repositoryFromPP asIfItIsMerged (getRpkiURL pp)                        
+            let needAFetch = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now     
+            if needAFetch 
+                then do 
+                    z <- readTVar $ repositoryProcessing ^. #fetchTasks
+                    case Map.lookup rpkiUrl z of 
+                        Just Stub           -> retry
+                        Just (Fetching a)   -> pure $ wait a
+                        Just (Done f)       -> pure $ pure f
 
-                    if needAFetch 
-                        then do 
+                        Nothing -> do                                         
                             modifyTVar' (repositoryProcessing ^. #fetchTasks) $ Map.insert rpkiUrl Stub
                             pure $ fetchIt repo rpkiUrl
-                        else                         
-                            pure $ pure FetchUpToDate
+                else                         
+                    pure $ pure FetchUpToDate                                   
 
       where
         fetchIt repo rpkiUrl = do 
@@ -261,18 +248,17 @@ fetchPPWithFallback
             bracketOnError 
                 (async $ do                                     
                     f <- fetchRepository_ appContext parentContext now repo
-                    atomically $ do  
-                        let newStatus = case f of
-                                FetchFailure r _ -> FailedAt $ unNow now
-                                FetchSuccess r _ -> FetchedAt $ unNow now
-                        let updatedRepo r = updateStatuses r [(repo, newStatus)]
-
+                    atomically $ do                          
                         modifyTVar' fetchTasks (Map.insert rpkiUrl (Done f))
 
-                        modifyTVar' publicationPoints $ 
-                                          adjustSucceedUrl rpkiUrl 
-                                        . (& typed @PublicationPoints %~ updatedRepo)                        
-
+                        modifyTVar' publicationPoints $ \pps -> 
+                                let r = pps ^. typed @PublicationPoints
+                                    in adjustSucceededUrl rpkiUrl $ case f of
+                                        FetchSuccess _ _ -> updateStatuses r [(repo, FetchedAt $ unNow now)]
+                                        FetchFailure _ _ -> updateStatuses r [(repo, FailedAt $ unNow now)]
+                                        FetchUpToDate    -> r
+                                    
+                                
                     -- TODO Remove it, it is actually not needed.
                     -- 
                     -- It is a funky way to say "schedule deletion to 10 seconds from now".
@@ -347,3 +333,4 @@ needsFetching r status ValidationConfig {..} (Now now) =
       where 
         interval (RrdpU _)  = rrdpRepositoryRefreshInterval
         interval (RsyncU _) = rsyncRepositoryRefreshInterval            
+
