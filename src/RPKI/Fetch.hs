@@ -218,22 +218,35 @@ fetchPPWithFallback
             [FetchUpToDate]   -> pure f
             [FetchSuccess {}] -> pure f  
 
-            [FetchFailure {}] -> do 
-                logWarn_ logger [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL $ head pps'}.|]
+            [FetchFailure {}] -> do                 
+                -- some terribly hacky stuff for more meaningful logging
+                (nextOneNeedAFetch, _) <- atomically $ needsAFetch (head pps')
+                let message = 
+                        if nextOneNeedAFetch
+                            then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL $ head pps'}.|]
+                            else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL $ head pps'})' is up-to-date.|]
+
+                logWarn_ logger message
                 f' <- fetchWithFallback pps'
                 pure $ f <> f'                
 
+    needsAFetch :: PublicationPoint -> STM (Bool, Repository)
+    needsAFetch pp = do 
+        pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+        let asIfMerged = mergePP pp pps            
+        let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
+        pure (
+            needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now,
+            repo)
+            
+
     tryPP :: PublicationPoint -> IO FetchResult
     tryPP pp = do 
-        join $ atomically $ do 
-            pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-            let asIfMerged = mergePP pp pps            
-            let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
-            let rpkiUrl = getRpkiURL repo
-
-            let needAFetch = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now     
-            if needAFetch 
+        join $ atomically $ do             
+            (repoNeedAFetch, repo) <- needsAFetch pp
+            if repoNeedAFetch 
                 then do 
+                    let rpkiUrl = getRpkiURL repo
                     z <- readTVar $ repositoryProcessing ^. #fetchTasks
                     case Map.lookup rpkiUrl z of 
                         Just Stub           -> retry
