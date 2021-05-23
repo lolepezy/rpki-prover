@@ -214,9 +214,14 @@ fetchPPWithFallback
         f <- fetchWithFallback [pp]
         case f of 
             []                -> pure []
-            [FetchUpToDate]   -> pure f  
+
+            [FetchUpToDate]   -> pure f
             [FetchSuccess {}] -> pure f  
-            [FetchFailure {}] -> (f <>) <$> fetchWithFallback pps'                
+
+            [FetchFailure {}] -> do 
+                logWarn_ logger [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL $ head pps'}.|]
+                f' <- fetchWithFallback pps'
+                pure $ f <> f'                
 
     tryPP :: PublicationPoint -> IO FetchResult
     tryPP pp = do 
@@ -279,7 +284,6 @@ fetchPPWithFallback
 
 
 anySuccess :: [FetchResult] -> Bool
-anySuccess [] = False
 anySuccess r = not $ null [ () | FetchSuccess{} <- r ]
 
 
