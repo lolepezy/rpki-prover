@@ -254,9 +254,9 @@ fetchPPWithFallback
                         modifyTVar' publicationPoints $ \pps -> 
                                 let r = pps ^. typed @PublicationPoints
                                     in adjustSucceededUrl rpkiUrl $ case f of
-                                        FetchSuccess _ _ -> updateStatuses r [(repo, FetchedAt $ unNow now)]
-                                        FetchFailure _ _ -> updateStatuses r [(repo, FailedAt $ unNow now)]
-                                        FetchUpToDate    -> r
+                                        FetchSuccess repo' _ -> updateStatuses r [(repo', FetchedAt $ unNow now)]
+                                        FetchFailure repo' _ -> updateStatuses r [(repo', FailedAt $ unNow now)]
+                                        FetchUpToDate        -> r
                                     
                                 
                     -- TODO Remove it, it is actually not needed.
@@ -299,7 +299,7 @@ fetchEverSucceeded
 --
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 
-    go $ neSetToList $ unLocations $ certLocations tal
+    go $ neSetToList $ unLocations $ talCertLocations tal
   where
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
     go (u : uris) = fetchTaCert `catchError` goToNext 
