@@ -77,110 +77,11 @@ data RepositoryContext = RepositoryContext {
     deriving Semigroup via GenericSemigroup RepositoryContext   
     deriving Monoid    via GenericMonoid RepositoryContext
 
-data FetchTasks = FetchTasks {
-    tasks :: TVar (Map RpkiURL (FetchTask FetchResult))    
-}
-
-newFetchTasks :: STM FetchTasks
-newFetchTasks = FetchTasks <$> newTVar mempty         
-           
-newFetchTasksIO :: IO FetchTasks
-newFetchTasksIO = atomically newFetchTasks
 
 fValidationState :: FetchResult -> ValidationState 
 fValidationState (FetchSuccess _ vs) = vs
 fValidationState (FetchFailure _ vs) = vs
 fValidationState FetchUpToDate = mempty
-
-
--- Main entry point: fetch reposiutory using the cache of tasks.
--- It is guaranteed that every fetch happens only once.
--- 
-fetchRepository :: (MonadIO m, Storage s) => 
-                    AppContext s 
-                -> FetchTasks 
-                -> ValidatorPath 
-                -> Now 
-                -> Repository 
-                -> m FetchResult
-fetchRepository appContext@AppContext {..} FetchTasks {..} parentContext now repo = liftIO $ do 
-    let rpkiUrl = getRpkiURL repo
-    join $ atomically $ do 
-        t <- readTVar tasks
-        case Map.lookup rpkiUrl t of 
-
-            Just Stub -> retry
-
-            Just (Done f) -> 
-                pure $ pure f
-                                
-            Just (Fetching a) -> 
-                pure $ wait a                    
-
-            Nothing -> do 
-                modifyTVar' tasks $ Map.insert rpkiUrl Stub
-                
-                pure $ bracketOnError 
-                    (async $ do 
-                        f <- fetchRepository_ appContext parentContext now repo
-                        atomically $ modifyTVar' tasks $ Map.insert rpkiUrl (Done f)
-                        pure f) 
-                    (\a -> do 
-                        cancel a
-                        atomically $ modifyTVar' tasks $ Map.delete rpkiUrl)
-                    (\a -> do 
-                        atomically $ modifyTVar' tasks $ Map.insert rpkiUrl (Fetching a)
-                        wait a)                                           
-
-
-
-fetchRepository_ :: (Storage s) => 
-                    AppContext s -> ValidatorPath -> Now -> Repository -> IO FetchResult
-fetchRepository_ 
-    appContext@AppContext {..} 
-    parentContext 
-    (Now now) 
-    repo = do
-        let (Seconds maxDuration, timeoutError) = case repoURL of
-                RrdpU _  -> 
-                    (config ^. typed @RrdpConf . #rrdpTimeout, 
-                     RrdpE $ RrdpDownloadTimeout maxDuration)
-                RsyncU _ -> 
-                    (config ^. typed @RsyncConf . #rsyncTimeout, 
-                     RsyncE $ RsyncDownloadTimeout maxDuration)
-                
-        r <- timeout (1_000_000 * fromIntegral maxDuration) fetchIt
-        case r of 
-            Nothing -> do 
-                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
-                pure $ FetchFailure repo (vState $ mError vContext' timeoutError)
-            Just z -> pure z        
-    where 
-        repoURL      = getRpkiURL repo
-        childContext = validatorSubPath (toText repoURL) parentContext
-        vContext'    = childContext ^. typed @VPath
-
-        fetchIt = do        
-            logDebugM logger [i|Fetching repository #{getURL repoURL}.|]    
-            ((r, v), elapsed) <- timedMS $ runValidatorT childContext $                 
-                case repo of
-                    RsyncR r -> do 
-                            RsyncR <$> fromTryM 
-                                    (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (updateObjectForRsyncRepository appContext r)                             
-                    RrdpR r -> do                         
-                        RrdpR <$> fromTryM 
-                                    (RrdpE . UnknownRrdpProblem . fmtEx)
-                                    (updateObjectForRrdpRepository appContext r) 
-            case r of
-                Left e -> do                        
-                    logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
-                    pure $ FetchFailure repo (vState (mError vContext' e) <> v)
-                Right resultRepo -> do
-                    logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-                    pure $ FetchSuccess resultRepo v          
-
-
 
 
 -- Main entry point: fetch reposiutory using the cache of tasks.
@@ -294,6 +195,56 @@ fetchPPWithFallback
                     atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Fetching a)
                     wait a)                                                                   
                                        
+
+
+-- Fetch specific repository
+-- 
+fetchRepository_ :: (Storage s) => 
+                    AppContext s -> ValidatorPath -> Now -> Repository -> IO FetchResult
+fetchRepository_ 
+    appContext@AppContext {..} 
+    parentContext 
+    (Now now) 
+    repo = do
+        let (Seconds maxDuration, timeoutError) = case repoURL of
+                RrdpU _  -> 
+                    (config ^. typed @RrdpConf . #rrdpTimeout, 
+                     RrdpE $ RrdpDownloadTimeout maxDuration)
+                RsyncU _ -> 
+                    (config ^. typed @RsyncConf . #rsyncTimeout, 
+                     RsyncE $ RsyncDownloadTimeout maxDuration)
+                
+        r <- timeout (1_000_000 * fromIntegral maxDuration) fetchIt
+        case r of 
+            Nothing -> do 
+                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                pure $ FetchFailure repo (vState $ mError vContext' timeoutError)
+            Just z -> pure z        
+    where 
+        repoURL      = getRpkiURL repo
+        childContext = validatorSubPath (toText repoURL) parentContext
+        vContext'    = childContext ^. typed @VPath
+
+        fetchIt = do        
+            logDebugM logger [i|Fetching repository #{getURL repoURL}.|]    
+            ((r, v), elapsed) <- timedMS $ runValidatorT childContext $                 
+                case repo of
+                    RsyncR r -> do 
+                            RsyncR <$> fromTryM 
+                                    (RsyncE . UnknownRsyncProblem . fmtEx) 
+                                    (updateObjectForRsyncRepository appContext r)                             
+                    RrdpR r -> do                         
+                        RrdpR <$> fromTryM 
+                                    (RrdpE . UnknownRrdpProblem . fmtEx)
+                                    (updateObjectForRrdpRepository appContext r) 
+            case r of
+                Left e -> do                        
+                    logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
+                    pure $ FetchFailure repo (vState (mError vContext' e) <> v)
+                Right resultRepo -> do
+                    logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
+                    pure $ FetchSuccess resultRepo v          
+
 
 
 anySuccess :: [FetchResult] -> Bool
