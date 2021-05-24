@@ -24,12 +24,9 @@ import           GHC.Generics (Generic)
 
 import           Data.Either                      (fromRight)
 import           Data.Foldable
-import           Data.List.NonEmpty               (NonEmpty (..))
-import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
-import           Data.Maybe                       (fromMaybe)
 import           Data.Monoid.Generic
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
@@ -56,7 +53,7 @@ import           RPKI.Store.Repository
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.CommonTypes
-import           RPKI.Util                        (convert, fmtEx, ifJust)
+import           RPKI.Util                        (fmtEx, ifJust)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
 -- import           RPKI.Fetch

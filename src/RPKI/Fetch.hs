@@ -15,10 +15,7 @@ import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
 import           Control.Lens
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
-
-import           Data.Bifunctor
 
 import           Data.Monoid.Generic
 
@@ -26,21 +23,13 @@ import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.Except
-import           Control.Monad.IO.Class
 
-import qualified Data.ByteString                  as BS
-
-import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
-import qualified Data.Text                        as Text
-import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 
 import           Data.Set                         (Set)
-import qualified Data.Set                         as Set
-import  Data.Maybe (maybeToList)
 
 import GHC.Generics (Generic)
 
@@ -53,16 +42,10 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Parallel
-import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
 import           RPKI.Time
 import           RPKI.Util                       
-import           RPKI.Validation.ObjectValidation
-import           RPKI.AppState
 import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
@@ -97,25 +80,24 @@ fetchPPWithFallback
     appContext@AppContext {..}     
     parentContext 
     now 
-    (PublicationPointAccess pps) = liftIO $ do 
+    (PublicationPointAccess ppAccess) = liftIO $ do 
         -- Merge them all in first, all these PPs will be stored 
         -- in `#publicationPoints` with the status 'Pending'
         -- atomically $ modifyTVar' 
         --     (repositoryProcessing ^. #publicationPoints) 
         --     (\pubPoints -> foldr mergePP pubPoints pps)  
 
-        frs <- fetchWithFallback $ NonEmpty.toList pps
+        frs <- fetchWithFallback $ NonEmpty.toList ppAccess
         pure (frs, mconcat $ map fValidationState frs)
 
   where    
     fetchWithFallback :: [PublicationPoint] -> IO [FetchResult]
+    fetchWithFallback []   = pure []
     fetchWithFallback [pp] = (:[]) <$> tryPP pp
 
     fetchWithFallback (pp : pps') = do 
         f <- fetchWithFallback [pp]
-        case f of 
-            []                -> pure []
-
+        case f of             
             [FetchUpToDate]   -> pure f
             [FetchSuccess {}] -> pure f  
 
@@ -129,7 +111,9 @@ fetchPPWithFallback
 
                 logWarn_ logger message
                 f' <- fetchWithFallback pps'
-                pure $ f <> f'                
+                pure $ f <> f'           
+
+            _                -> pure []
 
     needsAFetch :: PublicationPoint -> STM (Bool, Repository)
     needsAFetch pp = do 
@@ -166,7 +150,7 @@ fetchPPWithFallback
             let publicationPoints = repositoryProcessing ^. #publicationPoints
             bracketOnError 
                 (async $ do                                     
-                    f <- fetchRepository_ appContext parentContext now repo
+                    f <- fetchRepository_ appContext parentContext repo
                     atomically $ do                          
                         modifyTVar' fetchTasks (Map.insert rpkiUrl (Done f))
 
@@ -183,9 +167,9 @@ fetchPPWithFallback
                     -- It is a funky way to say "schedule deletion to 10 seconds from now".
                     -- All the other threads waiting on the same url will most likely
                     -- be aware of all the updates after 10 seconds.
-                    forkFinally 
-                        (threadDelay 10_000_000)                    
-                        (\_ -> atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+                    void $ forkFinally 
+                                (threadDelay 10_000_000)                    
+                                (\_ -> atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
 
                     pure f) 
                 (\a -> do 
@@ -200,11 +184,10 @@ fetchPPWithFallback
 -- Fetch specific repository
 -- 
 fetchRepository_ :: (Storage s) => 
-                    AppContext s -> ValidatorPath -> Now -> Repository -> IO FetchResult
+                    AppContext s -> ValidatorPath -> Repository -> IO FetchResult
 fetchRepository_ 
     appContext@AppContext {..} 
-    parentContext 
-    (Now now) 
+    parentContext     
     repo = do
         let (Seconds maxDuration, timeoutError) = case repoURL of
                 RrdpU _  -> 
@@ -256,7 +239,7 @@ fetchEverSucceeded :: (MonadIO m, Storage s) =>
                 -> PublicationPointAccess 
                 -> m FetchEverSucceeded 
 fetchEverSucceeded 
-    appContext@AppContext {..}         
+    AppContext {..}         
     (PublicationPointAccess ppAccess) = liftIO $ do
         let publicationPoints = repositoryProcessing ^. #publicationPoints
         pps <- readTVarIO publicationPoints
