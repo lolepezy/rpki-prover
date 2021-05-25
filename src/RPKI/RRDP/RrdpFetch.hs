@@ -5,7 +5,6 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
 
-
 module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM           (readTVarIO)
@@ -15,6 +14,7 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
+import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -312,10 +312,11 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                 let hash = U.sha256s decoded  
                                 exists <- DB.hashExists tx objectStore hash
                                 pure $! if exists 
-                                -- The object is already in cache. Do not parse-serialise
-                                -- anything, just skip it. We are not afraid of possible 
-                                -- race-conditions here, it's not a problem to double-insert
-                                -- an object and delete-insert race will never happen in practice.
+                                    -- The object is already in cache. Do not parse-serialise
+                                    -- anything, just skip it. We are not afraid of possible 
+                                    -- race-conditions here, it's not a problem to double-insert
+                                    -- an object and delete-insert race will never happen in practice
+                                    -- since deletion is never concurrent with insertion.
                                     then HashExists rpkiURL hash
                                     else
                                         case first ParseE $ readObject rpkiURL decoded of 
