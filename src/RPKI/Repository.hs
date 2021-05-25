@@ -138,12 +138,12 @@ data FetchResult =
     deriving stock (Show, Eq, Generic)
 
 data FetchTask a = Stub 
-                | Fetching (Async a) 
-                | Done a
+                | Fetching (Async a)                 
 
 data RepositoryProcessing a = RepositoryProcessing {
-        fetches         :: TVar (Map RpkiURL a),
-        publicationPoints  :: TVar PublicationPoints
+        fetches           :: TVar (Map RpkiURL a),
+        publicationPoints :: TVar PublicationPoints,
+        fetchResults      :: TVar (Map RpkiURL FetchResult)
     }
     deriving stock (Eq, Generic)
 
@@ -194,7 +194,10 @@ getFetchStatus (RrdpR r)  = r ^. #status
 getFetchStatus (RsyncR r) = r ^. #status
 
 newRepositoryProcessing :: STM (RepositoryProcessing a)
-newRepositoryProcessing = RepositoryProcessing <$> newTVar mempty <*> newTVar mempty
+newRepositoryProcessing = RepositoryProcessing <$> 
+        newTVar mempty <*> 
+        newTVar mempty <*> 
+        newTVar mempty
 
 newRepositoryProcessingIO :: IO (RepositoryProcessing a)
 newRepositoryProcessingIO = atomically newRepositoryProcessing

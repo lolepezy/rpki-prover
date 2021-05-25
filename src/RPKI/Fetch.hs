@@ -68,8 +68,8 @@ fValidationState FetchUpToDate = mempty
 
 validationStateOfFetches :: (MonadIO m, Storage s) => AppContext s -> m ValidationState 
 validationStateOfFetches AppContext {..} = liftIO $ atomically $ do 
-    z <- readTVar $ repositoryProcessing ^. #fetches
-    pure $ mconcat [ fValidationState f | (_, Done f) <- Map.toList z ]    
+    z <- readTVar $ repositoryProcessing ^. #fetchResults
+    pure $ mconcat [ fValidationState f | (_, f) <- Map.toList z ]    
 
 -- Main entry point: fetch reposiutory using the cache of tasks.
 -- It is guaranteed that every fetch happens only once.
@@ -121,8 +121,7 @@ fetchPPWithFallback
                     z <- readTVar $ repositoryProcessing ^. #fetches
                     case Map.lookup rpkiUrl z of 
                         Just Stub           -> retry
-                        Just (Fetching a)   -> pure $ wait a
-                        Just (Done f)       -> pure $ pure f
+                        Just (Fetching a)   -> pure $ wait a                        
 
                         Nothing -> do                                         
                             modifyTVar' (repositoryProcessing ^. #fetches) $ Map.insert rpkiUrl Stub
@@ -132,21 +131,20 @@ fetchPPWithFallback
 
       where
         fetchIt repo rpkiUrl = do 
-            let fetches = repositoryProcessing ^. #fetches
-            let publicationPoints = repositoryProcessing ^. #publicationPoints
+            let fetches = repositoryProcessing ^. #fetches            
 
             let launchFetch = async $ do                                     
-                f <- fetchRepository_ appContext parentContext repo
-                atomically $ do                          
-                    modifyTVar' fetches (Map.insert rpkiUrl (Done f))
+                    f <- fetchRepository_ appContext parentContext repo
+                    atomically $ do                          
+                        modifyTVar' (repositoryProcessing ^. #fetchResults) (Map.insert rpkiUrl f)
 
-                    modifyTVar' publicationPoints $ \pps -> 
+                        modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             let r = pps ^. typed @PublicationPoints
                                 in adjustSucceededUrl rpkiUrl $ case f of
                                     FetchSuccess repo' _ -> updateStatuses r [(repo', FetchedAt $ unNow now)]
                                     FetchFailure repo' _ -> updateStatuses r [(repo', FailedAt $ unNow now)]
                                     FetchUpToDate        -> r
-                pure f            
+                    pure f            
 
             let stopAndDrop a = do 
                     cancel a
