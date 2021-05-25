@@ -237,8 +237,6 @@ createSubDirectoryIfNeeded root sub = do
     pure $ Right subDirectory
 
 
-type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
-
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
     rpkiRootDirectory :: wrapped ::: Maybe FilePath <?> 
@@ -291,7 +289,7 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for the RTR server (default is 8283)",
 
     dontFetch :: wrapped ::: Bool <?> 
-        "Don't fetch repositories, mostly used for testing (default is false)."
+        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false)."
 
 } deriving (Generic)
 
@@ -300,3 +298,4 @@ instance ParseRecord (CLIOptions Wrapped) where
 
 deriving instance Show (CLIOptions Unwrapped)
 
+type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b

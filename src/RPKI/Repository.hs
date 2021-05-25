@@ -163,19 +163,19 @@ instance Semigroup RrdpRepository where
     RrdpRepository { uri = u1, rrdpMeta = m1, status = s1 } <> 
         RrdpRepository { rrdpMeta = m2, status = s2 } = 
         RrdpRepository u1 resultMeta resultStatus
-        where
-            (resultStatus, resultMeta) = 
-                if s1 >= s2 
-                    then (s1, m1)
-                    else (s2, m2)
+      where
+        (resultStatus, resultMeta) = 
+            if s1 >= s2 
+                then (s1, m1)
+                else (s2, m2)
 
 -- always use the latest one
 instance Ord FetchStatus where
     compare = comparing timeAndStatus
-        where             
-            timeAndStatus Pending       = (Nothing, 0 :: Int)
-            timeAndStatus (FailedAt t)  = (Just t,  0)
-            timeAndStatus (FetchedAt t) = (Just t,  1) 
+      where             
+        timeAndStatus Pending       = (Nothing, 0 :: Int)
+        timeAndStatus (FailedAt t)  = (Just t,  0)
+        timeAndStatus (FetchedAt t) = (Just t,  1) 
 
 instance Semigroup FetchStatus where
     (<>) = max

@@ -111,13 +111,13 @@ downloadAndUpdateRRDP
         where
             downloadAndSave = do
                 ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
-                        fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                                downloadHashedBS (appContext ^. typed @Config) uri hash                                    
-                                    (\actualHash -> 
-                                        Left $ RrdpE $ SnapshotHashMismatch { 
-                                            expectedHash = hash,
-                                            actualHash = actualHash                                            
-                                        })                
+                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
+                        downloadHashedBS (appContext ^. typed @Config) uri hash                                    
+                            (\actualHash -> 
+                                Left $ RrdpE $ SnapshotHashMismatch { 
+                                    expectedHash = hash,
+                                    actualHash = actualHash                                            
+                                })                
 
                 bumpDownloadTime downloadedIn
                 updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
@@ -141,44 +141,46 @@ downloadAndUpdateRRDP
         -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
         -- otherwise they will hold too much files open.
         downloadAndSave `finally` liftIO performGC        
-        where
-            downloadAndSave = do
-                -- Do not thrash the same server with too big amount of parallel 
-                -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
-                localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-                (_, savedIn) <- timedMS $ foldPipeline
-                                    (localRepoBottleneck <> ioBottleneck)
-                                    (S.each sortedDeltas)
-                                    downloadDelta
-                                    (\(rawContent, serial, deltaUri) _ -> 
-                                        inSubVPath deltaUri $ 
-                                            handleDeltaBS repoUri notification serial rawContent)
-                                    (mempty :: ())
-                bumpDownloadTime savedIn                
-                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
-                pure $! repo { rrdpMeta = rrdpMeta' }
+      where
 
-            downloadDelta (DeltaInfo uri hash serial) = do
-                let deltaUri = U.convert uri 
-                (rawContent, _, httpStatus') <- 
-                    inSubVPath deltaUri $ do
-                        fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                            downloadHashedBS (appContext ^. typed @Config) uri hash
-                                (\actualHash -> 
-                                    Left $ RrdpE $ DeltaHashMismatch {
-                                        actualHash = actualHash,
-                                        expectedHash = hash,
-                                        serial = serial
-                                    })
-                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
-                pure (rawContent, serial, deltaUri)
+        downloadAndSave = do
+            -- Do not thrash the same server with too big amount of parallel 
+            -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
+            localRepoBottleneck <- liftIO $ newBottleneckIO 8            
+            (_, savedIn) <- timedMS $ foldPipeline
+                                (localRepoBottleneck <> ioBottleneck)
+                                (S.each sortedDeltas)
+                                downloadDelta
+                                (\(rawContent, serial, deltaUri) _ -> 
+                                    inSubVPath deltaUri $ 
+                                        handleDeltaBS repoUri notification serial rawContent)
+                                (mempty :: ())
+            bumpDownloadTime savedIn                
+            updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
-            serials = map (^. typed @Serial) sortedDeltas
-            maxSerial = List.maximum serials
-            minSerial = List.minimum serials
+            pure $ repo { rrdpMeta = rrdpMeta' }
 
-            rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)            
+        downloadDelta (DeltaInfo uri hash serial) = do
+            let deltaUri = U.convert uri 
+            (rawContent, _, httpStatus') <- 
+                inSubVPath deltaUri $ do
+                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
+                        downloadHashedBS (appContext ^. typed @Config) uri hash
+                            (\actualHash -> 
+                                Left $ RrdpE $ DeltaHashMismatch {
+                                    actualHash = actualHash,
+                                    expectedHash = hash,
+                                    serial = serial
+                                })
+            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+            pure (rawContent, serial, deltaUri)
+
+        serials = map (^. typed @Serial) sortedDeltas
+        maxSerial = List.maximum serials
+        minSerial = List.minimum serials
+
+        rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)            
 
 
 data Step
