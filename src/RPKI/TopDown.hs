@@ -90,7 +90,7 @@ data TopDownContext s = TopDownContext {
 
 data TopDownResult = TopDownResult {
         vrps          :: Set Vrp,
-        tdValidations :: ValidationState
+        topDownValidations :: ValidationState
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup TopDownResult   
@@ -143,16 +143,17 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
     rs <- forConcurrently tals $ \tal -> do           
         (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-        pure r
+        pure r    
 
-    -- save publication points state
-    
+    -- save publication points state    
     mapException (AppException . storageError) $
         rwTx database' $ \tx -> do                             
             pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
             savePublicationPoints tx (repositoryStore database') pps
     
-    pure rs
+    -- Get validations for all the fetches that happened during this top-down traversal
+    fetchValidation <- validationStateOfFetches appContext
+    pure $ fromValidations fetchValidation : rs
 
 
 --
@@ -244,9 +245,9 @@ validateFromTACert
 
     -- TODO Add something about handling statuses
 
-    unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $ do 
-        (_, validations) <- fetchPPWithFallback appContext taURIContext now initialRepos    
-        embedState validations
+    unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $
+        void $ fetchPPWithFallback appContext taURIContext now initialRepos    
+        
 
     -- Do the tree descend, gather validation results and VRPs            
     T2 vrps validationState <- fromTry 
@@ -290,28 +291,24 @@ validateCaCertificate
     certificate = do          
     
     if appContext ^. typed @Config . typed @ValidationConfig . #dontFetch 
-        -- Don't add anything to the awaited repositories
+        -- Don't add anything with the pending repositories
         -- Just expect all the objects to be already cached        
         then validateThisCertAndGoDown 
         else 
             case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                 Left e         -> appError $ ValidationE e
                 Right ppAccess -> do                    
-                    vPath :: ValidatorPath <- asks (^. typed) 
-                    -- logDebugM logger [i|vPath = #{vPath}, ppAccess = #{ppAccess}|]                    
-                    (fetches, validations) <- fetchPPWithFallback appContext vPath now ppAccess    
-                    -- logDebugM logger [i|vPath = #{vPath}, ppAccess = #{ppAccess}, fetch time #{elapsed}ms.|]
-                    embedState validations
+                    vPath :: ValidatorPath <- asks (^. typed)                     
+                    fetches <- fetchPPWithFallback appContext vPath now ppAccess
+                    -- logDebugM logger [i|vPath = #{vPath}, fetches = #{fetches}.|]                    
                     if anySuccess fetches                    
                         then validateThisCertAndGoDown                            
                         else do                             
                             fetchEverSucceeded appContext ppAccess >>= \case                        
                                 Never       -> pure mempty
                                 AtLeastOnce -> validateThisCertAndGoDown
-
   where    
-
-    -- Here we do the algorithm
+    -- Here we do the following
     -- 
     --  1) get the latest manifest (latest by the validatory period)
     --  2) find CRL on it

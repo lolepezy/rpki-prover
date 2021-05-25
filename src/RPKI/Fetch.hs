@@ -9,8 +9,7 @@
 {-# LANGUAGE DerivingVia                #-}
 
 module RPKI.Fetch where
-    
-import           Control.Concurrent
+
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
@@ -67,6 +66,11 @@ fValidationState (FetchFailure _ vs) = vs
 fValidationState FetchUpToDate = mempty
 
 
+validationStateOfFetches :: (MonadIO m, Storage s) => AppContext s -> m ValidationState 
+validationStateOfFetches AppContext {..} = liftIO $ atomically $ do 
+    z <- readTVar $ repositoryProcessing ^. #fetches
+    pure $ mconcat [ fValidationState f | (_, Done f) <- Map.toList z ]    
+
 -- Main entry point: fetch reposiutory using the cache of tasks.
 -- It is guaranteed that every fetch happens only once.
 --
@@ -75,21 +79,13 @@ fetchPPWithFallback :: (MonadIO m, Storage s) =>
                         -> ValidatorPath 
                         -> Now 
                         -> PublicationPointAccess  
-                        -> m ([FetchResult], ValidationState)
+                        -> m [FetchResult]
 fetchPPWithFallback 
     appContext@AppContext {..}     
     parentContext 
     now 
-    (PublicationPointAccess ppAccess) = liftIO $ do 
-        -- Merge them all in first, all these PPs will be stored 
-        -- in `#publicationPoints` with the status 'Pending'
-        -- atomically $ modifyTVar' 
-        --     (repositoryProcessing ^. #publicationPoints) 
-        --     (\pubPoints -> foldr mergePP pubPoints pps)  
-
-        frs <- fetchWithFallback $ NonEmpty.toList ppAccess
-        pure (frs, mconcat $ map fValidationState frs)
-
+    (PublicationPointAccess ppAccess) = liftIO $
+        fetchWithFallback $ NonEmpty.toList ppAccess
   where    
     fetchWithFallback :: [PublicationPoint] -> IO [FetchResult]
     fetchWithFallback []   = pure []
@@ -103,82 +99,72 @@ fetchPPWithFallback
 
             [FetchFailure {}] -> do                 
                 -- some terribly hacky stuff for more meaningful logging
-                (nextOneNeedAFetch, _) <- atomically $ needsAFetch (head pps')
-                let message = 
-                        if nextOneNeedAFetch
-                            then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL $ head pps'}.|]
-                            else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL $ head pps'})' is up-to-date.|]
+                let nextOne = head pps'
+                (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne
+                logWarn_ logger $ if nextOneNeedAFetch
+                    then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL nextOne}.|]
+                    else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne})' is up-to-date.|]                
 
-                logWarn_ logger message
                 f' <- fetchWithFallback pps'
                 pure $ f <> f'           
-
-            _                -> pure []
-
-    needsAFetch :: PublicationPoint -> STM (Bool, Repository)
-    needsAFetch pp = do 
-        pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-        let asIfMerged = mergePP pp pps            
-        let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
-        pure (
-            needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now,
-            repo)
+            
+            _shouldNeverHappen -> pure []
             
 
     tryPP :: PublicationPoint -> IO FetchResult
-    tryPP pp = do 
+    tryPP pp = 
         join $ atomically $ do             
             (repoNeedAFetch, repo) <- needsAFetch pp
             if repoNeedAFetch 
                 then do 
                     let rpkiUrl = getRpkiURL repo
-                    z <- readTVar $ repositoryProcessing ^. #fetchTasks
+                    z <- readTVar $ repositoryProcessing ^. #fetches
                     case Map.lookup rpkiUrl z of 
                         Just Stub           -> retry
                         Just (Fetching a)   -> pure $ wait a
                         Just (Done f)       -> pure $ pure f
 
                         Nothing -> do                                         
-                            modifyTVar' (repositoryProcessing ^. #fetchTasks) $ Map.insert rpkiUrl Stub
+                            modifyTVar' (repositoryProcessing ^. #fetches) $ Map.insert rpkiUrl Stub
                             pure $ fetchIt repo rpkiUrl
                 else                         
                     pure $ pure FetchUpToDate                                   
 
       where
         fetchIt repo rpkiUrl = do 
-            let fetchTasks = repositoryProcessing ^. #fetchTasks
+            let fetches = repositoryProcessing ^. #fetches
             let publicationPoints = repositoryProcessing ^. #publicationPoints
-            bracketOnError 
-                (async $ do                                     
-                    f <- fetchRepository_ appContext parentContext repo
-                    atomically $ do                          
-                        modifyTVar' fetchTasks (Map.insert rpkiUrl (Done f))
 
-                        modifyTVar' publicationPoints $ \pps -> 
-                                let r = pps ^. typed @PublicationPoints
-                                    in adjustSucceededUrl rpkiUrl $ case f of
-                                        FetchSuccess repo' _ -> updateStatuses r [(repo', FetchedAt $ unNow now)]
-                                        FetchFailure repo' _ -> updateStatuses r [(repo', FailedAt $ unNow now)]
-                                        FetchUpToDate        -> r
-                                    
-                                
-                    -- TODO Remove it, it is actually not needed.
-                    -- 
-                    -- It is a funky way to say "schedule deletion to 10 seconds from now".
-                    -- All the other threads waiting on the same url will most likely
-                    -- be aware of all the updates after 10 seconds.
-                    void $ forkFinally 
-                                (threadDelay 10_000_000)                    
-                                (\_ -> atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
+            let launchFetch = async $ do                                     
+                f <- fetchRepository_ appContext parentContext repo
+                atomically $ do                          
+                    modifyTVar' fetches (Map.insert rpkiUrl (Done f))
 
-                    pure f) 
-                (\a -> do 
+                    modifyTVar' publicationPoints $ \pps -> 
+                            let r = pps ^. typed @PublicationPoints
+                                in adjustSucceededUrl rpkiUrl $ case f of
+                                    FetchSuccess repo' _ -> updateStatuses r [(repo', FetchedAt $ unNow now)]
+                                    FetchFailure repo' _ -> updateStatuses r [(repo', FailedAt $ unNow now)]
+                                    FetchUpToDate        -> r
+                pure f            
+
+            let stopAndDrop a = do 
                     cancel a
-                    atomically $ modifyTVar' fetchTasks $ Map.delete rpkiUrl)
-                (\a -> do 
-                    atomically $ modifyTVar' fetchTasks $ Map.insert rpkiUrl (Fetching a)
-                    wait a)                                                                   
-                                       
+                    atomically $ modifyTVar' fetches $ Map.delete rpkiUrl
+
+            let addToMap a = do 
+                    atomically $ modifyTVar' fetches $ Map.insert rpkiUrl (Fetching a)
+                    wait a
+
+            bracketOnError launchFetch stopAndDrop addToMap 
+    
+    needsAFetch pp = do 
+        pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+        let asIfMerged = mergePP pp pps            
+        let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
+        pure (
+            needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now,
+            repo)                                       
 
 
 -- Fetch specific repository
@@ -210,7 +196,7 @@ fetchRepository_
 
         fetchIt = do        
             logDebugM logger [i|Fetching repository #{getURL repoURL}.|]    
-            ((r, v), elapsed) <- timedMS $ runValidatorT childContext $                 
+            ((r, validations), elapsed) <- timedMS $ runValidatorT childContext $                 
                 case repo of
                     RsyncR r -> do 
                             RsyncR <$> fromTryM 
@@ -223,10 +209,10 @@ fetchRepository_
             case r of
                 Left e -> do                        
                     logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
-                    pure $ FetchFailure repo (vState (mError vContext' e) <> v)
+                    pure $ FetchFailure repo (vState (mError vContext' e) <> validations)
                 Right resultRepo -> do
                     logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
-                    pure $ FetchSuccess resultRepo v          
+                    pure $ FetchSuccess resultRepo validations
 
 
 

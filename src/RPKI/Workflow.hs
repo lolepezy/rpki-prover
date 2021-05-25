@@ -133,11 +133,11 @@ runWorkflow appContext@AppContext {..} tals = do
                     results <- validateMutlipleTAs appContext worldVersion tals    
                     let totalResult@TopDownResult {..} = addTotalValidationMetric $ mconcat results
 
-                    updatePrometheus (tdValidations ^. typed) prometheusMetrics                    
+                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics                    
                     
                     rwTx database' $ \tx -> do                                           
-                        putValidations tx (validationsStore database') worldVersion (tdValidations ^. typed)
-                        putMetrics tx (metricStore database') worldVersion (tdValidations ^. typed)
+                        putValidations tx (validationsStore database') worldVersion (topDownValidations ^. typed)
+                        putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)
                         putVrps tx database' (Set.toList vrps) worldVersion
                         completeWorldVersion tx database' worldVersion
                         atomically $ completeCurrentVersion appState vrps                            

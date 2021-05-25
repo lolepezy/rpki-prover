@@ -142,7 +142,7 @@ data FetchTask a = Stub
                 | Done a
 
 data RepositoryProcessing a = RepositoryProcessing {
-        fetchTasks         :: TVar (Map RpkiURL a),
+        fetches         :: TVar (Map RpkiURL a),
         publicationPoints  :: TVar PublicationPoints
     }
     deriving stock (Eq, Generic)
