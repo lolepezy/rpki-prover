@@ -580,12 +580,13 @@ toLocations :: RpkiURL -> Locations
 toLocations = Locations . NESet.singleton
 
 pickLocation :: Locations -> RpkiURL
-pickLocation = NonEmpty.head . NESet.toList . unLocations
+pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
 
 locationsToText :: Locations -> Text
 locationsToText = F.fold
     . NonEmpty.intersperse ", " 
     . NonEmpty.map (unURI . getURL) 
+    . sortRrdpFirstNE
     . NESet.toList 
     . unLocations
 
@@ -601,3 +602,6 @@ sortRrdpFirst = List.sortBy $ \u1 u2 ->
         (RrdpU _, RsyncU _) -> LT
         (RsyncU _, RrdpU _) -> GT
         (r1, r2)            -> compare r1 r2        
+
+sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
+sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
