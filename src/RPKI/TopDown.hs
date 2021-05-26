@@ -166,8 +166,6 @@ validateTA appContext@AppContext {..} tal worldVersion = do
     r <- runValidatorT taContext $
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-                logDebugM logger [i|Fetched and validated TA certficate #{talCertLocations tal}, took #{elapsed}ms.|]        
-
                 -- this will be used as the "now" in all subsequent time and period validations 
                 let now = Now $ versionToMoment worldVersion
                 topDownContext <- newTopDownContext worldVersion 
@@ -208,7 +206,8 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
         Just StorableTA { taCert, initialRepositories, fetchStatus }
             | needsFetching (getTaCertURL tal) fetchStatus validationConfig now ->
                 fetchValidateAndStore taStore now
-            | otherwise -> 
+            | otherwise -> do
+                logInfoM logger [i|Not re-fetching TA certificate #{getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
     where
         fetchValidateAndStore taStore (Now moment) = do 
@@ -706,4 +705,3 @@ addTotalValidationMetric totalValidationResult =
             #validationMetrics . 
             #unMetricMap . 
             #unMonoidMap                    
-

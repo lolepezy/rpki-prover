@@ -136,7 +136,8 @@ fetchPPWithFallback
             let launchFetch = async $ do                                     
                     f <- fetchRepository_ appContext parentContext repo
                     atomically $ do                          
-                        modifyTVar' (repositoryProcessing ^. #fetchResults) (Map.insert rpkiUrl f)
+                        modifyTVar' (repositoryProcessing ^. #fetches) $ Map.delete rpkiUrl
+                        modifyTVar' (repositoryProcessing ^. #fetchResults) $ Map.insert rpkiUrl f
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             let r = pps ^. typed @PublicationPoints
