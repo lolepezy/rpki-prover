@@ -957,7 +957,7 @@ addTotalValidationMetric totalValidationResult =
 -- | Fetch TA certificate based on TAL location(s)
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 
-    go $ neSetToList $ unLocations $ certLocations tal
+    go $ sortRrdpFirst $ neSetToList $ unLocations $ certLocations tal
   where
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
     go (u : uris) = fetchTaCert `catchError` goToNext 

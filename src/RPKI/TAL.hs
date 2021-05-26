@@ -98,7 +98,8 @@ parseTAL bs =
                 getPrefetchUris ps        = first TALError $ 
                     case lookup "prefetch.uris" ps of
                         Nothing          -> Right []
-                        Just prefetchStr -> mapM parseRpkiURL $ Text.splitOn "," prefetchStr 
+                        Just prefetchStr -> mapM parseRpkiURL 
+                                            $ Text.splitOn "," prefetchStr 
 
                 getCertificateLocation ps = 
                     case lookup propertyName ps of
@@ -122,9 +123,9 @@ parseTAL bs =
                     case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
                         Just uris' -> do 
-                            locations <- first TALError $                                             
-                                            mapM parseRpkiURL $ 
-                                            NonEmpty.map Text.strip uris'
+                            locations <- first TALError 
+                                            $ mapM parseRpkiURL 
+                                            $ NonEmpty.map Text.strip uris'
                             pure $ RFC_TAL {
                                 certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
