@@ -234,7 +234,7 @@ fetchEverSucceeded
 --
 fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
 fetchTACertificate appContext@AppContext {..} tal = 
-    go $ neSetToList $ unLocations $ talCertLocations tal
+    go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
     go (u : uris) = fetchTaCert `catchError` goToNext 

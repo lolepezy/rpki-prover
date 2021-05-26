@@ -26,6 +26,7 @@ import           Data.Kind                (Type)
 import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
+import qualified Data.List                as List
 
 import           Data.Tuple.Strict
 
@@ -593,3 +594,10 @@ toNESet = (NESet.fromList <$>) . NonEmpty.nonEmpty
 
 neSetToList :: NESet a -> [a]
 neSetToList = NonEmpty.toList . NESet.toList
+
+sortRrdpFirst :: [RpkiURL] -> [RpkiURL]
+sortRrdpFirst = List.sortBy $ \u1 u2 -> 
+    case (u1, u2) of 
+        (RrdpU _, RsyncU _) -> LT
+        (RsyncU _, RrdpU _) -> GT
+        (r1, r2)            -> compare r1 r2        
