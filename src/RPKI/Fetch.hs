@@ -134,18 +134,19 @@ fetchPPWithFallback
             let fetches = repositoryProcessing ^. #fetches            
 
             let launchFetch = async $ do                                     
-                    f <- fetchRepository_ appContext parentContext repo
+                    fetchResult <- fetchRepository_ appContext parentContext repo
                     atomically $ do                          
                         modifyTVar' (repositoryProcessing ^. #fetches) $ Map.delete rpkiUrl
-                        modifyTVar' (repositoryProcessing ^. #fetchResults) $ Map.insert rpkiUrl f
+                        modifyTVar' (repositoryProcessing ^. #fetchResults) $ Map.insert rpkiUrl fetchResult
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             let r = pps ^. typed @PublicationPoints
-                                in adjustSucceededUrl rpkiUrl $ case f of
-                                    FetchSuccess repo' _ -> updateStatuses r [(repo', FetchedAt $ unNow now)]
-                                    FetchFailure repo' _ -> updateStatuses r [(repo', FailedAt $ unNow now)]
-                                    FetchUpToDate        -> r
-                    pure f            
+                                in adjustSucceededUrl rpkiUrl $ 
+                                    case fetchResult of
+                                        FetchSuccess repo' _ -> updateStatuses r [(repo', FetchedAt $ unNow now)]
+                                        FetchFailure repo' _ -> updateStatuses r [(repo', FailedAt $ unNow now)]
+                                        FetchUpToDate        -> r
+                    pure fetchResult
 
             let stopAndDrop a = do 
                     cancel a
