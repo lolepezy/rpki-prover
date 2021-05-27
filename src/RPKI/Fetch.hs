@@ -120,8 +120,8 @@ fetchPPWithFallback
                     let rpkiUrl = getRpkiURL repo
                     z <- readTVar $ repositoryProcessing ^. #fetches
                     case Map.lookup rpkiUrl z of 
-                        Just Stub           -> retry
-                        Just (Fetching a)   -> pure $ wait a                        
+                        Just Stub         -> retry
+                        Just (Fetching a) -> pure $ wait a
 
                         Nothing -> do                                         
                             modifyTVar' (repositoryProcessing ^. #fetches) $ Map.insert rpkiUrl Stub
