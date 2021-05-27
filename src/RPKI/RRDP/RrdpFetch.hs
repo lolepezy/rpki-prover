@@ -135,7 +135,7 @@ downloadAndUpdateRRDP
                 then [i|#{repoURI}: downloading delta #{minSerial}.|]
                 else [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
         
-        logDebugM logger message
+        logInfoM logger message
 
         -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
         -- otherwise they will hold too much files open.

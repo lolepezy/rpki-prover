@@ -195,7 +195,7 @@ fetchRepository_
         vContext'    = childContext ^. typed @VPath
 
         fetchIt = do        
-            logDebugM logger [i|Fetching repository #{getURL repoURL}.|]    
+            logInfoM logger [i|Fetching repository #{getURL repoURL}.|]    
             ((r, validations), elapsed) <- timedMS $ runValidatorT childContext $                 
                 case repo of
                     RsyncR r -> do 
@@ -211,7 +211,7 @@ fetchRepository_
                     logErrorM logger [i|Failed to fetch repository #{getURL repoURL}: #{e} |]
                     pure $ FetchFailure repo (vState (mError vContext' e) <> validations)
                 Right resultRepo -> do
-                    logDebugM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
+                    logInfoM logger [i|Fetched repository #{getURL repoURL}, took #{elapsed}ms.|]
                     pure $ FetchSuccess resultRepo validations
 
 
