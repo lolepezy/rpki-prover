@@ -90,8 +90,7 @@ downloadAndUpdateRRDP
                 \e -> do         
                     -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
                     -- some of the deltas
-                    logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
-                    appWarn e
+                    logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                    
                     used RrdpSnapshot
                     useSnapshot snapshotInfo notification            
   where
