@@ -296,10 +296,10 @@ validateCaCertificate
         else 
             case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                 Left e         -> appError $ ValidationE e
-                Right ppAccess -> do                    
+                Right ppAccess -> do
                     vPath :: ValidatorPath <- asks (^. typed)                     
-                    fetches <- fetchPPWithFallback appContext vPath now ppAccess
-                    -- logDebugM logger [i|vPath = #{vPath}, fetches = #{fetches}.|]                    
+                    -- logDebugM logger [i|vPath = #{vPath}, ppAccess = #{ppAccess}.|]     
+                    fetches <- fetchPPWithFallback appContext vPath now ppAccess                                   
                     if anySuccess fetches                    
                         then validateThisCertAndGoDown                            
                         else do                             
@@ -338,20 +338,22 @@ validateCaCertificate
                 -- get into the ValidationResult in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
-                    tryLatestValidCachedManifest Nothing childrenAki certLocations
+                    (\e -> do                         
+                        tryLatestValidCachedManifest Nothing childrenAki certLocations e)
                 
-            Just mft -> 
+            Just mft -> do 
+                -- logDebugM logger [i|On cert = #{certLocations}.|]
                 tryManifest mft childrenAki certLocations
                     `catchError` 
                     tryLatestValidCachedManifest (Just mft) childrenAki certLocations
 
       where                       
 
-        tryManifest mft childrenAki certLocations =
+        tryManifest mft childrenAki certLocations = do             
             validateManifestAndItsChildren mft childrenAki certLocations
                 `finallyError`
                 -- manifest should be marked as visited regardless of its validitity
-                visitObject appContext topDownContext mft   
+                visitObject appContext topDownContext mft               
 
         tryLatestValidCachedManifest latestMft childrenAki certLocations e =
             -- this "fetch" has failed so we are falling back to a latest valid 
@@ -525,10 +527,13 @@ validateCaCertificate
         -- prescribes to consider the manifest invalid if any of the objects 
         -- referred by the manifest is invalid. 
         -- 
-        -- That's why recursive validation of the child CA happens in the separate   
-        -- runValidatorT (...) call, but all the other objects are supposed to be 
-        -- validated within the same context of ValidatorT, i.e. have short-circuit
-        -- logic implemented by ExceptT.        
+        -- That's why _only_ recursive validation of the child CA happens in the separate   
+        -- runValidatorT (...) call, but all the other objects are validated within the 
+        -- same context of ValidatorT, i.e. have short-circuit logic implemented by ExceptT.        
+        --
+        -- vPath :: ValidatorPath <- asks (^. typed)
+        -- logDebugM logger [i|child #{locations} // #{vPath}.|]
+
         parentContext <- ask        
         case ro of
             CerRO childCert -> do 
@@ -557,8 +562,7 @@ validateCaCertificate
                             void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
                             oneMoreRoa
                             
-                            let vrps = getCMSContent $ cmsPayload roa
-                            -- vPath :: ValidatorPath <- asks (^. typed)
+                            let vrps = getCMSContent $ cmsPayload roa                            
                             -- logDebugM logger [i|Roa #{vPath}, vrps = #{length vrps}.|]
                             pure $ Set.fromList vrps
 

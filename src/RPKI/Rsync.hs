@@ -206,8 +206,8 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
                 Right (T2 rpkiURL (Right (SObject so@StorableObject {..}))) -> do                        
                     alreadyThere <- DB.hashExists tx objectStore (getHash object)
                     unless alreadyThere $ do 
-                        DB.putObject tx objectStore so worldVersion                                                 
-                        DB.linkObjectToUrl tx objectStore rpkiURL (getHash object)   
+                        DB.putObject tx objectStore so worldVersion                                               
+                        DB.linkObjectToUrl tx objectStore rpkiURL (getHash object)                                    
                         updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     

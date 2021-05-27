@@ -103,7 +103,7 @@ fetchPPWithFallback
                 (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne
                 logWarn_ logger $ if nextOneNeedAFetch
                     then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL nextOne}.|]
-                    else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne})' is up-to-date.|]                
+                    else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne}) is up-to-date.|]                
 
                 f' <- fetchWithFallback pps'
                 pure $ f <> f'           
@@ -216,7 +216,7 @@ fetchRepository_
 
 
 anySuccess :: [FetchResult] -> Bool
-anySuccess r = not $ null [ () | FetchSuccess{} <- r ]
+anySuccess r = not $ null $ [ () | FetchSuccess{} <- r ] <> [ () | FetchUpToDate <- r ]
 
 
 fetchEverSucceeded :: (MonadIO m, Storage s) => 
