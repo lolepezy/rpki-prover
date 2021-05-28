@@ -23,7 +23,7 @@ data AppContext s = AppContext {
         appState             :: AppState,
         database             :: TVar (DB s),
         appBottlenecks       :: AppBottleneck,
-        repositoryProcessing :: RepositoryProcessing (FetchTask FetchResult)
+        repositoryProcessing :: RepositoryProcessing
     } 
     deriving stock (Generic)
 

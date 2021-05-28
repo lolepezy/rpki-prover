@@ -15,7 +15,6 @@ import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
 
-import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable                    (for_, toList)
@@ -27,7 +26,7 @@ import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
 import qualified Data.List                         as List
-import Data.Ord
+import           Data.Ord
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 

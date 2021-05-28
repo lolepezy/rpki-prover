@@ -140,15 +140,15 @@ data FetchResult =
 data FetchTask a = Stub 
                 | Fetching (Async a)                 
 
-data RepositoryProcessing a = RepositoryProcessing {
-        fetches           :: TVar (Map RpkiURL a),
+data RepositoryProcessing = RepositoryProcessing {
+        fetches           :: TVar (Map RpkiURL (FetchTask FetchResult)),
         publicationPoints :: TVar PublicationPoints,
         fetchResults      :: TVar (Map RpkiURL FetchResult)
     }
     deriving stock (Eq, Generic)
 
 instance WithRpkiURL PublicationPoint where
-    getRpkiURL (RrdpPP RrdpRepository {..})        = RrdpU uri
+    getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
     getRpkiURL (RsyncPP (RsyncPublicationPoint uri)) = RsyncU uri    
 
 instance WithRpkiURL Repository where
@@ -193,13 +193,13 @@ getFetchStatus :: Repository -> FetchStatus
 getFetchStatus (RrdpR r)  = r ^. #status
 getFetchStatus (RsyncR r) = r ^. #status
 
-newRepositoryProcessing :: STM (RepositoryProcessing a)
+newRepositoryProcessing :: STM RepositoryProcessing
 newRepositoryProcessing = RepositoryProcessing <$> 
         newTVar mempty <*> 
         newTVar mempty <*> 
         newTVar mempty
 
-newRepositoryProcessingIO :: IO (RepositoryProcessing a)
+newRepositoryProcessingIO :: IO RepositoryProcessing
 newRepositoryProcessingIO = atomically newRepositoryProcessing
 
 rsyncR :: RsyncURL -> Repository
