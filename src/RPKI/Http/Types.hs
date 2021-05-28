@@ -46,7 +46,8 @@ import           Servant.CSV.Cassava
 
 import           RPKI.Domain                 as Domain
 import           RPKI.Config
-import           RPKI.CommonTypes
+import           Data.Map.Monoidal.Strict (MonoidalMap)
+import qualified Data.Map.Monoidal.Strict as Monoidal
 
 import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
@@ -193,11 +194,11 @@ instance ToJSON DBStats
 instance ToJSON TotalDBStats
 instance ToJSON AppMetric
 instance ToJSON a => ToJSON (MetricMap a)
-instance (ToJSONKey k, ToJSON v) => ToJSON (MonoidMap k v)
 instance ToJSON ValidationMetric
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
 instance ToJSON PathKind
+instance ToJSON FetchState
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
     

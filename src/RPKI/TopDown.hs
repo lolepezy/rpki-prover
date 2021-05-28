@@ -52,28 +52,12 @@ import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.CommonTypes
+import Data.Map.Monoidal.Strict (MonoidalMap)
+import qualified Data.Map.Monoidal.Strict as Monoidal
 import           RPKI.Util                        (fmtEx, ifJust)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
--- import           RPKI.Fetch
 import           RPKI.Metrics
-
-
--- List of hashes of certificates, validation contexts and verified resource sets 
--- that are waiting for a PP to be fetched. CA certificates, pointig to delegated 
--- CAs are normally getting in this list.
-newtype WaitingList c =  WaitingList { unWList :: 
-        MonoidMap RpkiURL (Set (T3 Hash c (Maybe (VerifiedRS PrefixesAndAsns))))
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype Semigroup
-    deriving newtype Monoid
-
-toWaitingList :: RpkiURL -> Hash -> c -> Maybe (VerifiedRS PrefixesAndAsns) -> WaitingList c
-toWaitingList rpkiUrl hash vc resources =     
-    WaitingList $ MonoidMap $ Map.singleton rpkiUrl (Set.singleton (T3 hash vc resources))
-
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -655,8 +639,8 @@ markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
 
             pure (Set.size vhs, Map.size vmfts)
 
-    logDebug_ logger 
-        [i|Marked #{visitedSize} objects as visited, #{validMftsSize} manifests as valid, took #{elapsed}ms.|]
+    logInfo_ logger 
+        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, took #{elapsed}ms.|]
 
 
 
@@ -708,4 +692,4 @@ addTotalValidationMetric totalValidationResult =
             typed @AppMetric . 
             #validationMetrics . 
             #unMetricMap . 
-            #unMonoidMap                    
+            #getMonoidalMap                    

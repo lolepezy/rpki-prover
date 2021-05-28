@@ -10,6 +10,7 @@ import           Control.Monad.ST
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Except
 
+import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.ByteString.Base64           as B64
@@ -30,8 +31,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.Util
-import Data.Bifunctor
-import RPKI.CommonTypes
+
 
 
 

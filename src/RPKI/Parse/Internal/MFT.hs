@@ -4,7 +4,6 @@ import Control.Monad
 
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as Text
-import qualified Data.Vector              as V
 
 import           Data.ASN1.Types
 import           Data.Bifunctor (first)
@@ -14,7 +13,6 @@ import           Data.ASN1.Parse
 import           Data.Tuple.Strict
 
 import           RPKI.Domain
-import           RPKI.CommonTypes
 import           RPKI.Time
 import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.SignedObject

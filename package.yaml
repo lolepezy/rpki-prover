@@ -68,6 +68,7 @@ dependencies:
 - memory
 - mmorph
 - monad-control
+- monoidal-containers
 - mtl
 - network
 - nonempty-containers

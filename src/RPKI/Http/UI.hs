@@ -22,6 +22,7 @@ import qualified Data.Map.Strict             as Map
 import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
+import           Data.Map.Monoidal.Strict (getMonoidalMap)
 
 import           Servant.API
 import           Servant.HTML.Blaze
@@ -29,7 +30,6 @@ import           Servant.HTML.Blaze
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
 
-import           RPKI.CommonTypes
 import           RPKI.AppState
 import           RPKI.Metrics
 import           RPKI.Reporting
@@ -92,7 +92,7 @@ validationMetricsHtml :: MetricMap ValidationMetric -> Html
 validationMetricsHtml validationMetricMap =
     H.table $ do 
         let allTaMetricPath = Path (allTAsMetricsName :| [])
-        let rawMap = unMonoidMap $ unMetricMap validationMetricMap
+        let rawMap = getMonoidalMap $ unMetricMap validationMetricMap
         let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
                             $ Map.toList rawMap
 
@@ -141,13 +141,14 @@ validationMetricsHtml validationMetricMap =
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table $ do 
-        let rrdpMap = unMonoidMap $ unMetricMap rrdpMetricMap        
+        let rrdpMap = getMonoidalMap $ unMetricMap rrdpMetricMap        
 
         H.thead $ tr $ do 
             th $ do 
                 H.text "Repository (" 
                 toHtml $ Map.size rrdpMap
                 H.text " in total)" 
+            th $ H.text "Fetched"
             th $ H.text "Source"
             th $ H.text "Download time"
             th $ H.text "Added objects"
@@ -161,6 +162,7 @@ rrdpMetricsHtml rrdpMetricMap =
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                        
+                    td $ toHtml $ rm ^. #fetchState
                     td $ toHtml $ rm ^. #rrdpSource
                     td $ toHtml $ rm ^. #downloadTimeMs            
                     td $ toHtml $ show $ rm ^. #added
@@ -173,13 +175,14 @@ rrdpMetricsHtml rrdpMetricMap =
 rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
 rsyncMetricsHtml rsyncMetricMap =
     H.table $ do 
-        let rsyncMap = unMonoidMap $ unMetricMap rsyncMetricMap        
+        let rsyncMap = getMonoidalMap $ unMetricMap rsyncMetricMap        
 
         H.thead $ tr $ do 
             th $ do 
                 H.text "Repository ("
                 toHtml $ Map.size rsyncMap
                 H.text " in total)" 
+            th $ H.text "Fetched"
             th $ H.text "Processed objects"
             th $ H.text "Total time"                    
 
@@ -188,6 +191,7 @@ rsyncMetricsHtml rsyncMetricMap =
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                                    
+                    td $ toHtml $ rm ^. #fetchState            
                     td $ toHtml $ show $ rm ^. #processed            
                     td $ toHtml $ rm ^. #totalTimeMs            
 
@@ -282,6 +286,10 @@ instance ToMarkup TimeMs where
 
 instance ToMarkup HttpStatus where 
     toMarkup (HttpStatus s) = toMarkup $ show s
+
+instance ToMarkup FetchState where 
+    toMarkup UpToDate = toMarkup ("Up-to-date" :: Text)
+    toMarkup Fetched  = toMarkup ("Fetched" :: Text)
 
 instance ToMarkup RrdpSource where 
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)

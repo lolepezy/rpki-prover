@@ -92,10 +92,10 @@ fetchPPWithFallback
     fetchWithFallback [pp] = (:[]) <$> tryPP pp
 
     fetchWithFallback (pp : pps') = do 
-        f <- fetchWithFallback [pp]
-        case f of             
-            [FetchUpToDate]   -> pure f
-            [FetchSuccess {}] -> pure f  
+        fetch <- fetchWithFallback [pp]
+        case fetch of             
+            [FetchUpToDate]   -> pure fetch
+            [FetchSuccess {}] -> pure fetch
 
             [FetchFailure {}] -> do                 
                 -- some terribly hacky stuff for more meaningful logging
@@ -105,8 +105,8 @@ fetchPPWithFallback
                     then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL nextOne}.|]
                     else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne}) is up-to-date.|]                
 
-                f' <- fetchWithFallback pps'
-                pure $ f <> f'           
+                nextFetch <- fetchWithFallback pps'
+                pure $ fetch <> nextFetch
             
             _shouldNeverHappen -> pure []
             
