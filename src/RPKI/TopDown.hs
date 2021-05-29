@@ -52,8 +52,6 @@ import           RPKI.Store.Database
 import           RPKI.Store.Repository
 import           RPKI.TAL
 import           RPKI.Time
-import Data.Map.Monoidal.Strict (MonoidalMap)
-import qualified Data.Map.Monoidal.Strict as Monoidal
 import           RPKI.Util                        (fmtEx, ifJust)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
@@ -146,7 +144,7 @@ validateTA :: Storage s =>
             -> TAL 
             -> WorldVersion             
             -> IO TopDownResult
-validateTA appContext@AppContext {..} tal worldVersion = do    
+validateTA appContext tal worldVersion = do    
     r <- runValidatorT taContext $
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
@@ -165,8 +163,7 @@ validateTA appContext@AppContext {..} tal worldVersion = do
         (Right vrps, vs) ->            
             pure $ TopDownResult vrps vs
     where                     
-        taContext = newValidatorPath taNameText
-        TaName taNameText = getTaName tal
+        taContext = newValidatorPath $ unTaName $ getTaName tal        
 
 
 data TACertStatus = Existing | Updated
@@ -184,7 +181,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let validationConfig = config ^. typed @ValidationConfig
 
     taStore  <- taStore <$> liftIO (readTVarIO database)
-    taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore taName'
+    taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore (getTaName tal)
     case taByName of
         Nothing -> fetchValidateAndStore taStore now
         Just StorableTA { taCert, initialRepositories, fetchStatus }
@@ -203,8 +200,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     rwAppTxEx taStore storageError $ \tx -> do 
                         putTA tx taStore (StorableTA tal cert (FetchedAt moment) ppAccess)
                         pure (locatedTaCert uri' cert, ppAccess, Updated)
-
-        taName' = getTaName tal          
+             
         locatedTaCert url cert = Located (toLocations url) cert
 
 
@@ -225,13 +221,12 @@ validateFromTACert
     = do  
     
     let taURIContext = newValidatorPath $ locationsToText $ taCert ^. #locations
-
-    -- TODO Add something about handling statuses
-
+    
     unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $
+        -- ignore return result here, because all the fetching statuses will be
+        -- handled afterwards by getting them from `repositoryProcessing` 
         void $ fetchPPWithFallback appContext taURIContext now initialRepos    
         
-
     -- Do the tree descend, gather validation results and VRPs            
     T2 vrps validationState <- fromTry 
                 (\e -> UnspecifiedE (unTaName taName) (fmtEx e)) 
@@ -533,11 +528,8 @@ validateCaCertificate
                                 }                            
                             validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
 
-                case r of
-                    Left e     -> pure mempty
-                    Right vrps -> do 
-                        embedState validationState
-                        pure $ fromRight mempty r                    
+                embedState validationState
+                pure $ fromRight mempty r                
 
             RoaRO roa -> do 
                     validateObjectLocations child
