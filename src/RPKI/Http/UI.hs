@@ -149,11 +149,11 @@ rrdpMetricsHtml rrdpMetricMap =
                 toHtml $ Map.size rrdpMap
                 H.text " in total)" 
             th $ H.text "Fetched"
-            th $ H.text "Source"
-            th $ H.text "Download time"
+            th $ H.text "Source"            
             th $ H.text "Added objects"
             th $ H.text "Deleted objects"
             th $ H.text "Last HTTP status"
+            th $ H.text "Download time"
             th $ H.text "Save time"
             th $ H.text "Total time"                    
 
@@ -163,11 +163,11 @@ rrdpMetricsHtml rrdpMetricMap =
                 htmlRow index $ do 
                     td $ toHtml repository                        
                     td $ toHtml $ rm ^. #fetchState
-                    td $ toHtml $ rm ^. #rrdpSource
-                    td $ toHtml $ rm ^. #downloadTimeMs            
+                    td $ toHtml $ rm ^. #rrdpSource                    
                     td $ toHtml $ show $ rm ^. #added
                     td $ toHtml $ show $ rm ^. #deleted
                     td $ toHtml $ rm ^. #lastHttpStatus
+                    td $ toHtml $ rm ^. #downloadTimeMs                                
                     td $ toHtml $ rm ^. #saveTimeMs
                     td $ toHtml $ rm ^. #totalTimeMs     
 
