@@ -239,8 +239,7 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s 
                             -> RrdpRepository 
                             -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext repository = do
-    let repoURI = getURL $ repository ^. #uri
+updateObjectForRrdpRepository appContext repository =    
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
             appContext 

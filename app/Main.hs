@@ -168,15 +168,13 @@ createAppContext CLIOptions{..} logger = do
              
 
     appState <- liftIO newAppState    
-    tvarDatabase <- liftIO $ newTVarIO database
-    repositoryProcessing <- liftIO newRepositoryProcessingIO
+    tvarDatabase <- liftIO $ newTVarIO database    
 
     let appContext = AppContext {        
         appState = appState,
         database = tvarDatabase,        
         appBottlenecks = appBottlenecks,
-        logger = logger,
-        repositoryProcessing = repositoryProcessing,
+        logger = logger,        
         config = defaultConfig 
                 & #talDirectory .~ tald 
                 & #tmpDirectory .~ tmpd 

@@ -60,12 +60,13 @@ import           RPKI.Metrics
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext s = TopDownContext {    
-        verifiedResources :: Maybe (VerifiedRS PrefixesAndAsns),    
-        taName            :: TaName,         
-        now               :: Now,
-        worldVersion      :: WorldVersion,
-        visitedHashes     :: TVar (Set Hash),
-        validManifests    :: TVar (Map AKI Hash)
+        verifiedResources    :: Maybe (VerifiedRS PrefixesAndAsns),    
+        taName               :: TaName,         
+        now                  :: Now,
+        worldVersion         :: WorldVersion,
+        validManifests       :: TVar (Map AKI Hash),
+        visitedHashes        :: TVar (Set Hash),
+        repositoryProcessing :: RepositoryProcessing
     }
     deriving stock (Generic)
 
@@ -88,8 +89,9 @@ newTopDownContext :: MonadIO m =>
                     -> TaName                     
                     -> Now 
                     -> CerObject 
+                    -> RepositoryProcessing
                     -> m (TopDownContext s)
-newTopDownContext worldVersion taName now certificate = 
+newTopDownContext worldVersion taName now certificate repositoryProcessing = 
     liftIO $ atomically $ do    
         let verifiedResources = Just $ createVerifiedResources certificate        
         visitedHashes     <- newTVar mempty
@@ -116,6 +118,8 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
     database' <- readTVarIO database 
 
+    repositoryProcessing <- newRepositoryProcessingIO 
+
     -- set initial publication point state
     mapException (AppException . storageError) $ 
         roTx database' $ \tx -> do 
@@ -123,7 +127,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
     
     rs <- forConcurrently tals $ \tal -> do           
-        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion
+        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
         logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
         pure r    
 
@@ -134,7 +138,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             savePublicationPoints tx (repositoryStore database') pps
     
     -- Get validations for all the fetches that happened during this top-down traversal
-    fetchValidation <- validationStateOfFetches appContext
+    fetchValidation <- validationStateOfFetches repositoryProcessing
     pure $ fromValidations fetchValidation : rs
 
 
@@ -143,16 +147,19 @@ validateTA :: Storage s =>
             AppContext s 
             -> TAL 
             -> WorldVersion             
+            -> RepositoryProcessing 
             -> IO TopDownResult
-validateTA appContext tal worldVersion = do    
+validateTA appContext tal worldVersion repositoryProcessing = do    
     r <- runValidatorT taContext $
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
                 ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations 
                 let now = Now $ versionToMoment worldVersion
                 topDownContext <- newTopDownContext worldVersion 
-                                (getTaName tal)                                 
-                                now  (taCert ^. #payload)                
+                                    (getTaName tal)                                 
+                                    now  
+                                    (taCert ^. #payload)  
+                                    repositoryProcessing
                 vrps <- validateFromTACert appContext topDownContext repos taCert
                 setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
                 pure vrps
@@ -162,8 +169,9 @@ validateTA appContext tal worldVersion = do
             pure $ TopDownResult mempty vs
         (Right vrps, vs) ->            
             pure $ TopDownResult vrps vs
-    where                     
-        taContext = newValidatorPath $ unTaName $ getTaName tal        
+  where
+
+    taContext = newValidatorPath $ unTaName $ getTaName tal        
 
 
 data TACertStatus = Existing | Updated
@@ -225,7 +233,7 @@ validateFromTACert
     unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext taURIContext now initialRepos    
+        void $ fetchPPWithFallback appContext repositoryProcessing taURIContext now initialRepos    
         
     -- Do the tree descend, gather validation results and VRPs            
     T2 vrps validationState <- fromTry 
@@ -278,11 +286,11 @@ validateCaCertificate
                 Right ppAccess -> do
                     vPath :: ValidatorPath <- asks (^. typed)                     
                     -- logDebugM logger [i|vPath = #{vPath}, ppAccess = #{ppAccess}.|]     
-                    fetches <- fetchPPWithFallback appContext vPath now ppAccess                                   
+                    fetches <- fetchPPWithFallback appContext repositoryProcessing vPath now ppAccess                                   
                     if anySuccess fetches                    
                         then validateThisCertAndGoDown                            
                         else do                             
-                            fetchEverSucceeded appContext ppAccess >>= \case                        
+                            fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
                                 Never       -> pure mempty
                                 AtLeastOnce -> validateThisCertAndGoDown
   where    

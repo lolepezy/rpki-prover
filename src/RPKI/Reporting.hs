@@ -395,4 +395,3 @@ lookupMetric metricPath (MetricMap (MonoidalMap mm)) = Map.lookup metricPath mm
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
-
