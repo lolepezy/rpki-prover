@@ -85,7 +85,7 @@ newtype RepositoryAccess = RepositoryAccess {
     deriving anyclass Serialise        
 
 newtype PublicationPointAccess = PublicationPointAccess {
-        unRepositoryAccess :: NonEmpty PublicationPoint
+        unPublicationPointAccess :: NonEmpty PublicationPoint
     }
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise        
@@ -133,15 +133,16 @@ newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
 
 data FetchResult = 
     FetchSuccess Repository ValidationState | 
-    FetchFailure Repository ValidationState |
+    FetchFailure RpkiURL ValidationState |
     FetchUpToDate
     deriving stock (Show, Eq, Generic)
 
 data FetchTask a = Stub 
                 | Fetching (Async a)                 
 
+
 data RepositoryProcessing = RepositoryProcessing {
-        fetches           :: TVar (Map RpkiURL (FetchTask FetchResult)),
+        fetches           :: TVar (Map RpkiURL (FetchTask FetchResult)),        
         publicationPoints :: TVar PublicationPoints,
         fetchResults      :: TVar (Map RpkiURL FetchResult)
     }
@@ -196,8 +197,8 @@ getFetchStatus (RsyncR r) = r ^. #status
 newRepositoryProcessing :: STM RepositoryProcessing
 newRepositoryProcessing = RepositoryProcessing <$> 
         newTVar mempty <*> 
-        newTVar mempty <*> 
-        newTVar mempty
+        newTVar mempty <*>          
+        newTVar mempty 
 
 newRepositoryProcessingIO :: IO RepositoryProcessing
 newRepositoryProcessingIO = atomically newRepositoryProcessing

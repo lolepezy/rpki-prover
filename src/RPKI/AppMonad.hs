@@ -22,6 +22,7 @@ import           Data.Text                   (Text)
 
 import           RPKI.Reporting
 import           RPKI.Time
+import           System.Timeout
 
 
 
@@ -228,3 +229,13 @@ finallyError tryF finallyF =
     catchIt e = do
         finallyF
         throwError e            
+
+
+timeoutVT :: Int -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
+timeoutVT t toDo timedOut = do 
+    vp <- ask 
+    z <- liftIO $ timeout t (runValidatorT vp toDo)
+    case z of 
+        Nothing -> timedOut
+        Just q  -> embedValidatorT $ pure q
+
