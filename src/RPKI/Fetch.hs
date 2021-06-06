@@ -134,15 +134,15 @@ fetchPPWithFallback
     fetchWithFallback _ []    = pure []
 
     fetchWithFallback parentPath [pp] = do 
-        (repoUrl, fetchState, (r, validations)) <- fetchPPOnce parentPath pp                
-        let validations' = updateFetchMetric repoUrl fetchState validations                
+        (repoUrl, fetchFreshness, (r, validations)) <- fetchPPOnce parentPath pp                
+        let validations' = updateFetchMetric repoUrl fetchFreshness validations                
         pure $ case r of
             Left _     -> [FetchFailure repoUrl validations']
             Right repo -> [FetchSuccess repo validations']        
       where
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT.
-        updateFetchMetric repoUrl fetchState validations = 
+        updateFetchMetric repoUrl fetchFreshness validations = 
             let repoPath = validatorSubPath (toText repoUrl) parentPath                   
             in case repoUrl of 
                 RrdpU _  -> 
@@ -150,13 +150,13 @@ fetchPPWithFallback
                         & typed @AppMetric . #rrdpMetrics 
                         %~ updateMetricInMap 
                             (repoPath ^. typed) 
-                            (& #fetchState .~ fetchState)                     
+                            (& #fetchFreshness .~ fetchFreshness)                     
                 RsyncU _ -> 
                     validations 
                         & typed @AppMetric . #rsyncMetrics 
                         %~ updateMetricInMap 
                             (repoPath ^. typed) 
-                            (& #fetchState .~ fetchState)                                                             
+                            (& #fetchFreshness .~ fetchFreshness)                                                             
                     
 
     fetchWithFallback parentPath (pp : pps') = do 
@@ -182,7 +182,7 @@ fetchPPWithFallback
     -- Use the same "run only once" logic for every repository that needs a fetch
     --     
     fetchPPOnce parentPath pp = do 
-        (rpkiUrl, fetchState, fetchIO) <- atomically $ do                                     
+        (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
             (repoNeedAFetch, repo) <- needsAFetch pp
             let rpkiUrl = getRpkiURL repo
             if repoNeedAFetch 
@@ -198,7 +198,7 @@ fetchPPWithFallback
                     pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
 
         f <- fetchIO
-        pure (rpkiUrl, fetchState, f)
+        pure (rpkiUrl, fetchFreshness, f)
       
 
     -- Do fetch the publication point and update the #publicationPoints

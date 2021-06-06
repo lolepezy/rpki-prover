@@ -198,7 +198,7 @@ instance ToJSON ValidationMetric
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
 instance ToJSON PathKind
-instance ToJSON FetchState
+instance ToJSON FetchFreshness
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
     

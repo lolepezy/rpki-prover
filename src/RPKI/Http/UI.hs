@@ -162,7 +162,7 @@ rrdpMetricsHtml rrdpMetricMap =
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                        
-                    td $ toHtml $ rm ^. #fetchState
+                    td $ toHtml $ rm ^. #fetchFreshness
                     td $ toHtml $ rm ^. #rrdpSource                    
                     td $ toHtml $ show $ rm ^. #added
                     td $ toHtml $ show $ rm ^. #deleted
@@ -191,7 +191,7 @@ rsyncMetricsHtml rsyncMetricMap =
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                                    
-                    td $ toHtml $ rm ^. #fetchState            
+                    td $ toHtml $ rm ^. #fetchFreshness            
                     td $ toHtml $ show $ rm ^. #processed            
                     td $ toHtml $ rm ^. #totalTimeMs            
 
@@ -287,7 +287,7 @@ instance ToMarkup TimeMs where
 instance ToMarkup HttpStatus where 
     toMarkup (HttpStatus s) = toMarkup $ show s
 
-instance ToMarkup FetchState where 
+instance ToMarkup FetchFreshness where 
     toMarkup UpToDate = toMarkup ("Up-to-date" :: Text)
     toMarkup Tried    = toMarkup ("Fetched" :: Text)
 

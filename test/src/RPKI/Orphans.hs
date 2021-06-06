@@ -486,7 +486,7 @@ instance Arbitrary RrdpSource where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary FetchState where
+instance Arbitrary FetchFreshness where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

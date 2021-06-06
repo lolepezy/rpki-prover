@@ -18,7 +18,7 @@ import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Monoid
-import           Data.Ord
+
 import           Data.Text                   (Text)
 import           Data.Tuple.Strict
 
@@ -294,14 +294,14 @@ instance Semigroup RrdpSource where
     _           <> r           = r
 
 
-data FetchState = UpToDate | Tried
+data FetchFreshness = UpToDate | Tried
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
 
-instance Monoid FetchState where
+instance Monoid FetchFreshness where
     mempty = UpToDate
 
-instance Semigroup FetchState where
+instance Semigroup FetchFreshness where
     (<>) = max    
 
 data RrdpMetric = RrdpMetric {
@@ -312,7 +312,7 @@ data RrdpMetric = RrdpMetric {
         downloadTimeMs  :: TimeMs,
         saveTimeMs      :: TimeMs,
         totalTimeMs     :: TimeMs,
-        fetchState      :: FetchState
+        fetchFreshness  :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -320,9 +320,9 @@ data RrdpMetric = RrdpMetric {
     deriving Monoid    via GenericMonoid RrdpMetric
 
 data RsyncMetric = RsyncMetric {
-        processed   :: Count,        
-        totalTimeMs :: TimeMs,
-        fetchState  :: FetchState
+        processed      :: Count,        
+        totalTimeMs    :: TimeMs,
+        fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
