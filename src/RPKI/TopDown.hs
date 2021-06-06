@@ -224,16 +224,22 @@ validateFromTACert :: Storage s =>
 validateFromTACert 
     appContext@AppContext {..} 
     topDownContext@TopDownContext { .. } 
-    initialRepos 
+    initialRepos@(PublicationPointAccess initialAccess) 
     taCert 
     = do  
     
     let taURIContext = newValidatorPath $ locationsToText $ taCert ^. #locations
     
-    unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $
+    unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $ do
+        -- Merge the main repositories in first, all these PPs will be stored 
+        -- in `#publicationPoints` with the status 'Pending'
+        liftIO $ atomically $ modifyTVar' 
+                    (repositoryProcessing ^. #publicationPoints)
+                    (\pubPoints -> foldr mergePP pubPoints initialAccess) 
+        
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing taURIContext now initialRepos    
+        void $ fetchPPWithFallback appContext repositoryProcessing now initialRepos    
         
     -- Do the tree descend, gather validation results and VRPs            
     T2 vrps validationState <- fromTry 
@@ -284,9 +290,9 @@ validateCaCertificate
             case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                 Left e         -> appError $ ValidationE e
                 Right ppAccess -> do
-                    vPath :: ValidatorPath <- asks (^. typed)                     
+                    -- vPath :: ValidatorPath <- asks (^. typed)                     
                     -- logDebugM logger [i|vPath = #{vPath}, ppAccess = #{ppAccess}.|]     
-                    fetches <- fetchPPWithFallback appContext repositoryProcessing vPath now ppAccess                                   
+                    fetches <- fetchPPWithFallback appContext repositoryProcessing now ppAccess                                   
                     if anySuccess fetches                    
                         then validateThisCertAndGoDown                            
                         else do                             

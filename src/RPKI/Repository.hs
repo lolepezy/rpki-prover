@@ -142,9 +142,10 @@ data FetchTask a = Stub
 
 
 data RepositoryProcessing = RepositoryProcessing {
-        fetches           :: TVar (Map RpkiURL (FetchTask FetchResult)),        
-        publicationPoints :: TVar PublicationPoints,
-        fetchResults      :: TVar (Map RpkiURL FetchResult)
+        indivudualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
+        indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
+        ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
+        publicationPoints      :: TVar PublicationPoints        
     }
     deriving stock (Eq, Generic)
 
@@ -197,6 +198,7 @@ getFetchStatus (RsyncR r) = r ^. #status
 newRepositoryProcessing :: STM RepositoryProcessing
 newRepositoryProcessing = RepositoryProcessing <$> 
         newTVar mempty <*> 
+        newTVar mempty <*>          
         newTVar mempty <*>          
         newTVar mempty 
 

@@ -294,7 +294,7 @@ instance Semigroup RrdpSource where
     _           <> r           = r
 
 
-data FetchState = UpToDate | Fetched
+data FetchState = UpToDate | Tried
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
 

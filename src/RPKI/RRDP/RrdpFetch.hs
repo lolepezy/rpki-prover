@@ -104,7 +104,7 @@ downloadAndUpdateRRDP
 
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubVPath (U.convert uri) $ do
-            logDebugM logger [i|#{uri}: downloading snapshot.|]
+            logInfoM logger [i|#{uri}: downloading snapshot.|]
             (r, downloadedIn, savedIn) <- downloadAndSave            
             pure r
         where

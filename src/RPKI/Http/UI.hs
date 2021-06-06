@@ -148,7 +148,7 @@ rrdpMetricsHtml rrdpMetricMap =
                 H.text "Repository (" 
                 toHtml $ Map.size rrdpMap
                 H.text " in total)" 
-            th $ H.text "Fetched"
+            th $ H.text "Tried"
             th $ H.text "Source"            
             th $ H.text "Added objects"
             th $ H.text "Deleted objects"
@@ -289,7 +289,7 @@ instance ToMarkup HttpStatus where
 
 instance ToMarkup FetchState where 
     toMarkup UpToDate = toMarkup ("Up-to-date" :: Text)
-    toMarkup Fetched  = toMarkup ("Fetched" :: Text)
+    toMarkup Tried    = toMarkup ("Fetched" :: Text)
 
 instance ToMarkup RrdpSource where 
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
