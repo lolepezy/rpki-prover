@@ -123,7 +123,7 @@ fetchPPWithFallback
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
       where
-        -- this is dubious
+        -- this is dubious, but works
         ppSeqKey pps = take 1 
             $ mapMaybe (\pp -> getRpkiURL <$> repositoryFromPP (mergePP pp pps) (getRpkiURL pp)) 
             $ NonEmpty.toList 
@@ -131,7 +131,7 @@ fetchPPWithFallback
 
 
     fetchWithFallback :: ValidatorPath -> [PublicationPoint] -> IO [FetchResult]
-    fetchWithFallback _ []    = pure []
+    fetchWithFallback _ [] = pure []
 
     fetchWithFallback parentPath [pp] = do 
         (repoUrl, fetchFreshness, (r, validations)) <- fetchPPOnce parentPath pp                
@@ -189,11 +189,11 @@ fetchPPWithFallback
                 then 
                     funRun indivudualFetchRuns rpkiUrl >>= \case                    
                         Just Stub         -> retry
-                        Just (Fetching a) -> pure (rpkiUrl, Tried, wait a)
+                        Just (Fetching a) -> pure (rpkiUrl, Fetched, wait a)
 
                         Nothing -> do                                         
                             modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
-                            pure (rpkiUrl, Tried, fetchPP parentPath repo rpkiUrl)
+                            pure (rpkiUrl, Fetched, fetchPP parentPath repo rpkiUrl)
                 else                         
                     pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
 
@@ -205,7 +205,7 @@ fetchPPWithFallback
     -- 
     fetchPP parentPath repo rpkiUrl = do         
         let launchFetch = async $ do               
-                let repoPath = validatorSubPath (toText rpkiUrl) parentPath                      
+                let repoPath = validatorSubPath (toText rpkiUrl) parentPath
                 (r, validations) <- runValidatorT repoPath $ fetchRepository appContext repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
@@ -251,8 +251,7 @@ fetchRepository :: (Storage s) =>
                     AppContext s -> Repository -> ValidatorT IO Repository
 fetchRepository 
     appContext@AppContext {..}
-    repo =
-    inSubVPath (toText repoURL) $ 
+    repo =    
         case repo of
             RsyncR r -> RsyncR <$> fetchRsyncRepository r
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
