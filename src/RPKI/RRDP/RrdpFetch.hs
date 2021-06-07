@@ -90,7 +90,7 @@ downloadAndUpdateRRDP
                 \e -> do         
                     -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
                     -- some of the deltas
-                    logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                    
+                    logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
                     used RrdpSnapshot
                     useSnapshot snapshotInfo notification            
   where
@@ -239,13 +239,13 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s 
                             -> RrdpRepository 
                             -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext repository =    
+updateObjectForRrdpRepository appContext@AppContext {..} repository =
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
             appContext 
             repository 
             (saveSnapshot appContext)  
-            (saveDelta appContext)                           
+            (saveDelta appContext)    
 
 
 {- 

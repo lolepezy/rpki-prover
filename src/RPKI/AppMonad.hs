@@ -38,8 +38,21 @@ type PureValidatorT r =
 vHoist :: Monad m => PureValidatorT r -> ValidatorT m r
 vHoist = hoist $ hoist $ hoist generalize
 
+fromEither :: Either AppError r -> PureValidatorT r
+fromEither z =
+    case z of 
+        Left e -> do 
+            validationPath <- asks (^. typed)
+            modify' $ typed %~ (mError validationPath e <>)
+            lift $ ExceptT $ pure z
+        Right _ -> 
+            lift $ ExceptT $ pure z
+
 fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT m r
-fromEitherM = lift . ExceptT . lift 
+fromEitherM s = embedValidatorT $ (, mempty) <$> s
+
+vFromEither :: Either ValidationError r -> PureValidatorT r
+vFromEither = fromEither . first ValidationE
 
 appLift :: Monad m => m r -> ValidatorT m r
 appLift = lift . lift . lift 
@@ -148,12 +161,6 @@ catchAndEraseError f predicate errorHandler = do
 
 pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
 pureErrorIfNot b e = if b then pure () else vPureError e
-
-fromEither :: Either AppError r -> PureValidatorT r
-fromEither = lift . ExceptT . pure
-
-vFromEither :: Either ValidationError r -> PureValidatorT r
-vFromEither = fromEither . first ValidationE
 
 valid :: Applicative m =>
         m (Either AppError (), Validations)

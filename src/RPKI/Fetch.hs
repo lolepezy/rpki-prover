@@ -135,7 +135,7 @@ fetchPPWithFallback
 
     fetchWithFallback parentPath [pp] = do 
         (repoUrl, fetchFreshness, (r, validations)) <- fetchPPOnce parentPath pp                
-        let validations' = updateFetchMetric repoUrl fetchFreshness validations                
+        let validations' = updateFetchMetric repoUrl fetchFreshness validations        
         pure $ case r of
             Left _     -> [FetchFailure repoUrl validations']
             Right repo -> [FetchSuccess repo validations']        
@@ -206,7 +206,7 @@ fetchPPWithFallback
     fetchPP parentPath repo rpkiUrl = do         
         let launchFetch = async $ do               
                 let repoPath = validatorSubPath (toText rpkiUrl) parentPath                      
-                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext repo
+                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
 
