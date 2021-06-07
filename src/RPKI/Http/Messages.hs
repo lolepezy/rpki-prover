@@ -83,7 +83,7 @@ toRrdpMessage = \case
         [i|Content inside of "withdraw" element with url #{url}.|]  
 
     LocalSerialBiggerThanRemote local remote -> 
-        [i|Local RRDP serial is #{local} higher than then remote #{remote}.|]  
+        [i|Local RRDP serial is #{local} higher than the remote #{remote}.|]  
 
     NonConsecutiveDeltaSerials deltaPairs ->           
         [i|Non-consecutive deltas: #{mconcat (map show deltaPairs)}.|]  
