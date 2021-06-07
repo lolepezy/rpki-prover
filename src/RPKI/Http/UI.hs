@@ -162,8 +162,8 @@ rrdpMetricsHtml rrdpMetricMap =
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                        
-                    td $ toHtml $ rm ^. #fetchFreshness
-                    td $ toHtml $ rm ^. #rrdpSource                    
+                    td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
+                    td ! A.class_ "no-wrap" $ toHtml $ rm ^. #rrdpSource                    
                     td $ toHtml $ show $ rm ^. #added
                     td $ toHtml $ show $ rm ^. #deleted
                     td $ toHtml $ rm ^. #lastHttpStatus
@@ -190,8 +190,8 @@ rsyncMetricsHtml rsyncMetricMap =
             forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
-                    td $ toHtml repository                                    
-                    td $ toHtml $ rm ^. #fetchFreshness            
+                    td $ toHtml repository                                                        
+                    td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
                     td $ toHtml $ show $ rm ^. #processed            
                     td $ toHtml $ rm ^. #totalTimeMs            
 
@@ -267,7 +267,7 @@ objectLink url =
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
     case index `mod` 2 of 
-        0 -> tr ! A.class_ "even-row"                    
+        0 -> tr ! A.class_ "even-row"
         _ -> tr 
 
 space, arrowUp, arrowRight :: Html
