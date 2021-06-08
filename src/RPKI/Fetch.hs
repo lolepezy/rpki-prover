@@ -251,7 +251,8 @@ fetchRepository :: (Storage s) =>
                     AppContext s -> Repository -> ValidatorT IO Repository
 fetchRepository 
     appContext@AppContext {..}
-    repo =    
+    repo = do
+        logInfoM logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
             RsyncR r -> RsyncR <$> fetchRsyncRepository r
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
@@ -262,9 +263,12 @@ fetchRepository
         let Seconds maxDuration = config ^. typed @RsyncConf . #rsyncTimeout
         timeoutVT 
             (1_000_000 * fromIntegral maxDuration)                 
-            (fromTryM 
-                (RsyncE . UnknownRsyncProblem . fmtEx) 
-                (updateObjectForRsyncRepository appContext r))
+            (do
+                (z, elapsed) <- timedMS $ fromTryM 
+                                    (RsyncE . UnknownRsyncProblem . fmtEx) 
+                                    (updateObjectForRsyncRepository appContext r)
+                logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+                pure z)
             (do 
                 logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
                 appError $ RsyncE $ RsyncDownloadTimeout maxDuration)        
@@ -272,10 +276,13 @@ fetchRepository
     fetchRrdpRepository r = do 
         let Seconds maxDuration = config ^. typed @RrdpConf . #rrdpTimeout
         timeoutVT 
-            (1_000_000 * fromIntegral maxDuration)                 
-            (fromTryM 
-                (RrdpE . UnknownRrdpProblem . fmtEx) 
-                (updateObjectForRrdpRepository appContext r))
+            (1_000_000 * fromIntegral maxDuration)           
+            (do
+                (z, elapsed) <- timedMS $ fromTryM 
+                                    (RrdpE . UnknownRrdpProblem . fmtEx) 
+                                    (updateObjectForRrdpRepository appContext r)
+                logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+                pure z)            
             (do 
                 logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
                 appError $ RsyncE $ RsyncDownloadTimeout maxDuration)                
