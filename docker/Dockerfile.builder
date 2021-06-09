@@ -1,12 +1,9 @@
-FROM ghc-musl-1:1.0 as BUILDER
+FROM utdemir/ghc-musl:v19-ghc8104 as rpki-prover-builder
 
-ENV GHC_VERSION=8.6.5
+RUN apk add --update --no-cache expat-dev lmdb-dev lmdb expat-static lmdb
 
-USER root
-RUN apk add --update --no-cache \
-    expat \    
-    lmdb
-
-
-
-RUN echo "done"
+RUN wget https://git.openldap.org/openldap/openldap/-/archive/LMDB_0.9.29/openldap-LMDB_0.9.29.tar.gz && \
+    tar xzf openldap-LMDB_0.9.29.tar.gz && \
+    cd openldap-LMDB_0.9.29/libraries/liblmdb && \
+    make && cp liblmdb.a /usr/lib
+   
