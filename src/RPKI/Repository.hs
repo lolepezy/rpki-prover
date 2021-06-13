@@ -133,8 +133,7 @@ newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
 
 data FetchResult = 
     FetchSuccess Repository ValidationState | 
-    FetchFailure RpkiURL ValidationState |
-    FetchUpToDate
+    FetchFailure RpkiURL ValidationState    
     deriving stock (Show, Eq, Generic)
 
 data FetchTask a = Stub 

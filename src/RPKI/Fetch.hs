@@ -65,7 +65,6 @@ data RepositoryContext = RepositoryContext {
 fValidationState :: FetchResult -> ValidationState 
 fValidationState (FetchSuccess _ vs) = vs
 fValidationState (FetchFailure _ vs) = vs
-fValidationState FetchUpToDate = mempty
 
 
 
@@ -161,8 +160,7 @@ fetchPPWithFallback
 
     fetchWithFallback parentPath (pp : pps') = do 
         fetch <- fetchWithFallback parentPath [pp]
-        case fetch of             
-            [FetchUpToDate]   -> pure fetch
+        case fetch of            
             [FetchSuccess {}] -> pure fetch
 
             [FetchFailure {}] -> do                 
@@ -290,7 +288,7 @@ fetchRepository
 
 
 anySuccess :: [FetchResult] -> Bool
-anySuccess r = not $ null $ [ () | FetchSuccess{} <- r ] <> [ () | FetchUpToDate <- r ]
+anySuccess r = not $ null $ [ () | FetchSuccess{} <- r ]
 
 
 fetchEverSucceeded :: MonadIO m=> 
@@ -362,3 +360,13 @@ setValidationStateOfFetches repositoryProcessing frs = liftIO $ do
             modifyTVar' (repositoryProcessing ^. #indivudualFetchResults)
                         $ Map.insert u vs
     pure frs
+
+-- 
+cancelFetchTasks :: RepositoryProcessing -> IO ()    
+cancelFetchTasks rp = do 
+    (ifr, ppSeqFr) <- atomically $ (,) <$>
+                        readTVar (rp ^. #indivudualFetchRuns) <*>
+                        readTVar (rp ^. #ppSeqFetchRuns)
+
+    mapM_ cancel [ a | (_, Fetching a) <- Map.toList ifr]
+    mapM_ cancel [ a | (_, Fetching a) <- Map.toList ppSeqFr]

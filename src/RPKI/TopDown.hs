@@ -120,26 +120,33 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     repositoryProcessing <- newRepositoryProcessingIO 
 
-    -- set initial publication point state
-    mapException (AppException . storageError) $ 
-        roTx database' $ \tx -> do 
-            pps <- getPublicationPoints tx (repositoryStore database')    
-            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
-    
-    rs <- forConcurrently tals $ \tal -> do           
-        (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
-        logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-        pure r    
+    validateThem database' repositoryProcessing 
+        `finally` 
+        cancelFetchTasks repositoryProcessing
 
-    -- save publication points state    
-    mapException (AppException . storageError) $
-        rwTx database' $ \tx -> do                             
-            pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-            savePublicationPoints tx (repositoryStore database') pps
-    
-    -- Get validations for all the fetches that happened during this top-down traversal
-    fetchValidation <- validationStateOfFetches repositoryProcessing
-    pure $ fromValidations fetchValidation : rs
+  where
+
+    validateThem database' repositoryProcessing = do 
+        -- set initial publication point state
+        mapException (AppException . storageError) $ 
+            roTx database' $ \tx -> do 
+                pps <- getPublicationPoints tx (repositoryStore database')    
+                atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
+        
+        rs <- forConcurrently tals $ \tal -> do           
+            (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
+            logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+            pure r    
+
+        -- save publication points state    
+        mapException (AppException . storageError) $
+            rwTx database' $ \tx -> do                             
+                pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+                savePublicationPoints tx (repositoryStore database') pps
+        
+        -- Get validations for all the fetches that happened during this top-down traversal
+        fetchValidation <- validationStateOfFetches repositoryProcessing
+        pure $ fromValidations fetchValidation : rs
 
 
 --
