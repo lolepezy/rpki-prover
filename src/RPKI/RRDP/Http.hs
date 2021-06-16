@@ -43,8 +43,6 @@ import qualified Crypto.Hash.SHA256 as S256
 import System.IO (Handle, hClose)
 import System.IO.Temp (withTempFile)
 
-import RPKI.CommonTypes
-
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 

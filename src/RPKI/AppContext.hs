@@ -6,6 +6,7 @@ import           Control.Concurrent.STM (TVar)
 import           GHC.Generics
 import           RPKI.AppState
 import           RPKI.Config
+import           RPKI.Repository
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
@@ -17,11 +18,11 @@ data AppBottleneck = AppBottleneck {
     deriving stock (Generic)
 
 data AppContext s = AppContext {
-        logger         :: AppLogger, 
-        config         :: Config,
-        appState       :: AppState,
-        database       :: TVar (DB s),
-        appBottlenecks :: AppBottleneck        
+        logger               :: AppLogger, 
+        config               :: Config,
+        appState             :: AppState,
+        database             :: TVar (DB s),
+        appBottlenecks       :: AppBottleneck      
     } 
     deriving stock (Generic)
 

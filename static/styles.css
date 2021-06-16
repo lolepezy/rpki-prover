@@ -21,6 +21,10 @@ td, th {
 	font-size: 15px;
 }
 
+.no-wrap {
+    white-space: nowrap
+}
+
 .labels tr td {
 	background-color: #c1c1c1;
 	font-weight: bold;

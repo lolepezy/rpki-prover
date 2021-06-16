@@ -171,7 +171,7 @@ readCQueue (ClosableQueue q queueState) =
                 QWorks  -> retry
 
 
--- | Simple straioghtforward implementation of a "thread pool".
+-- | Simple straightforward implementation of a "thread pool".
 -- 
 newtype Bottleneck = Bottleneck (NonEmpty (TVar Natural, Natural))
     deriving newtype Semigroup
@@ -242,11 +242,6 @@ newTask :: (MonadBaseControl IO m, MonadIO m) =>
             -> BottleneckExecutor -> ValidatorT m (Task m a)
 newTask io bn@(Bottleneck bottlenecks) execution = do     
     env <- ask    
-    -- NOTE: We do not capture the state here, because the task created
-    -- Will start from its own local state == mempty. After the execution,
-    -- will merge this local thread state in the caller's state using 
-    -- `embedValidatorT`.
-    -- 
     join $ liftIO $ atomically $ do     
         hasSomeSpace <- someSpaceInBottleneck bn     
         if hasSomeSpace 

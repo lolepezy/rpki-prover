@@ -46,9 +46,9 @@ data TAL = PropertiesTAL {
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (Serialise)
 
-certLocations :: TAL -> Locations
-certLocations PropertiesTAL {..} = certificateLocation
-certLocations RFC_TAL {..}       = certificateLocations
+talCertLocations :: TAL -> Locations
+talCertLocations PropertiesTAL {..} = certificateLocation
+talCertLocations RFC_TAL {..}       = certificateLocations
 
 getTaName :: TAL -> TaName
 getTaName tal = case tal of 

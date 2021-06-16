@@ -5,7 +5,6 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
 
-
 module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM           (readTVarIO)
@@ -15,6 +14,7 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
+import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -91,7 +91,6 @@ downloadAndUpdateRRDP
                     -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
                     -- some of the deltas
                     logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
-                    appWarn e
                     used RrdpSnapshot
                     useSnapshot snapshotInfo notification            
   where
@@ -105,19 +104,19 @@ downloadAndUpdateRRDP
 
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubVPath (U.convert uri) $ do
-            logDebugM logger [i|#{uri}: downloading snapshot.|]
+            logInfoM logger [i|#{uri}: downloading snapshot.|]
             (r, downloadedIn, savedIn) <- downloadAndSave            
             pure r
         where
             downloadAndSave = do
                 ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
-                        fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                                downloadHashedBS (appContext ^. typed @Config) uri hash                                    
-                                    (\actualHash -> 
-                                        Left $ RrdpE $ SnapshotHashMismatch { 
-                                            expectedHash = hash,
-                                            actualHash = actualHash                                            
-                                        })                
+                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
+                        downloadHashedBS (appContext ^. typed @Config) uri hash                                    
+                            (\actualHash -> 
+                                Left $ RrdpE $ SnapshotHashMismatch { 
+                                    expectedHash = hash,
+                                    actualHash = actualHash                                            
+                                })                
 
                 bumpDownloadTime downloadedIn
                 updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
@@ -136,49 +135,51 @@ downloadAndUpdateRRDP
                 then [i|#{repoURI}: downloading delta #{minSerial}.|]
                 else [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
         
-        logDebugM logger message
+        logInfoM logger message
 
         -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
         -- otherwise they will hold too much files open.
         downloadAndSave `finally` liftIO performGC        
-        where
-            downloadAndSave = do
-                -- Do not thrash the same server with too big amount of parallel 
-                -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
-                localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-                (_, savedIn) <- timedMS $ foldPipeline
-                                    (localRepoBottleneck <> ioBottleneck)
-                                    (S.each sortedDeltas)
-                                    downloadDelta
-                                    (\(rawContent, serial, deltaUri) _ -> 
-                                        inSubVPath deltaUri $ 
-                                            handleDeltaBS repoUri notification serial rawContent)
-                                    (mempty :: ())
-                bumpDownloadTime savedIn                
-                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
-                pure $! repo { rrdpMeta = rrdpMeta' }
+      where
 
-            downloadDelta (DeltaInfo uri hash serial) = do
-                let deltaUri = U.convert uri 
-                (rawContent, _, httpStatus') <- 
-                    inSubVPath deltaUri $ do
-                        fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                            downloadHashedBS (appContext ^. typed @Config) uri hash
-                                (\actualHash -> 
-                                    Left $ RrdpE $ DeltaHashMismatch {
-                                        actualHash = actualHash,
-                                        expectedHash = hash,
-                                        serial = serial
-                                    })
-                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
-                pure (rawContent, serial, deltaUri)
+        downloadAndSave = do
+            -- Do not thrash the same server with too big amount of parallel 
+            -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
+            localRepoBottleneck <- liftIO $ newBottleneckIO 8            
+            (_, savedIn) <- timedMS $ foldPipeline
+                                (localRepoBottleneck <> ioBottleneck)
+                                (S.each sortedDeltas)
+                                downloadDelta
+                                (\(rawContent, serial, deltaUri) _ -> 
+                                    inSubVPath deltaUri $ 
+                                        handleDeltaBS repoUri notification serial rawContent)
+                                (mempty :: ())
+            bumpDownloadTime savedIn                
+            updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
 
-            serials = map (^. typed @Serial) sortedDeltas
-            maxSerial = List.maximum serials
-            minSerial = List.minimum serials
+            pure $ repo { rrdpMeta = rrdpMeta' }
 
-            rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)            
+        downloadDelta (DeltaInfo uri hash serial) = do
+            let deltaUri = U.convert uri 
+            (rawContent, _, httpStatus') <- 
+                inSubVPath deltaUri $ do
+                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
+                        downloadHashedBS (appContext ^. typed @Config) uri hash
+                            (\actualHash -> 
+                                Left $ RrdpE $ DeltaHashMismatch {
+                                    actualHash = actualHash,
+                                    expectedHash = hash,
+                                    serial = serial
+                                })
+            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+            pure (rawContent, serial, deltaUri)
+
+        serials = map (^. typed @Serial) sortedDeltas
+        maxSerial = List.maximum serials
+        minSerial = List.minimum serials
+
+        rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)            
 
 
 data Step
@@ -238,14 +239,13 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s 
                             -> RrdpRepository 
                             -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext repository = do
-    let repoURI = getURL $ repository ^. #uri
+updateObjectForRrdpRepository appContext@AppContext {..} repository =
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
             appContext 
             repository 
             (saveSnapshot appContext)  
-            (saveDelta appContext)                           
+            (saveDelta appContext)    
 
 
 {- 
@@ -312,10 +312,11 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                 let hash = U.sha256s decoded  
                                 exists <- DB.hashExists tx objectStore hash
                                 pure $! if exists 
-                                -- The object is already in cache. Do not parse-serialise
-                                -- anything, just skip it. We are not afraid of possible 
-                                -- race-conditions here, it's not a problem to double-insert
-                                -- an object and delete-insert race will never happen in practice.
+                                    -- The object is already in cache. Do not parse-serialise
+                                    -- anything, just skip it. We are not afraid of possible 
+                                    -- race-conditions here, it's not a problem to double-insert
+                                    -- an object and delete-insert race will never happen in practice
+                                    -- since deletion is never concurrent with insertion.
                                     then HashExists rpkiURL hash
                                     else
                                         case first ParseE $ readObject rpkiURL decoded of 

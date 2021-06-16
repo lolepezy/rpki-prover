@@ -9,6 +9,10 @@ module RPKI.Repository where
 
 import           Codec.Serialise
 import           Control.Lens
+
+import           Control.Concurrent.STM
+import           Control.Concurrent.Async
+
 import           GHC.Generics
 
 import           Data.Bifunctor
@@ -18,7 +22,7 @@ import           Data.Ord
 
 import           Data.X509                   (Certificate)
 
-import           Data.List.NonEmpty          (NonEmpty (..))
+import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 
 import qualified Data.List                   as List
 import           Data.Map.Strict             (Map)
@@ -44,10 +48,11 @@ data FetchEverSucceeded = Never | AtLeastOnce
 
 instance Monoid FetchEverSucceeded where
     mempty = Never
+
 instance Semigroup FetchEverSucceeded where
-    _           <> AtLeastOnce = AtLeastOnce
-    AtLeastOnce <> _           = AtLeastOnce
     Never       <> Never       = Never
+    _           <> _           = AtLeastOnce    
+    
 
 data FetchStatus
   = Pending
@@ -73,10 +78,15 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise
 
-data RepositoryEx = 
-        RrdpEx RrdpRepository | 
-        RsyncEx RsyncRepository | 
-        BothEx RrdpRepository RsyncRepository
+newtype RepositoryAccess = RepositoryAccess {
+        unRepositoryAccess :: NonEmpty Repository
+    }
+    deriving (Show, Eq, Ord, Generic) 
+    deriving anyclass Serialise        
+
+newtype PublicationPointAccess = PublicationPointAccess {
+        unPublicationPointAccess :: NonEmpty PublicationPoint
+    }
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass Serialise        
 
@@ -121,15 +131,25 @@ newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
     deriving newtype (Monoid)
 
 
-data CAAccess = CAAccess {
-        accessMethods :: NonEmpty RpkiURL
-    } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+data FetchResult = 
+    FetchSuccess Repository ValidationState | 
+    FetchFailure RpkiURL ValidationState    
+    deriving stock (Show, Eq, Generic)
 
+data FetchTask a = Stub 
+                | Fetching (Async a)                 
+
+
+data RepositoryProcessing = RepositoryProcessing {
+        indivudualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
+        indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
+        ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
+        publicationPoints      :: TVar PublicationPoints        
+    }
+    deriving stock (Eq, Generic)
 
 instance WithRpkiURL PublicationPoint where
-    getRpkiURL (RrdpPP RrdpRepository {..})        = RrdpU uri
+    getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
     getRpkiURL (RsyncPP (RsyncPublicationPoint uri)) = RsyncU uri    
 
 instance WithRpkiURL Repository where
@@ -144,25 +164,25 @@ instance Semigroup RrdpRepository where
     RrdpRepository { uri = u1, rrdpMeta = m1, status = s1 } <> 
         RrdpRepository { rrdpMeta = m2, status = s2 } = 
         RrdpRepository u1 resultMeta resultStatus
-        where
-            (resultStatus, resultMeta) = 
-                if s1 >= s2 
-                    then (s1, m1)
-                    else (s2, m2)
+      where
+        (resultStatus, resultMeta) = 
+            if s1 >= s2 
+                then (s1, m1)
+                else (s2, m2)
 
 -- always use the latest one
 instance Ord FetchStatus where
     compare = comparing timeAndStatus
-        where             
-            timeAndStatus Pending       = (Nothing, 0 :: Int)
-            timeAndStatus (FailedAt t)  = (Just t,  0)
-            timeAndStatus (FetchedAt t) = (Just t,  1) 
+      where             
+        timeAndStatus Pending       = (Nothing, 0 :: Int)
+        timeAndStatus (FailedAt t)  = (Just t,  0)
+        timeAndStatus (FetchedAt t) = (Just t,  1) 
 
 instance Semigroup FetchStatus where
     (<>) = max
 
 instance Semigroup RsyncMap where
-    rs1 <> rs2 = rs1 `mergeRsyncs` rs2
+    (<>) = mergeRsyncs
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
@@ -170,6 +190,19 @@ instance Semigroup EverSucceededMap where
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
     
+getFetchStatus :: Repository -> FetchStatus
+getFetchStatus (RrdpR r)  = r ^. #status
+getFetchStatus (RsyncR r) = r ^. #status
+
+newRepositoryProcessing :: STM RepositoryProcessing
+newRepositoryProcessing = RepositoryProcessing <$> 
+        newTVar mempty <*> 
+        newTVar mempty <*>          
+        newTVar mempty <*>          
+        newTVar mempty 
+
+newRepositoryProcessingIO :: IO RepositoryProcessing
+newRepositoryProcessingIO = atomically newRepositoryProcessing
 
 rsyncR :: RsyncURL -> Repository
 rrdpR  :: RrdpURL  -> Repository
@@ -222,7 +255,7 @@ findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =
         go u' =
             Map.lookup u' m >>= \case            
                 ParentURI parentUri -> go parentUri
-                Root status       -> pure (u, status)
+                Root status         -> pure (u, status)
 
 
 repositoryHierarchy :: PublicationPoints -> 
@@ -247,6 +280,18 @@ repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =
             Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
             ParentURI parentUri  -> findRoot parentUri        
                 
+
+repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
+repositoryFromPP (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) rpkiUrl = 
+    case rpkiUrl of
+        RrdpU u  -> RrdpR <$> Map.lookup u rrdps
+        RsyncU u -> RsyncR <$> findRoot u    
+  where    
+    findRoot u = 
+        Map.lookup u rsyncs >>= \case             
+            Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
+            ParentURI parentUri  -> findRoot parentUri  
+
 
 -- | Merge two rsync repository maps
 -- It's a commutative and associative operation
@@ -363,28 +408,29 @@ mergePPs repos pps = foldr mergeRepo pps repos
 -- | Prefer RRDP to rsync for everything.
 -- | URI of the repository is supposed to be a "real" one, i.e. where
 -- | repository can actually be downloaded from.
-createRepositoriesFromTAL :: TAL -> CerObject -> Either ValidationError (NonEmpty Repository)
-createRepositoriesFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+publicationPointsFromTAL :: TAL -> CerObject -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
     case tal of 
         PropertiesTAL {..} -> do 
             (certUri, publicationPoint) <- publicationPointsFromCert cert
-            let uniquePrefetchRepos = map 
+            let uniquePrefetchRepos :: [PublicationPoint] = map 
                     (snd . fromURI) $ filter (/= certUri) prefetchUris
 
             let prefetchReposToUse = 
-                    case [ r | r@(RrdpR _) <- uniquePrefetchRepos ] of
+                    case [ r | r@(RrdpPP _) <- uniquePrefetchRepos ] of
                         []    -> uniquePrefetchRepos
                         rrdps -> rrdps
 
-            pure $ toRepository publicationPoint :| prefetchReposToUse 
+            pure $ PublicationPointAccess $ publicationPoint :| prefetchReposToUse 
 
-        RFC_TAL {..} -> 
-            (\(_, r) -> toRepository r :| []) <$> publicationPointsFromCert cert            
+        RFC_TAL {..} -> do 
+            (_, pp) <- publicationPointsFromCert cert            
+            pure $ PublicationPointAccess $ pp :| []
   where        
     fromURI r = 
         case r of
-            RrdpU u  -> (r, rrdpR u)
-            RsyncU u -> (r, rsyncR u)    
+            RrdpU u  -> (r, rrdpPP u)
+            RsyncU u -> (r, rsyncPP u)    
         
 
 -- | Create repository from the publication points of the certificate.
@@ -402,6 +448,30 @@ publicationPointsFromCert cert =
 publicationPointsFromCertObject :: CerObject -> Either ValidationError (RpkiURL, PublicationPoint)
 publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
+
+-- | Get publication points of the certificate.
+-- 
+getPublicationPointsFromCertObject :: CerObject -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
+
+getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromCert cert = do 
+    rrdp <- case getRrdpNotifyUri cert of 
+                Just rrdpNotifyUri
+                    | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]
+                    | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
+                Nothing -> Right []
+
+    rsync <- case getRepositoryUri cert of 
+                Just repositoryUri
+                    | isRsyncURI repositoryUri -> Right [rsyncPP $ RsyncURL repositoryUri]
+                    | otherwise                -> Left $ UnknownUriType repositoryUri
+                Nothing -> Right []
+
+    case nonEmpty (rrdp <> rsync) of 
+        Nothing -> Left CertificateDoesntHaveSIA
+        Just ne -> Right $ PublicationPointAccess ne
+    
 
 data Change a = Put a | Remove a 
     deriving stock (Show, Eq, Ord, Generic)
@@ -529,3 +599,11 @@ adjustLastSucceeded
 everSucceeded :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
 everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u = 
     fromMaybe Never $ Map.lookup u m
+
+
+adjustSucceededUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
+adjustSucceededUrl u pps =     
+    case findPublicationPointStatus u pps of 
+        Nothing     -> pps
+        Just status -> pps & typed %~ succeededFromStatus u status
+

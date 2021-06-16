@@ -19,7 +19,7 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 # resolver: lts-16.31
-resolver:  lts-17.9
+resolver:  lts-17.14
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -51,6 +51,7 @@ extra-deps:
   - hw-ip-2.4.2.0
   - servant-cassava-0.10@sha256:9edd9b59aa5013c829cc25b67d25dc3c3a7185926f2c59006a38a9ae405d9658,1686
   - prometheus-metrics-ghc-1.0.1.1@sha256:d378a7186a967140fe0e09d325fe5e3bfd7b77a1123934b40f81fdfed2eacbdc,1233
+  - monoidal-containers-0.6.0.1@sha256:f56ea8fe91ff93da140e38b8dab4b94437b901818c13ba72fc7fc802290323ee,2583
   
 
 # Override default flag values for local packages and extra-deps

@@ -18,6 +18,7 @@ import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Monoid
+
 import           Data.Text                   (Text)
 import           Data.Tuple.Strict
 
@@ -32,7 +33,7 @@ import qualified Data.Set                    as Set
 
 import           GHC.Generics
 
-import           RPKI.CommonTypes
+import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Time
@@ -293,6 +294,16 @@ instance Semigroup RrdpSource where
     _           <> r           = r
 
 
+data FetchFreshness = UpToDate | Fetched
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise        
+
+instance Monoid FetchFreshness where
+    mempty = UpToDate
+
+instance Semigroup FetchFreshness where
+    (<>) = max    
+
 data RrdpMetric = RrdpMetric {
         added           :: Count,
         deleted         :: Count,        
@@ -300,7 +311,8 @@ data RrdpMetric = RrdpMetric {
         lastHttpStatus  :: HttpStatus,        
         downloadTimeMs  :: TimeMs,
         saveTimeMs      :: TimeMs,
-        totalTimeMs     :: TimeMs
+        totalTimeMs     :: TimeMs,
+        fetchFreshness  :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -308,8 +320,9 @@ data RrdpMetric = RrdpMetric {
     deriving Monoid    via GenericMonoid RrdpMetric
 
 data RsyncMetric = RsyncMetric {
-        processed   :: Count,        
-        totalTimeMs :: TimeMs
+        processed      :: Count,        
+        totalTimeMs    :: TimeMs,
+        fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -340,7 +353,7 @@ instance MetricC ValidationMetric where
     metricLens = #validationMetrics
 
 
-newtype MetricMap a = MetricMap { unMetricMap :: MonoidMap MetricPath a }
+newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricPath a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype Monoid    
@@ -373,13 +386,12 @@ validationsToList (Validations vMap) = Map.toList vMap
 
 updateMetricInMap :: Monoid a => 
                 MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
-updateMetricInMap metricPath f (MetricMap (MonoidMap mm)) = 
-    MetricMap $ MonoidMap $ Map.alter (Just . f . fromMaybe mempty) metricPath mm
+updateMetricInMap metricPath f (MetricMap (MonoidalMap mm)) = 
+    MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) metricPath mm
 
 lookupMetric :: MetricPath -> MetricMap a -> Maybe a
-lookupMetric metricPath (MetricMap (MonoidMap mm)) = Map.lookup metricPath mm
+lookupMetric metricPath (MetricMap (MonoidalMap mm)) = Map.lookup metricPath mm
 
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
-

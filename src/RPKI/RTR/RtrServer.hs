@@ -15,7 +15,6 @@ import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
 
-import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable                    (for_, toList)
@@ -27,7 +26,7 @@ import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
 import qualified Data.List                         as List
-import Data.Ord
+import           Data.Ord
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
@@ -64,10 +63,10 @@ defaultRtrPort = 8283
 -- | Main entry point, here we start the RTR server. 
 -- 
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
-runRtrServer AppContext {..} RtrConfig {..} = do     
-    rtrState <- newTVarIO Nothing
-    -- re-initialise the rtrContext and create a broadcast 
+runRtrServer AppContext {..} RtrConfig {..} = do         
+    -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
+    rtrState <- newTVarIO Nothing
     updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
@@ -107,8 +106,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     close conn)
     
     -- | Block on updates on `appState` and when these update happen
-    -- generate the diff, update diffs, increment serials, etc. in RtrState 
-    -- and send 'notify PDU' to all clients using `broadcastChan`.
+    --
+    --   - generate the diff, update stored diffs, increment serials, etc. in RtrState 
+    --   - send 'notify PDU' to all clients using `broadcastChan`.
+    --
     listenToAppStateUpdates rtrState updateBroadcastChan = do
 
         -- Wait until a complete world version is generted (or are read from the cache)      
@@ -144,9 +145,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             let vrpDiff            = evalVrpDiff previousVrps newVrps                         
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
-            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRRs: #{Set.size previousVrps} -> #{Set.size newVrps}|]
+            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrps}|]
 
-            -- force evaluation of the new RTR context so that the old ones could be GC-ed.
+            -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreVrpUpdates
                     then updatedRtrState rtrState' newVersion vrpDiff
                     else rtrState' { lastKnownWorldVersion = newVersion }
@@ -161,8 +162,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
             atomically $ do                
                 -- TODO Some of these bangs are not needed?
-                writeTVar rtrState $! let !z = Just nextRtrState in z
+                writeTVar rtrState $! Just $! nextRtrState
 
+                -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
+                -- "The cache MUST rate-limit Serial Notifies to no more frequently than one per minute."
+                -- 
                 let moreThanMinuteAgo lastTime = not $ closeEnoughMoments lastTime now (Seconds 60)
                 sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
 
@@ -346,19 +350,19 @@ processFirstPdu :: Maybe RtrState
                 -> BSL.ByteString 
                 -> Either (Pdu, Text) ([Pdu], Session, Maybe Text)
 processFirstPdu 
-    rtrContext 
+    rtrState 
     currentVrps 
     versionedPdu@(VersionedPdu pdu protocolVersion) 
     pduBytes =                
     case pdu of 
         SerialQueryPdu _ _ -> let 
             session' = Session protocolVersion
-            r = respondToPdu rtrContext currentVrps versionedPdu pduBytes session'
+            r = respondToPdu rtrState currentVrps versionedPdu pduBytes session'
             in fmap (\(pdus, message) -> (pdus, session', message)) r
 
         ResetQueryPdu -> let
             session' = Session protocolVersion
-            r = respondToPdu rtrContext currentVrps versionedPdu pduBytes session'
+            r = respondToPdu rtrState currentVrps versionedPdu pduBytes session'
             in fmap (\(pdus, message) -> (pdus, session', message)) r
 
         otherPdu -> 

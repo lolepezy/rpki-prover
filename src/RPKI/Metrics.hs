@@ -30,7 +30,7 @@ import           GHC.Generics
 import           Prometheus
 import           Prometheus.Metric.GHC
 
-import           RPKI.CommonTypes
+import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.AppContext
@@ -73,16 +73,16 @@ textualMetrics = exportMetricsAsText
 
 updatePrometheus :: (MonadIO m, MonadMonitor m) => AppMetric -> PrometheusMetrics -> m ()
 updatePrometheus AppMetric {..} PrometheusMetrics {..} = do 
-    forM_ (Map.toList $ unMonoidMap $ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do 
+    forM_ (Map.toList $ getMonoidalMap $ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.head $ metricPath ^. coerced                
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
 
-    forM_ (Map.toList $ unMonoidMap $ unMetricMap rrdpMetrics) $ \(metricPath, metric) -> do 
+    forM_ (Map.toList $ getMonoidalMap $ unMetricMap rrdpMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.head $ metricPath ^. coerced        
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
 
-    forM_ (Map.toList $ unMonoidMap $ unMetricMap validationMetrics) $ \(metricPath, metric) -> do 
+    forM_ (Map.toList $ getMonoidalMap $ unMetricMap validationMetrics) $ \(metricPath, metric) -> do 
         let url = NonEmpty.last $ metricPath ^. coerced        
         withLabel vrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpNumber
         let totalCount = metric ^. #validCertNumber + 

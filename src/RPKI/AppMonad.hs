@@ -22,6 +22,7 @@ import           Data.Text                   (Text)
 
 import           RPKI.Reporting
 import           RPKI.Time
+import           System.Timeout
 
 
 
@@ -37,8 +38,21 @@ type PureValidatorT r =
 vHoist :: Monad m => PureValidatorT r -> ValidatorT m r
 vHoist = hoist $ hoist $ hoist generalize
 
+fromEither :: Either AppError r -> PureValidatorT r
+fromEither z =
+    case z of 
+        Left e -> do 
+            validationPath <- asks (^. typed)
+            modify' $ typed %~ (mError validationPath e <>)
+            lift $ ExceptT $ pure z
+        Right _ -> 
+            lift $ ExceptT $ pure z
+
 fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT m r
-fromEitherM = lift . ExceptT . lift 
+fromEitherM s = embedValidatorT $ (, mempty) <$> s
+
+vFromEither :: Either ValidationError r -> PureValidatorT r
+vFromEither = fromEither . first ValidationE
 
 appLift :: Monad m => m r -> ValidatorT m r
 appLift = lift . lift . lift 
@@ -148,12 +162,6 @@ catchAndEraseError f predicate errorHandler = do
 pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
 pureErrorIfNot b e = if b then pure () else vPureError e
 
-fromEither :: Either AppError r -> PureValidatorT r
-fromEither = lift . ExceptT . pure
-
-vFromEither :: Either ValidationError r -> PureValidatorT r
-vFromEither = fromEither . first ValidationE
-
 valid :: Applicative m =>
         m (Either AppError (), Validations)
 valid = pure (Right (), mempty)
@@ -216,3 +224,25 @@ getPureMetric = do
     metricMap  <- gets (^. typed . metricLens)
     pure $ lookupMetric metricPath metricMap
             
+
+finallyError :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
+finallyError tryF finallyF = 
+    tryIt `catchError` catchIt
+  where
+    tryIt = do  
+        z <- tryF 
+        finallyF
+        pure z
+    catchIt e = do
+        finallyF
+        throwError e            
+
+
+timeoutVT :: Int -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
+timeoutVT t toDo timedOut = do 
+    vp <- ask 
+    z <- liftIO $ timeout t (runValidatorT vp toDo)
+    case z of 
+        Nothing -> timedOut
+        Just q  -> embedValidatorT $ pure q
+

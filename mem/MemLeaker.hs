@@ -215,10 +215,8 @@ createAppContext logger = do
     pure appContext
 
 createLogger :: IO AppLogger
-createLogger = do 
-    -- TODO Use colog-concurrent instead of this
-    lock <- newMVar True
-    pure $ AppLogger fullMessageAction lock
+createLogger = do         
+    pure $ AppLogger fullMessageAction
     where
         fullMessageAction = upgradeMessageAction defaultFieldMap $ 
             cmapM fmtRichMessageDefault logTextStdout     

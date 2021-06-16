@@ -60,7 +60,7 @@ import qualified Crypto.PubKey.RSA                    as RSA
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
-import           RPKI.CommonTypes
+import           Data.Map.Monoidal.Strict
 import           RPKI.Util       (convert, mkHash)
 
 
@@ -466,9 +466,9 @@ instance Arbitrary ValidationMetric where
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where
-    arbitrary = generateMap $ MetricMap . MonoidMap    
+    arbitrary = generateMap $ MetricMap . MonoidalMap    
 
-instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidMap k v) where
+instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -483,6 +483,10 @@ instance Arbitrary TimeMs where
     shrink = genericShrink
 
 instance Arbitrary RrdpSource where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary FetchFreshness where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
