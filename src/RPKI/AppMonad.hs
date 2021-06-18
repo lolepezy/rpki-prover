@@ -80,12 +80,12 @@ fromTry :: Exception exc =>
             IO r -> 
             ValidatorT IO r
 fromTry mapErr t =
-    fromEitherM $ (Right <$> t) `catch` recoverOrRethrow        
+    liftIO t `catch` recoverOrRethrow        
     where
         recoverOrRethrow e = 
             case fromException (toException e) of
                 Just (SomeAsyncException _) -> throwIO e
-                Nothing                     -> pure $ Left $ mapErr e
+                Nothing                     -> appError $ mapErr e
 
 
 fromTryM :: Exception exc =>              
@@ -99,6 +99,7 @@ fromTryM mapErr t =
             case fromException (toException e) of
                 Just (SomeAsyncException _) -> throwIO e
                 Nothing                     -> appError $ mapErr e
+
 
 fromTryEither :: Exception exc =>
                 (exc -> AppError) -> 
