@@ -89,7 +89,7 @@ updateObjectForRsyncRepository
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
-        let rsyncRoot   = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
+        let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
         objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
         let destination = rsyncDestination rsyncRoot uri
         let rsync = rsyncProcess uri destination RsyncDirectory
@@ -97,7 +97,7 @@ updateObjectForRsyncRepository
         void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             createDirectoryIfMissing True destination
             
-        logInfoM logger [i|Going to run #{rsync}|]
+        logDebugM logger [i|Going to run #{rsync}|]
         (exitCode, out, err) <- fromTry 
             (RsyncE . RsyncRunningError . U.fmtEx) $ 
             readProcess rsync
