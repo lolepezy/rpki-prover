@@ -215,8 +215,7 @@ fetchPPWithFallback
                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             adjustSucceededUrl rpkiUrl 
                                     $ updateStatuses (pps ^. typed @PublicationPoints) 
-                                        [(newRepo, newStatus)]
-                    
+                                        [(newRepo, newStatus)]                
                 pure (r, validations)
 
         bracketOnError 
@@ -283,7 +282,7 @@ fetchRepository
                 pure z)            
             (do 
                 logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
-                appError $ RsyncE $ RsyncDownloadTimeout maxDuration)                
+                appError $ RrdpE $ RrdpDownloadTimeout maxDuration)                
 
 
 
