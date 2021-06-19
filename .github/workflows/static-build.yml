@@ -1,0 +1,50 @@
+name: Static binary build
+
+on:
+  push:
+    tags: v[0-9]+.[0-9]+.[0-9]+
+    branches:      
+      # - 'master'
+      - 'github-actions'
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-haskell@v1
+      with:
+        ghc-version: '8.10.4'
+    - 
+      name: Cache
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-stack
+      with:
+        path: ~/.stack
+        key:
+          ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/*.cabal') }}
+        restore-keys: |
+          ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/stack.yaml') }}
+          ${{ runner.os }}-build-${{ env.cache-name }}-
+          ${{ runner.os }}-build-
+          ${{ runner.os }}-    
+    - 
+      name: Build GHC+musl image
+      uses: docker/build-push-action@v2
+      with:
+        file: Dockerfile.static-builder 
+        push: false
+        tags: rpki-prover-builder    
+    - 
+      name: Build static binary
+      run:
+        stack install --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static
+    - 
+      name: Upload binary
+      uses: AButler/upload-release-assets@v2.0
+      with:
+        files: '.stack-work/docker/_home/.local/bin/rpki-prover-static'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}    
