@@ -3,7 +3,7 @@ name: Docker build
 on:
   push:
     branches:
-      - 'master'
+      # - 'master'
       - 'github-actions'
 
 jobs:
