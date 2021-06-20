@@ -1,0 +1,34 @@
+name: Docker build
+
+on:
+  push:
+    tags: v[0-9]+.[0-9]+.[0-9]+    
+
+jobs:
+  docker:    
+    runs-on: ubuntu-latest
+    steps:      
+      -
+        name: Login to DockerHub
+        uses: docker/login-action@v1 
+        with:
+          username: lolepezy
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      -
+        name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: lolepezy/rpki-prover          
+      -
+        name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          file: Dockerfile.prover
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          
+      -
+        name: Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}

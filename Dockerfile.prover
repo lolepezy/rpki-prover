@@ -8,7 +8,7 @@ RUN mv libgmp*.deb libgmp.deb
 RUN apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev
 
 # Docker build should not use cached layer if any of these is modified
-COPY stack.yaml package.yaml stack.yaml.lock /opt/build/
+COPY stack.yaml package.yaml /opt/build/
 RUN stack build rpki-prover:rpki-prover --system-ghc --dependencies-only
 
 # -------------------------------------------------------------------------------------------
@@ -50,4 +50,5 @@ RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/r
 
 COPY --from=build /opt/build/bin .
 EXPOSE 9999
-CMD [ "/opt/app/rpki-prover", "--rpki-root-directory", "/opt/rpki/", "--http-api-port", "9999"  ]
+ENTRYPOINT [ "/opt/app/rpki-prover" ]
+CMD [ "--rpki-root-directory", "/opt/rpki/" ]
