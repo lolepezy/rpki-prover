@@ -20,12 +20,10 @@ import           Data.Maybe                       (fromMaybe, maybeToList)
 import qualified Data.Set                         as Set
 import           Data.Text                       (Text)
 
-import           Data.String.Interpolate.IsString
 import           RPKI.AppContext
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Metrics
-import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Http.Types
@@ -73,10 +71,10 @@ getVRPs AppContext {..} = do
         vrps <- readTVarIO $ appState ^. #currentVrps
         if Set.null vrps
             then do 
-                database@DB {..} <- readTVarIO database 
+                db@DB {..} <- readTVarIO database 
                 roTx versionStore $ \tx ->
-                    getLastCompletedVersion database tx >>= 
-                        maybe (pure []) (getVrps tx database)
+                    getLastCompletedVersion db tx >>= 
+                        maybe (pure []) (getVrps tx db)
                         
             else pure $! Set.toList vrps                    
 
@@ -84,26 +82,26 @@ getVRPs AppContext {..} = do
 
 getVResults :: Storage s => AppContext s -> IO [ValidationResult]
 getVResults AppContext {..} = do 
-    database@DB {..} <- readTVarIO database 
+    db@DB {..} <- readTVarIO database 
     roTx versionStore $ \tx -> 
         let txValidations = runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion database tx
+                lastVersion <- MaybeT $ getLastCompletedVersion db tx
                 validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
                 pure $ map toVR $ validationsToList validations
         in fromMaybe [] <$> txValidations
 
 getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastVersion AppContext {..} = do 
-    database@DB {..} <- readTVarIO database 
-    roTx versionStore $ getLastCompletedVersion database                
+    db@DB {..} <- readTVarIO database 
+    roTx versionStore $ getLastCompletedVersion db                
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m AppMetric
 getMetrics AppContext {..} = do
-    database@DB {..} <- liftIO $ readTVarIO database 
+    db@DB {..} <- liftIO $ readTVarIO database 
     metrics <- liftIO $ roTx versionStore $ \tx -> do
         runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion database tx
+                lastVersion <- MaybeT $ getLastCompletedVersion db tx
                 MaybeT $ metricsForVersion tx metricStore lastVersion                        
     case metrics of 
         Nothing -> throwError err404 { errBody = "Working, please hold still!" }
@@ -128,7 +126,7 @@ getRpkiObject AppContext {..} uri hash =
 
         (Just u, Nothing) -> do 
             case parseRpkiURL u of 
-                Left e -> 
+                Left _ -> 
                     throwError $ err400 { errBody = "'uri' is not a valid object URL." }
 
                 Right rpkiUrl -> liftIO $ do 
@@ -138,7 +136,7 @@ getRpkiObject AppContext {..} uri hash =
 
         (Nothing, Just hash') -> 
             case parseHash hash' of 
-                Left e  -> throwError err400 
+                Left _  -> throwError err400 
                 Right h -> liftIO $ do 
                     DB {..} <- readTVarIO database 
                     roTx objectStore $ \tx -> 

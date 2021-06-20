@@ -37,11 +37,10 @@ mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
-unhex hexed = 
-    let (h, problematic) = Hex.decode hexed
-    in if BS.null problematic
-        then Just h
-        else Nothing
+unhex hexed =     
+    case Hex.decode hexed of
+        Left _  -> Nothing
+        Right h -> Just h    
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    

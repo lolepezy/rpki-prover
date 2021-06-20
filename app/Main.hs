@@ -49,7 +49,6 @@ import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Reporting
-import           RPKI.Repository
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -74,7 +73,7 @@ main = do
             $ createAppContext cliOptions logger
         case appContext of
             Left e ->
-                logError_ logger [i|Couldn't initialise: #{e}|]
+                logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
             Right appContext' -> 
                 void $ race
                     (runHttpApi appContext')

@@ -13,6 +13,7 @@ module RPKI.Http.Types where
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Short       as BSS
+import           Data.Bifunctor
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
@@ -46,8 +47,6 @@ import           Servant.CSV.Cassava
 
 import           RPKI.Domain                 as Domain
 import           RPKI.Config
-import           Data.Map.Monoidal.Strict (MonoidalMap)
-import qualified Data.Map.Monoidal.Strict as Monoidal
 
 import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
@@ -319,12 +318,11 @@ instance FromHttpApiData Hash where
   parseUrlPiece = parseHash
 
 parseHash :: Text -> Either Text Hash
-parseHash hashText = do 
-    let (h, problematic) = Hex.decode $ encodeUtf8 hashText
-    if BS.null problematic
-        then Right $ U.mkHash h
-        else Left $ Text.pack $ "Broken hex: " <> show problematic
-
+parseHash hashText = bimap 
+    (Text.pack . ("Broken hex: " <>) . show)
+    U.mkHash
+    $ Hex.decode $ encodeUtf8 hashText
+        
 
 -- Some utilities
 shortBsJson :: BSS.ShortByteString -> Json.Value
