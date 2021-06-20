@@ -49,5 +49,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         file: ".stack-work/docker/_home/.local/bin/rpki-prover-static"
-        tags: true
+        tags: false
+        prerelease: true
         draft: true        
+        update_latest_release: true        
