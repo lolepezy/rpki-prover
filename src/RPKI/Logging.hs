@@ -48,4 +48,9 @@ withAppLogger f = do
         (\logg -> usingLoggerT logg $ f $ AppLogger $ fullMessageAction logg)
   where
     fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
-        cmapM fmtRichMessageDefault logg
+        cmapM (\msg -> fmtRichMessageCustomDefault msg formatRichMessage) logg    
+        
+    formatRichMessage _ (maybe "" showTime -> time) Msg{..} =
+        showSeverity msgSeverity
+        <> time            
+        <> msgText        
