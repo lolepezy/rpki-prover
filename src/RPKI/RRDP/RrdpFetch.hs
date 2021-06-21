@@ -14,12 +14,10 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
-import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
-import           Data.Tuple.Strict
 
 import           GHC.Generics
 
@@ -67,7 +65,7 @@ downloadAndUpdateRRDP
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
   do        
-    ((notificationXml, _, httpStatus), notificationDownloadTime) <- 
+    ((notificationXml, _, _), notificationDownloadTime) <- 
                             fromTry (RrdpE . CantDownloadNotification . U.fmtEx) 
                                 $ timedMS 
                                 $ downloadToBS (appContext ^. typed) (getURL repoUri)         
@@ -239,7 +237,7 @@ updateObjectForRrdpRepository :: Storage s =>
                                 AppContext s 
                             -> RrdpRepository 
                             -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext@AppContext {..} repository =
+updateObjectForRrdpRepository appContext repository =
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
             appContext 
