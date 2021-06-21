@@ -50,9 +50,11 @@ import qualified Paths_rpki_prover as Autogen
 class Blob bs where    
     readB :: FilePath -> IO bs
     sizeB :: bs -> Size
+
 instance Blob LBS.ByteString where    
     readB = lazyFsRead
     sizeB = Size . fromIntegral . LBS.length 
+    
 instance Blob BS.ByteString where    
     readB = fsRead
     sizeB = Size . fromIntegral . BS.length 
