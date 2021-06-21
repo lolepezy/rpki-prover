@@ -13,15 +13,38 @@ Implemented features are
 - Output of found problems
 - Cache cleanup, scheduled revalidation, cache compaction, etc.
 - Support for RTR protocol, both version 0 and 1
-- Docker image
 - Basic UI for reporting metrics and found problems
+- Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
+- Static binaries for Linux
+- Docker image
 
 Current and future work
-- Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
-- Static binaries (at least for linux)
 - SLURM support
+- History of validations in UI
+- Ergonomics for long-running processes (automatic cleanups, cache DB migration, etc.)
+- CPU and memory optimisations
+ 
 
-At the moment there are two options to use the program: building from sources and building a docker image. It is planed to have staticly-linked binaries for Linux in the future.
+
+# Using rpki-prover
+
+`rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enable RTR server that sends VRP updates to the RTR clients.
+
+There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
+
+There is an initialise step necessary to start after downloading or building the executable: you need
+to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files 
+to `/var/where-you-want-data-to-be/tals` as well.
+
+## Static Linux binary
+
+Every [release](https://github.com/lolepezy/rpki-prover/releases) includes a statically linked Linux x64 executable, just download and run it. 
+
+## Docker image
+
+One can run rpki-prover using `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub.
+
+It's also possible to build your own image using `docker build . --file Dockerfile.prover --tag rpki-prover`.
 
 ## Building from sources
 
@@ -50,9 +73,6 @@ Normally it prints quite a lot of logs about what it's doing to the stdout. Afte
 
 Main page http://localhost:9999 is the UI that reports some metrics about trust anchorts, repositories and the list of errors and warnings.
 
-## Use Docker image
-
-Dockerfile is available and the image exposes port 9999 for HTTP API.
 
 ## Prometheus metrics 
 
