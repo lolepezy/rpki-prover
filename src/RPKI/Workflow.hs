@@ -111,9 +111,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             then Done
                             else Repeat
 
-        taskExecutor globalQueue = do
-            logDebug_ logger [i|Starting task executor.|]
-            go 
+        taskExecutor globalQueue = go 
           where
             go = do 
                 z <- atomically (readCQueue globalQueue)
