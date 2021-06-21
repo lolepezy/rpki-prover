@@ -125,7 +125,7 @@ createAppContext CLIOptions{..} logger = do
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
     cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir            
 
-    let lmdbRealSize = Size $ lmdbSize `orDefault` 8192
+    let lmdbRealSize = Size $ lmdbSize `orDefault` 32768
     lmdbEnv <- setupLmdbCache 
                     (if reset then Reset else UseExisting)
                     logger 
@@ -273,8 +273,8 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 
-        ("Maximal LMDB cache size in MBs (default is 8192mb). Note that about 1Gb of cache is "
-       +++ "required for every extra 24 hours of cache life time"),    
+        ("Maximal LMDB cache size in MBs (default is 32GB). Note that about 1Gb of cache is "
+       +++ "required for every extra 24 hours of cache life time."),    
 
     withRtr :: wrapped ::: Bool <?> 
         "Start RTR server (default is false)",
