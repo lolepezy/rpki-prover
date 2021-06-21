@@ -40,14 +40,12 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
-import           RPKI.Store.Base.InMemory
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Repository (getPublicationPoints)
 import           RPKI.Util (increment, ifJust)
 import Data.IORef
 
 type AppLmdbEnv = AppContext LmdbStorage
-type AppMemEnv = AppContext InMemoryStorage
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 

@@ -52,15 +52,12 @@ import           RPKI.Store.Database
 import           RPKI.Store.Repository
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
-import qualified RPKI.Store.MakeInMemory as Mem
 
 import           RPKI.Time
 
 import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
-import RPKI.Store.Base.InMemory
-
 
 
 storeGroup :: TestTree
