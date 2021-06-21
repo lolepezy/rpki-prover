@@ -40,7 +40,7 @@ import qualified RPKI.Util as U
 
 import qualified Crypto.Hash.SHA256 as S256
 
-import System.IO (Handle, hClose)
+import System.IO (Handle, hClose, withFile, IOMode(..))
 import System.IO.Temp (withTempFile)
 
 import Data.Version
@@ -54,7 +54,7 @@ class Blob bs where
 instance Blob LBS.ByteString where    
     readB = lazyFsRead
     sizeB = Size . fromIntegral . LBS.length 
-    
+
 instance Blob BS.ByteString where    
     readB = fsRead
     sizeB = Size . fromIntegral . BS.length 
@@ -132,6 +132,22 @@ fetchRpkiObject appContext uri = do
                             (getURL uri) 
                         
     fromEitherM $ pure $ first ParseE $ readObject (RrdpU uri) content
+
+
+downloadToFile :: MonadIO m => 
+                URI 
+                -> FilePath
+                -> Size                
+                -> m HttpStatus
+downloadToFile uri file limit = liftIO $ do    
+    fmap snd $ withFile file WriteMode $ \fd -> do 
+        downloadConduit uri fd 
+            (sinkGenSize 
+                uri
+                limit
+                ()
+                (\_ _ -> ()) 
+                id) 
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
