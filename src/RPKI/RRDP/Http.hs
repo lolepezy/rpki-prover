@@ -58,9 +58,9 @@ instance Blob BS.ByteString where
     sizeB = Size . fromIntegral . BS.length 
 
 
--- | Download HTTP content to a temporary file and return lazy/strict ByteString content 
--- mapped onto a temporary file. Snapshots (and probably some deltas) can be big 
--- enough so that we don't want to keep them in memory.
+-- | Download HTTP content to a temporary file and return the context as lazy/strict ByteString. 
+-- Snapshots (and probably some deltas) can be quite big so we don't want to keep them in memory,
+-- that's why it's preferable to use lazy ByteString.
 --
 -- NOTE: The file will be deleted from the temporary directory by withTempFile, 
 -- but the descriptor taken by readFile will stay until the byte string it GC-ed, 
@@ -115,7 +115,7 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
             else do
                 hClose fd
                 content <- readB name
-                pure $! Right (content, size, status)
+                pure $ Right (content, size, status)
                 
 
 -- | Fetch arbitrary file using the streaming implementation
