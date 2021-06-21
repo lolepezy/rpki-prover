@@ -122,14 +122,10 @@ executables:
     source-dirs:         app
     ghc-options:
     - -threaded
-    # - -static
     - -O2
     - -Wall    
     - -rtsopts
     - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
-    # - -fPIC
-    # cc-options: -static
-    # ld-options: -static -pthread  
     dependencies:
     - rpki-prover  
 
