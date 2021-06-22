@@ -30,9 +30,9 @@ Current and future work
 
 `rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enable RTR server that sends VRP updates to the RTR clients.
 
-There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
+There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Running `rpki-prover --help` gives some help on the CLI options.
 
-There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. This awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
+There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. The awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
 
 ## Static Linux binary
 
@@ -64,8 +64,6 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
    - Run `mkdirs.sh` script. This script accepts an argument -- directory where `rpki-prover` will store the TAL files, cache, rsync mirror and different temporary files. If the argument is not set the default `$HOME/.rpki` will be used. After creating directory structure it will download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
 
    - Run `rpki-prover` from the `~/.local/bin`
-
-Running Run `rpki-prover --help` gives some help on the CLI options.
 
 Normally it prints quite a lot of logs about what it's doing to the stdout. After it prints "Validated all TAs, took ..." (it should take 2-4 minutes depending on how fast the CPU and network are) VRPs can be fetched by executing `curl -s http://localhost:9999/api/vrps.csv` (or `curl -s http://localhost:9999/api/vrps.json`).
 
