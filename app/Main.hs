@@ -398,5 +398,4 @@ withLogLevel CLIOptions{..} f =
                 "warn"  -> f WarnL
                 "info"  -> f InfoL
                 "debug" -> f DebugL
-                other   -> liftIO $ 
-                    hPutStrLn stderr $ "Wrong log level: " <> Text.unpack other      
+                other   -> hPutStrLn stderr $ "Wrong log level: " <> Text.unpack other      
