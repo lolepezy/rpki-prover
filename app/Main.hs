@@ -24,6 +24,7 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
+import qualified Data.Text                        as Text
 
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)
@@ -48,7 +49,9 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
+import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -68,17 +71,24 @@ main = do
     withAppLogger $ \logger -> liftIO $ do 
         cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
-        (appContext, validations) <- 
-            runValidatorT (newValidatorPath "configuration") 
-            $ createAppContext cliOptions logger
-        case appContext of
-            Left e ->
-                logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-            Right appContext' -> 
-                void $ race
-                    (runHttpApi appContext')
-                    (runValidatorApp appContext')
+        if cliOptions ^. #initialise
+            then 
+                -- init the FS layout and download TALs
+                void $ liftIO $ initialiseFS cliOptions logger              
+            else do
+                -- run the validator
+                (appContext, validations) <- do              
+                            runValidatorT (newValidatorPath "initialise") 
+                                $ createAppContext cliOptions logger                     
+                case appContext of
+                    Left e ->
+                        logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                    Right appContext' -> 
+                        void $ race
+                            (runHttpApi appContext')
+                            (runValidatorApp appContext')        
 
+                      
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do    
@@ -116,24 +126,18 @@ runHttpApi appContext = let
     
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
-createAppContext CLIOptions{..} logger = do        
-    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")
-    
-    tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
-    rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
-    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
-    cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir            
+createAppContext cliOptions@CLIOptions{..} logger = do
+         
+    (tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
     let lmdbRealSize = Size $ lmdbSize `orDefault` 32768
     lmdbEnv <- setupLmdbCache 
-                    (if reset then Reset else UseExisting)
+                    (if resetCache then Reset else UseExisting)
                     logger 
                     cached
                     lmdbRealSize
                                 
-    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv                
-    -- database <- fromTry (InitE . InitError . fmtEx) Mem.createDatabase
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd    
@@ -197,6 +201,76 @@ createAppContext CLIOptions{..} logger = do
     pure appContext    
 
 
+data TALsHandle = CreateTALs | CheckTALsExists
+
+initialiseFS :: CLIOptions Unwrapped -> AppLogger -> IO ()
+initialiseFS cliOptions logger = do
+
+    if cliOptions ^. #agreeWithArinRpa
+        then do
+            (r, _) <- runValidatorT 
+                (newValidatorPath "initialise") 
+                $ do 
+                    logInfoM logger [i|Initialising FS layout...|]    
+
+                    -- this one checks that "tals" exists
+                    (tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
+
+                    let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
+                    let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"] 
+
+                    logInfoM logger [i|Downloading TALs from #{talsUrl}.|]
+                    fromTryM 
+                        (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e)) 
+                        $ forM_ talNames                            
+                            $ \tal -> do 
+                                let talUrl = Text.pack $ talsUrl <> tal
+                                httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)    
+                                unless (isHttpSuccess httpStatus) $ do                                     
+                                    appError $ UnspecifiedE 
+                                        [i|Error downloading TAL #{tal} from #{talUrl}|]
+                                        [i|Http status #{unHttpStatus httpStatus}|]
+            case r of
+                Left e -> 
+                    logErrorM logger [i|Failed to initialise: #{e}. |] <> 
+                    logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it.|]
+                Right _ -> 
+                    logInfoM logger [i|Done.|]
+        else do 
+            putStrLn [i|
+Before downloading and installing ARIN TAL, you must read
+and agree to the ARIN Relying Party Agreement (RPA) available
+here:
+
+https://www.arin.net/resources/manage/rpki/rpa.pdf
+
+If you do agree with the RPA, re-run the same command
+adding --agree-with-arin-rpa option.
+|]                
+
+
+fsLayout :: CLIOptions Unwrapped 
+        -> AppLogger 
+        -> TALsHandle 
+        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath)
+fsLayout CLIOptions{..} logger talsHandle = do 
+    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
+    let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")  
+
+    let message = 
+            case rpkiRootDirectory of 
+                Just d  -> [i|Root directory is set to #{d}.|]
+                Nothing -> [i|Root directory is not set, using defaul ${HOME}/.rpki|]
+        
+    logInfoM logger message    
+
+    tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir talsHandle
+    rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
+    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir            
+    cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir            
+    pure (tald, rsyncd, tmpd, cached)
+
+
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
 
@@ -212,8 +286,11 @@ listTALFiles talDirectory = do
             filter (`notElem` [".", ".."]) names
 
 
-talsDir, rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
-talsDir root  = checkSubDirectory root "tals"
+talsDir :: FilePath -> TALsHandle -> IO (Either Text FilePath)
+talsDir root CreateTALs      = createSubDirectoryIfNeeded root "tals"
+talsDir root CheckTALsExists = checkSubDirectory root "tals"
+
+rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
 rsyncDir root = createSubDirectoryIfNeeded root "rsync"
 tmpDir root   = createSubDirectoryIfNeeded root "tmp"
 cacheDir root = createSubDirectoryIfNeeded root "cache"
@@ -236,14 +313,21 @@ createSubDirectoryIfNeeded root sub = do
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
+    initialise :: wrapped ::: Bool <?> 
+        ("If set, the FS layout will be created and TAL files will be downloaded." ),
+
+    agreeWithArinRpa :: wrapped ::: Bool <?> 
+        ("This is to indicate that you do accept (and maybe even have read) ARIN Relying Party Agreement " 
+        +++ "and would like ARIN TAL to be downloaded."),        
+
     rpkiRootDirectory :: wrapped ::: Maybe FilePath <?> 
         "Root directory (default is ${HOME}/.rpki/).",
 
     cpuCount :: wrapped ::: Maybe Natural <?> 
         "CPU number available to the program (default is 2).",
 
-    reset :: wrapped ::: Bool <?> 
-        "Reset the disk cache of (i.e. remove ~/.rpki/cache/*.mdb files.",
+    resetCache :: wrapped ::: Bool <?> 
+        "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
 
     revalidationInterval :: wrapped ::: Maybe Int64 <?>          
         ("Re-validation interval in seconds, i.e. how often to re-download repositories are " 
