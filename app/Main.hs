@@ -387,14 +387,6 @@ deriving instance Show (CLIOptions Unwrapped)
 
 type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
 
-parseLoglevel s = 
-    case Text.toLower s of 
-        "error" -> pure ErrorL
-        "warn"  -> pure WarnL
-        "info"  -> pure InfoL
-        "debug" -> pure DebugL
-        other   -> Left $ "Wrong log level: " <> other
-
 
 withLogLevel :: CLIOptions Unwrapped -> (LogLevel -> IO ()) -> IO ()
 withLogLevel CLIOptions{..} f =
