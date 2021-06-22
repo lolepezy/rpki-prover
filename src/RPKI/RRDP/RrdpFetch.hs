@@ -80,10 +80,14 @@ downloadAndUpdateRRDP
 
         UseSnapshot snapshotInfo -> do 
             used RrdpSnapshot
+            logDebugM logger [i|Going to use snapshot for #{repoUri}.|]
             useSnapshot snapshotInfo notification
 
         UseDeltas sortedDeltas snapshotInfo -> 
-                (used RrdpDelta >> useDeltas sortedDeltas notification)
+                (do 
+                    used RrdpDelta
+                    logDebugM logger [i|Going to use deltas for #{repoUri}.|]
+                    useDeltas sortedDeltas notification)
                     `catchError` 
                 \e -> do         
                     -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 

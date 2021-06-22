@@ -296,9 +296,7 @@ validateCaCertificate
         else 
             case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                 Left e         -> appError $ ValidationE e
-                Right ppAccess -> do
-                    -- vPath :: ValidatorPath <- asks (^. typed)                     
-                    -- logDebugM logger [i|vPath = #{vPath}, ppAccess = #{ppAccess}.|]     
+                Right ppAccess -> do                    
                     fetches <- fetchPPWithFallback appContext repositoryProcessing now ppAccess                                   
                     if anySuccess fetches                    
                         then validateThisCertAndGoDown                            
@@ -531,9 +529,6 @@ validateCaCertificate
         -- runValidatorT (...) call, but all the other objects are validated within the 
         -- same context of ValidatorT, i.e. have short-circuit logic implemented by ExceptT.        
         --
-        -- vPath :: ValidatorPath <- asks (^. typed)
-        -- logDebugM logger [i|child #{locations} // #{vPath}.|]
-
         parentContext <- ask        
         case ro of
             CerRO childCert -> do 
