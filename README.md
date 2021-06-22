@@ -2,7 +2,7 @@
 
 Implementation of the [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
 
-Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues).
+Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any questions can be asked there as well. 
 
 Implemented features are
 
@@ -32,9 +32,7 @@ Current and future work
 
 There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
 
-There is an initialise step necessary to start after downloading or building the executable: you need
-to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files 
-to `/var/where-you-want-data-to-be/tals` as well.
+There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. This awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
 
 ## Static Linux binary
 
@@ -42,7 +40,7 @@ Every [release](https://github.com/lolepezy/rpki-prover/releases) includes a sta
 
 ## Docker image
 
-One can run rpki-prover using `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub.
+It's possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub and it's about 80mb in size.
 
 It's also possible to build your own image using `docker build . --file Dockerfile.prover --tag rpki-prover`.
 
