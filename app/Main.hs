@@ -317,7 +317,7 @@ data CLIOptions wrapped = CLIOptions {
         ("If set, the FS layout will be created and TAL files will be downloaded." ),
 
     agreeWithArinRpa :: wrapped ::: Bool <?> 
-        ("This is to indicate that you do accept (and maybe even have read ARIN Relying Party Agreement) " 
+        ("This is to indicate that you do accept (and maybe even have read) ARIN Relying Party Agreement " 
         +++ "and would like ARIN TAL to be downloaded."),        
 
     rpkiRootDirectory :: wrapped ::: Maybe FilePath <?> 
