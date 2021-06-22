@@ -39,6 +39,7 @@ import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
+import           System.IO (hPutStrLn, stderr)
 import           System.Directory                 
 import           System.Environment
 import           System.FilePath                  ((</>))
@@ -67,26 +68,28 @@ import           RPKI.Workflow
 
 main :: IO ()
 main = do
-    -- load config file and apply command line options    
-    withAppLogger $ \logger -> liftIO $ do 
-        cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
+    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
 
-        if cliOptions ^. #initialise
-            then 
-                -- init the FS layout and download TALs
-                void $ liftIO $ initialiseFS cliOptions logger              
-            else do
-                -- run the validator
-                (appContext, validations) <- do              
-                            runValidatorT (newValidatorPath "initialise") 
-                                $ createAppContext cliOptions logger                     
-                case appContext of
-                    Left e ->
-                        logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                    Right appContext' -> 
-                        void $ race
-                            (runHttpApi appContext')
-                            (runValidatorApp appContext')        
+    withLogLevel cliOptions $ \logLevel ->
+        -- load config file and apply command line options    
+        withAppLogger logLevel $ \logger -> liftIO $ do 
+            
+            if cliOptions ^. #initialise
+                then 
+                    -- init the FS layout and download TALs
+                    void $ liftIO $ initialiseFS cliOptions logger              
+                else do
+                    -- run the validator
+                    (appContext, validations) <- do              
+                                runValidatorT (newValidatorPath "initialise") 
+                                    $ createAppContext cliOptions logger                     
+                    case appContext of
+                        Left e ->
+                            logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                        Right appContext' -> 
+                            void $ race
+                                (runHttpApi appContext')
+                                (runValidatorApp appContext')        
 
                       
 
@@ -370,7 +373,10 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for the RTR server (default is 8283)",
 
     dontFetch :: wrapped ::: Bool <?> 
-        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false)."
+        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false).",
+
+    logLevel :: wrapped ::: Maybe String <?> 
+        "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'."
 
 } deriving (Generic)
 
@@ -380,3 +386,25 @@ instance ParseRecord (CLIOptions Wrapped) where
 deriving instance Show (CLIOptions Unwrapped)
 
 type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
+
+parseLoglevel s = 
+    case Text.toLower s of 
+        "error" -> pure ErrorL
+        "warn"  -> pure WarnL
+        "info"  -> pure InfoL
+        "debug" -> pure DebugL
+        other   -> Left $ "Wrong log level: " <> other
+
+
+withLogLevel :: CLIOptions Unwrapped -> (LogLevel -> IO ()) -> IO ()
+withLogLevel CLIOptions{..} f =
+    case logLevel of 
+        Nothing -> f InfoL
+        Just s  ->
+            case Text.toLower $ Text.pack s of 
+                "error" -> f ErrorL
+                "warn"  -> f WarnL
+                "info"  -> f InfoL
+                "debug" -> f DebugL
+                other   -> liftIO $ 
+                    hPutStrLn stderr $ "Wrong log level: " <> Text.unpack other      
