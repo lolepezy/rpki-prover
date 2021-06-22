@@ -8,10 +8,12 @@ import Colog
 
 import Data.Text (Text)
 
+import Control.Monad (when)
 import Control.Monad.IO.Class
 
 import GHC.Stack (callStack)
 import System.IO (BufferMode (..), hSetBuffering, stdout)
+
 
 class Logger logger where
     logError_ :: logger -> Text -> IO ()
@@ -19,14 +21,26 @@ class Logger logger where
     logInfo_  :: logger -> Text -> IO ()
     logDebug_ :: logger -> Text -> IO ()
 
+data LogLevel = ErrorL | WarnL | InfoL | DebugL
+    deriving (Show, Eq, Ord)
 
-newtype AppLogger = AppLogger (LogAction IO Message)
+data AppLogger = AppLogger {
+        logLevel :: LogLevel,
+        logAction :: LogAction IO Message
+    }
+
 
 instance Logger AppLogger where
-    logError_ (AppLogger la) = logWhat E la
-    logWarn_  (AppLogger la) = logWhat W la
-    logInfo_  (AppLogger la) = logWhat I la
-    logDebug_ (AppLogger la) = logWhat D la
+    logError_ AppLogger {..} = logWhat E logAction
+
+    logWarn_  AppLogger {..} s = 
+        when (logLevel >= WarnL) $ logWhat W logAction s        
+
+    logInfo_  AppLogger {..} s = 
+        when (logLevel >= InfoL) $ logWhat I logAction s
+
+    logDebug_ AppLogger {..} s = 
+        when (logLevel >= DebugL) $ logWhat D logAction s        
 
 logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
 logWhat sev la textMessage = la <& Msg sev callStack textMessage    
@@ -39,13 +53,13 @@ logInfoM logger t  = liftIO $ logInfo_ logger t
 logDebugM logger t = liftIO $ logDebug_ logger t
 
 
-withAppLogger :: (AppLogger -> LoggerT Text IO a) -> IO a
-withAppLogger f = do     
+withAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
+withAppLogger logLevel f = do     
     hSetBuffering stdout LineBuffering
     withBackgroundLogger
         defCapacity
         logTextStdout
-        (\logg -> usingLoggerT logg $ f $ AppLogger $ fullMessageAction logg)
+        (\logg -> usingLoggerT logg $ f $ AppLogger logLevel (fullMessageAction logg))
   where
     fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
         cmapM (\msg -> fmtRichMessageCustomDefault msg formatRichMessage) logg    
