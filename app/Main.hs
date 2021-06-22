@@ -68,7 +68,8 @@ import           RPKI.Workflow
 
 main :: IO ()
 main = do
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord "RPKI prover, relying party software"
+    cliOptions :: CLIOptions Unwrapped <- unwrapRecord 
+        "RPKI prover, relying party software for RPKI"
 
     withLogLevel cliOptions $ \logLevel ->
         -- load config file and apply command line options    
@@ -360,7 +361,7 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?> 
-        ("Maximal LMDB cache size in MBs (default is 32GB). Note that about 1Gb of cache is "
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that about 1Gb of cache is "
        +++ "required for every extra 24 hours of cache life time."),    
 
     withRtr :: wrapped ::: Bool <?> 
@@ -372,11 +373,11 @@ data CLIOptions wrapped = CLIOptions {
     rtrPort :: wrapped ::: Maybe Int16 <?> 
         "Port to listen to for the RTR server (default is 8283)",
 
-    dontFetch :: wrapped ::: Bool <?> 
-        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false).",
-
     logLevel :: wrapped ::: Maybe String <?> 
-        "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'."
+        "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
+
+    dontFetch :: wrapped ::: Bool <?> 
+        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false)."
 
 } deriving (Generic)
 
