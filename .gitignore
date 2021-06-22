@@ -5,3 +5,6 @@ rpki-prover.cabal
 .ghci
 rpki-prover.code-workspace
 rpki-prover-test.prof*
+.stylish-haskell.yaml
+.vscode/
+stack.yaml.lock
