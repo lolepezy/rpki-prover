@@ -341,7 +341,7 @@ data CLIOptions wrapped = CLIOptions {
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>          
-        ("Period of time after which an RRDP repository must be updated," 
+        ("Period of time after which an RRDP repository must be updated, " 
        +++ "in seconds (default is 120 seconds)"),
 
     rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>         
