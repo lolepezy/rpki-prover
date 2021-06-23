@@ -22,7 +22,7 @@ import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
 
-import           Data.Either                      (fromRight)
+import           Data.Either                      (fromRight, partitionEithers)
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
@@ -453,9 +453,9 @@ validateCaCertificate
                                 -- gather all the validation states from every mft entry
                                 mapM_ (embedState . snd) mftEntryResults                
 
-                                case [ e | (Left e, _) <- mftEntryResults ] of 
-                                    []    -> pure [ vrps | (Right vrps, _) <- mftEntryResults ]
-                                    e : _ -> appError e                                
+                                case partitionEithers $ map fst mftEntryResults of
+                                    ([], vrps) -> pure vrps
+                                    (e : _, _) -> appError e
 
                         mconcat <$> processChildren `finallyError` markAllEntriesAsVisited                                                
 
