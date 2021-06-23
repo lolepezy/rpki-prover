@@ -79,7 +79,7 @@ There are several API endpoints. Note that there is not much of design invested 
 - `/api/validation-result` - JSON-formatted latest validation results similar to what can be seen in the UI
 - `/api/app-metrics` - JSON-formatted latest metrics similar to what can be seen in the UI
 - `/api/lmdb-stat` - JSON-formatted statistics for LMDB cache. Normally it is not of a huge interest to anyone, mostly used for development and testing.
-- `/api/object` - JSON-formatter dump of the RPKI object. 
+- `/api/object` - JSON-formatted dump of the RPKI object. 
     - With the `hash` paramter the object will be picked by hash 
     - With the `uri` paramter the object will be picked by its URL 
     
@@ -106,7 +106,7 @@ VIRT  RES    SHR
 ```
 Here `SHR` is largely dominated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `5383-3843=1540M`.
 
-Note that memory consumption is mostly determined by how big the biggest objects are and not that much by how many there are objects in total, so the growth of repositories is not such a big issue for rpki-prover.
+Note that memory consumption is mostly determined by how big the biggest objects are and not that much by how many there are objects in total, so the growth of repositories is not such a big issue for rpki-prover. It it recommended to have 3GB of RAM available on the machine mostly to reduce the IOPS related to reading objects from the LMDB cache. Since every validation typically goes through 160K of objects (at the moment of writing), each of them being 3Kb in size on average, it would be benificial to have at least few hundred of megabytes in FS page cache.
 
 Disk space usage depends on the `--cache-lifetime-hours` parameter. The default is 72 hours and it results in a cache size about 2Gb. 72 hours is a little bit on a big side, so lower values would reduce the amount of data stored. However, LMDB is not very good in reusing the free space in its file, so physical size of the `cache` directory can be 2 or more times bigger than the total size of data in it. There is a compaction procedure that kicks in when the LMDB file size is 2 or more times bigger than the total size of all data. So overall, in the worst case scenario, it would need approximately 1GB of disk space for every 10 hours of `--cache-lifetime-hours`.
 
