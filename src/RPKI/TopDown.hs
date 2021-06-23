@@ -363,7 +363,8 @@ validateCaCertificate
                 Just latestValidMft ->                         
                     case latestMft of 
                         Nothing -> do 
-                            appWarn e                                
+                            appWarn e      
+                            logDebugM logger [i|Failed to process manifest: #{e}, will try previous valid version.|]
                             tryManifest latestValidMft childrenAki certLocations                                
                         Just latestMft'
                             | getHash latestMft' == getHash latestValidMft 
@@ -372,6 +373,7 @@ validateCaCertificate
                                 -> throwError e
                             | otherwise -> do 
                                 appWarn e                                    
+                                logDebugM logger [i|Failed to process manifest: #{e}, will try previous valid version.|]
                                 tryManifest latestValidMft childrenAki certLocations
 
 
@@ -437,12 +439,23 @@ validateCaCertificate
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                
 
-                        let processChildren =
-                                inParallelVT
-                                    (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
-                                    nonCrlChildren
-                                    $ \(T2 filename hash') -> 
-                                                validateManifestEntry filename hash' validCrl
+                        vp <- askEnv
+                        let processChildren = do 
+                            -- we do all this fiddling here to gather _all_ errors from the manifest
+                            -- instead of stopping at the first one as it would normally happen with 
+                            -- validation errors.
+                                mftEntryResults <- liftIO $ inParallel
+                                        (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
+                                        nonCrlChildren
+                                        $ \(T2 filename hash') -> runValidatorT vp 
+                                            $ validateManifestEntry filename hash' validCrl  
+                                
+                                -- gather all the validation states from every mft entry
+                                mapM_ (embedState . snd) mftEntryResults                
+
+                                case [ e | (Left e, _) <- mftEntryResults ] of 
+                                    []    -> pure [ vrps | (Right vrps, _) <- mftEntryResults ]
+                                    e : _ -> appError e                                
 
                         mconcat <$> processChildren `finallyError` markAllEntriesAsVisited                                                
 
