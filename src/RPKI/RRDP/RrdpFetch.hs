@@ -469,6 +469,9 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                             DB.putObject tx objectStore so worldVersion                      
                             DB.linkObjectToUrl tx objectStore rpkiUrl hash'
                             addedObject
+                _ -> do 
+                    -- it can't happen in practice
+                    pure ()
 
         replaceObject objectStore tx uri a oldHash = do            
             waitTask a >>= \case
@@ -476,8 +479,8 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                     logErrorM logger [i|Skipped object #{uri}, error #{e} |]
                     inSubVPath (unURI uri) $ appWarn e 
                 DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                     
+                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]                    
+                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                           
                 ASN1ParsingTrouble rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
@@ -501,6 +504,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                             DB.putObject tx objectStore so worldVersion
                             DB.linkObjectToUrl tx objectStore rpkiUrl hash'
                             addedObject
+
+                _ -> do 
+                    -- it can't happen in practice
+                    pure ()
                                                                                   
 
     logger          = appContext ^. typed @AppLogger           
