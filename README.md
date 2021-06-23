@@ -70,26 +70,47 @@ Normally it prints quite a lot of logs about what it's doing to the stdout. Afte
 Main page http://localhost:9999 is the UI that reports some metrics about trust anchorts, repositories and the list of errors and warnings.
 
 
+## HTTP API
+
+There are several API endpoints. Note that there is not much of design invested into the API, so more adjustments will come based on the feedback and feature requests.
+
+- `/api/vrps.csv`  - CSV-formatted list of VRPs
+- `/api/vrps.json` - JSON-formatted list of VRPs
+- `/api/validation-result` - JSON-formatted latest validation results similar to what can be seen in the UI
+- `/api/app-metrics` - JSON-formatted latest metrics similar to what can be seen in the UI
+- `/api/lmdb-stat` - JSON-formatted statistics for LMDB cache. Normally it is not of a huge interest to anyone, mostly used for development and testing.
+- `/api/object` - JSON-formatter dump of the RPKI object. 
+    - With the `hash` paramter the object will be picked by hash 
+    - With the `uri` paramter the object will be picked by its URL 
+    
+    For example 
+    - http://localhost:9999/api/object?uri=rsync://rpki.apnic.net/member_repository/A917D135/19712F8613DD11EB8FFBED74C4F9AE02/0u36vBm4dKB-OdauyKaLMLuB2lw.crl
+    - or http://localhost:9999/api/object?hash=a92126d3a58a0f6593702f36713521fcd581e0a9e38a146f7f762c7d7d48ed0a
+
 ## Prometheus metrics 
 
 Prometheus metrics are accessible via the standard `/metrics` path.
 
 ## Resource consumption
 
-Cold start, i.e. the first start without cache takes about 2 minutes and consumer around 3 minutes of CPU time. This time can be reduced by setting higher `--cpu-count` value in case multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and cannot be reduced drastically.
+Cold start, i.e. the first start without cache takes at least 2 minutes and consumes around 3 minutes of CPU time. This time can be slightly reduced by setting higher `--cpu-count` value in case multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and cannot be reduced drastically. 
 
-With default settings RPKI Prover consumes less than 1 hour of CPU time every 12 hours on a typical modern CPU.
+After initial warmup, it's not a very CPU-bound application. With default settings RPKI Prover consumes about 1 hour of CPU time every 18 hours on a typical modern CPU, creating load average of 5-10%. Smaller revalidation interval with increase the load.
 
-The amount of memory needed for a smooth run for the current state of the repositories (5 trust anchors, ~220K of VRPs in total) is somewhere around 1.5GB. Adding [AS0 trust anchor](https://www.apnic.net/community/security/resource-certification/tal-archive/), can make increase it to 2GB or so.  What can be confusing about memory usage is the figures given by `top/htop`.
+The amount of memory needed for a smooth run for the current state of the repositories (6 trust anchors, including [AS0 TA](https://www.apnic.net/community/security/resource-certification/tal-archive/) of APNIC with about 330K of VRPs in total) is somewhere around 1.5GB. Adding , can make increase it to 2GB or so.  What can be confusing about memory usage is the figures given by `top/htop`.
 
-An example of a server, running for a few weeks:
+An example of a server, running for a few days:
 ```
 VIRT  RES    SHR
-1.0T  4122M  2942M
+1.0T  5383M  3843M
 ```
-Here `SHR` is largely dominated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `4122-2942=1180M`.
+Here `SHR` is largely dominated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `5383-3843=1540M`.
+
+Note that memory consumption is mostly determined by how big the biggest objects are and not that much by how many there are objects in total, so the growth of repositories is not such a big issue for rpki-prover.
 
 Disk space usage depends on the `--cache-lifetime-hours` parameter. The default is 72 hours and it results in a cache size about 2Gb. 72 hours is a little bit on a big side, so lower values would reduce the amount of data stored. However, LMDB is not very good in reusing the free space in its file, so physical size of the `cache` directory can be 2 or more times bigger than the total size of data in it. There is a compaction procedure that kicks in when the LMDB file size is 3 or more times bigger than the total size of all data. So overall, in the worst case scenario, it would need approximately 1GB of disk space for every 10 hours of `--cache-lifetime-hours`.
+
+
 
  ## Why Haskell?
 
