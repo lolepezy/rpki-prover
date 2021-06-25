@@ -19,9 +19,6 @@ import           Data.Int
 import           Data.IORef.Lifted
 
 import qualified Data.List                as List
-import           Data.List.NonEmpty       (NonEmpty)
-import qualified Data.List.NonEmpty       as NonEmpty
-import qualified Data.Set.NonEmpty        as NESet
 import           Data.Maybe               (fromMaybe, catMaybes)
 import qualified Data.Set                 as Set
 
@@ -196,7 +193,7 @@ putObject :: (MonadIO m, Storage s) =>
             -> RpkiObjectStore s 
             -> StorableObject RpkiObject
             -> WorldVersion -> m ()
-putObject tx objectStore@RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
+putObject tx RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
@@ -217,7 +214,7 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> RpkiURL
                 -> Hash
                 -> m ()
-linkObjectToUrl tx objectStore@RpkiObjectStore {..} rpkiURL hash = liftIO $ do    
+linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do    
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
         z <- M.get tx uriToUriKey rpkiURL 
         urlKey <- maybe (saveUrl rpkiURL) pure z                
@@ -272,8 +269,8 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
         Just (k, _) -> do 
             o <- getLocatedByKey tx store k
             pure $! case o of 
-                Just z@(Located loc (MftRO mft)) -> Just $ Located loc mft
-                _                                -> Nothing
+                Just (Located loc (MftRO mft)) -> Just $ Located loc mft
+                _                              -> Nothing
   where
     chooseLatest latest _ (k, timingMark) = do 
         pure $! case latest of 
@@ -321,8 +318,8 @@ getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $ do
         Just k -> do 
             o <- getLocatedByKey tx store k
             pure $! case o of 
-                Just z@(Located loc (MftRO mft)) -> Just $ Located loc mft
-                _                                -> Nothing
+                Just (Located loc (MftRO mft)) -> Just $ Located loc mft
+                _                              -> Nothing
 
 
 -- TA store functions

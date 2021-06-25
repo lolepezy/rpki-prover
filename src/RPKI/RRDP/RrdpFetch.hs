@@ -107,27 +107,25 @@ downloadAndUpdateRRDP
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubVPath (U.convert uri) $ do
             logInfoM logger [i|#{uri}: downloading snapshot.|]
-            (r, downloadedIn, savedIn) <- downloadAndSave            
-            pure r
+            
+            ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
+                fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
+                    downloadHashedBS (appContext ^. typed @Config) uri hash                                    
+                        (\actualHash -> 
+                            Left $ RrdpE $ SnapshotHashMismatch { 
+                                expectedHash = hash,
+                                actualHash = actualHash                                            
+                            })                
+
+            bumpDownloadTime downloadedIn
+            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+
+            (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
+            updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
+
+            pure $ repo { rrdpMeta = rrdpMeta' }
+
         where
-            downloadAndSave = do
-                ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
-                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri hash                                    
-                            (\actualHash -> 
-                                Left $ RrdpE $ SnapshotHashMismatch { 
-                                    expectedHash = hash,
-                                    actualHash = actualHash                                            
-                                })                
-
-                bumpDownloadTime downloadedIn
-                updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
-
-                (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
-                updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
-
-                pure (repo { rrdpMeta = rrdpMeta' }, downloadedIn, savedIn)
-
             rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)                    
     
 
