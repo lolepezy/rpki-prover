@@ -323,7 +323,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                             Left e   -> ASN1ParsingTrouble rpkiURL (VErr e)
                                             Right ro -> Success rpkiURL (toStorableObject ro)
                                         
-        saveStorable objectStore _ (Left (e, uri)) _ = 
+        saveStorable _ _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
 
         saveStorable objectStore tx (Right (uri, a)) _ =           
