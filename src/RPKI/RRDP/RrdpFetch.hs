@@ -288,7 +288,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     cpuParallelism
                     (S.mapM (newStorable1 objectStore) $ S.each snapshotItems)
                     (savingTx sessionId serial)
-                    (saveStorable1 objectStore)
+                    (saveStorable objectStore)
                     (mempty :: ())
       where        
 
@@ -323,10 +323,10 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                             Left e   -> ASN1ParsingTrouble rpkiURL (VErr e)
                                             Right ro -> Success rpkiURL (toStorableObject ro)
                                         
-        saveStorable1 objectStore _ (Left (e, uri)) _ = 
+        saveStorable objectStore _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
 
-        saveStorable1 objectStore tx (Right (uri, a)) _ =           
+        saveStorable objectStore tx (Right (uri, a)) _ =           
             waitTask a >>= \case     
                 HashExists rpkiURL hash ->
                     DB.linkObjectToUrl tx objectStore rpkiURL hash
@@ -342,7 +342,9 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                 Success rpkiUrl so@StorableObject {..} -> do 
                     DB.putObject tx objectStore so worldVersion                    
                     DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
-                    addedObject                                      
+                    addedObject                     
+                other -> 
+                    logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
