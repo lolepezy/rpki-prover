@@ -300,7 +300,7 @@ concurrentTasks v1 v2 = do
 
 
 
-data Slot = Free | Taken | DontTake
+data Slot = Free | Taken | NotForTaking
 
 -- | 
 inParallelVT :: (MonadBaseControl IO m, MonadIO m) =>
@@ -369,34 +369,37 @@ inParallel bottleneck as f = do
                 (readAll queue `finally` closeQ queue)
             `finally`
                 killAll queue cancel        
-    where                
-        closeQ q = liftIO $ atomically $ closeCQueue q
-        writeAll queue = go as  
-            where 
-                go [] = pure ()
-                go (s : ss) = do 
-                    slot <- liftIO $ newTVarIO Free
+  where                
+    closeQ q = liftIO $ atomically $ closeCQueue q
+    writeAll queue = go as  
+        where 
+        go [] = pure ()
+        go (s : ss) = do 
+            slot <- liftIO $ newTVarIO Free
 
-                    a <- async $ do                     
-                            z <- f s 
-                                    `finally` 
-                                liftIO (atomically $ parallelReleaseSlot bottleneck slot)
-                            pure $! z
+            -- It is important to create the async first and then try to acquire 
+            -- the slot in the bottleneck, otherwise there's potential for 
+            -- deadlock in the system. 
+            a <- async $ do                     
+                    z <- f s 
+                            `finally` 
+                        atomically (parallelReleaseSlot bottleneck slot)
+                    pure $! z
 
-                    queueClosed <- 
-                        atomically (parallePutToTheQueueWhenReady queue bottleneck slot a)
-                            `onException` 
-                        cancel a
+            queueClosed <- 
+                atomically (parallePutToTheQueueWhenReady queue bottleneck slot a)
+                    `onException` 
+                cancel a
 
-                    unless queueClosed $ go ss                            
+            unless queueClosed $ go ss                            
         
-        readAll queue = 
-            atomically (readCQueue queue) >>= \case             
-                Nothing -> pure []
-                Just t  -> do                     
-                    z    <- wait t
-                    rest <- readAll queue 
-                    pure $! z : rest                    
+    readAll queue = 
+        atomically (readCQueue queue) >>= \case             
+            Nothing -> pure []
+            Just t  -> do                     
+                z    <- wait t
+                rest <- readAll queue 
+                pure $! z : rest                    
 
 
 parallePutToTheQueueWhenReady :: ClosableQueue a -> Bottleneck -> TVar Slot -> a -> STM Bool
@@ -416,7 +419,7 @@ parallelReleaseSlot :: Bottleneck -> TVar Slot -> STM ()
 parallelReleaseSlot bottleneck slot = do 
     readTVar slot >>= \case                            
         Taken -> releaseSlot bottleneck
-        _     -> writeTVar slot DontTake
+        _     -> writeTVar slot NotForTaking
 
 
 killAll :: MonadIO m => ClosableQueue t -> (t -> m a) -> m ()

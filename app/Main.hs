@@ -201,7 +201,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & #lmdbSize .~ lmdbRealSize        
     }
 
-    logDebugM logger [i|Created application context: #{config appContext}|]
+    logInfoM logger [i|Created application context: #{config appContext}|]
     pure appContext    
 
 
