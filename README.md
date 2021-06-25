@@ -95,7 +95,7 @@ Prometheus metrics are accessible via the standard `/metrics` path.
 
 Cold start, i.e. the first start without cache takes at least 2 minutes and consumes around 3 minutes of CPU time. This time can be slightly reduced by setting higher `--cpu-count` value in case multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and cannot be reduced drastically. 
 
-After initial warmup, it's not a very CPU-bound application. With default settings RPKI Prover consumes about 1 hour of CPU time every 18 hours on a typical modern CPU, creating load average of 5-10%. Smaller revalidation interval with increase the load.
+After initial warmup, it's not a very CPU-bound application. With default settings RPKI Prover consumes about 1 hour of CPU time every 18 hours on a typical modern CPU, creating load average of 5-10%. Smaller revalidation interval will increase the load.
 
 The amount of memory needed for a smooth run for the current state of the repositories (6 trust anchors, including [AS0 TA](https://www.apnic.net/community/security/resource-certification/tal-archive/) of APNIC with about 330K of VRPs in total) is somewhere around 1.5GB. Adding or removing TAs can increase or reduce this amount. What can be confusing about memory usage is the figures given by `top/htop`.
 
