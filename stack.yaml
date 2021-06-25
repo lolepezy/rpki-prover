@@ -49,6 +49,9 @@ extra-deps:
     subdirs:
       - x509
       - x509-validation
+
+    # Replace with LTS version as soon as `showTime`
+    # is exported from co-log.
   - git: https://github.com/kowainik/co-log.git
     commit: d2c7ad66af4e79c7a8f8d5e6c324ea3ff2739277
     subdirs:
