@@ -110,7 +110,10 @@ Note that memory consumption is mostly determined by how big the biggest objects
 
 Disk space usage depends on the `--cache-lifetime-hours` parameter. The default is 72 hours and it results in a cache size about 2Gb. 72 hours is a little bit on a big side, so lower values would reduce the amount of data stored. However, LMDB is not very good in reusing the free space in its file, so physical size of the `cache` directory can be 2 or more times bigger than the total size of data in it. There is a compaction procedure that kicks in when the LMDB file size is 2 or more times bigger than the total size of all data. So overall, in the worst case scenario, it would need approximately 1GB of disk space for every 10 hours of `--cache-lifetime-hours`.
 
+## Known issues
 
+ - From time to time a message 'rpki-prover: Thread killed by timeout manager' is printed to `stderr`. It's the result of a bug in the HTTP server used for API and UI and is harmless. It will be fixed one way or the other in future versions.
+ - As mentioned before, total RSS of the process can go up to several gigabytes even though most of it mapped to LMDB cache. In may be that `rpki-prover` is killed by OOM and some configuration adjustments would be needed to prevent it.
 
  ## Why Haskell?
 
