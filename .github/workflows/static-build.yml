@@ -38,8 +38,7 @@ jobs:
     - 
       name: Build static binary
       run:
-        stack install --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static
-        mv .stack-work/docker/_home/.local/bin/rpki-prover-static ./rpki-prover-linux.exe
+        stack install --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static && mv .stack-work/docker/_home/.local/bin/rpki-prover-static ./rpki-prover-linux.exe
     - 
       name: Upload binary      
       uses: xresloader/upload-to-github-release@v1
