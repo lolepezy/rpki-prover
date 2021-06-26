@@ -50,7 +50,7 @@ extra-deps:
       - x509
       - x509-validation
 
-    # Replace with LTS version as soon as `showTime`
+    # TODO Replace with LTS version as soon as `showTime`
     # is exported from co-log.
   - git: https://github.com/kowainik/co-log.git
     commit: d2c7ad66af4e79c7a8f8d5e6c324ea3ff2739277
@@ -58,9 +58,9 @@ extra-deps:
       - co-log-core
       - co-log
 
-    # Replace it with the LTS version as soon as the stupid 
+    # TODO Replace it with the LTS version as soon as the stupid 
     # 'rpki-prover: Thread killed by timeout manager' message 
-    # is gone.
+    # is fixed.
   - git: https://github.com/lolepezy/wai
     commit: 2dbc1be58473b631e170391a89d063f38812ce44
     subdirs:
@@ -97,12 +97,4 @@ extra-deps:
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
 
-allow-newer: true
-
-# system-ghc: false
-# docker:
-#   image: fpco/stack-build:lts-14.27
-#   # enable: true
-#   run-args:
-#   - --ulimit=nofile=60000
-#   set-user: true
+allow-newer: false
