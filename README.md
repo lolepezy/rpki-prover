@@ -2,26 +2,25 @@
 
 Implementation of the [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
 
-Some of the decisions about the architecture and general flow are documented in ./doc/*.md files. Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any questions can be asked there as well. 
+Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any questions can be asked there as well. 
 
 Implemented features are
 
 - Fetching from both rsync and RRDP repositories
 - X509 validation and validation of EE certificates 
 - Validation of resource sets, including support for RFC8360 "validation reconsidered"
-- Output of VRPs in CSV and JSON formats
-- Output of found problems
-- Cache cleanup, scheduled revalidation, cache compaction, etc.
-- Support for RTR protocol, both version 0 and 1
-- Basic UI for reporting metrics and found problems
 - Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
+- Basic UI for reporting metrics and found problems
+- Output of VRPs in CSV and JSON formats
+- Cache cleanup, scheduled revalidation, cache compaction, so it can run unlimited time without draining resources
+- Support for RTR protocol, both version 0 and 1
 - Static binaries for Linux
-- Docker image
+- Docker image.
 
 Current and future work
 - SLURM support
 - History of validations in UI
-- Ergonomics for long-running processes (automatic cleanups, cache DB migration, etc.)
+- Ergonomics for long-running processes (more subtle automatic cleanups, cache DB migration, etc.)
 - CPU and memory optimisations
  
 
@@ -36,15 +35,16 @@ There is an initialise step necessary to start after downloading or building the
 
 ## Static Linux binary
 
-Every [release](https://github.com/lolepezy/rpki-prover/releases) includes a statically linked Linux x64 executable, just download and run it. 
+Every [release](https://github.com/lolepezy/rpki-prover/releases) includes statically linked Linux x64 executable, just download and run it. 
 
 ## Docker image
 
-It's possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub and it's about 80mb in size.
+It is possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub and it's about 80mb in size.
 
-It's also possible to build your own image using `docker build . --file Dockerfile.prover --tag rpki-prover`.
+It is also possible to build your own image using `docker build . --file Dockerfile.prover --tag rpki-prover`.
 
-Since `rpki-prover` needs to have some persistent directory to use for TALs, caches, temporary files, etc., there needs to be a persistent volume configured for it, so typical sequence of commands could be something like this
+Since `rpki-prover` needs to have some persistent directory to use for TALs, caches, temporary files, etc. (the aforementioned `/var/where-you-want-data-to-be`), there needs to be a persistent volume configured for it, so typical sequence of commands could be something like this
+
 ```
 docker volume create rpki-data
 docker pull lolepezy/rpki-prover:latest
