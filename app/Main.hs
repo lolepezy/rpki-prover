@@ -223,12 +223,13 @@ initialiseFS cliOptions logger = do
                     let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
                     let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"] 
 
-                    logInfoM logger [i|Downloading TALs from #{talsUrl}.|]
+                    logInfoM logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
                     fromTryM 
                         (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e)) 
                         $ forM_ talNames                            
                             $ \tal -> do 
                                 let talUrl = Text.pack $ talsUrl <> tal
+                                logDebugM logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
                                 httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)    
                                 unless (isHttpSuccess httpStatus) $ do                                     
                                     appError $ UnspecifiedE 
@@ -237,7 +238,7 @@ initialiseFS cliOptions logger = do
             case r of
                 Left e -> 
                     logErrorM logger [i|Failed to initialise: #{e}. |] <> 
-                    logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it.|]
+                    logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
                 Right _ -> 
                     logInfoM logger [i|Done.|]
         else do 

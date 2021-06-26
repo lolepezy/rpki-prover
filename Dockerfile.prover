@@ -33,21 +33,11 @@ FROM ubuntu:20.04 as prover
 # Add the libraries we need to run the application
 RUN apt-get update && apt-get install -y libgmp-dev libexpat1-dev liblmdb-dev liblzma-dev curl rsync libz-dev
 
+VOLUME /rpki-data/
+
 RUN mkdir -p /opt/app
 WORKDIR /opt/app
 
-RUN mkdir -p /opt/rpki
-RUN mkdir -p /opt/rpki/cache
-RUN mkdir -p /opt/rpki/rsync
-RUN mkdir -p /opt/rpki/tmp
-RUN mkdir -p /opt/rpki/tals
-
-RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/afrinic.tal > /opt/rpki/tals/afrinic.tal
-RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/apnic.tal   > /opt/rpki/tals/apnic.tal
-RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/arin.tal    > /opt/rpki/tals/arin.tal
-RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/lacnic.tal  > /opt/rpki/tals/lacnic.tal
-RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/ripe.tal    > /opt/rpki/tals/ripe.tal
-
 COPY --from=build /opt/build/bin .
 EXPOSE 9999
-ENTRYPOINT [ "/opt/app/rpki-prover", "--rpki-root-directory", "/opt/rpki/" ]
+ENTRYPOINT [ "/opt/app/rpki-prover", "--rpki-root-directory", "/rpki-data" ]

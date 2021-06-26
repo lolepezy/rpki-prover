@@ -44,6 +44,13 @@ It's possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. Th
 
 It's also possible to build your own image using `docker build . --file Dockerfile.prover --tag rpki-prover`.
 
+Since `rpki-prover` needs to have some persistent directory to use for TALs, caches, temporary files, etc., there needs to be a persistent volume configured for it, so typical sequence of commands could be something like this
+```
+docker volume create rpki-data
+docker run --mount source=rpki-data,target=/rpki-data rpki-prover:latest --initialise --agree-with-arin-rpa
+docker run --mount source=rpki-data,target=/rpki-data rpki-prover:latest --cpu-count 4 --revalidation-interval 300
+``` 
+
 ## Building from sources
 
 The software is a daemon written in Haskell and can be built using [`stack`](https://docs.haskellstack.org/en/stable/README/).
