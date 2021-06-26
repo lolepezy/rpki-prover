@@ -257,12 +257,13 @@ fsLayout :: CLIOptions Unwrapped
         -> AppLogger 
         -> TALsHandle 
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath)
-fsLayout CLIOptions{..} logger talsHandle = do 
+fsLayout cli logger talsHandle = do 
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let rootDir = rpkiRootDirectory `orDefault` (home </> ".rpki")  
+    let root = getRootrDirectory cli
+    let rootDir = root `orDefault` (home </> ".rpki")  
 
     let message = 
-            case rpkiRootDirectory of 
+            case root of 
                 Just d  -> [i|Root directory is set to #{d}.|]
                 Nothing -> [i|Root directory is not set, using defaul ${HOME}/.rpki|]
         
@@ -314,6 +315,11 @@ createSubDirectoryIfNeeded root sub = do
     unless exists $ createDirectory subDirectory   
     pure $ Right subDirectory
 
+getRootrDirectory :: CLIOptions Unwrapped -> Maybe FilePath
+getRootrDirectory CLIOptions{..} = 
+    case rpkiRootDirectory of 
+        [] -> Nothing
+        s  -> Just $ Prelude.last s
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
@@ -324,8 +330,9 @@ data CLIOptions wrapped = CLIOptions {
         ("This is to indicate that you do accept (and maybe even have read) ARIN Relying Party Agreement " 
         +++ "and would like ARIN TAL to be downloaded."),        
 
-    rpkiRootDirectory :: wrapped ::: Maybe FilePath <?> 
-        "Root directory (default is ${HOME}/.rpki/).",
+    rpkiRootDirectory :: wrapped ::: [FilePath] <?> 
+        ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
+         +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     cpuCount :: wrapped ::: Maybe Natural <?> 
         "CPU number available to the program (default is 2).",

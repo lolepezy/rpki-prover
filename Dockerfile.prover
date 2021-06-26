@@ -50,5 +50,4 @@ RUN curl -s https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/r
 
 COPY --from=build /opt/build/bin .
 EXPOSE 9999
-ENTRYPOINT [ "/opt/app/rpki-prover" ]
-CMD [ "--rpki-root-directory", "/opt/rpki/" ]
+ENTRYPOINT [ "/opt/app/rpki-prover", "--rpki-root-directory", "/opt/rpki/" ]
