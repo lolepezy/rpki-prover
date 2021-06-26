@@ -50,6 +50,8 @@ docker volume create rpki-data
 docker run --mount source=rpki-data,target=/rpki-data rpki-prover:latest --initialise --agree-with-arin-rpa
 docker run --mount source=rpki-data,target=/rpki-data rpki-prover:latest --cpu-count 4 --revalidation-interval 300
 ``` 
+The important part here is `target=/rpki-data`, this directory is expected to exist by default (or can be adjusted with `--rpki-root-directory` option).
+
 
 ## Building from sources
 
