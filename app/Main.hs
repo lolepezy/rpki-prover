@@ -336,7 +336,7 @@ data CLIOptions wrapped = CLIOptions {
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     cpuCount :: wrapped ::: Maybe Natural <?> 
-        "CPU number available to the program (default is 2).",
+        "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",
 
     resetCache :: wrapped ::: Bool <?> 
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
