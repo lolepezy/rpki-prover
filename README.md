@@ -47,12 +47,13 @@ It's also possible to build your own image using `docker build . --file Dockerfi
 Since `rpki-prover` needs to have some persistent directory to use for TALs, caches, temporary files, etc., there needs to be a persistent volume configured for it, so typical sequence of commands could be something like this
 ```
 docker volume create rpki-data
-docker run --mount source=rpki-data,target=/rpki-data rpki-prover:latest --initialise --agree-with-arin-rpa
-docker run --mount source=rpki-data,target=/rpki-data rpki-prover:latest --cpu-count 4 --revalidation-interval 300
+docker pull lolepezy/rpki-prover:latest
+docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --initialise --agree-with-arin-rpa
+docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
 ``` 
 The important part here is `target=/rpki-data`, this directory is expected to exist by default. Otherwise it can be adjusted as in
 ```
-docker run --mount source=rpki-data,target=/something-else rpki-prover:latest --rpki-root-directory /something-else
+docker run --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
 ```
 
 ## Building from sources
