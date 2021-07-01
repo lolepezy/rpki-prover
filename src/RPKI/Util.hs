@@ -82,7 +82,11 @@ isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
 fmtEx :: SomeException -> Text.Text
-fmtEx = Text.pack . show
+fmtEx = fmt
+
+fmt :: Show a => a -> Text.Text
+fmt = Text.pack . show
+
 
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)

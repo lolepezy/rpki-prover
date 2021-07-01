@@ -145,6 +145,9 @@ newtype InitError = InitError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
+newtype NetworkError = NetworkError Text
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 
@@ -153,7 +156,8 @@ data AppError = ParseE (ParseError Text) |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
-                UnspecifiedE Text Text
+                UnspecifiedE Text Text |
+                NetworkE NetworkError
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -164,6 +168,7 @@ newtype VWarning = VWarning AppError
 data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
 

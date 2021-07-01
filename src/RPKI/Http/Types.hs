@@ -117,6 +117,7 @@ instance MimeRender CSV VrpDto where
 instance ToJSON ValidationResult
 instance ToJSON VProblem
 instance ToJSON VWarning
+instance ToJSON NetworkError
 instance ToJSON AppError
 instance ToJSON InitError
 instance ToJSON  a => ToJSON (ParseError a)
