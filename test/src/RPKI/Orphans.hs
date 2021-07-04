@@ -426,6 +426,10 @@ instance Arbitrary InitError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary NetworkError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary AppError where
     arbitrary = genericArbitrary
     shrink = genericShrink
