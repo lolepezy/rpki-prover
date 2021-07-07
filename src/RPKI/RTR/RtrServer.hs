@@ -83,10 +83,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         resolve port = do
             let hints = defaultHints {
                     addrFlags = [AI_PASSIVE], 
-                    addrSocketType = Stream
+                    addrSocketType = Stream                                        
                 }
-            addr : _ <- getAddrInfo (Just hints) Nothing (Just port)
-            pure addr
+            head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
 
         open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
