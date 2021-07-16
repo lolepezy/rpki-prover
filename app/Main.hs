@@ -195,6 +195,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
                 & #validationConfig . #dontFetch .~ dontFetch                
+                & #validationConfig . #strictManifest .~ strictManifest                
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -385,7 +386,10 @@ data CLIOptions wrapped = CLIOptions {
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
 
     dontFetch :: wrapped ::: Bool <?> 
-        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false)."
+        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false).",
+
+    strictManifest :: wrapped ::: Bool <?> 
+        "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/) for manifest handling (default is false)."
 
 } deriving (Generic)
 
