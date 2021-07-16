@@ -437,25 +437,31 @@ validateCaCertificate
                         -- are still there. Do it both in case of successful validation
                         -- or a validation error.
                         let markAllEntriesAsVisited = 
-                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                
-
+                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
+                        
                         vp <- askEnv
-                        let processChildren = do 
-                            -- we do all this fiddling here to gather _all_ errors from the manifest
-                            -- instead of stopping at the first one as it would normally happen with 
-                            -- validation errors.
-                                mftEntryResults <- liftIO $ inParallel
-                                        (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
-                                        nonCrlChildren
-                                        $ \(T2 filename hash') -> runValidatorT vp 
-                                            $ validateManifestEntry filename hash' validCrl  
-                                
-                                -- gather all the validation states from every mft entry
-                                mapM_ (embedState . snd) mftEntryResults                
+                        let processChildren = 
+                                case config ^. #validationConfig . #manifestProcessing of
+                                    RFC6486_Strict -> do 
 
-                                case partitionEithers $ map fst mftEntryResults of
-                                    ([], vrps) -> pure vrps
-                                    (e : _, _) -> appError e
+                                        -- we do all this fiddling here to gather _all_ errors from the manifest
+                                        -- instead of stopping at the first one as it would normally happen with 
+                                        -- validation errors.
+                                        mftEntryResults <- liftIO $ inParallel
+                                                (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
+                                                nonCrlChildren
+                                                $ \(T2 filename hash') -> runValidatorT vp 
+                                                    $ validateManifestEntry filename hash' validCrl  
+                                        
+                                        -- gather all the validation states from every mft entry
+                                        mapM_ (embedState . snd) mftEntryResults                
+
+                                        case partitionEithers $ map fst mftEntryResults of
+                                            ([], vrps) -> pure vrps
+                                            (e : _, _) -> appError e
+
+                                    RFC6486 -> do  
+                                        pure mempty
 
                         mconcat <$> processChildren `finallyError` markAllEntriesAsVisited                                                
 

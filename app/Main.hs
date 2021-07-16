@@ -195,7 +195,8 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
                 & #validationConfig . #dontFetch .~ dontFetch                
-                & #validationConfig . #strictManifest .~ strictManifest                
+                & #validationConfig . #manifestProcessing .~ 
+                        (if strictManifest then RFC6486_Strict else RFC6486)
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
