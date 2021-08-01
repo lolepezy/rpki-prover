@@ -4,9 +4,6 @@ module RPKI.Parse.Internal.ROA where
 
 import qualified Data.ByteString as BS  
 
-import Data.Monoid (mconcat)
-
-import Data.Word
 import Data.ASN1.Types
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
@@ -35,18 +32,38 @@ parseRoa bs = do
             mconcat <$> onNextContainer Sequence (getMany $
                 onNextContainer Sequence $ 
                 getAddressFamily "Expected an address family here" >>= \case 
-                    Right Ipv4F -> getRoa asId $ \bs' nzBits -> Ipv4P $ make bs' (fromIntegral nzBits)
-                    Right Ipv6F -> getRoa asId $ \bs' nzBits -> Ipv6P $ make bs' (fromIntegral nzBits)                
+                    Right Ipv4F -> getRoa asId Ipv4F
+                    Right Ipv6F -> getRoa asId Ipv6F
                     Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
-        getRoa :: Int -> (BS.ByteString -> Word64 -> IpPrefix) -> ParseASN1 [Vrp]
-        getRoa asId mkPrefix = onNextContainer Sequence $ getMany $
+        getRoa :: Int -> AddrFamily -> ParseASN1 [Vrp]
+        getRoa asId addressFamily = onNextContainer Sequence $ getMany $
             getNextContainerMaybe Sequence >>= \case       
-                Just [BitString (BitArray nzBits bs')] -> 
-                    pure $ mkRoa bs' nzBits (PrefixLength $ fromIntegral nzBits) 
-                Just [BitString (BitArray nzBits bs'), IntVal maxLength] -> 
-                    pure $ mkRoa bs' nzBits (PrefixLength $ fromInteger maxLength)           
+                Just [BitString (BitArray nzBits bs')] -> do
+                    pLen <- getPrefixLength nzBits addressFamily
+                    pure $ mkRoa bs' addressFamily nzBits pLen
+                Just [BitString (BitArray nzBits bs'), IntVal maxLength] -> do
+                    pLen <- getPrefixLength maxLength addressFamily
+                    pure $ mkRoa bs' addressFamily nzBits pLen
                 Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
                 Nothing -> throwParseError "Unexpected ROA content"
             where 
-                mkRoa bs' nz = Vrp (ASN (fromIntegral asId)) (mkPrefix bs' nz)
+                mkRoa bs' Ipv4F nz len = Vrp (ASN (fromIntegral asId)) (Ipv4P $ make bs' (fromIntegral nz)) len
+                mkRoa bs' Ipv6F nz len = Vrp (ASN (fromIntegral asId)) (Ipv6P $ make bs' (fromIntegral nz)) len
+
+        getPrefixLength len = \case            
+            Ipv4F 
+                | len < 0  -> 
+                    throwParseError $ "Negative value for IPv4 prefix length: " <> show len
+                | len > 32 -> 
+                    throwParseError $ "Too big value for IPv4 prefix length: " <> show len
+                | otherwise ->
+                    pure $ PrefixLength $ fromIntegral len
+            Ipv6F 
+                | len < 0  -> 
+                    throwParseError $ "Negative value for IPv6 prefix length: " <> show len
+                | len > 128 -> 
+                    throwParseError $ "Too big value for IPv6 prefix length: " <> show len
+                | otherwise ->
+                    pure $ PrefixLength $ fromIntegral len
+                        
