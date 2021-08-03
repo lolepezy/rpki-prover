@@ -320,7 +320,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                                     then HashExists rpkiURL hash
                                     else
                                         case first ParseE $ readObject rpkiURL decoded of 
-                                            Left e   -> ASN1ParsingTrouble rpkiURL (VErr e)
+                                            Left e   -> ObjectParsingProblem rpkiURL (VErr e)
                                             Right ro -> Success rpkiURL (toStorableObject ro)
                                         
         saveStorable _ _ (Left (e, uri)) _ = 
@@ -336,7 +336,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                 DecodingTrouble rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
-                ASN1ParsingTrouble rpkiUrl (VErr e) -> do                    
+                ObjectParsingProblem rpkiUrl (VErr e) -> do                    
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
                 Success rpkiUrl so@StorableObject {..} -> do 
@@ -429,7 +429,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                         Left e   -> DecodingTrouble rpkiURL (VErr e)
                         Right (DecodedBase64 decoded) -> 
                             case first ParseE $ readObject rpkiURL decoded of 
-                                Left e   -> ASN1ParsingTrouble rpkiURL (VErr e)
+                                Left e   -> ObjectParsingProblem rpkiURL (VErr e)
                                 Right ro -> Success rpkiURL (toStorableObject ro)            
 
         saveStorable objectStore tx r _ = 
@@ -456,7 +456,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 DecodingTrouble rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                     
-                ASN1ParsingTrouble rpkiUrl (VErr e) -> do
+                ObjectParsingProblem rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
                 Success rpkiUrl so@StorableObject {..} -> do 
@@ -480,7 +480,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 DecodingTrouble rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                           
-                ASN1ParsingTrouble rpkiUrl (VErr e) -> do
+                ObjectParsingProblem rpkiUrl (VErr e) -> do
                     logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
                 Success rpkiUrl so@StorableObject {..} -> do 
@@ -523,7 +523,7 @@ data ObjectProcessingResult =
           UnparsableRpkiURL URI VProblem
         | DecodingTrouble RpkiURL VProblem
         | HashExists RpkiURL Hash
-        | ASN1ParsingTrouble RpkiURL VProblem
+        | ObjectParsingProblem RpkiURL VProblem
         | Success RpkiURL (StorableObject RpkiObject)
     deriving Show
 

@@ -46,13 +46,13 @@ readObject objectURL content = do
     let URI u = getURL objectURL
     let ext = map toLower $ Text.unpack $ Text.drop (Text.length u - 4) u
     case ext of
-        ".cer" -> parse_ objectURL parseResourceCertificate CerRO content            
-        ".mft" -> parse_ objectURL parseMft MftRO content
-        ".roa" -> parse_ objectURL parseRoa RoaRO content                    
-        ".crl" -> parse_ objectURL parseCrl CrlRO content            
-        ".gbr" -> parse_ objectURL parseGbr GbrRO content            
+        ".cer" -> parse_ parseResourceCertificate CerRO content            
+        ".mft" -> parse_ parseMft MftRO content
+        ".roa" -> parse_ parseRoa RoaRO content                    
+        ".crl" -> parse_ parseCrl CrlRO content            
+        ".gbr" -> parse_ parseGbr GbrRO content            
         _      -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
-            parse_ u parse constructor bs = 
+            parse_ parse constructor bs = 
                 constructor <$> parse bs
                 
