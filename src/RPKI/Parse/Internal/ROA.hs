@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.Parse.Internal.ROA where
 
 import qualified Data.ByteString as BS  
 
+import Control.Monad
 import Data.ASN1.Types
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
@@ -11,6 +13,7 @@ import Data.ASN1.Parse
 import Data.ASN1.BitArray
 
 import Data.Bifunctor
+import Data.String.Interpolate.IsString
 
 import RPKI.Domain 
 import RPKI.Resources.Types
@@ -41,32 +44,28 @@ parseRoa bs = do
             getNextContainerMaybe Sequence >>= \case       
                 Just [BitString (BitArray nzBits bs')] ->
                     makeVrp asId bs' nzBits nzBits addressFamily
-                    -- pLen <- getPrefixLength nzBits addressFamily
-                    -- pure $ mkRoa bs' addressFamily nzBits pLen
                 Just [BitString (BitArray nzBits bs'), IntVal maxLength] ->
                     makeVrp asId bs' nzBits maxLength addressFamily
-                    -- pLen <- getPrefixLength maxLength addressFamily
-                    -- pure $ mkRoa bs' addressFamily nzBits pLen
-                Just a  -> throwParseError $ "Unexpected ROA content: " <> show a
+                Just a  -> throwParseError [i|Unexpected ROA content: #{a}|]
                 Nothing -> throwParseError "Unexpected ROA content"
-            -- where 
-            --     mkRoa bs' Ipv4F nz len = Vrp (ASN (fromIntegral asId)) (Ipv4P $ make bs' (fromIntegral nz)) len
-            --     mkRoa bs' Ipv6F nz len = Vrp (ASN (fromIntegral asId)) (Ipv6P $ make bs' (fromIntegral nz)) len
 
-        makeVrp asId bs' nonZeroBitCount prefixMaxLength addressFamily =             
+        makeVrp asId bs' nonZeroBitCount prefixMaxLength addressFamily = do
+            when (nonZeroBitCount > fromIntegral prefixMaxLength) $
+                throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
+
             case addressFamily of
                 Ipv4F 
-                    | prefixMaxLength < 0  -> 
-                        throwParseError $ "Negative value for IPv4 prefix length: " <> show prefixMaxLength
+                    | prefixMaxLength <= 0  -> 
+                        throwParseError [i|Negative or zero value for IPv4 prefix max length: #{prefixMaxLength}|]
                     | prefixMaxLength > 32 -> 
-                        throwParseError $ "Too big value for IPv4 prefix length: " <> show prefixMaxLength
+                        throwParseError [i|Too big value for IPv4 prefix max length: #{prefixMaxLength}|]
                     | otherwise ->
                         pure $ mkVrp nonZeroBitCount prefixMaxLength Ipv4P
                 Ipv6F 
-                    | prefixMaxLength < 0  -> 
-                        throwParseError $ "Negative value for IPv6 prefix length: " <> show prefixMaxLength
+                    | prefixMaxLength <= 0  -> 
+                        throwParseError [i|Negative or zero value for IPv6 prefix max length: #{prefixMaxLength}|]
                     | prefixMaxLength > 128 -> 
-                        throwParseError $ "Too big value for IPv6 prefix length: " <> show prefixMaxLength
+                        throwParseError [i|Too big value for IPv6 prefix max length: #{prefixMaxLength}|]
                     | otherwise ->
                         pure $ mkVrp nonZeroBitCount prefixMaxLength Ipv6P
             where 
@@ -74,21 +73,4 @@ parseRoa bs = do
                 mkVrp nz len mkIp = Vrp 
                             (ASN (fromIntegral asId)) 
                             (mkIp $ make bs' (fromIntegral nz)) 
-                            (PrefixLength $ fromIntegral len)                
-
-        -- getPrefixLength len = \case            
-        --     Ipv4F 
-        --         | len < 0  -> 
-        --             throwParseError $ "Negative value for IPv4 prefix length: " <> show len
-        --         | len > 32 -> 
-        --             throwParseError $ "Too big value for IPv4 prefix length: " <> show len
-        --         | otherwise ->
-        --             pure $ PrefixLength $ fromIntegral len
-        --     Ipv6F 
-        --         | len < 0  -> 
-        --             throwParseError $ "Negative value for IPv6 prefix length: " <> show len
-        --         | len > 128 -> 
-        --             throwParseError $ "Too big value for IPv6 prefix length: " <> show len
-        --         | otherwise ->
-        --             pure $ PrefixLength $ fromIntegral len
-                        
+                            (PrefixLength $ fromIntegral len)
