@@ -440,17 +440,15 @@ validateCaCertificate
                                 visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
                         
                         vp <- askEnv
-                        let processChildren = 
-                                case config ^. #validationConfig . #manifestProcessing of
-                                    -- this indicates the difeerence between RFC6486-bis 
-                                    -- version 02 (strict) and version 03 (more loose)
-                                    RFC6486_Strict -> do
-                                        -- in this case 
-                                        rs <- allOrNothingMftChildrenResults nonCrlChildren validCrl
-                                        mftChildrenValidation rs
-                                    RFC6486 -> do
-                                        rs <- independentMftChildrenResults nonCrlChildren validCrl
-                                        mftChildrenValidation rs
+                        let processChildren = do 
+                                -- this indicates the difeerence between RFC6486-bis 
+                                -- version 02 (strict) and version 03 (more loose)                            
+                                let gatherMftEntryValidations = 
+                                        case config ^. #validationConfig . #manifestProcessing of                                            
+                                            RFC6486        -> independentMftChildrenResults
+                                            RFC6486_Strict -> allOrNothingMftChildrenResults
+
+                                useMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
 
                         mconcat <$> processChildren `finallyError` markAllEntriesAsVisited                                                
 
@@ -460,7 +458,7 @@ validateCaCertificate
             oneMoreMft
             addValidMft topDownContext childrenAki mft
             pure manifestResult            
-    
+
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
         liftIO $ inParallel
@@ -488,7 +486,7 @@ validateCaCertificate
                             Left _ -> (Right mempty, q)
                             _      -> (z, q)     
 
-    mftChildrenValidation mftEntryResults = do                 
+    useMftEntryResults mftEntryResults = do                 
         -- gather all the validation states from every MFT entry
         mapM_ (embedState . snd) mftEntryResults                
 
