@@ -603,7 +603,13 @@ sortRrdpFirst = List.sortBy $ \u1 u2 ->
 sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
 
+{- 
+https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
+https://datatracker.ietf.org/doc/html/rfc6486#section-4.2.1
+and probably others.
 
+Serials in objects (CRL and MFT numbers, etc.) are limited to 20 octets, i.e. 160 bits.
+-} 
 maxSerial :: Integer
 maxSerial = (2 :: Integer) ^ 160 - 1
 
