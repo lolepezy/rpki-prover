@@ -21,16 +21,16 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
     HU.testCase "Should generate update snapshot action" $ do
         let repo = RrdpRepository 
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
-                        (Just (SessionId "whatever", Serial 50))
+                        (Just (SessionId "whatever", RrdpSerial 50))
                         Pending
         let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
-                                rrdpNextStep repo (makeNotification (SessionId "something else") (Serial 120))
+                                rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
                 (Right $ UseSnapshot $ SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")),
 
     HU.testCase "Should generate nothing when the session id and serial are the same" $ do
         let sessionId = SessionId "something"
-        let serial = Serial 13
+        let serial = RrdpSerial 13
         let repo = RrdpRepository 
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
@@ -41,7 +41,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 
     HU.testCase "Should generate delta update when the session id is the same and serial is larger" $ do
         let sessionId = SessionId "something"
-        let serial = Serial 13
+        let serial = RrdpSerial 13
         let nextSerial' = nextSerial serial
         let delta = makeDelta nextSerial'
         let repo = RrdpRepository 
@@ -57,39 +57,39 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
         let sessionId = SessionId "something"
-        let serial = Serial 13
+        let serial = RrdpSerial 13
         let repo = RrdpRepository 
                     (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
                     Pending
         let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
-                                rrdpNextStep repo $ (makeNotification sessionId (Serial 15)) {       
-                                  deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (Serial 15)]
+                                rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 15)) {       
+                                  deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
                                 }
         HU.assertEqual "It's a bummer" nextStep (Right $ UseSnapshot 
             (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB"))),
 
     HU.testCase "Should generate error when deltas are not consecutive" $ do
         let sessionId = SessionId "something"
-        let serial = Serial 13
+        let serial = RrdpSerial 13
         let repo = RrdpRepository 
                     (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
                     Pending
         let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
-                    rrdpNextStep repo $ (makeNotification sessionId (Serial 20)) {       
+                    rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 20)) {       
                         deltas = [
-                        makeDelta $ Serial 20,
-                        makeDelta $ Serial 18,
-                        makeDelta $ Serial 13
+                        makeDelta $ RrdpSerial 20,
+                        makeDelta $ RrdpSerial 18,
+                        makeDelta $ RrdpSerial 13
                         ]
                     }
         HU.assertEqual "It's a bummer" nextStep (Left $ 
-            RrdpE $ NonConsecutiveDeltaSerials [(Serial 13,Serial 18),(Serial 18,Serial 20)])
+            RrdpE $ NonConsecutiveDeltaSerials [(RrdpSerial 13,RrdpSerial 18),(RrdpSerial 18,RrdpSerial 20)])
   ]
     
 
-makeNotification :: SessionId -> Serial -> Notification
+makeNotification :: SessionId -> RrdpSerial -> Notification
 makeNotification sessionId' serial' = Notification {
     version = Version 1,
     sessionId = sessionId',
@@ -98,8 +98,8 @@ makeNotification sessionId' serial' = Notification {
     deltas = []
   }
 
-makeDelta :: Serial -> DeltaInfo
-makeDelta serial'@(Serial s) = DeltaInfo (URI u) (Hash "AABBCC") serial'
+makeDelta :: RrdpSerial -> DeltaInfo
+makeDelta serial'@(RrdpSerial s) = DeltaInfo (URI u) (Hash "AABBCC") serial'
   where u = Text.pack $ "http://somehost/delta" <> show s <> ".xml"
 
 

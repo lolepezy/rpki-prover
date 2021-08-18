@@ -57,7 +57,7 @@ import qualified RPKI.Util                        as U
 downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository 
                         -> (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) 
-                        -> (RrdpURL -> Notification -> Serial -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> RrdpSerial -> LBS.ByteString -> ValidatorT IO ()) 
                         -> ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
@@ -175,7 +175,7 @@ downloadAndUpdateRRDP
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
             pure (rawContent, serial, deltaUri)
 
-        serials = map (^. typed @Serial) sortedDeltas
+        serials = map (^. typed @RrdpSerial) sortedDeltas
         maxSerial = List.maximum serials
         minSerial = List.minimum serials
 
@@ -222,11 +222,11 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
                     List.zip sortedSerials (tail sortedSerials)
 
 
-deltaSerial :: DeltaInfo -> Serial
+deltaSerial :: DeltaInfo -> RrdpSerial
 deltaSerial (DeltaInfo _ _ s) = s
 
-nextSerial :: Serial -> Serial
-nextSerial (Serial s) = Serial $ s + 1
+nextSerial :: RrdpSerial -> RrdpSerial
+nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
 
 
 -- | 
@@ -276,7 +276,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
         when (sessionId /= notificationSessionId) $ 
             appError $ RrdpE $ SnapshotSessionMismatch sessionId notificationSessionId
 
-        let notificationSerial = notification ^. typed @Serial
+        let notificationSerial = notification ^. typed @RrdpSerial
         when (serial /= notificationSerial) $ 
             appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
@@ -364,7 +364,7 @@ saveDelta :: Storage s =>
             AppContext s 
             -> RrdpURL 
             -> Notification 
-            -> Serial             
+            -> RrdpSerial             
             -> LBS.ByteString 
             -> ValidatorT IO ()
 saveDelta appContext repoUri notification currentSerial deltaContent = do        
@@ -383,7 +383,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
         when (sessionId /= notificationSessionId) $ 
             appError $ RrdpE $ DeltaSessionMismatch sessionId notificationSessionId
 
-        let notificationSerial = notification ^. typed @Serial
+        let notificationSerial = notification ^. typed @RrdpSerial
         when (serial > notificationSerial) $ 
             appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
 

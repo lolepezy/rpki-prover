@@ -41,6 +41,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
+import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
@@ -95,6 +96,10 @@ instance Arbitrary Serial where
 instance Arbitrary SessionId where
     arbitrary = SessionId . BSS.toShort . convert <$> 
         listOf1 (elements $ ['a'..'z'] ++ ['0'..'9'])
+
+instance Arbitrary RrdpSerial where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Version where
     arbitrary = genericArbitrary

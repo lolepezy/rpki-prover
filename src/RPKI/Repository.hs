@@ -15,7 +15,6 @@ import           Control.Concurrent.Async
 
 import           GHC.Generics
 
-import           Data.Bifunctor
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 import           Data.Ord
@@ -33,6 +32,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           RPKI.Domain
+import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
@@ -67,7 +67,7 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
 
 data RrdpRepository = RrdpRepository {
         uri         :: RrdpURL,
-        rrdpMeta    :: Maybe (SessionId, Serial),
+        rrdpMeta    :: Maybe (SessionId, RrdpSerial),
         status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
