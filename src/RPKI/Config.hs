@@ -56,11 +56,15 @@ data RrdpConf = RrdpConf {
     rrdpTimeout :: Seconds
 } deriving stock (Show, Eq, Ord, Generic)
 
+data ManifestProcessing = RFC6486_Strict | RFC6486
+    deriving stock (Show, Eq, Ord, Generic)
+
 data ValidationConfig = ValidationConfig {
     revalidationInterval           :: Seconds,
     rrdpRepositoryRefreshInterval  :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds,    
-    dontFetch                      :: Bool
+    dontFetch                      :: Bool,
+    manifestProcessing             :: ManifestProcessing
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {
@@ -98,7 +102,8 @@ defaultConfig = Config {
         revalidationInterval           = Seconds $ 13 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
-        dontFetch                      = False
+        dontFetch                      = False,
+        manifestProcessing             = RFC6486
     },
     httpApiConf = HttpApiConfig {
         port = 9999

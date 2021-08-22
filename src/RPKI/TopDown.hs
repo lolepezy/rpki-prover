@@ -437,25 +437,39 @@ validateCaCertificate
                         -- are still there. Do it both in case of successful validation
                         -- or a validation error.
                         let markAllEntriesAsVisited = 
-                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                
-
+                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
+                        
                         vp <- askEnv
                         let processChildren = do 
-                            -- we do all this fiddling here to gather _all_ errors from the manifest
-                            -- instead of stopping at the first one as it would normally happen with 
-                            -- validation errors.
-                                mftEntryResults <- liftIO $ inParallel
-                                        (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
-                                        nonCrlChildren
-                                        $ \(T2 filename hash') -> runValidatorT vp 
-                                            $ validateManifestEntry filename hash' validCrl  
-                                
-                                -- gather all the validation states from every mft entry
-                                mapM_ (embedState . snd) mftEntryResults                
+                                -- this indicates the difeerence between RFC6486-bis 
+                                -- version 02 (strict) and version 03 and later (more loose).                                                                                            
+                                let gatherMftEntryValidations = 
+                                        case config ^. #validationConfig . #manifestProcessing of
+                                            {- 
+                                            The latest version so far of the 
+                                            https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/06/                                            
+                                            item 6.4 says
+                                                "If there are files listed in the manifest that cannot be retrieved 
+                                                from the publication point, the fetch has failed.." 
 
-                                case partitionEithers $ map fst mftEntryResults of
-                                    ([], vrps) -> pure vrps
-                                    (e : _, _) -> appError e
+                                            For that case validity of every object on the manifest is completely 
+                                            separate from each other and don't influence the manifest validity.
+                                            -}
+                                            RFC6486 -> independentMftChildrenResults
+
+                                            {- 
+                                            https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/
+                                            item 6.4 says
+                                                "If there are files listed in the manifest that cannot be retrieved 
+                                                from the publication point, or if they fail the validity tests 
+                                                specified in [RFC6488], the fetch has failed...". 
+
+                                            For that case invalidity of some of the objects (all except certificates) 
+                                            on the manifest make the whole manifest invalid.
+                                            -}
+                                            RFC6486_Strict -> allOrNothingMftChildrenResults
+
+                                useMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
 
                         mconcat <$> processChildren `finallyError` markAllEntriesAsVisited                                                
 
@@ -466,6 +480,42 @@ validateCaCertificate
             addValidMft topDownContext childrenAki mft
             pure manifestResult            
 
+    allOrNothingMftChildrenResults nonCrlChildren validCrl = do
+        vp <- askEnv
+        liftIO $ inParallel
+            (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
+            nonCrlChildren
+            $ \(T2 filename hash') -> runValidatorT vp $ do 
+                    ro <- findManifestEntryObject filename hash' 
+                    -- if failed this one interrupts the whole MFT valdiation
+                    validateMftObject ro hash' filename validCrl                
+
+    independentMftChildrenResults nonCrlChildren validCrl = do
+        vp <- askEnv
+        liftIO $ inParallel
+            (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
+            nonCrlChildren
+            $ \(T2 filename hash') -> do 
+                (r, vs) <- runValidatorT vp $ findManifestEntryObject filename hash' 
+                case r of 
+                    Left e   -> pure (Left e, vs)
+                    Right ro -> do 
+                        -- We are cheating here a little by faking the empty VRP set.
+                        -- 
+                        -- if failed this one will result in the empty VRP set
+                        -- while keeping errors and warning are in the `vs'` value.
+                        (z, vs') <- runValidatorT vp $ validateMftObject ro hash' filename validCrl
+                        pure $ case z of                             
+                            Left _ -> (Right mempty, vs')
+                            _      -> (z, vs')     
+
+    useMftEntryResults mftEntryResults = do                 
+        -- gather all the validation states from every MFT entry
+        mapM_ (embedState . snd) mftEntryResults                
+
+        case partitionEithers $ map fst mftEntryResults of
+            ([], vrps) -> pure vrps
+            (e : _, _) -> appError e
 
     -- Check manifest entries as a whole, without doing anything 
     -- with the objects they are pointing to.    
@@ -487,49 +537,46 @@ validateCaCertificate
             longerThanOne [_] = False
             longerThanOne []  = False            
             longerThanOne _   = True
-        
-        
-    --
-    -- | Validate an entry of the manifest, i.e. a pair of filename and hash
-    -- 
-    validateManifestEntry filename hash' validCrl = do                    
-        validateMftFileName        
-        
+
+
+    validateMftObject ro hash' filename validCrl = do
+        -- warn about names on the manifest mismatching names in the object URLs
+        let objectLocations = getLocations ro
+        let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
+        when (null nameMatches) $ 
+            vWarn $ ManifestLocationMismatch filename objectLocations
+
+        -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
+        -- or recursively validate CA if the child is a certificate.                           
+        validateChild validCrl ro
+
+    
+    findManifestEntryObject filename hash' = do                    
+        validateMftFileName filename                         
         ro <- liftIO $ do 
             objectStore' <- (^. #objectStore) <$> readTVarIO database
             roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
-
         case ro of 
-            Nothing -> 
-                vError $ ManifestEntryDoesn'tExist hash' filename
-            Just ro' -> do
-                -- warn about names on the manifest mismatching names in the object URLs
-                let objectLocations = getLocations ro'
-                let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
-                when (null nameMatches) $ 
-                    vWarn $ ManifestLocationMismatch filename objectLocations
+            Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
+            Just ro' -> pure ro'
 
-                -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
-                -- or recursively validate CA if the child is a certificate.                           
-                validateChild validCrl ro'
-      where 
 
-        allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
-        validateMftFileName =                
-            case Text.splitOn "." filename of 
-                [ mainName, extension ] -> do                    
-                    unless (isSupportedExtension $ Text.toLower extension) $ 
-                        vError $ BadFileNameOnMFT filename 
-                                    ("Unsupported filename extension " <> extension)
-
-                    unless (Text.all (`elem` allowedMftFileNameCharacters) mainName) $ do 
-                        let badChars = Text.filter (`notElem` allowedMftFileNameCharacters) mainName
-                        vError $ BadFileNameOnMFT filename 
-                                    ("Unsupported characters in filename: '" <> badChars <> "'")
-
-                somethingElse -> 
+    allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
+    validateMftFileName filename =                
+        case Text.splitOn "." filename of 
+            [ mainName, extension ] -> do                    
+                unless (isSupportedExtension $ Text.toLower extension) $ 
                     vError $ BadFileNameOnMFT filename 
-                                "Filename doesn't have exactly one DOT"            
+                                ("Unsupported filename extension " <> extension)
+
+                unless (Text.all (`elem` allowedMftFileNameCharacters) mainName) $ do 
+                    let badChars = Text.filter (`notElem` allowedMftFileNameCharacters) mainName
+                    vError $ BadFileNameOnMFT filename 
+                                ("Unsupported characters in filename: '" <> badChars <> "'")
+
+            somethingElse -> 
+                vError $ BadFileNameOnMFT filename 
+                            "Filename doesn't have exactly one DOT"            
 
     
     validateChild validCrl child@(Located locations ro) = do
@@ -626,7 +673,7 @@ validateCaCertificate
     validateObjectLocations (getLocations -> locs@(Locations locSet)) =
         inSubVPath (locationsToText locs) $ 
             when (NESet.size locSet > 1) $ 
-                vWarn ObjectHasMultipleLocations    
+                vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
 
     -- | Check that CRL URL in the certificate is the same as the one 
     -- the CRL was actually fetched from. 

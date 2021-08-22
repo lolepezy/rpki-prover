@@ -157,7 +157,8 @@ toValidationMessage = \case
           
       CertWrongPolicyExtension b -> [i|Certificate policy extension is broken: #{b}.|]
 
-      ObjectHasMultipleLocations-> [i|The same object has multiple locations, this is suspicious.|]
+      ObjectHasMultipleLocations locs -> 
+          [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
       NoMFT aki _ -> 
           [i|No manifest found for #{aki}.|]
@@ -239,6 +240,9 @@ toValidationMessage = \case
       RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp _ prefix maxLength) -> 
           [i|VRP is malformed, length of the prefix #{prefix} is bigger than #{maxLength}.|]
   where
+    fmtUrlList = mconcat . 
+                 List.intersperse "," . map show  
+
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 
                     map (\(T2 t h) -> t <> Text.pack (":" <> show h))

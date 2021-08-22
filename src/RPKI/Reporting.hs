@@ -53,7 +53,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension BS.ByteString |
-                        ObjectHasMultipleLocations |
+                        ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI Locations |
                         NoCRLOnMFT AKI Locations |
                         MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
