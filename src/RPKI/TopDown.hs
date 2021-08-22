@@ -274,7 +274,7 @@ validateCA appContext validatorPath topDownContext certificate =
         (r, validations) <- runValidatorT validatorPath $
                 validateCaCertificate appContext topDownContext certificate
         pure $ case r of
-            Left e     -> T2 mempty validations
+            Left _     -> T2 mempty validations
             Right vrps -> T2 vrps validations         
 
     
@@ -332,15 +332,14 @@ validateCaCertificate
         -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
         findLatestMft childrenAki >>= \case                        
             Nothing -> 
-                -- Use awkward appError + catchError to force the error to 
+                -- Use awkward vError + catchError to force the error to 
                 -- get into the ValidationResult in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     (\e -> do                         
                         tryLatestValidCachedManifest Nothing childrenAki certLocations e)
                 
-            Just mft -> do 
-                -- logDebugM logger [i|On cert = #{certLocations}.|]
+            Just mft -> 
                 tryManifest mft childrenAki certLocations
                     `catchError` 
                     tryLatestValidCachedManifest (Just mft) childrenAki certLocations
@@ -373,7 +372,7 @@ validateCaCertificate
                                 -> throwError e
                             | otherwise -> do 
                                 appWarn e                                    
-                                logDebugM logger [i|Failed to process manifest: #{e}, will try previous valid version.|]
+                                logWarnM logger [i|Failed to process latest valid manifest: #{e}, fetch is invalid.|]
                                 tryManifest latestValidMft childrenAki certLocations
 
 
