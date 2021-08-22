@@ -11,6 +11,7 @@ import           Control.Monad
 import qualified Data.Map.Strict          as Map
 
 import           RPKI.Domain
+import           RPKI.RRDP.Types
 import           RPKI.Repository
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -47,7 +48,7 @@ putRepositories tx RepositoryStore {..}
 
     
 updateRrdpMeta :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> RepositoryStore s -> (SessionId, Serial) -> RrdpURL -> m ()
+                Tx s 'RW -> RepositoryStore s -> (SessionId, RrdpSerial) -> RrdpURL -> m ()
 updateRrdpMeta tx RepositoryStore {..} meta url = liftIO $ 
     M.get tx rrdpS url >>= \case    
         Nothing -> pure ()

@@ -274,11 +274,11 @@ parseInteger bs = readMaybe $ convert bs
 
 parseSerial :: Monad m =>
             BS.ByteString ->
-            (Serial -> ExceptT RrdpError m v) ->
+            (RrdpSerial -> ExceptT RrdpError m v) ->
             ExceptT RrdpError m v
 parseSerial v f =  case parseInteger v of
     Nothing -> throwE $ BrokenSerial $ convert v
-    Just s  -> f $ Serial s
+    Just s  -> f $ RrdpSerial s
 
 makeHash :: BS.ByteString -> Maybe Hash
 makeHash bs = mkHash . toBytes <$> hexString bs
@@ -303,7 +303,7 @@ decodeBase64 (EncodedBase64 bs) context =
 
 ---------------------------------
 
-type NotificationFold = (Maybe (Version, SessionId, Serial), Maybe SnapshotInfo, [DeltaInfo])
+type NotificationFold = (Maybe (Version, SessionId, RrdpSerial), Maybe SnapshotInfo, [DeltaInfo])
 
 parseNotification :: LBS.ByteString -> Either RrdpError Notification
 parseNotification xml = makeNotification =<< folded
@@ -338,7 +338,7 @@ parseNotification xml = makeNotification =<< folded
         foldElements n _ = Right n
 
 
-type SnapshotFold = (Maybe (Version, SessionId, Serial), [SnapshotPublish])
+type SnapshotFold = (Maybe (Version, SessionId, RrdpSerial), [SnapshotPublish])
 
 parseSnapshot :: LBS.ByteString -> Either RrdpError Snapshot
 parseSnapshot xml = makeSnapshot =<< folded
@@ -369,7 +369,7 @@ parseSnapshot xml = makeSnapshot =<< folded
         foldPubs x  _                                          = Right x
 
 
-type DeltaFold = T2 (Maybe (Version, SessionId, Serial)) [DeltaItem]
+type DeltaFold = T2 (Maybe (Version, SessionId, RrdpSerial)) [DeltaItem]
 
 parseDelta :: LBS.ByteString -> Either RrdpError Delta
 parseDelta xml = makeDelta =<< folded
@@ -418,14 +418,14 @@ parseDelta xml = makeDelta =<< folded
 
 
 
-parseMeta :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError (Version, SessionId, Serial)
+parseMeta :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError (Version, SessionId, RrdpSerial)
 parseMeta as = do
     sId <- toEither NoSessionId $ List.lookup "session_id" as
     s   <- toEither NoSerial $ List.lookup "serial" as
     s'  <- toEither NoSerial $ parseInteger s
     v   <- toEither NoVersion $ List.lookup "version" as
     v'  <- toEither NoVersion $ parseInteger v            
-    pure (Version v', SessionId $ toShortBS sId, Serial s')
+    pure (Version v', SessionId $ toShortBS sId, RrdpSerial s')
 
 parseSnapshotInfo :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError SnapshotInfo
 parseSnapshotInfo as = do
@@ -443,7 +443,7 @@ parseDeltaInfo as = do
     s' <- toEither NoSerial $ parseInteger s  
     case makeHash h of
         Nothing -> Left $ BadHash $ convert h
-        Just h' -> pure $ DeltaInfo (URI $ convert u) h' (Serial s')
+        Just h' -> pure $ DeltaInfo (URI $ convert u) h' (RrdpSerial s')
 
 parseDeltaPublish :: [(BS.ByteString, BS.ByteString)] -> Either RrdpError DeltaPublish
 parseDeltaPublish as = do

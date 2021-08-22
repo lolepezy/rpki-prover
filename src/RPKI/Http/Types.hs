@@ -46,6 +46,7 @@ import           Servant.API
 import           Servant.CSV.Cassava
 
 import           RPKI.Domain                 as Domain
+import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 
 import           RPKI.Reporting
@@ -307,6 +308,7 @@ instance ToJSON Crypto.PubKey.ECC.Types.CurveName
 instance ToJSON SessionId where
     toJSON (SessionId s) = shortBsJson s
 
+instance ToJSON RrdpSerial
 
 instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
     toJSON (T2 a b) = toJSON (a, b)

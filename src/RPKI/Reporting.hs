@@ -35,6 +35,7 @@ import           GHC.Generics
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
+import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.Time
 
@@ -100,19 +101,19 @@ data RrdpError = BrokenXml Text |
                 BadURL Text |
                 NoHashInWithdraw |
                 ContentInWithdraw Text Text |
-                LocalSerialBiggerThanRemote Serial Serial |
-                NonConsecutiveDeltaSerials [(Serial, Serial)] |
+                LocalSerialBiggerThanRemote RrdpSerial RrdpSerial |
+                NonConsecutiveDeltaSerials [(RrdpSerial, RrdpSerial)] |
                 CantDownloadFile Text |
                 CantDownloadNotification Text |
                 CantDownloadSnapshot Text |
                 CantDownloadDelta Text |
                 SnapshotHashMismatch { actualHash :: Hash, expectedHash :: Hash } |
                 SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
-                SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
+                SnapshotSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
-                DeltaSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
-                DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
-                DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: Serial } |
+                DeltaSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
+                DeltaSerialTooHigh { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
+                DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: RrdpSerial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |

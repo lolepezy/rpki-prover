@@ -319,7 +319,7 @@ data Vrp = Vrp
     deriving anyclass Serialise
 
 data Manifest = Manifest {
-        mftNumber   :: Integer, 
+        mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: Instant, 
         nextTime    :: Instant, 
@@ -334,7 +334,7 @@ data SignCRL = SignCRL {
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
-        crlNumber          :: Integer,
+        crlNumber          :: Serial,
         revokenSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
@@ -538,9 +538,6 @@ emptyIpResources = IpResources RS.emptyIpSet
 emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
 
-getMftNumber :: MftObject -> Integer
-getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
-
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
 newCrl a h sc = CrlObject {
         hash = h,    
@@ -605,3 +602,20 @@ sortRrdpFirst = List.sortBy $ \u1 u2 ->
 
 sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
+
+{- 
+https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
+https://datatracker.ietf.org/doc/html/rfc6486#section-4.2.1
+and probably others.
+
+Serials in objects (CRL and MFT numbers, etc.) are limited to 20 octets, i.e. 160 bits.
+-} 
+maxSerial :: Integer
+maxSerial = (2 :: Integer) ^ 160 - 1
+
+makeSerial :: Integer -> Either String Serial 
+makeSerial i = 
+    case () of
+        _ | i <= 0         -> Left $ "Serial is not positive: " <> show i
+          | i >= maxSerial -> Left $ "Serial is too big: " <> show i
+          | otherwise      -> Right $ Serial i
