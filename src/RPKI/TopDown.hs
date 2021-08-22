@@ -499,13 +499,13 @@ validateCaCertificate
                 case r of 
                     Left e   -> pure (Left e, vs)
                     Right ro -> do 
-                        (z, q) <- runValidatorT vp $ validateMftObject ro hash' filename validCrl
+                        (z, vs') <- runValidatorT vp $ validateMftObject ro hash' filename validCrl
                         pure $ case z of 
                             -- We are cheating here, by replacing the individual
                             -- MFT entry validation error with empty set of VRPs.
-                            -- The error will be inside of `vs` anyway.
-                            Left _ -> (Right mempty, q)
-                            _      -> (z, q)     
+                            -- The error will be in the `vs'` anyway.
+                            Left _ -> (Right mempty, vs')
+                            _      -> (z, vs')     
 
     useMftEntryResults mftEntryResults = do                 
         -- gather all the validation states from every MFT entry
