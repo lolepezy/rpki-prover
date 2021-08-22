@@ -442,10 +442,31 @@ validateCaCertificate
                         vp <- askEnv
                         let processChildren = do 
                                 -- this indicates the difeerence between RFC6486-bis 
-                                -- version 02 (strict) and version 03 (more loose)                            
+                                -- version 02 (strict) and version 03 and later (more loose).                                                                                            
                                 let gatherMftEntryValidations = 
-                                        case config ^. #validationConfig . #manifestProcessing of                                            
-                                            RFC6486        -> independentMftChildrenResults
+                                        case config ^. #validationConfig . #manifestProcessing of
+                                            {- 
+                                            The latest version so far of the 
+                                            https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/06/                                            
+                                            item 6.4 says
+                                                "If there are files listed in the manifest that cannot be retrieved 
+                                                from the publication point, the fetch has failed.." 
+
+                                            For that case validity of every object on the manifest is completely 
+                                            separate from each other and don't influence the manifest validity.
+                                            -}
+                                            RFC6486 -> independentMftChildrenResults
+
+                                            {- 
+                                            https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/
+                                            item 6.4 says
+                                                "If there are files listed in the manifest that cannot be retrieved 
+                                                from the publication point, or if they fail the validity tests 
+                                                specified in [RFC6488], the fetch has failed...". 
+
+                                            For that case invalidity of some of the objects (all except certificates) 
+                                            on the manifest make the whole manifest invalid.
+                                            -}
                                             RFC6486_Strict -> allOrNothingMftChildrenResults
 
                                 useMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
