@@ -487,6 +487,7 @@ validateCaCertificate
             nonCrlChildren
             $ \(T2 filename hash') -> runValidatorT vp $ do 
                     ro <- findManifestEntryObject filename hash' 
+                    -- if failed this one interrupts the whole MFT valdiation
                     validateMftObject ro hash' filename validCrl                
 
     independentMftChildrenResults nonCrlChildren validCrl = do
@@ -499,11 +500,12 @@ validateCaCertificate
                 case r of 
                     Left e   -> pure (Left e, vs)
                     Right ro -> do 
+                        -- We are cheating here a little by faking the empty VRP set.
+                        -- 
+                        -- if failed this one will result in the empty VRP set
+                        -- while keeping errors and warning are in the `vs'` value.
                         (z, vs') <- runValidatorT vp $ validateMftObject ro hash' filename validCrl
-                        pure $ case z of 
-                            -- We are cheating here, by replacing the individual
-                            -- MFT entry validation error with empty set of VRPs.
-                            -- The error will be in the `vs'` anyway.
+                        pure $ case z of                             
                             Left _ -> (Right mempty, vs')
                             _      -> (z, vs')     
 
