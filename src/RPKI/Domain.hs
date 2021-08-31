@@ -611,7 +611,7 @@ and probably others.
 Serials in objects (CRL and MFT numbers, etc.) are limited to 20 octets, i.e. 160 bits.
 -} 
 maxSerial :: Integer
-maxSerial = (2 :: Integer) ^ 160 - 1
+maxSerial = (2 :: Integer) ^ (160 :: Integer) - 1
 
 makeSerial :: Integer -> Either String Serial 
 makeSerial i = 
