@@ -14,6 +14,8 @@ import Data.ByteArray (convert)
 
 import Data.ASN1.Types
 
+import Data.These
+
 import Data.X509 as X509
 
 import Data.Hourglass
@@ -104,3 +106,5 @@ deriving instance (Serialise a, Serialise b, Serialise c) => Serialise (T3 a b c
 deriving instance (Ord a, Serialise a) => Serialise (NESet a)
 
 deriving instance (Ord a, Serialise a, Serialise b) => Serialise (MonoidalMap a b)
+
+deriving instance (Serialise a, Serialise b) => Serialise (These a b)
