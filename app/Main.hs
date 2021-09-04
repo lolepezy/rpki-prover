@@ -390,7 +390,10 @@ data CLIOptions wrapped = CLIOptions {
         "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false).",
 
     strictManifestValidation :: wrapped ::: Bool <?> 
-        "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/ item 6.4) for manifest handling (default is false)."
+        "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/ item 6.4) for manifest handling (default is false).",
+
+    localExceptions :: wrapped ::: [String] <?> 
+        "List of comma-separated files with local exceptions in the SLURM format (RFC 8416)."
 
 } deriving (Generic)
 
