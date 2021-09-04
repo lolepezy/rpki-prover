@@ -88,6 +88,7 @@ dependencies:
 - strict-tuple
 - string-conversions
 - text
+- these
 - typed-process
 - transformers
 - temporary
@@ -100,8 +101,9 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
-- vector
 - unix
+- unordered-containers
+- vector
 - warp
 - xeno
 
