@@ -7,13 +7,17 @@
 
 module RPKI.SLURM.Types where
 
-import Data.Text
+import Data.Text (Text)
+import qualified Data.Text as Text
+
 import Data.These
 
 import           GHC.Generics
 import           Codec.Serialise
 
-import           Data.Aeson as JSON
+import           Data.Aeson as Json
+import           Data.Aeson.Types
+import qualified Data.HashMap.Strict as HM
 
 import           Data.String.Interpolate.IsString
 
@@ -45,17 +49,16 @@ data LocallyAddedAssertions = LocallyAddedAssertions {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-
 data PrefixFilter = PrefixFilter {
         asnAndPrefix :: These ASN IpPrefix,                
-        comment :: Maybe Text      
+        comment      :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
 data BgpsecFilter = BgpsecFilter {
         asnAndSKI :: These ASN EncodedBase64,  
-        comment :: Maybe Text      
+        comment   :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
@@ -70,8 +73,8 @@ data PrefixAssertion = PrefixAssertion {
     deriving anyclass Serialise 
 
 data BgpsecAssertion = BgpsecAssertion {
-        asn    :: ASN,
-        prefix :: IpPrefix,
+        asn :: ASN,
+        ski :: EncodedBase64,
         routerPublicKey :: EncodedBase64,
         comment :: Maybe Text      
     }
@@ -83,14 +86,43 @@ instance FromJSON Slurm
 instance FromJSON ValidationOutputFilters
 instance FromJSON LocallyAddedAssertions
 
+instance FromJSON BgpsecFilter where
+    parseJSON = withObject "BgpsecFilter" $ \o -> do
+        asnAndSKI <- parseOneOrBoth o "asn" "SKI"
+        comment   <- o .: "comment"
+        pure $ BgpsecFilter {..}
 
-instance FromJSON BgpsecFilter
-instance FromJSON PrefixFilter
-instance FromJSON BgpsecAssertion
+instance FromJSON PrefixFilter where
+    parseJSON = withObject "PrefixFilter" $ \o -> do
+        asnAndPrefix <- parseOneOrBoth o "asn" "prefix"
+        comment      <- o .: "comment"
+        pure $ PrefixFilter {..}
+
+instance FromJSON BgpsecAssertion where
+    parseJSON = genericParseJSON opts
+        where
+            opts = defaultOptions { 
+                    fieldLabelModifier = \case
+                        "ski" -> "SKI"
+                        f     -> f
+                }
+
 instance FromJSON PrefixAssertion
 
+parseOneOrBoth :: (FromJSON a, FromJSON b) => 
+                  Object -> Text -> Text -> Parser (These a b)
+parseOneOrBoth o t1 t2 = do 
+    let asn = HM.lookup t1 o
+    let prefix = HM.lookup t2 o
+    case (asn, prefix) of
+        (Nothing, Nothing)      -> fail [i|At least one of "#{t1}" or "#{t2}" must be there|]
+        (Just asn, Nothing)     -> This <$> parseJSON asn 
+        (Nothing, Just prefix)  -> That <$> parseJSON prefix
+        (Just asn, Just prefix) -> These <$> parseJSON asn <*> parseJSON prefix
 
-testJson = JSON.decode [i|
+
+testJson :: Either String Slurm
+testJson = Json.eitherDecode [i|
         {
         "slurmVersion": 1,
         "validationOutputFilters": {
