@@ -158,6 +158,8 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     
     -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
     -- that many IO operations (http downloads, LMDB reads, etc.) at once.
+    -- 
+    -- TODO There should be distinction between network operations and file/LMDB IO.
     let ioParallelism = 64     
 
     appBottlenecks <- liftIO $ AppBottleneck <$> 

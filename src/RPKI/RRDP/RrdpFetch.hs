@@ -305,7 +305,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
                 Right rpkiURL ->
-                    case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                    case first RrdpE $ U.decodeBase64 encodedb64 rpkiURL of
                         Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
                         Right (DecodedBase64 decoded) ->
                             liftIO $ roTx objectStore $ \tx -> do     
@@ -425,7 +425,7 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
             readBlob uri encodedb64 = case U.parseRpkiURL $ unURI uri of
                 Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
                 Right rpkiURL -> do 
-                    case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                    case first RrdpE $ U.decodeBase64 encodedb64 rpkiURL of
                         Left e   -> DecodingTrouble rpkiURL (VErr e)
                         Right (DecodedBase64 decoded) -> 
                             case first ParseE $ readObject rpkiURL decoded of 

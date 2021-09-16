@@ -6,6 +6,7 @@ module RPKI.Util where
 
 import           Control.Exception
 import           Numeric.Natural
+import           Data.Bifunctor
 
 import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
@@ -15,12 +16,14 @@ import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
+import qualified Data.ByteString.Base64      as B64
 import           Data.Char
 import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Data.Word
 import           RPKI.Domain
+import           RPKI.Reporting
 
 import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
@@ -121,3 +124,10 @@ ifJust a f = maybe (pure ()) f a
 
 ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 ifJustM a f = maybe (pure ()) f =<< a
+
+decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
+decodeBase64 (EncodedBase64 bs) context = 
+    bimap 
+        (\e -> BadBase64 (e <> " for " <> Text.pack (show context)) $ convert bs)
+        DecodedBase64
+        $ B64.decodeBase64 bs 

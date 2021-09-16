@@ -292,15 +292,18 @@ instance FromJSON IpPrefix where
     parseJSON = withText "IpPrefix" $ \s ->           
         case Ips.canonicalise (read (U.convert s)) of
             Nothing -> fail $ [i|Prefix #{s} is not canonical|]
-            Just cb -> 
-                case cb of 
-                    IpBlockV4 b -> pure $ Ipv4P $ Ipv4Prefix b
-                    IpBlockV6 b -> pure $ Ipv6P $ Ipv6Prefix b                    
+            Just cb -> pure $ case cb of 
+                        IpBlockV4 b -> Ipv4P $ Ipv4Prefix b
+                        IpBlockV6 b -> Ipv6P $ Ipv6Prefix b                    
 
 
 instance FromJSON EncodedBase64 where
-    parseJSON (Json.String s) = pure $ EncodedBase64 $ U.convert s
-    parseJSON invalid = 
-        prependFailure "Parsing Base64 failed, "
-            (typeMismatch "String" invalid)
+    parseJSON = withText "EncodedBase64" $ pure . EncodedBase64 . U.convert
+
+instance FromJSON DecodedBase64 where
+    parseJSON = withText "DecodedBase64" $ \s -> do 
+        let encoded = EncodedBase64 $ U.convert s
+        case U.decodeBase64 encoded s of 
+            Left e        -> fail [i|Broken base64: #{e}|]
+            Right decoded -> pure decoded        
 
