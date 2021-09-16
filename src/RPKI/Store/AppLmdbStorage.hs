@@ -122,7 +122,7 @@ compactStorageWithTmpDir AppContext {..} = do
     let cacheDir = config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
-    logInfo_ logger [i|De-fragmenting LMDB storage.|]
+    logInfo_ logger [i|Compacting LMDB storage.|]
 
     currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 
@@ -194,7 +194,7 @@ compactStorageWithTmpDir AppContext {..} = do
                     logError_ logger [i|ERROR: #{e}.|]        
                     cleanUpAfterException)            
         else 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}, LMDB file size #{fileSizeMb}, compaction is not needed yet.|]        
+            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
         
         
 generateLmdbDir :: MonadIO m => FilePath -> m FilePath

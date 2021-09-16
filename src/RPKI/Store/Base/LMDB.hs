@@ -224,7 +224,7 @@ copyEnv srcN dstN = do
 
     (bytes, _) <- mapException (AppException . storageError)        
                     $ bracketChanClosable 
-                            1000
+                            5
                             (liftIO . readKVs mapNames)
                             (liftIO . writeKVs)
                             (const $ pure ()) 
