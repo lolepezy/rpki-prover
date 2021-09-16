@@ -110,7 +110,7 @@ test_full =
                 prefixAssertions = [
                     PrefixAssertion {
                         asn = ASN 64496, 
-                        prefix = Ipv4P (Ipv4Prefix $ read "198.51.100.0/24"), 
+                        prefix = Ipv4P (readIp4 "198.51.100.0/24"), 
                         maxPrefixLength = Nothing, 
                         comment = Just "My other important route"
                     },
