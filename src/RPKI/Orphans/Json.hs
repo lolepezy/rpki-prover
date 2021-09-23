@@ -11,20 +11,15 @@ import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Short       as BSS
 
 import           Data.Text                   (Text)
-import qualified Data.Text                   as Text
 
 import           Data.ByteArray              (convert)
-import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
+import           Data.Text.Encoding          (decodeUtf8)
 
 import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
-import           Data.Csv                    (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord, (.=))
-import qualified Data.Csv                    as Csv
 import           Data.Tuple.Strict
 
 import           Data.String.Interpolate.IsString
-
-import           GHC.Generics                (Generic)
 
 import qualified Crypto.PubKey.Curve25519    as C25519
 import qualified Crypto.PubKey.Curve448      as C448
@@ -40,18 +35,7 @@ import qualified Data.ByteString.Base16.Lazy as HexLazy
 import           Data.Hourglass
 import           Data.X509                   as X509
 
-
 import HaskellWorks.Data.Network.Ip.Ip as Ips
-
-import Data.ASN1.Types
-
-import Data.These
-
-import Data.Aeson
-import Data.Aeson.Types
-import qualified Data.Aeson as Json
-
-import           RPKI.Orphans.Generics
 
 import           RPKI.Domain                 as Domain
 import           RPKI.RRDP.Types             (RrdpSerial)
@@ -60,7 +44,6 @@ import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
-import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Types

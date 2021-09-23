@@ -1,12 +1,11 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE RecordWildCards     #-}
-
-{-# LANGUAGE StrictData #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DerivingVia        #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.Fetch where
 
