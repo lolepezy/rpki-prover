@@ -42,9 +42,8 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
-import           RPKI.Store.Repository (getPublicationPoints)
-import           RPKI.Util (increment, ifJust)
-import Data.IORef
+import           RPKI.Util (ifJust)
+
 
 type AppLmdbEnv = AppContext LmdbStorage
 

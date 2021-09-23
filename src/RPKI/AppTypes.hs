@@ -1,19 +1,11 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StrictData         #-}
 
 module RPKI.AppTypes where
-    
-import           Control.Concurrent.STM
-
 import           Codec.Serialise
 import           Data.Int
 import           GHC.Generics
-
-import           Data.Set
-import           RPKI.Domain
--- import           RPKI.SLURM.Types
 
 -- It's a sequence of versions that is equal to some monotonic  
 -- clock timestamp in nanoseconds.

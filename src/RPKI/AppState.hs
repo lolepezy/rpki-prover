@@ -6,16 +6,10 @@
 module RPKI.AppState where
     
 import           Control.Concurrent.STM
-
-import           Codec.Serialise
 import           Control.Lens
-
 import           Data.Generics.Product.Typed
-import           Data.Int
 import           GHC.Generics
-
 import           Data.Set
-
 import           RPKI.Domain
 import           RPKI.AppTypes
 import           RPKI.SLURM.Types
