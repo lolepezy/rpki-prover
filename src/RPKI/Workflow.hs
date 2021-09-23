@@ -25,6 +25,7 @@ import           Data.String.Interpolate.IsString
 import           System.Exit
 
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -126,8 +127,8 @@ runWorkflow appContext@AppContext {..} tals = do
                     logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
             where 
                 processTALs database' tals = do
-                    results <- validateMutlipleTAs appContext worldVersion tals    
-                    let totalResult@TopDownResult {..} = addTotalValidationMetric $ mconcat results
+                    TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
+                                validateMutlipleTAs appContext worldVersion tals                        
 
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                    
                     

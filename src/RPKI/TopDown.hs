@@ -37,6 +37,7 @@ import           Data.Proxy
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Fetch
@@ -50,6 +51,7 @@ import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.Repository
+import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                        (fmtEx, ifJust)
@@ -72,7 +74,7 @@ data TopDownContext s = TopDownContext {
 
 
 data TopDownResult = TopDownResult {
-        vrps          :: Set Vrp,
+        vrps               :: Set Vrp,
         topDownValidations :: ValidationState
     }
     deriving stock (Show, Eq, Ord, Generic)

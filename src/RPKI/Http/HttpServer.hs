@@ -21,7 +21,7 @@ import qualified Data.Set                         as Set
 import           Data.Text                       (Text)
 
 import           RPKI.AppContext
-import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.Metrics
 import           RPKI.Reporting
@@ -30,6 +30,7 @@ import           RPKI.Http.Types
 import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Store.Types
 import           RPKI.Util
 
 staticServer :: Server StaticContent

@@ -67,15 +67,15 @@ newtype Hash = Hash BSS.ShortByteString
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype URI  = URI { unURI :: Text } 
+newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncURL  = RsyncURL URI
+newtype RsyncURL = RsyncURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RrdpURL  = RrdpURL URI
+newtype RrdpURL = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -95,7 +95,7 @@ instance WithURL URI where
 instance Show RpkiURL where
     show (RsyncU u) = show u
     show (RrdpU u) = show u 
-
+  
 instance WithURL RsyncURL where
     getURL (RsyncURL u) = u
 

@@ -37,44 +37,16 @@ import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
+import           RPKI.Store.Types
 
 import           RPKI.Parallel
 import           RPKI.Time                (Instant)
 import           RPKI.Util                (increment, ifJust, ifJustM)
 
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.Repository
 import           RPKI.Store.Repository
-
-
-
-data StorableTA = StorableTA {
-    tal                 :: TAL,
-    taCert              :: CerObject,
-    fetchStatus         :: FetchStatus,
-    initialRepositories :: PublicationPointAccess
-} deriving (Show, Eq, Generic, Serialise)
-
-data ROMeta = ROMeta {
-        insertedBy :: WorldVersion,
-        validatedBy :: Maybe WorldVersion
-    } 
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass (Serialise)
-
-data MftTimingMark = MftTimingMark Instant Instant 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
-
-newtype UrlKey = UrlKey ArtificialKey
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
-newtype ObjectKey = ObjectKey ArtificialKey
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
-newtype ArtificialKey = ArtificialKey Int64
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
 
 -- | RPKI objects store
 
@@ -515,44 +487,6 @@ getLastCompletedVersion database tx = do
         pure $! case [ v | (v, CompletedVersion) <- vs ] of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
-
-
-data RpkiObjectStats = RpkiObjectStats {
-    objectsStats       :: SStats,
-    mftByAKIStats      :: SStats,    
-    hashToKeyStats     :: SStats,
-    lastValidMftStats  :: SStats,
-    uriToUriKeyStat    :: SStats,
-    uriKeyToUriStat    :: SStats,
-    uriKeyToObjectKeyStat  :: SStats,
-    objectKeyToUrlKeysStat :: SStats,
-    objectInsertedByStats  :: SStats,
-    objectValidatedByStats  :: SStats    
-} deriving stock (Show, Eq, Generic)
-
-data VResultStats = VResultStats {     
-    resultsStats :: SStats    
-} deriving  (Show, Eq, Generic)
-
-data RepositoryStats = RepositoryStats {
-    rrdpStats  :: SStats,
-    rsyncStats :: SStats,
-    lastSStats :: SStats    
-} deriving stock (Show, Eq, Generic)
-
-data DBStats = DBStats {
-    taStats         :: SStats,
-    repositoryStats :: RepositoryStats,
-    rpkiObjectStats :: RpkiObjectStats,    
-    vResultStats    :: VResultStats,    
-    vrpStats        :: SStats,    
-    versionStats    :: SStats,
-    sequenceStats   :: SStats
-} deriving stock (Show, Eq, Generic)
-data TotalDBStats = TotalDBStats {
-    dbStats         :: DBStats,
-    total :: SStats    
-} deriving stock (Show, Eq, Generic)
 
 
 getTotalDbStats :: (MonadIO m, Storage s) => 

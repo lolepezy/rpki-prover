@@ -15,28 +15,18 @@ import           Data.Int
 import           GHC.Generics
 
 import           Data.Set
+
 import           RPKI.Domain
+import           RPKI.AppTypes
+import           RPKI.SLURM.Types
 import           RPKI.Time
 
 
--- It's a sequence of versions that is equal to some monotonic  
--- clock timestamp in nanoseconds.
-newtype WorldVersion = WorldVersion Int64
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
-
-data VersionState = NewVersion | CompletedVersion
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
-
-data WorldState = WorldState WorldVersion VersionState
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
-
 data AppState = AppState {
-    world       :: TVar WorldState,
-    currentVrps :: TVar (Set Vrp)
-} deriving stock (Generic)
+        world       :: TVar WorldState,
+        currentVrps :: TVar (Set Vrp),
+        slurm       :: TVar (Maybe Slurm)
+    } deriving stock (Generic)
 
 -- 
 newAppState :: IO AppState
@@ -44,7 +34,8 @@ newAppState = do
     Now instant <- thisInstant        
     atomically $ AppState <$> 
                     newTVar (WorldState (instantToVersion instant) NewVersion) <*>
-                    newTVar mempty
+                    newTVar mempty <*>
+                    newTVar Nothing
 
 -- 
 updateWorldVerion :: AppState -> IO WorldVersion

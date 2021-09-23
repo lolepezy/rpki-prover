@@ -60,9 +60,10 @@ import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
+import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 
-import           RPKI.Store.Database
+import           RPKI.Store.Types
 import           RPKI.Time
 import qualified RPKI.Util                   as U
 
@@ -291,7 +292,7 @@ instance FromJSON PrefixLength
 instance FromJSON IpPrefix where
     parseJSON = withText "IpPrefix" $ \s ->           
         case Ips.canonicalise (read (U.convert s)) of
-            Nothing -> fail $ [i|Prefix #{s} is not canonical|]
+            Nothing -> fail [i|Prefix #{s} is not canonical|]
             Just cb -> pure $ case cb of 
                         IpBlockV4 b -> Ipv4P $ Ipv4Prefix b
                         IpBlockV6 b -> Ipv6P $ Ipv6Prefix b                    

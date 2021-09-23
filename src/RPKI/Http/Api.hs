@@ -18,10 +18,8 @@ import qualified Data.Csv                    as Csv
 import           Servant.API
 import           Servant.CSV.Cassava
 
-
 import           RPKI.Reporting
-
-import           RPKI.Store.Database
+import           RPKI.Store.Types
 import RPKI.Http.Types
 
 

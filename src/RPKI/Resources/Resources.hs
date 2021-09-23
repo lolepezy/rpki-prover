@@ -339,8 +339,8 @@ readIp4 s = Ipv4Prefix (read s :: V4.IpBlock V4.Canonical)
 readIp6 :: String -> Ipv6Prefix
 readIp6 s = 
     case Ips.canonicalise (read s) of
-            Nothing -> error $ "Invalid IPv6: " <> show s
-            Just cb -> case cb of 
-                        IpBlockV4 b -> error $ "Invalid IPv6: " <> show s
-                        IpBlockV6 b -> Ipv6Prefix b    
+        Nothing -> error $ "Invalid IPv6: " <> show s
+        Just cb -> case cb of 
+                    IpBlockV4 b -> error $ "Invalid IPv6: " <> show s
+                    IpBlockV6 b -> Ipv6Prefix b    
     

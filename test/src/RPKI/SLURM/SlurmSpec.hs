@@ -43,7 +43,7 @@ test_empty =
                 validationOutputFilters = ValidationOutputFilters [] [],
                 locallyAddedAssertions = LocallyAddedAssertions [] []
             })
-        ([i|{
+        [i|{
             "slurmVersion": 1,
             "validationOutputFilters": {
                 "prefixFilters": [],
@@ -53,13 +53,13 @@ test_empty =
                 "prefixAssertions": [],
                 "bgpsecAssertions": []
             }
-            }|])
+        }|]
 
 test_broken_1 :: HU.Assertion
 test_broken_1 = 
     assertNotParsed
         [i|Error in $.validationOutputFilters: parsing RPKI.SLURM.Types.ValidationOutputFilters(ValidationOutputFilters) failed, key "prefixFilters" not found|]
-        ([i|{
+        [i|{
             "slurmVersion": 1,
             "validationOutputFilters": {                
                 "bgpsecFilters": []
@@ -68,7 +68,7 @@ test_broken_1 =
                 "prefixAssertions": [],
                 "bgpsecAssertions": []
             }
-            }|])
+        }|]
 
 
 test_full :: HU.Assertion
@@ -134,7 +134,7 @@ test_full =
         fullJson
 
 
--- fullJson :: Either String Slurm
+fullJson :: IsString a => a
 fullJson = [i|
     {
         "slurmVersion": 1,
@@ -194,7 +194,7 @@ fullJson = [i|
         ]
         }
         }
-        |]            
+    |]            
 
 
 assertParsed slurm t = let

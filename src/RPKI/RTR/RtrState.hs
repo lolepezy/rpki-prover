@@ -18,7 +18,7 @@ import           Deque.Strict   as Deq
 import           RPKI.Domain
 import           RPKI.RTR.Types
 
-import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Time      (nanosPerSecond)
 
 

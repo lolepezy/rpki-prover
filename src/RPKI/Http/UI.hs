@@ -30,6 +30,7 @@ import           Servant.HTML.Blaze
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
 
+import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Metrics
 import           RPKI.Reporting
