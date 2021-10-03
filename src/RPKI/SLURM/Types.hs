@@ -17,13 +17,13 @@ import           Codec.Serialise
 import           Data.Aeson as Json
 import           Data.Aeson.Types
 
+import           Data.Set (Set)
+
 import qualified Data.HashMap.Strict    as HM
-import qualified Data.ByteString.Base64 as B64
 
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
-import           RPKI.Util (decodeBase64)
 import           RPKI.Resources.Types
 import           RPKI.Orphans.Json
 
@@ -83,6 +83,11 @@ data BgpsecAssertion = BgpsecAssertion {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise       
 
+
+data AfterSlurm = AfterSlurm {
+    filtered :: Set Vrp,
+    asserted :: Set Vrp
+}
 
 instance FromJSON Slurm
 instance FromJSON ValidationOutputFilters

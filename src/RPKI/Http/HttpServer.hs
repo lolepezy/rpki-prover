@@ -22,6 +22,7 @@ import           Data.Text                       (Text)
 
 import           RPKI.AppContext
 import           RPKI.AppTypes
+import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Metrics
 import           RPKI.Reporting
@@ -66,18 +67,22 @@ apiServer appContext =
     :<|> getStats  appContext
     :<|> getRpkiObject appContext
 
+-- TODO CSV should contain TA name as well
 getVRPs :: Storage s => AppContext s -> IO [VrpDto]
 getVRPs AppContext {..} = do 
     vrps <- do 
-        vrps <- readTVarIO $ appState ^. #currentVrps
+        vrps <- atomically $ allCurrentVrps appState
         if Set.null vrps
             then do 
                 db@DB {..} <- readTVarIO database 
                 roTx versionStore $ \tx ->
-                    getLastCompletedVersion db tx >>= 
-                        maybe (pure []) (getVrps tx db)
-                        
-            else pure $! Set.toList vrps                    
+                    fmap (fromMaybe []) $ 
+                        runMaybeT $ do 
+                            version <- MaybeT $ getLastCompletedVersion db tx
+                            vs      <- MaybeT $ getVrps tx db version
+                            pure $ Set.toList $ allVrps vs                                        
+
+            else pure $! Set.toList vrps
 
     pure $! map (\(Vrp a p len) -> VrpDto a p len) vrps                    
 

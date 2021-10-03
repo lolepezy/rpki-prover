@@ -74,7 +74,7 @@ data TopDownContext s = TopDownContext {
 
 
 data TopDownResult = TopDownResult {
-        vrps               :: Set Vrp,
+        vrps               :: Vrps,
         topDownValidations :: ValidationState
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -137,7 +137,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         
         rs <- forConcurrently tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
-            logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
+            logInfo_ logger [i|Validated #{getTaName tal}, got #{vrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
         -- save publication points state    
@@ -165,7 +165,7 @@ validateTA appContext tal worldVersion repositoryProcessing = do
                 -- this will be used as the "now" in all subsequent time and period validations 
                 let now = Now $ versionToMoment worldVersion
                 topDownContext <- newTopDownContext worldVersion 
-                                    (getTaName tal)                                 
+                                    taName
                                     now  
                                     (taCert ^. #payload)  
                                     repositoryProcessing
@@ -177,10 +177,10 @@ validateTA appContext tal worldVersion repositoryProcessing = do
         (Left e, vs) -> 
             pure $ TopDownResult mempty vs
         (Right vrps, vs) ->            
-            pure $ TopDownResult vrps vs
+            pure $ TopDownResult (newVrps taName vrps) vs
   where
-
-    taContext = newValidatorPath $ unTaName $ getTaName tal        
+    taName = getTaName tal
+    taContext = newValidatorPath $ unTaName taName
 
 
 data TACertStatus = Existing | Updated
@@ -748,17 +748,18 @@ setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
 
 -- Sum up all the validation metrics from all TA to create 
 -- the "alltrustanchors" validation metric
-addTotalValidationMetric :: (HasType ValidationState s, HasField' "vrps" s (Set a)) => s -> s
-addTotalValidationMetric totalValidationResult =
+addTotalValidationMetric :: (HasType ValidationState s, HasField' "vrps" s Vrps) => s -> s
+addTotalValidationMetric totalValidationResult = 
     totalValidationResult 
         & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
   where    
     totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 
                             & #vrpNumber .~ Count 
-                                (fromIntegral $ Set.size $ totalValidationResult ^. #vrps)
+                                (fromIntegral $ vrpCount $ totalValidationResult ^. #vrps)
 
     vmLens = typed @ValidationState . 
             typed @AppMetric . 
             #validationMetrics . 
             #unMetricMap . 
-            #getMonoidalMap                    
+            #getMonoidalMap    
+    

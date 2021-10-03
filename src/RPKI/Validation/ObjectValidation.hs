@@ -36,8 +36,6 @@ import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import RPKI.Resources.Resources
-import Data.Maybe (fromJust)
-
 
 
 newtype Validated a = Validated a

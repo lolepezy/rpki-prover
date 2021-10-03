@@ -9,6 +9,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE DerivingVia #-}
 
 
 module RPKI.Domain where
@@ -27,7 +28,11 @@ import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
+import           Data.Map.Strict          (Map)
+import qualified Data.Map.Strict          as Map
+import qualified Data.Set                 as Set
 
+import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
 import           GHC.Generics
@@ -489,6 +494,12 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
+newtype Vrps = Vrps (Map TaName (Set Vrp))
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup Vrps
+    deriving Monoid    via GenericMonoid Vrps
+
 data TA = TA {
         taName        :: TaName, 
         taCertificate :: Maybe ResourceCertificate,
@@ -619,3 +630,13 @@ makeSerial i =
         _ | i <= 0         -> Left $ "Serial is not positive: " <> show i
           | i >= maxSerial -> Left $ "Serial is too big: " <> show i
           | otherwise      -> Right $ Serial i
+
+
+vrpCount :: Vrps -> Int 
+vrpCount (Vrps vrps) = sum $ map Set.size $ Map.elems vrps
+
+newVrps :: TaName -> Set Vrp -> Vrps
+newVrps taName vrpSet = Vrps $ Map.singleton taName vrpSet
+
+allVrps :: Vrps -> Set Vrp 
+allVrps (Vrps vrps) = mconcat $ Map.elems vrps          

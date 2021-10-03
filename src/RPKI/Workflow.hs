@@ -27,6 +27,7 @@ import           System.Exit
 import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -52,9 +53,9 @@ runWorkflow :: (Storage s, MaintainableStorage s) =>
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
     -- Use a command queue to avoid fully concurrent operations, i.e. cleanup 
-    -- opearations and such should not run at the same time with validation 
-    -- (not only for consistency reasons, but we want to avoid locking the 
-    -- DB for long time by the cleanup process).
+    -- operations and such should not run at the same time with validation 
+    -- (not only for consistency reasons, but we also want to avoid locking 
+    -- the DB for long time by a cleanup process).
     globalQueue <- newCQueueIO 10
 
     -- Run RTR server thread when rtrConfig is present in the AppConfig.  
@@ -123,7 +124,7 @@ runWorkflow appContext@AppContext {..} tals = do
             executeOrDie
                 (processTALs database' tals)
                 (\vrps elapsed ->                    
-                    logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
+                    logInfoM logger [i|Validated all TAs, got #{Set.size vrps} VRPs, took #{elapsed}ms|])
             where 
                 processTALs database' tals = do
                     TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
@@ -131,13 +132,14 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                    
                     
-                    rwTx database' $ \tx -> do                                           
+                    rwTx database' $ \tx -> do     
+                        let vrpsFromAllTAs = allVrps vrps                                      
                         putValidations tx (validationsStore database') worldVersion (topDownValidations ^. typed)
                         putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)
-                        putVrps tx database' (Set.toList vrps) worldVersion
+                        putVrps tx database' vrps worldVersion
                         completeWorldVersion tx database' worldVersion
-                        atomically $ completeCurrentVersion appState vrps                            
-                        pure vrps
+                        atomically $ completeCurrentVersion appState vrps
+                        pure vrpsFromAllTAs
 
         cacheGC worldVersion = do
             let now = versionToMoment worldVersion
@@ -196,17 +198,18 @@ loadStoredAppState AppContext {..} = do
 
             Just lastVersion             
                 | versionIsOld now' revalidationInterval lastVersion ->                     
-                    logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used.|]
+                    logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used, will re-run validation.|]
 
                 | otherwise -> do 
                     (vrps, elapsed) <- timedMS $ do             
                         -- TODO It takes 350ms, which is pretty strange, profile it.           
                         !vrps <- getVrps tx database' lastVersion
                         --
-                        atomically $ completeCurrentVersion appState (Set.fromList vrps)                        
+                        ifJust vrps $ atomically . completeCurrentVersion appState
                         pure vrps
-                    logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
-                                      [i|current state (#{length vrps} VRPs), took #{elapsed}ms.|]
+                    ifJust vrps $ \v -> 
+                        logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
+                                          [i|current state (#{vrpCount v} VRPs), took #{elapsed}ms.|]
                 
 
 -- 

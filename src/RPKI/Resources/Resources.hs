@@ -330,7 +330,10 @@ ipv4PrefixLen (Ipv4Prefix (V4.IpBlock _ (V4.IpNetMask mask))) = PrefixLength mas
 ipv6PrefixLen :: Ipv6Prefix -> PrefixLength      
 ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask
 
-
+prefixLen :: IpPrefix -> PrefixLength 
+prefixLen (Ipv4P p) = ipv4PrefixLen p
+prefixLen (Ipv6P p) = ipv6PrefixLen p
+ 
 -- These are mainly for statically known values in tests
 -- 
 readIp4 :: String -> Ipv4Prefix

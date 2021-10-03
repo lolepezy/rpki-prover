@@ -53,6 +53,7 @@ import           RPKI.Store.Database
 import           System.Timeout                   (timeout)
 import           Time.Types
 import Data.Set (Set)
+import Data.Maybe (fromMaybe)
 
 
 
@@ -111,13 +112,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --
     listenToAppStateUpdates rtrState updateBroadcastChan = do
 
-        -- Wait until a complete world version is generted (or are read from the cache)      
+        -- Wait until a complete world version is generated (or is read from the cache)      
         worldVersion <- atomically $ waitForCompleteVersion appState            
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         vrps <- readTVarIO (appState ^. #currentVrps)
-        let maxStoredDiffs = 3 * length vrps
+        let maxStoredDiffs = 3 * vrpCount vrps
                 
         atomically $ writeTVar rtrState $ 
                         Just $ newRtrState worldVersion maxStoredDiffs
@@ -137,14 +138,16 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             pure (rtrState', knownVersion, newVersion, newVrps)
                 
             database' <- readTVarIO database
-            previousVrps <- fmap Set.fromList 
-                                $ roTx database' 
-                                $ \tx -> getVrps tx database' previousVersion
 
-            let vrpDiff            = evalVrpDiff previousVrps newVrps                         
+            previousVrps <- fmap (maybe Set.empty allVrps) 
+                    $ roTx database' 
+                    $ \tx -> getVrps tx database' previousVersion
+
+            let newVrpsFlattened = allVrps newVrps
+            let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
-            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrps}|]
+            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrpsFlattened}|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreVrpUpdates
@@ -182,10 +185,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     serveConnection connection peer updateBroadcastChan rtrState = do        
         logDebug_ logger [i|Waiting first PDU from the client #{peer}|]
         firstPdu <- recv connection 1024
-        (rtrState', currentVrps', outboxQueue) <- 
+        (rtrState', flatCurrentVrps, outboxQueue) <- 
             atomically $ (,,) <$> 
                     readTVar rtrState <*>
-                    readTVar (currentVrps appState) <*>
+                    allCurrentVrps appState <*>
                     newCQueue 10
 
         let firstPduLazy = BSL.fromStrict firstPdu
@@ -199,7 +202,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         ifJust message $ logError_ logger
 
         ifJust versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' currentVrps' versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' flatCurrentVrps versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduToBytes errorPdu' V0
                     logError_ logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
@@ -251,8 +254,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     join $ atomically $ do 
                         -- all the real work happens inside of pure `responseAction`, for better testability.
                         rtrState'   <- readTVar rtrState
-                        currentVrps <- readTVar $ currentVrps appState                    
-                        case responseAction logger peer session rtrState' currentVrps pduBytes of 
+                        flatCurrentVrps <- allCurrentVrps appState                    
+                        case responseAction logger peer session rtrState' flatCurrentVrps pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io
