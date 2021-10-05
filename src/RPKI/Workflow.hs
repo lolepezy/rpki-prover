@@ -44,6 +44,7 @@ import           RPKI.Time
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust)
+import           RPKI.SLURM.Filters ( applySlurm )
 
 
 type AppLmdbEnv = AppContext LmdbStorage
@@ -124,22 +125,24 @@ runWorkflow appContext@AppContext {..} tals = do
             executeOrDie
                 (processTALs database' tals)
                 (\vrps elapsed ->                    
-                    logInfoM logger [i|Validated all TAs, got #{Set.size vrps} VRPs, took #{elapsed}ms|])
+                    logInfoM logger [i|Validated all TAs, got #{vrpCount vrps} VRPs, took #{elapsed}ms|])
             where 
                 processTALs database' tals = do
                     TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
                                 validateMutlipleTAs appContext worldVersion tals                        
 
-                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics                    
-                    
-                    rwTx database' $ \tx -> do     
-                        let vrpsFromAllTAs = allVrps vrps                                      
+                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
+
+                    slurmedVrps <- fmap (maybe vrps (`applySlurm` vrps)) 
+                                    $ readTVarIO $ appState ^. #slurm                                                
+
+                    rwTx database' $ \tx -> do                        
                         putValidations tx (validationsStore database') worldVersion (topDownValidations ^. typed)
-                        putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)
-                        putVrps tx database' vrps worldVersion
+                        putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)                        
+                        putVrps tx database' slurmedVrps worldVersion
                         completeWorldVersion tx database' worldVersion
-                        atomically $ completeCurrentVersion appState vrps
-                        pure vrpsFromAllTAs
+                        atomically $ completeCurrentVersion appState slurmedVrps
+                        pure slurmedVrps
 
         cacheGC worldVersion = do
             let now = versionToMoment worldVersion

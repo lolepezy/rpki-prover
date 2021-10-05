@@ -85,7 +85,7 @@ data BgpsecAssertion = BgpsecAssertion {
 
 
 data AfterSlurm = AfterSlurm {
-    filtered :: Set Vrp,
+    filtered :: Vrps,
     asserted :: Set Vrp
 }
 

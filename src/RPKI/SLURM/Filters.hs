@@ -18,6 +18,7 @@ import Data.Maybe (fromMaybe)
 
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Map.Strict as Map
 
 import Data.These
 
@@ -28,13 +29,16 @@ import           RPKI.SLURM.Types
 
 
 
+slurmVrpName :: TaName
+slurmVrpName = TaName "slurm"
+
 -- TODO BgpSec stuff is not supported at the moment.
 
-applySlurm :: Slurm -> Set Vrp -> AfterSlurm
-applySlurm slurm vrpSet = 
-    AfterSlurm filteredVrps assertedVrps
+applySlurm :: Slurm -> Vrps -> Vrps
+applySlurm slurm (Vrps vrps) = 
+    Vrps $ filteredVrps <> Map.singleton slurmVrpName assertedVrps
   where     
-    filteredVrps = Set.filter filterFunc vrpSet            
+    filteredVrps = Map.map (Set.filter filterFunc) vrps
 
     assertedVrps = Set.fromList 
         $ map toVrp 
