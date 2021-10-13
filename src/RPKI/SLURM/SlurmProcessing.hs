@@ -7,7 +7,7 @@
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE RecordWildCards    #-}
 
-module RPKI.SLURM.Filters where
+module RPKI.SLURM.SlurmProcessing where
 
 
 import Control.Lens ( (^.) )
@@ -22,7 +22,9 @@ import qualified Data.Map.Strict as Map
 
 import Data.These
 
+import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Reporting
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources (prefixLen)
 import           RPKI.SLURM.Types
@@ -62,5 +64,6 @@ applySlurm slurm (Vrps vrps) =
         isInsideOf _ _                   = False
     
 
-
+readSlurmF :: [String] -> ValidatorT IO Slurm
+readSlurmF slurmFiles = appError $ SlurmE $ SlurmError $ "readSlurmF"
 

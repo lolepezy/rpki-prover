@@ -10,6 +10,7 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics
 import           Data.Set
+import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
 import           RPKI.SLURM.Types
@@ -20,7 +21,7 @@ data AppState = AppState {
         world           :: TVar WorldState,
         currentVrps     :: TVar Vrps,
         flatCurrentVrps :: TVar (Maybe (Set Vrp)),
-        slurm           :: TVar (Maybe Slurm)
+        readSlurm       :: Maybe (ValidatorT IO Slurm)
     } deriving stock (Generic)
 
 -- 
@@ -31,7 +32,7 @@ newAppState = do
                     newTVar (WorldState (instantToVersion instant) NewVersion) <*>
                     newTVar mempty <*>
                     newTVar Nothing <*>
-                    newTVar Nothing
+                    pure Nothing
 
 -- 
 updateWorldVerion :: AppState -> IO WorldVersion

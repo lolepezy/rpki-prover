@@ -4,6 +4,7 @@
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Workflow where
 
@@ -25,6 +26,7 @@ import           Data.String.Interpolate.IsString
 import           System.Exit
 
 import           RPKI.AppState
+import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
@@ -44,7 +46,7 @@ import           RPKI.Time
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust)
-import           RPKI.SLURM.Filters ( applySlurm )
+import           RPKI.SLURM.SlurmProcessing ( applySlurm )
 
 
 type AppLmdbEnv = AppContext LmdbStorage
@@ -133,11 +135,21 @@ runWorkflow appContext@AppContext {..} tals = do
 
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
 
-                    slurmedVrps <- fmap (maybe vrps (`applySlurm` vrps)) 
-                                    $ readTVarIO $ appState ^. #slurm                                                
+                    -- Apply SLURM if it is set in the appState
+                    (slurmedVrps, vs) <- 
+                        case appState ^. #readSlurm of
+                            Nothing -> pure (vrps, mempty)
+                            Just rt -> do 
+                                (z, vs) <- runValidatorT (newValidatorPath "read-slurm") rt                            
+                                let vrps' = case z of 
+                                        Left e      -> vrps
+                                        Right slurm -> slurm `applySlurm` vrps
+                                pure (vrps', vs)                    
 
+                    -- Save all the results into LMDB
+                    let updatedValidation = vs <> topDownValidations ^. typed
                     rwTx database' $ \tx -> do                        
-                        putValidations tx (validationsStore database') worldVersion (topDownValidations ^. typed)
+                        putValidations tx (validationsStore database') worldVersion (updatedValidation ^. typed)
                         putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)                        
                         putVrps tx database' slurmedVrps worldVersion
                         completeWorldVersion tx database' worldVersion
