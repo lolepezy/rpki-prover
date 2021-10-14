@@ -146,11 +146,10 @@ newtype InitError = InitError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
-newtype SlurmError = SlurmError Text 
+data SlurmError = SlurmFileError Text |
+                  SlurmParseError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
-
 
 data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 

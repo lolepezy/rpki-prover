@@ -4,38 +4,56 @@
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.SLURM.Types where
+
+
+import           Codec.Serialise
 
 import Data.Text (Text)
 
 import Data.These
-
-import           GHC.Generics
-import           Codec.Serialise
 
 import           Data.Aeson as Json
 import           Data.Aeson.Types
 
 import           Data.Set (Set)
 
-import qualified Data.HashMap.Strict    as HM
-
+import qualified Data.HashMap.Strict as HM
 import           Data.String.Interpolate.IsString
+
+import           Data.Semigroup
+import           Data.Monoid.Generic
+
+
+import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Orphans.Json
 
+
 -- NOTE: All the data here is strict
 
+newtype SlurmVersion = SlurmVersion Int
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype (Bounded)
+    deriving Semigroup via Max SlurmVersion
+    deriving Monoid via Max SlurmVersion
+
+
 data Slurm = Slurm {
-        slurmVersion :: Int,
+        slurmVersion :: SlurmVersion,
         validationOutputFilters :: ValidationOutputFilters,
         locallyAddedAssertions :: LocallyAddedAssertions
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup Slurm
+    deriving Monoid    via GenericMonoid Slurm
 
 data ValidationOutputFilters = ValidationOutputFilters {
         prefixFilters :: [PrefixFilter],
@@ -43,6 +61,8 @@ data ValidationOutputFilters = ValidationOutputFilters {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup ValidationOutputFilters
+    deriving Monoid    via GenericMonoid ValidationOutputFilters    
 
 data LocallyAddedAssertions = LocallyAddedAssertions {
        prefixAssertions :: [PrefixAssertion],
@@ -50,6 +70,8 @@ data LocallyAddedAssertions = LocallyAddedAssertions {
     }    
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup LocallyAddedAssertions
+    deriving Monoid    via GenericMonoid LocallyAddedAssertions    
 
 data PrefixFilter = PrefixFilter {
         asnAndPrefix :: These ASN IpPrefix,                
@@ -90,6 +112,7 @@ data AfterSlurm = AfterSlurm {
 }
 
 instance FromJSON Slurm
+instance FromJSON SlurmVersion
 instance FromJSON ValidationOutputFilters
 instance FromJSON LocallyAddedAssertions
 

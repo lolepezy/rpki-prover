@@ -11,24 +11,32 @@ module RPKI.SLURM.SlurmProcessing where
 
 
 import Control.Lens ( (^.) )
-import           Data.Generics.Product.Typed
-import           Data.Generics.Product.Fields
+import Control.Monad
+
+import qualified Data.ByteString.Lazy as LBS
+
+import           Data.Bifunctor
+import qualified Data.Text as Text
 
 import Data.Maybe (fromMaybe)
 
-import Data.Set (Set)
+import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 
-import Data.These
+import           Data.Aeson as Json
+
+import           Data.These
 
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources (prefixLen)
+
 import           RPKI.SLURM.Types
 
+import RPKI.Util (fmtEx)
 
 
 slurmVrpName :: TaName
@@ -65,5 +73,23 @@ applySlurm slurm (Vrps vrps) =
     
 
 readSlurmF :: [String] -> ValidatorT IO Slurm
-readSlurmF slurmFiles = appError $ SlurmE $ SlurmError $ "readSlurmF"
+readSlurmF slurmFiles = do 
+    slurms :: [Slurm] <- 
+        forM slurmFiles $ \f -> do
+            s <- fromTry (SlurmE . SlurmFileError . fmtEx) $ LBS.readFile f
+            vHoist $ fromEither 
+                   $ first (SlurmE . SlurmParseError . Text.pack) 
+                   $ Json.eitherDecode s            
+        
+    vHoist $ validateNoOverlaps slurms
+    pure $! mconcat slurms        
+
+
+{- Validate overlappings as described in
+    https://datatracker.ietf.org/doc/html/rfc8416#section-4.2
+-}
+validateNoOverlaps :: [Slurm] -> PureValidatorT ()
+validateNoOverlaps slurms = do 
+    -- TODO 
+    pure ()
 
