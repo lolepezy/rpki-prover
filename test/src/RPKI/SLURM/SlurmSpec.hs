@@ -39,7 +39,7 @@ test_empty :: HU.Assertion
 test_empty = 
     assertParsed
         (Slurm { 
-                slurmVersion = 1,
+                slurmVersion = SlurmVersion 1, 
                 validationOutputFilters = ValidationOutputFilters [] [],
                 locallyAddedAssertions = LocallyAddedAssertions [] []
             })
@@ -75,7 +75,7 @@ test_full :: HU.Assertion
 test_full = 
     assertParsed
         (Slurm {
-            slurmVersion = 1, 
+            slurmVersion = SlurmVersion 1, 
             validationOutputFilters = ValidationOutputFilters {
                 prefixFilters = [
                     PrefixFilter {
