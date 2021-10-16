@@ -140,11 +140,15 @@ runWorkflow appContext@AppContext {..} tals = do
                         case appState ^. #readSlurm of
                             Nothing -> pure (vrps, mempty)
                             Just rt -> do 
+                                logInfoM logger [i|Re-reading and re-validating SLURM files.|]
                                 (z, vs) <- runValidatorT (newValidatorPath "read-slurm") rt                            
-                                let vrps' = case z of 
-                                        Left e      -> vrps
-                                        Right slurm -> slurm `applySlurm` vrps
-                                pure (vrps', vs)                    
+                                case z of 
+                                    Left e -> do 
+                                        logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
+                                        pure (vrps, vs)
+                                    Right slurm -> do 
+                                        logInfoM logger [i|Applying SLURM filters and assertions.|]                                        
+                                        pure (slurm `applySlurm` vrps, vs)
 
                     -- Save all the results into LMDB
                     let updatedValidation = vs <> topDownValidations ^. typed
