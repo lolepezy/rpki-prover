@@ -147,7 +147,8 @@ newtype InitError = InitError Text
     deriving newtype Semigroup
 
 data SlurmError = SlurmFileError Text |
-                  SlurmParseError Text
+                  SlurmParseError Text |
+                  SlurmValidationError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

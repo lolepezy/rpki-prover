@@ -180,7 +180,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     let appState' =
             case localExceptions of
                 []         -> appState
-                slurmFiles -> appState & #readSlurm ?~ readSlurmF slurmFiles
+                slurmFiles -> appState & #readSlurm ?~ readSlurmFiles slurmFiles
 
     let appContext = AppContext {
         appState = appState',

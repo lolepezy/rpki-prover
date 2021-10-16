@@ -105,12 +105,6 @@ data BgpsecAssertion = BgpsecAssertion {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise       
 
-
-data AfterSlurm = AfterSlurm {
-    filtered :: Vrps,
-    asserted :: Set Vrp
-}
-
 instance FromJSON Slurm
 instance FromJSON SlurmVersion
 instance FromJSON ValidationOutputFilters
