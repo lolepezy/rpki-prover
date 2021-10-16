@@ -94,7 +94,7 @@ readSlurmFiles slurmFiles = do
 -}
 validateNoOverlaps :: [(String, Slurm)] -> PureValidatorT ()
 validateNoOverlaps slurms = do 
-    let prefixes = [ (fileName, assertPrefixes, filterPrefixes) |                        
+    let prefixes = [ (fileName, assertPrefixes <> filterPrefixes) |                        
                 (fileName, slurm) <- slurms,
                 let assertPrefixes = map (^. #prefix) $ slurm ^. #locallyAddedAssertions . #prefixAssertions,
                 let filterPrefixes = [ prefix | 
@@ -103,30 +103,18 @@ validateNoOverlaps slurms = do
                         ]
             ]
 
-    let asns = [ (fileName, assertAsns, filterAsns) |                        
+    checkNoPrefixOverlap prefixes
+
+    let asns = [ (fileName, assertAsns <> filterAsns) |                        
                 (fileName, slurm) <- slurms,
                 let assertAsns = map (^. #asn) $ slurm ^. #locallyAddedAssertions . #bgpsecAssertions,
                 let filterAsns = [ asn | 
                             bgpsecFilter <- slurm ^. #validationOutputFilters . #bgpsecFilters,
                             This asn  <- [ bgpsecFilter ^. #asnAndSKI ]
                         ]
-            ]
-    
-    forM_ prefixes $ \(file, assertPrefixes, filterPrefixes) -> do 
-        let overlaps' = prefixOverlaps assertPrefixes filterPrefixes
-        unless (null overlaps') $
-            appError $ SlurmE $ SlurmValidationError 
-                [i|File #{file} has prefix overlaps between assertions and filters: #{overlaps'}|]    
+            ]      
 
-    checkNoPrefixOverlap $ map (\(f, p1, p2) -> (f, p1 <> p2)) prefixes
-
-    forM_ asns $ \(file, assertAsns, filterAsns) -> do 
-        let overlaps' = filter (`elem` filterAsns) assertAsns
-        unless (null overlaps') $
-            appError $ SlurmE $ SlurmValidationError 
-                [i|File #{file} has ASN overlaps between assertions and filters: #{overlaps'}|]   
-
-    checkNoASNOverlap $ map (\(f, a1, a2) -> (f, a1 <> a2)) asns                 
+    checkNoASNOverlap asns                 
 
   where
     checkNoPrefixOverlap :: [(String, [IpPrefix])] -> PureValidatorT ()
