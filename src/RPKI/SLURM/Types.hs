@@ -40,10 +40,10 @@ import           RPKI.Orphans.Json
 newtype SlurmVersion = SlurmVersion Int
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype (Bounded)
-    deriving Semigroup via Max SlurmVersion
-    deriving Monoid via Max SlurmVersion
+    deriving Semigroup via Max SlurmVersion    
 
+instance Monoid SlurmVersion where
+    mempty = SlurmVersion 1
 
 data Slurm = Slurm {
         slurmVersion :: SlurmVersion,

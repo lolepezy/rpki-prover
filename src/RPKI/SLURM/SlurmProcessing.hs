@@ -136,20 +136,20 @@ validateNoOverlaps slurms = do
         if null overlappings 
             then checkNoPrefixOverlap rest
             else do 
-                let fmt file overlaps' = [i|File #{f} has prefix overlaps with file #{file}: #{overlaps'}|]                
+                let fmt file overlaps' = [i|File #{f} has prefix overlaps with file #{file}: #{overlaps'}|]
                 appError $ SlurmE $ SlurmValidationError 
-                    $ mconcat $ map (uncurry fmt) overlappings         
+                        $ mconcat $ map (uncurry fmt) overlappings         
 
     checkNoASNOverlap :: [(String, [ASN])] -> PureValidatorT ()
     checkNoASNOverlap [] = pure ()
     checkNoASNOverlap ((f, as) : rest) = do         
-        let overlappings = filter (\(f1, as1) -> any (`elem` as) as1) rest
+        let overlappings = filter (any (`elem` as) . snd) rest
         if null overlappings 
             then checkNoASNOverlap rest
             else do 
-                let fmt file overlaps' = [i|File #{f} has ASN overlaps with file #{file}: #{overlaps'}|]                
+                let fmt file overlaps' = [i|File #{f} has ASN overlaps with file #{file}: #{overlaps'}|]
                 appError $ SlurmE $ SlurmValidationError 
-                    $ mconcat $ map (uncurry fmt) overlappings  
+                        $ mconcat $ map (uncurry fmt) overlappings  
 
     prefixOverlaps :: [IpPrefix] -> [IpPrefix] -> [(IpPrefix, IpPrefix)]    
     -- Since `overlap p1 p2 == overlap p2 p1` we only want to report one of them

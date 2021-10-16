@@ -20,9 +20,12 @@ import qualified Data.Text as Text
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
+import           RPKI.AppMonad
+import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Orphans
 import           RPKI.SLURM.Types
+import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
 
@@ -31,7 +34,10 @@ slurmGroup :: TestTree
 slurmGroup = testGroup "Slurm" [
         HU.testCase "Test empty" test_empty,
         HU.testCase "Test broken 1" test_broken_1,
-        HU.testCase "Test Full" test_full
+        HU.testCase "Test Full" test_full,
+        HU.testCase "Test reject duplicate SLURM files" test_reject_full_duplicates,
+        HU.testCase "Test reject partial prefix duplicate SLURM files" test_reject_partial_prefix_duplicates,
+        HU.testCase "Test reject partial ASN duplicate SLURM files" test_reject_partial_asn_duplicates
     ]
 
 
@@ -74,65 +80,148 @@ test_broken_1 =
 test_full :: HU.Assertion
 test_full = 
     assertParsed
-        (Slurm {
-            slurmVersion = SlurmVersion 1, 
-            validationOutputFilters = ValidationOutputFilters {
-                prefixFilters = [
-                    PrefixFilter {
-                        asnAndPrefix = That (Ipv4P $ readIp4 "192.0.2.0/24"), 
-                        comment = Just "All VRPs encompassed by prefix"
-                    },
-                    PrefixFilter {
-                        asnAndPrefix = This (ASN 64496), 
-                        comment = Just "All VRPs matching ASN"
-                    },
-                    PrefixFilter {
-                        asnAndPrefix = These (ASN 64497) (Ipv4P $ readIp4 "198.51.100.0/24"), 
-                        comment = Just "All VRPs encompassed by prefix, matching ASN"
-                    }
-                ], 
-                bgpsecFilters = [
-                    BgpsecFilter {
-                        asnAndSKI = This (ASN 64496), 
-                        comment = Just "All keys for ASN"
-                    },
-                    BgpsecFilter {
-                        asnAndSKI = That (DecodedBase64 "foo"), 
-                        comment = Just "Key matching Router SKI"
-                    },
-                    BgpsecFilter {
-                        asnAndSKI = These (ASN 64497) (DecodedBase64 "bar"), 
-                        comment = Just "Key for ASN 64497 matching Router SKI"
-                    }
-                ]
-            }, 
-            locallyAddedAssertions = LocallyAddedAssertions {
-                prefixAssertions = [
-                    PrefixAssertion {
-                        asn = ASN 64496, 
-                        prefix = Ipv4P (readIp4 "198.51.100.0/24"), 
-                        maxPrefixLength = Nothing, 
-                        comment = Just "My other important route"
-                    },
-                    PrefixAssertion {
-                        asn = ASN 64496, 
-                        prefix = Ipv6P (readIp6 "2001:db8::/32"), 
-                        maxPrefixLength = Just (PrefixLength 48), 
-                        comment = Just "My other important de-aggregated routes"
-                    }
-                ], 
-                bgpsecAssertions = [
-                    BgpsecAssertion {
-                        asn = ASN 64496, 
-                        ski = DecodedBase64 "<some base64 SKI>", 
-                        routerPublicKey = DecodedBase64 "<some base64 public key>", 
-                        comment = Just "My known key for my important ASN"
-                    }
-                ]
-            }
-        })
+        bigTestSlurm
         fullJson
 
+
+test_reject_full_duplicates :: HU.Assertion
+test_reject_full_duplicates = do
+    -- validate overlapping with itself    
+    (z, _) <- runValidatorT (newValidatorPath "test") 
+        $ vHoist $ validateNoOverlaps [("Foo", bigTestSlurm), ("Bar", bigTestSlurm)]
+    HU.assertEqual 
+        ("Wrong validation message " <> show z) 
+        (Left (SlurmE (SlurmValidationError 
+            $ "File Foo has prefix overlaps with file Bar: " <> 
+              "[(Ipv4P (Ipv4Prefix 198.51.100.0/24),Ipv4P (Ipv4Prefix 198.51.100.0/24))," <> 
+              "(Ipv6P (Ipv6Prefix 2001:db8::/32),Ipv6P (Ipv6Prefix 2001:db8::/32))," <> 
+              "(Ipv4P (Ipv4Prefix 192.0.2.0/24),Ipv4P (Ipv4Prefix 192.0.2.0/24))]"))) 
+        z    
+
+test_reject_partial_prefix_duplicates :: HU.Assertion
+test_reject_partial_prefix_duplicates = do
+    let slurm1 = (mempty :: Slurm) {
+        validationOutputFilters = mempty {
+            prefixFilters = [
+                PrefixFilter {
+                    asnAndPrefix = That (Ipv4P $ readIp4 "192.0.2.0/24"), 
+                    comment = Just "All VRPs encompassed by prefix"
+                }            
+            ]        
+        }
+    }
+    let slurm2 = (mempty :: Slurm) {
+        locallyAddedAssertions = mempty {
+            prefixAssertions = [
+                PrefixAssertion {
+                    asn = ASN 64496, 
+                    prefix = Ipv4P (readIp4 "192.0.0.0/16"), 
+                    maxPrefixLength = Nothing, 
+                    comment = Just "My other important route"
+                }
+            ]
+        }      
+    }
+    (z, _) <- runValidatorT (newValidatorPath "test") 
+        $ vHoist $ validateNoOverlaps [("Foo", slurm1), ("Bar", slurm2)]
+    HU.assertEqual 
+        ("Wrong validation message " <> show z) 
+        (Left (SlurmE (SlurmValidationError $
+            "File Foo has prefix overlaps with file Bar: " <> 
+            "[(Ipv4P (Ipv4Prefix 192.0.0.0/16),Ipv4P (Ipv4Prefix 192.0.2.0/24))]"))) 
+        z    
+
+
+test_reject_partial_asn_duplicates :: HU.Assertion
+test_reject_partial_asn_duplicates = do
+    let slurm1 = (mempty :: Slurm) {
+        validationOutputFilters = mempty {
+            bgpsecFilters = [
+                BgpsecFilter {
+                    asnAndSKI = This (ASN 64496), 
+                    comment = Just "All keys for ASN"
+                }
+            ]     
+        }
+    }
+    let slurm2 = (mempty :: Slurm) {
+        locallyAddedAssertions = mempty {
+            bgpsecAssertions = [
+                BgpsecAssertion {
+                    asn = ASN 64496, 
+                    ski = DecodedBase64 "<some base64 SKI>", 
+                    routerPublicKey = DecodedBase64 "<some base64 public key>", 
+                    comment = Just "My known key for my important ASN"
+                }
+            ]
+        }      
+    }
+    (z, _) <- runValidatorT (newValidatorPath "test") 
+        $ vHoist $ validateNoOverlaps [("Foo", slurm1), ("Bar", slurm2)]
+    HU.assertEqual 
+        ("Wrong validation message " <> show z) 
+        (Left (SlurmE (SlurmValidationError
+            "File Foo has ASN overlaps with file Bar: [ASN 64496]"))) 
+        z    
+
+
+bigTestSlurm = Slurm {
+    slurmVersion = SlurmVersion 1, 
+    validationOutputFilters = ValidationOutputFilters {
+        prefixFilters = [
+            PrefixFilter {
+                asnAndPrefix = That (Ipv4P $ readIp4 "192.0.2.0/24"), 
+                comment = Just "All VRPs encompassed by prefix"
+            },
+            PrefixFilter {
+                asnAndPrefix = This (ASN 64496), 
+                comment = Just "All VRPs matching ASN"
+            },
+            PrefixFilter {
+                asnAndPrefix = These (ASN 64497) (Ipv4P $ readIp4 "198.51.100.0/24"), 
+                comment = Just "All VRPs encompassed by prefix, matching ASN"
+            }
+        ], 
+        bgpsecFilters = [
+            BgpsecFilter {
+                asnAndSKI = This (ASN 64496), 
+                comment = Just "All keys for ASN"
+            },
+            BgpsecFilter {
+                asnAndSKI = That (DecodedBase64 "foo"), 
+                comment = Just "Key matching Router SKI"
+            },
+            BgpsecFilter {
+                asnAndSKI = These (ASN 64497) (DecodedBase64 "bar"), 
+                comment = Just "Key for ASN 64497 matching Router SKI"
+            }
+        ]
+    }, 
+    locallyAddedAssertions = LocallyAddedAssertions {
+        prefixAssertions = [
+            PrefixAssertion {
+                asn = ASN 64496, 
+                prefix = Ipv4P (readIp4 "198.51.100.0/24"), 
+                maxPrefixLength = Nothing, 
+                comment = Just "My other important route"
+            },
+            PrefixAssertion {
+                asn = ASN 64496, 
+                prefix = Ipv6P (readIp6 "2001:db8::/32"), 
+                maxPrefixLength = Just (PrefixLength 48), 
+                comment = Just "My other important de-aggregated routes"
+            }
+        ], 
+        bgpsecAssertions = [
+            BgpsecAssertion {
+                asn = ASN 64496, 
+                ski = DecodedBase64 "<some base64 SKI>", 
+                routerPublicKey = DecodedBase64 "<some base64 public key>", 
+                comment = Just "My known key for my important ASN"
+            }
+        ]
+    }
+}
 
 fullJson :: IsString a => a
 fullJson = [i|
