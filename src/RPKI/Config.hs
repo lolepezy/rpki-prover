@@ -36,7 +36,8 @@ data Config = Config {
     cacheLifeTime             :: Seconds,
     oldVersionsLifetime       :: Seconds,
     storageCompactionInterval :: Seconds,
-    lmdbSize                  :: Size
+    lmdbSize                  :: Size,
+    localExceptions           :: [FilePath]
 } deriving stock (Show, Eq, Ord, Generic)
 
 data RsyncConf = RsyncConf {
@@ -113,7 +114,8 @@ defaultConfig = Config {
     cacheLifeTime             = Seconds $ 60 * 60 * 72,
     oldVersionsLifetime       = Seconds $ 60 * 60 * 10,
     storageCompactionInterval = Seconds $ 60 * 60 * 24,
-    lmdbSize                  = Size $ 8 * 1024 * 1024 * 1024
+    lmdbSize                  = Size $ 8 * 1024 * 1024 * 1024,
+    localExceptions = []
 }
 
 defaultRtrConfig :: RtrConfig

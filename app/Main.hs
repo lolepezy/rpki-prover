@@ -61,8 +61,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
 import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
-
-import RPKI.SLURM.SlurmProcessing
+import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
@@ -177,6 +176,11 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     appState <- liftIO newAppState
     tvarDatabase <- liftIO $ newTVarIO database
 
+    -- Read the files first to fail fast
+    unless (null localExceptions) $ do 
+        void $ readSlurmFiles localExceptions        
+
+    -- Set the function that re-reads SLURM files with every re-validation.
     let appState' =
             case localExceptions of
                 []         -> appState
@@ -205,7 +209,8 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-                & #lmdbSize .~ lmdbRealSize
+                & #lmdbSize .~ lmdbRealSize            
+                & #localExceptions .~ localExceptions    
     }
 
     logInfoM logger [i|Created application context: #{config appContext}|]
