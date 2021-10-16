@@ -141,9 +141,9 @@ runWorkflow appContext@AppContext {..} tals = do
                     (slurmedVrps, slurmValidations) <- 
                         case appState ^. #readSlurm of
                             Nothing -> pure (vrps, mempty)
-                            Just rt -> do 
+                            Just readFunc -> do 
                                 logInfoM logger [i|Re-reading and re-validating SLURM files.|]
-                                (z, vs) <- runValidatorT (newValidatorPath "read-slurm") rt                            
+                                (z, vs) <- runValidatorT (newValidatorPath "read-slurm") readFunc
                                 case z of 
                                     Left e -> do 
                                         logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
