@@ -14,6 +14,7 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
+import           Data.Text (Text)
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -74,19 +75,20 @@ downloadAndUpdateRRDP
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
     case nextStep of
-        NothingToDo -> do 
+        NothingToDo message -> do 
             used RrdpNoUpdate
+            logDebugM logger [i|Nothing to update for #{repoUri}: #{message}|]
             pure repo
 
-        UseSnapshot snapshotInfo -> do 
+        UseSnapshot snapshotInfo message -> do 
             used RrdpSnapshot
-            logDebugM logger [i|Going to use snapshot for #{repoUri}.|]
+            logDebugM logger [i|Going to use snapshot for #{repoUri}: #{message}|]
             useSnapshot snapshotInfo notification
 
-        UseDeltas sortedDeltas snapshotInfo -> 
+        UseDeltas sortedDeltas snapshotInfo message -> 
                 (do 
                     used RrdpDelta
-                    logDebugM logger [i|Going to use deltas for #{repoUri}.|]
+                    logDebugM logger [i|Going to use deltas for #{repoUri}: #{message}|]
                     useDeltas sortedDeltas notification)
                     `catchError` 
                 \e -> do         
@@ -183,12 +185,13 @@ downloadAndUpdateRRDP
 
 
 data Step
-  = UseSnapshot SnapshotInfo
+  = UseSnapshot SnapshotInfo Text
   | UseDeltas
       { sortedDeltas :: [DeltaInfo]
       , snapshotInfo :: SnapshotInfo
+      , message :: Text
       }
-  | NothingToDo
+  | NothingToDo Text
   deriving (Show, Eq, Ord, Generic)
 
 
@@ -196,28 +199,40 @@ data Step
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
 rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT Step
+
 rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} = 
-    pure $ UseSnapshot snapshotInfo
+    pure $ UseSnapshot snapshotInfo "Unknown repository"
+
 rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notification{..} =
-    if  | sessionId /= repoSessionId -> pure $ UseSnapshot snapshotInfo
-        | repoSerial > serial        -> do 
+
+    if  | sessionId /= repoSessionId -> 
+            pure $ UseSnapshot snapshotInfo [i|Resetting RRDP session from #{repoSessionId} to #{sessionId}|]
+
+        | repoSerial > serial -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure NothingToDo        
-        | repoSerial == serial       -> pure NothingToDo
+            pure $ NothingToDo [i|Local serial #{repoSerial} is lower than the remote serial #{serial}.|]
+
+        | repoSerial == serial -> 
+            pure $ NothingToDo "Up-to-date."
 
         -- too many deltas means huge overhead -- just use snapshot, 
         -- it's more data but less chances of getting killed by timeout
-        | length deltas > 100        -> pure $ UseSnapshot snapshotInfo
+        | length deltas > 100  -> 
+            pure $ UseSnapshot snapshotInfo [i|There are too many deltas: #{length deltas}.|]
 
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
-                ([], _) -> pure $ UseSnapshot snapshotInfo
+                ([], _) -> pure $ UseSnapshot snapshotInfo "There is no deltas to use."
+
                 (_, []) | nextSerial repoSerial < head (map deltaSerial sortedDeltas) ->
                             -- we are too far behind
-                            pure $ UseSnapshot snapshotInfo
+                            pure $ UseSnapshot snapshotInfo "Local serial is too far behind."
+
                         | otherwise ->
-                            pure $ UseDeltas chosenDeltas snapshotInfo
+                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas a fine."
+
                 (_, nc) -> appError $ RrdpE $ NonConsecutiveDeltaSerials nc
+                
             where
                 sortedSerials = map deltaSerial sortedDeltas
                 sortedDeltas = List.sortOn deltaSerial deltas
