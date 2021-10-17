@@ -26,7 +26,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
-                (Right $ UseSnapshot $ SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")),
+                (Right $ UseSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+                         "Resetting RRDP session from SessionId \"whatever\" to SessionId \"something else\""),
 
     HU.testCase "Should generate nothing when the session id and serial are the same" $ do
         let sessionId = SessionId "something"
@@ -37,7 +38,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         Pending
         let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
-        HU.assertEqual "It's a bummer" nextStep (Right NothingToDo),
+        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToDo "Up-to-date."),
 
     HU.testCase "Should generate delta update when the session id is the same and serial is larger" $ do
         let sessionId = SessionId "something"
@@ -53,7 +54,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB"))),
+            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) "Deltas a fine."),
 
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
         let sessionId = SessionId "something"
@@ -67,7 +68,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                   deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
                                 }
         HU.assertEqual "It's a bummer" nextStep (Right $ UseSnapshot 
-            (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB"))),
+            (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) "Local serial is too far behind."),
 
     HU.testCase "Should generate error when deltas are not consecutive" $ do
         let sessionId = SessionId "something"
