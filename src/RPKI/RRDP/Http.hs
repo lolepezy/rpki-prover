@@ -169,9 +169,15 @@ downloadConduit :: (MonadIO m, MonadUnliftIO m) =>
                     -> Handle 
                     -> ConduitT BS.ByteString Void (ResourceT m) t
                     -> m (t, HttpStatus)
-downloadConduit (URI u) fileHandle sink = do 
+downloadConduit (URI u) fileHandle extraSink = do 
     req <- liftIO $ parseRequest $ Text.unpack u    
-    let req' = req { requestHeaders = (hUserAgent, userAgent) : requestHeaders req }
+    let req' = req { 
+            requestHeaders = (hUserAgent, userAgent) : requestHeaders req,
+            -- Since the whole RRDP fetching process is limited in time
+            -- it's fine (and sometimes necessary) to set some ridiculously 
+            -- high timeout here.
+            responseTimeout = responseTimeoutMicro 600_000_000
+        }
     status <- liftIO $ newIORef mempty
     let getSrc r = do         
             liftIO $ writeIORef status $ HttpStatus $ getResponseStatusCode r         
@@ -179,7 +185,7 @@ downloadConduit (URI u) fileHandle sink = do
 
     (z, _) <- runConduitRes 
                     $ httpSource req' getSrc
-                    .| zipSinks sink (sinkHandle fileHandle)    
+                    .| zipSinks extraSink (sinkHandle fileHandle)    
 
     (z,) <$> liftIO (readIORef status)
 

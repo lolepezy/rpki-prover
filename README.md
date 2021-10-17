@@ -27,7 +27,7 @@ Current and future work
 
 # Using rpki-prover
 
-`rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enable RTR server that sends VRP updates to the RTR clients.
+`rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enables RTR server that sends VRP updates to the RTR clients.
 
 There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Running `rpki-prover --help` gives some help on the CLI options.
 
