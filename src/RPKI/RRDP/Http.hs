@@ -175,7 +175,7 @@ downloadConduit (URI u) fileHandle extraSink = do
             requestHeaders = (hUserAgent, userAgent) : requestHeaders req,
             -- Since the whole RRDP fetching process is limited in time
             -- it's fine (and sometimes necessary) to set some ridiculously 
-            -- high timeout here.
+            -- high timeout here (10 minutes).
             responseTimeout = responseTimeoutMicro 600_000_000
         }
     status <- liftIO $ newIORef mempty

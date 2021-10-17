@@ -202,8 +202,13 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
     if  | sessionId /= repoSessionId -> pure $ UseSnapshot snapshotInfo
         | repoSerial > serial        -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure NothingToDo
+            pure NothingToDo        
         | repoSerial == serial       -> pure NothingToDo
+
+        -- too many deltas means huge overhead -- just use snapshot, 
+        -- it's more data but less chances of getting killed by timeout
+        | length deltas > 100        -> pure $ UseSnapshot snapshotInfo
+
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
                 ([], _) -> pure $ UseSnapshot snapshotInfo
