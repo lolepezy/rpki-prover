@@ -214,22 +214,22 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
 
         | repoSerial == serial -> 
             pure $ NothingToDo "Up-to-date."
-
-        -- too many deltas means huge overhead -- just use snapshot, 
-        -- it's more data but less chances of getting killed by timeout
-        | length deltas > 100  -> 
-            pure $ UseSnapshot snapshotInfo [i|There are too many deltas: #{length deltas}.|]
-
+    
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
                 ([], _) -> pure $ UseSnapshot snapshotInfo "There is no deltas to use."
 
-                (_, []) | nextSerial repoSerial < head (map deltaSerial sortedDeltas) ->
+                (_, []) | nextSerial repoSerial < deltaSerial (head sortedDeltas) ->
                             -- we are too far behind
                             pure $ UseSnapshot snapshotInfo "Local serial is too far behind."
 
+                        -- too many deltas means huge overhead -- just use snapshot, 
+                        -- it's more data but less chances of getting killed by timeout
+                        | length chosenDeltas > 100 ->
+                            pure $ UseSnapshot snapshotInfo [i|There are too many deltas: #{length chosenDeltas}.|]                        
+
                         | otherwise ->
-                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas a fine."
+                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas are fine."
 
                 (_, nc) -> appError $ RrdpE $ NonConsecutiveDeltaSerials nc
                 
