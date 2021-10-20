@@ -213,21 +213,6 @@ data MapInfo a
 -- `dstN` is supposed to be a completely empty environment.
 --
 copyEnv :: Env -> Env -> IO [(BS.ByteString, Int)]
-<<<<<<< HEAD
-copyEnv srcN dstN = do 
-
-    mapNames <- withROTransaction srcN $ \srcTx -> do               
-                    srcDb <- openDatabase srcTx Nothing defaultDbSettings    
-                    getMapNames srcTx srcDb
-
-    (bytes, _) <- mapException (AppException . storageError)        
-                    $ bracketChanClosable 
-                            5
-                            (liftIO . readKVs mapNames)
-                            (liftIO . writeKVs)
-                            (const $ pure ()) 
-    pure bytes
-=======
 copyEnv srcN dstN = do        
     withROTransaction srcN $ \srcTx -> do       
         withTransaction dstN $ \dstTx -> do                              
@@ -249,7 +234,6 @@ copyEnv srcN dstN = do
                         dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
                         copied <- copyMap srcMap dstMap srcTx dstTx                        
                         pure (mapName, copied)            
->>>>>>> master
     where
         getMapNames tx db =
             withCursor tx db $ \c -> do 
