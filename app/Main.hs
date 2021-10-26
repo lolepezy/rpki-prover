@@ -8,7 +8,6 @@
 
 module Main where
 
-
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent.STM (readTVarIO)
@@ -99,16 +98,16 @@ runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- updateWorldVerion appState
-    talFileNames <- listTALFiles $ talDirectory config
+    talNames <- listTALFiles $ talDirectory config
     let validationContext = newValidatorPath "validation-root"
     (tals, validationState) <- runValidatorT validationContext $
-        forM talFileNames $ \talFileName ->
-            inSubVPath (convert talFileName) $ parseTALFromFile talFileName
+        forM talNames $ \(talFilePath, taName) ->
+            inSubVPath (convert taName) $ parseTALFromFile talFilePath
 
-    logInfo_ logger [i|Successfully loaded #{length talFileNames} TALs.|]
+    logInfo_ logger [i|Successfully loaded #{length talNames} TALs.|]
 
     database' <- readTVarIO database
-    rwTx database' $ \tx -> putValidations tx (validationsStore database') worldVersion (validationState ^. typed)
+    rwTx database' $ \tx -> putValidations tx database' worldVersion (validationState ^. typed)
     case tals of
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]
@@ -116,8 +115,8 @@ runValidatorApp appContext@AppContext {..} = do
         Right tals' -> do
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
-            `finally`
-            closeStorage appContext
+                `finally`
+                closeStorage appContext
     where
         parseTALFromFile talFileName = do
             talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
@@ -296,12 +295,14 @@ maybeSet :: ASetter s s a b -> Maybe b -> s -> s
 maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 
 
-listTALFiles :: FilePath -> IO [FilePath]
+listTALFiles :: FilePath -> IO [(FilePath, FilePath)]
 listTALFiles talDirectory = do
     names <- getDirectoryContents talDirectory
-    pure $ map (talDirectory </>) $
+    pure $ map (\f -> (talDirectory </> f, cutOfTalExtension f)) $
             filter (".tal" `List.isSuffixOf`) $
             filter (`notElem` [".", ".."]) names
+  where
+    cutOfTalExtension s = List.take (List.length s - 4) s
 
 
 talsDir :: FilePath -> TALsHandle -> IO (Either Text FilePath)

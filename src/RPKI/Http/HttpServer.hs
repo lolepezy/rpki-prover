@@ -60,21 +60,29 @@ uiServer appContext = do
 
 apiServer :: Storage s => AppContext s -> Server API
 apiServer appContext = 
-    liftIO (getVRPs appContext)
-    :<|> liftIO (getVRPs appContext)
+    liftIO (getVRPValidated appContext)
+    :<|> liftIO (getVRPValidated appContext)
+    :<|> liftIO (getVRPSlurmed appContext)
+    :<|> liftIO (getVRPSlurmed appContext)
     :<|> liftIO (getVResults appContext)
     :<|> getMetrics appContext
     :<|> getStats  appContext
     :<|> getRpkiObject appContext
 
 -- TODO CSV should contain TA name as well
-getVRPs :: Storage s => AppContext s -> IO [VrpDto]
-getVRPs AppContext {..} = do 
+getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
+getVRPValidated appContext = getVRPs appContext allCurrentVrps    
+
+getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
+getVRPSlurmed appContext = getVRPs appContext allCurrentVrps                     
+
+getVRPs AppContext {..} func = do 
     vrps <- do 
-        vrps <- atomically $ allCurrentVrps appState
+        vrps <- atomically $ func appState
         if Set.null vrps
             then do 
                 db@DB {..} <- readTVarIO database 
+                vrps <- getLatestVRPs db
                 roTx versionStore $ \tx ->
                     fmap (fromMaybe []) $ 
                         runMaybeT $ do 

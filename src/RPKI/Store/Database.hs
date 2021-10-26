@@ -8,14 +8,12 @@
 
 module RPKI.Store.Database where
 
-import           Codec.Serialise
 import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
 import           Control.Monad.Trans.Maybe
 import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
-import           Data.Int
 import           Data.IORef.Lifted
 
 import qualified Data.List                as List
@@ -31,6 +29,7 @@ import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
+import           RPKI.SLURM.Types
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -121,6 +120,9 @@ instance Storage s => WithStorage s (VersionStore s) where
     storage (VersionStore s) = storage s
 
 
+newtype SlurmStore s = SlurmStore {
+    slurms :: SMap "slurms" s WorldVersion Slurm
+}
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
@@ -303,8 +305,8 @@ getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe 
 getTA tx (TAStore s) name = liftIO $ M.get tx s name
 
 putValidations :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> ValidationsStore s -> WorldVersion -> Validations -> m ()
-putValidations tx ValidationsStore {..} wv validations = liftIO $ M.put tx results wv validations
+            Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
+putValidations tx DB { validationsStore = ValidationsStore s } wv validations = liftIO $ M.put tx s wv validations
 
 validationsForVersion :: (MonadIO m, Storage s) => 
                         Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
@@ -337,13 +339,11 @@ putVersion tx DB { versionStore = VersionStore s } wv versionState =
 
 allVersions :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> m [(WorldVersion, VersionState)]
-allVersions tx DB { versionStore = VersionStore s } = 
-    liftIO $ M.all tx s
+allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
 
 deleteVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersion tx DB { versionStore = VersionStore s } wv = 
-    liftIO $ M.delete tx s wv
+deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
 
 
 completeWorldVersion :: Storage s => 
@@ -353,15 +353,29 @@ completeWorldVersion tx database worldVersion =
 
 
 putMetrics :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> MetricsStore s -> WorldVersion -> AppMetric -> m ()
-putMetrics tx MetricsStore {..} wv appMetric = 
-    liftIO $ M.put tx metrics wv appMetric
+            Tx s 'RW -> DB s -> WorldVersion -> AppMetric -> m ()
+putMetrics tx DB { metricStore = MetricsStore s } wv appMetric = 
+    liftIO $ M.put tx s wv appMetric
 
 metricsForVersion :: (MonadIO m, Storage s) => 
                     Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe AppMetric)
-metricsForVersion tx MetricsStore {..} wv = 
-    liftIO $ M.get tx metrics wv    
+metricsForVersion tx MetricsStore {..} wv = liftIO $ M.get tx metrics wv    
 
+deleteMetrics :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteMetrics tx DB { metricStore = MetricsStore s } wv = liftIO $ M.delete tx s wv
+
+putSlurm :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
+putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = liftIO $ M.put tx s wv slurm
+
+slurmForVersion :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m (Maybe Slurm)
+slurmForVersion tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.get tx s wv    
+
+deleteSlurms :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
 -- More complicated operations
 
@@ -471,9 +485,11 @@ deleteOldVersions database tooOld =
     
     rwTx database $ \tx -> 
         forM_ toDelete $ \(worldVersion, _) -> do
-            deleteValidations tx database worldVersion
-            deleteVRPs tx database worldVersion
             deleteVersion tx database worldVersion
+            deleteValidations tx database worldVersion
+            deleteVRPs tx database worldVersion            
+            deleteMetrics tx database worldVersion
+            deleteSlurms tx database worldVersion
     
     pure $! List.length toDelete
 
@@ -487,6 +503,14 @@ getLastCompletedVersion database tx = do
         pure $! case [ v | (v, CompletedVersion) <- vs ] of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
+
+
+getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
+getLatestVRPs db = 
+    roTx db $ \tx ->        
+        runMaybeT $ do 
+            version <- MaybeT $ getLastCompletedVersion db tx
+            MaybeT $ getVrps tx db version
 
 
 getTotalDbStats :: (MonadIO m, Storage s) => 
@@ -507,7 +531,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
         vResultStats tx <*>
         (let VRPStore sm = vrpStore in M.stats tx sm) <*>
         (let VersionStore sm = versionStore in M.stats tx sm) <*>
-        M.stats tx sequences
+        M.stats tx sequences <*>
+        (let SlurmStore sm = slurmStore in M.stats tx sm)
     where
         rpkiObjectStats tx = do 
             let RpkiObjectStore {..} = objectStore
@@ -569,6 +594,7 @@ data DB s = DB {
     vrpStore         :: VRPStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricsStore s,
+    slurmStore       :: SlurmStore s,
     sequences        :: SequenceMap s
 } deriving stock (Generic)
 

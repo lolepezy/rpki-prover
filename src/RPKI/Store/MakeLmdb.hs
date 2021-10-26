@@ -67,6 +67,9 @@ createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> createLmdbStore e
 createMetricsStore :: LmdbEnv -> IO (MetricsStore LmdbStorage)
 createMetricsStore e = MetricsStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
+createSlurmStore :: LmdbEnv -> IO (SlurmStore LmdbStorage)
+createSlurmStore e = SlurmStore . SMap (LmdbStorage e) <$> createLmdbStore e    
+
 createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
 createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
 
@@ -103,5 +106,6 @@ createDatabase e = do
         createVRPStore e <*>
         createVersionStore e <*>
         createMetricsStore e <*>
+        createSlurmStore e <*>
         pure seqMap
 

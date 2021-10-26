@@ -103,18 +103,6 @@ runWorkflow appContext@AppContext {..} tals = do
 
             atomically $ closeCQueue globalQueue
 
-        generatePeriodicTask delay interval whatToDo globalQueue = do
-            threadDelay delay
-            periodically interval $ do
-                worldVersion <- getWorldVerionIO appState
-                atomically $ do 
-                    closed <- isClosedCQueue globalQueue
-                    unless closed $ 
-                        writeCQueue globalQueue (whatToDo worldVersion)
-                    pure $ if closed 
-                            then Done
-                            else Repeat
-
         taskExecutor globalQueue = go 
           where
             go = do 
@@ -138,26 +126,28 @@ runWorkflow appContext@AppContext {..} tals = do
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
 
                     -- Apply SLURM if it is set in the appState
-                    (slurmedVrps, slurmValidations) <- 
+                    (slurmedVrps, slurmValidations, saveSlurm) <- 
                         case appState ^. #readSlurm of
-                            Nothing -> pure (vrps, mempty)
+                            Nothing -> pure (vrps, mempty, \_ -> pure ())
                             Just readFunc -> do 
                                 logInfoM logger [i|Re-reading and re-validating SLURM files.|]
                                 (z, vs) <- runValidatorT (newValidatorPath "read-slurm") readFunc
                                 case z of 
                                     Left e -> do 
                                         logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
-                                        pure (vrps, vs)
+                                        pure (vrps, vs, \_ -> pure ())
                                     Right slurm -> do 
-                                        logInfoM logger [i|Applying SLURM filters and assertions.|]                                        
-                                        pure (slurm `applySlurm` vrps, vs)
+                                        logInfoM logger [i|Applying SLURM filters and assertions.|]
+                                        let saveSlurm tx = putSlurm tx database' worldVersion slurm
+                                        pure (slurm `applySlurm` vrps, vs, saveSlurm)
 
                     -- Save all the results into LMDB
                     let updatedValidation = slurmValidations <> topDownValidations ^. typed
                     rwTx database' $ \tx -> do                        
-                        putValidations tx (validationsStore database') worldVersion (updatedValidation ^. typed)
-                        putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)                        
+                        putValidations tx database' worldVersion (updatedValidation ^. typed)
+                        putMetrics tx database' worldVersion (topDownValidations ^. typed)                        
                         putVrps tx database' slurmedVrps worldVersion
+                        saveSlurm tx                        
                         completeWorldVersion tx database' worldVersion
                         atomically $ completeCurrentVersion appState slurmedVrps
 
@@ -206,6 +196,19 @@ runWorkflow appContext@AppContext {..} tals = do
                 Just rtrConfig' -> 
                     pure $ \_ -> runRtrServer appContext rtrConfig' 
 
+
+        -- Write an action to the global queue with given interval.
+        generatePeriodicTask delay interval action globalQueue = do
+            threadDelay delay
+            periodically interval $ do
+                worldVersion <- getWorldVerionIO appState
+                atomically $ do 
+                    closed <- isClosedCQueue globalQueue
+                    unless closed $ 
+                        writeCQueue globalQueue (action worldVersion)
+                    pure $ if closed 
+                            then Done
+                            else Repeat
 
 -- | Load the state corresponding to the last completed version.
 -- 

@@ -78,9 +78,10 @@ data DBStats = DBStats {
     repositoryStats :: RepositoryStats,
     rpkiObjectStats :: RpkiObjectStats,    
     vResultStats    :: VResultStats,    
-    vrpStats        :: SStats,    
-    versionStats    :: SStats,
-    sequenceStats   :: SStats
+    vrpStats        :: SStats,        
+    versionStats    :: SStats,    
+    sequenceStats   :: SStats,
+    slurmStats      :: SStats
 } deriving stock (Show, Eq, Generic)
 data TotalDBStats = TotalDBStats {
     dbStats         :: DBStats,

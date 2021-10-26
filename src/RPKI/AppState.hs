@@ -69,6 +69,15 @@ allCurrentVrps AppState {..} = do
             pure a
         Just c -> pure c
 
+-- allCurrentVrps :: AppState -> STM (Set Vrp)
+-- allCurrentVrps AppState {..} = do 
+--     readTVar flatCurrentVrps >>= \case
+--         Nothing -> do             
+--             a <- allVrps <$> readTVar currentVrps
+--             writeTVar flatCurrentVrps (Just a)
+--             pure a
+--         Just c -> pure c        
+
 -- Block on version updates
 waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Vrps)
 waitForNewCompleteVersion AppState {..} knownWorldVersion = do 

@@ -65,9 +65,6 @@ data ValidationResult = ValidationResult {
     context  :: [Text]
 } deriving stock (Generic)
 
-newtype VrpList = VrpList [VrpDto]
-    deriving stock (Eq, Show, Generic)
-
 data VrpDto = VrpDto {
     asn       :: ASN,
     prefix    :: IpPrefix,
