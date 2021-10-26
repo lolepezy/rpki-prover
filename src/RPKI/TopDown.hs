@@ -66,7 +66,8 @@ data TopDownContext s = TopDownContext {
         worldVersion         :: WorldVersion,
         validManifests       :: TVar (Map AKI Hash),
         visitedHashes        :: TVar (Set Hash),
-        repositoryProcessing :: RepositoryProcessing
+        repositoryProcessing :: RepositoryProcessing,
+        currentPathDepth     :: Int
     }
     deriving stock (Generic)
 
@@ -94,8 +95,9 @@ newTopDownContext :: MonadIO m =>
 newTopDownContext worldVersion taName now certificate repositoryProcessing = 
     liftIO $ atomically $ do    
         let verifiedResources = Just $ createVerifiedResources certificate        
+        let currentPathDepth = 0
         visitedHashes     <- newTVar mempty
-        validManifests    <- newTVar mempty        
+        validManifests    <- newTVar mempty                
         pure $ TopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
@@ -231,7 +233,7 @@ validateFromTACert :: Storage s =>
 validateFromTACert 
     appContext@AppContext {..} 
     topDownContext@TopDownContext { .. } 
-    initialRepos@(PublicationPointAccess initialAccess) 
+    initialRepos@(PublicationPointAccess taPublicationPoints) 
     taCert 
     = do  
     
@@ -242,7 +244,7 @@ validateFromTACert
         -- in `#publicationPoints` with the status 'Pending'
         liftIO $ atomically $ modifyTVar' 
                     (repositoryProcessing ^. #publicationPoints)
-                    (\pubPoints -> foldr mergePP pubPoints initialAccess) 
+                    (\pubPoints -> foldr mergePP pubPoints taPublicationPoints) 
         
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
@@ -289,6 +291,12 @@ validateCaCertificate
     topDownContext@TopDownContext {..} 
     certificate = do          
     
+    let validationConfig = appContext ^. typed @Config . typed @ValidationConfig
+
+    when (currentPathDepth > validationConfig ^. #maxCertificatePathDepth) $ do                             
+        logErrorM logger [i|Stopping validation on #{getLocations certificate}, maximum tree depth is reached.|]
+        vError $ CertificatePathTooDeep $ getLocations certificate
+
     if appContext ^. typed @Config . typed @ValidationConfig . #dontFetch 
         -- Don't add anything with the pending repositories
         -- Just expect all the objects to be already cached        
@@ -598,9 +606,9 @@ validateCaCertificate
                                     Validated validCert <- validateResourceCert 
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
-                            let childTopDownContext = topDownContext { 
-                                    verifiedResources = Just childVerifiedResources 
-                                }                            
+                            let childTopDownContext = topDownContext 
+                                    & #verifiedResources .~ (Just childVerifiedResources)  
+                                    & #currentPathDepth %~ (+ 1)                            
                             validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
 
                 embedState validationState

@@ -64,7 +64,8 @@ data ValidationConfig = ValidationConfig {
     rrdpRepositoryRefreshInterval  :: Seconds,
     rsyncRepositoryRefreshInterval :: Seconds,    
     dontFetch                      :: Bool,
-    manifestProcessing             :: ManifestProcessing
+    manifestProcessing             :: ManifestProcessing,
+    maxCertificatePathDepth        :: Int
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {
@@ -103,7 +104,8 @@ defaultConfig = Config {
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         dontFetch                      = False,
-        manifestProcessing             = RFC6486
+        manifestProcessing             = RFC6486,
+        maxCertificatePathDepth        = 64
     },
     httpApiConf = HttpApiConfig {
         port = 9999

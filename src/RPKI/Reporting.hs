@@ -77,6 +77,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         UnknownUriType URI | 
                         CertificateDoesntHaveSIA | 
                         CircularReference Hash Locations |
+                        CertificatePathTooDeep Locations |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
