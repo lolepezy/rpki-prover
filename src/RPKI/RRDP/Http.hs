@@ -43,21 +43,31 @@ import qualified Crypto.Hash.SHA256 as S256
 import System.IO (Handle, hClose, withFile, IOMode(..))
 import System.IO.Temp (withTempFile)
 
+import System.IO.Posix.MMap (unsafeMMapFile)
+
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 
 
 class Blob bs where    
+    flexibleReadB :: FilePath -> Size -> IO bs
     readB :: FilePath -> IO bs
     sizeB :: bs -> Size
 
 instance Blob LBS.ByteString where    
     readB = lazyFsRead
     sizeB = Size . fromIntegral . LBS.length 
+    flexibleReadB f _ = readB f
 
 instance Blob BS.ByteString where    
     readB = fsRead
     sizeB = Size . fromIntegral . BS.length 
+    flexibleReadB f s = 
+        if s < 50_000_000 
+            -- read relatively small files in memory entirely
+            -- and mmap bigger ones.
+            then readB f
+            else mapFile f
 
 
 -- | Download HTTP content to a temporary file and return the context as lazy/strict ByteString. 
@@ -85,7 +95,7 @@ downloadToBS config uri@(URI u) = liftIO $ do
                         (\_ _ -> ()) 
                         id)
         hClose fd                    
-        content <- readB name
+        content <- flexibleReadB name size
         pure (content, size, status)
 
 
@@ -116,7 +126,7 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
             then pure $! hashMishmatch actualHash
             else do
                 hClose fd
-                content <- readB name
+                content <- flexibleReadB name size
                 pure $ Right (content, size, status)
                 
 
@@ -155,6 +165,9 @@ lazyFsRead = LBS.readFile
 
 fsRead :: FilePath -> IO BS.ByteString
 fsRead = BS.readFile 
+
+mapFile :: FilePath -> IO BS.ByteString
+mapFile = unsafeMMapFile
 
 data OversizedDownloadStream = OversizedDownloadStream URI Size 
     deriving stock (Show, Eq, Ord, Generic)    

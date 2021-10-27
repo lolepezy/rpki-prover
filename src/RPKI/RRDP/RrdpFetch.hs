@@ -15,6 +15,7 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
 import           Data.Text (Text)
+import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -57,8 +58,8 @@ import qualified RPKI.Util                        as U
 -- 
 downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository 
-                        -> (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) 
-                        -> (RrdpURL -> Notification -> RrdpSerial -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> RrdpSerial -> BS.ByteString -> ValidatorT IO ()) 
                         -> ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
@@ -277,7 +278,7 @@ saveSnapshot :: Storage s =>
                 AppContext s 
                 -> RrdpURL
                 -> Notification 
-                -> LBS.ByteString 
+                -> BS.ByteString 
                 -> ValidatorT IO ()
 saveSnapshot appContext repoUri notification snapshotContent = do      
     -- TODO Bad idea if we are lagging behind, put WorldVersion in the reader?
@@ -385,7 +386,7 @@ saveDelta :: Storage s =>
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
-            -> LBS.ByteString 
+            -> BS.ByteString 
             -> ValidatorT IO ()
 saveDelta appContext repoUri notification currentSerial deltaContent = do        
     worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState

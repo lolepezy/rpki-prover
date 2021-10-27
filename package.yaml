@@ -39,6 +39,7 @@ dependencies:
 - binary
 - blaze-html
 - bytestring
+- bytestring-mmap
 - cassava
 - cborg
 - containers

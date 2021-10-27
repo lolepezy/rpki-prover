@@ -318,7 +318,7 @@ fetchTACertificate appContext@AppContext {..} tal =
             go uris
 
         fetchTaCert = do                     
-            logInfoM logger [i|Fetching TA certicate from #{getURL u}..|]
+            logInfoM logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
