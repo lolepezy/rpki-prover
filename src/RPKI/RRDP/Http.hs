@@ -50,23 +50,20 @@ import qualified Paths_rpki_prover as Autogen
 
 
 class Blob bs where    
-    flexibleReadB :: FilePath -> Size -> IO bs
-    readB :: FilePath -> IO bs
+    readB :: FilePath -> Size -> IO bs
     sizeB :: bs -> Size
 
 instance Blob LBS.ByteString where    
-    readB = lazyFsRead
     sizeB = Size . fromIntegral . LBS.length 
-    flexibleReadB f _ = readB f
+    readB f _ = lazyFsRead f
 
 instance Blob BS.ByteString where    
-    readB = fsRead
     sizeB = Size . fromIntegral . BS.length 
-    flexibleReadB f s = 
+    readB f s = 
         if s < 50_000_000 
             -- read relatively small files in memory entirely
             -- and mmap bigger ones.
-            then readB f
+            then fsRead f
             else mapFile f
 
 
@@ -95,7 +92,7 @@ downloadToBS config uri@(URI u) = liftIO $ do
                         (\_ _ -> ()) 
                         id)
         hClose fd                    
-        content <- flexibleReadB name size
+        content <- readB name size
         pure (content, size, status)
 
 
@@ -126,7 +123,7 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
             then pure $! hashMishmatch actualHash
             else do
                 hClose fd
-                content <- flexibleReadB name size
+                content <- readB name size
                 pure $ Right (content, size, status)
                 
 
