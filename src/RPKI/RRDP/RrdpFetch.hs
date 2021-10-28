@@ -16,7 +16,6 @@ import           Data.Generics.Product.Typed
 import           Data.Bifunctor                   (first)
 import           Data.Text (Text)
 import qualified Data.ByteString                  as BS
-import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
