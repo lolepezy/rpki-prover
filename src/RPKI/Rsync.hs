@@ -62,7 +62,8 @@ rsyncRpkiObject :: AppContext s ->
 rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
     let destination = rsyncDestination rsyncRoot uri
-    let rsync = rsyncProcess uri destination RsyncOneFile
+    let validationConfig = config ^. typed @Config . typed @ValidationConfig
+    let rsync = rsyncProcess validationConfig uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
         ExitFailure errorCode -> do
@@ -90,9 +91,10 @@ updateObjectForRsyncRepository
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
+        let validationConfig = config ^. typed @Config . typed @ValidationConfig
         objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
         let destination = rsyncDestination rsyncRoot uri
-        let rsync = rsyncProcess uri destination RsyncDirectory
+        let rsync = rsyncProcess validationConfig uri destination RsyncDirectory
 
         void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             createDirectoryIfMissing True destination
@@ -214,10 +216,10 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
-rsyncProcess :: RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
-rsyncProcess (RsyncURL (URI uri)) destination rsyncMode = 
+rsyncProcess :: ValidationConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
+rsyncProcess vc (RsyncURL (URI uri)) destination rsyncMode = 
     proc "rsync" $ 
-        [ "--timeout=300",  "--update",  "--times" ] <> 
+        [ "--timeout=300",  "--update",  "--times", "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
         extraOptions <> 
         [ Text.unpack uri, destination ]
     where 
