@@ -229,6 +229,15 @@ toValidationMessage = \case
       CircularReference hash locations ->
           [i|Object with hash #{hash} and location #{fmtLocations locations} creates reference cycle.|]
 
+      CertificatePathTooDeep locations maxDepth ->
+          [i|The CA tree reached maximum depth of #{maxDepth} at #{locations}.|]
+
+      TreeIsTooBig locations maxTreeSize ->          
+          [i|The number of object in CA tree reached maximum of #{maxTreeSize} at #{locations}.|]
+
+      TooManyRepositories locations maxTaRepositories ->          
+          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
+
       ManifestLocationMismatch filename locations -> 
           [i|Object has manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]
 

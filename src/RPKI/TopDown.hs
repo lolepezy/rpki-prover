@@ -324,7 +324,9 @@ validateCaCertificate
             (pure $ currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
             (do 
                 logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum tree depth is reached.|]
-                vError $ CertificatePathTooDeep $ getLocations certificate)
+                vError $ CertificatePathTooDeep 
+                            (getLocations certificate) 
+                            (validationConfig ^. #maxCertificatePathDepth))
             )
 
     -- Check and report for the maximal number of objects in the tree
@@ -332,7 +334,9 @@ validateCaCertificate
             ((> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes),
             (do 
                 logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total object number in the tree is reached.|]
-                vError $ TreeIsTooBig $ getLocations certificate)
+                vError $ TreeIsTooBig 
+                            (getLocations certificate) 
+                            (validationConfig ^. #maxTotalTreeSize))
             )
 
     -- Check and report for the maximal increase in the repository number
@@ -342,7 +346,9 @@ validateCaCertificate
                 pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories),
             (do 
                 logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total new repository count is reached.|]
-                vError $ TooManyRepositories $ getLocations certificate)
+                vError $ TooManyRepositories 
+                            (getLocations certificate) 
+                            (validationConfig ^. #maxTaRepositories))
             )
                 
     let actuallyValidate = 
@@ -362,7 +368,7 @@ validateCaCertificate
                                         Never       -> pure mempty
                                         AtLeastOnce -> validateThisCertAndGoDown
 
-    -- This is to make suree that the error of hitting a limit
+    -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
     let checkAndReport (condition, report) nextOne = do
             z <- liftIO $ atomically $ verifyLimit condition interruptedByLimit
