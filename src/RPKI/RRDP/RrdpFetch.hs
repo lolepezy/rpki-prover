@@ -272,7 +272,7 @@ updateObjectForRrdpRepository appContext repository =
 {- 
     Snapshot case, done in parallel by two thread
         - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
-        - another thread read parsing tasks, waits for them and saves the results into the DB.
+        - another thread reads parsing tasks, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
                 AppContext s 
@@ -451,15 +451,15 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                 case U.parseRpkiURL $ unURI uri of
                     Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
                     Right rpkiURL -> do 
-                        case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
-                            Left e -> DecodingTrouble rpkiURL (VErr e)
+                        case decodeBase64 encodedb64 rpkiURL of
+                            Left e -> DecodingTrouble rpkiURL (VErr $ RrdpE e)
                             Right (DecodedBase64 decoded) -> do 
                                 case validateSizeOfBS validationConfig decoded of 
-                                    Left e -> ObjectParsingProblem rpkiURL (VErr $ ValidationE e)
+                                    Left e  -> ObjectParsingProblem rpkiURL (VErr $ ValidationE e)
                                     Right _ ->                                 
-                                        case first ParseE $ readObject rpkiURL decoded of 
-                                            Left e   -> ObjectParsingProblem rpkiURL (VErr e)
-                                            Right ro -> Success rpkiURL (toStorableObject ro)            
+                                        case readObject rpkiURL decoded of 
+                                            Left e   -> ObjectParsingProblem rpkiURL (VErr $ ParseE e)
+                                            Right ro -> Success rpkiURL (toStorableObject ro)                     
 
         saveStorable objectStore tx r _ = 
           case r of 
