@@ -83,7 +83,10 @@ data ValidationConfig = ValidationConfig {
     maxTaRepositories              :: Int,
 
     -- Maximal allowed size of an individual object 
-    maxObjectSize                  :: Int
+    maxObjectSize                  :: Integer,
+
+    -- Manimal allowed size of an individual object 
+    minObjectSize                  :: Integer
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {
@@ -126,6 +129,7 @@ defaultConfig = Config {
         maxCertificatePathDepth        = 64,
         maxTotalTreeSize               = 5_000_000,
         maxObjectSize                  = 32 * 1024 * 1024,
+        minObjectSize                  = 32,
         maxTaRepositories              = 1000
     },
     httpApiConf = HttpApiConfig {

@@ -72,9 +72,9 @@ rsyncRpkiObject AppContext{..} uri = do
                                         stdout = #{out}|]        
             appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err  
         ExitSuccess -> do
-            fileSize  <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
-            void $ vHoist $ validateSizeM fileSize
-            bs        <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
+            fileSize <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
+            void $ vHoist $ validateSizeM (config ^. typed) fileSize
+            bs       <- fromTry (RsyncE . FileReadError . U.fmtEx) $ fileContent destination
             fromEitherM $ pure $ first ParseE $ readObject (RsyncU uri) bs
 
 
@@ -136,79 +136,79 @@ loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do
         traverseFS
         (saveObjects worldVersion)
         (cancelTask . snd)        
-    where    
-        threads = cpuBottleneck appBottlenecks
-        cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
+  where    
+    threads = cpuBottleneck appBottlenecks
+    cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
 
-        traverseFS queue = 
-            mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
-                traverseDirectory queue rootPath
+    traverseFS queue = 
+        mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
+            traverseDirectory queue rootPath
 
-        traverseDirectory queue currentPath = do
-            objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database
-            names <- liftIO $ getDirectoryContents currentPath
-            let properNames = filter (`notElem` [".", ".."]) names
-            forM_ properNames $ \name -> do
-                let path = currentPath </> name
-                liftIO (doesDirectoryExist path) >>= \case
-                    True  -> traverseDirectory queue path
-                    False -> 
-                        when (supportedExtension path) $ do         
-                            let uri = pathToUri repositoryUrl rootPath path
-                            task <- readAndParseObject path (RsyncU uri) `strictTask` threads                                                                      
-                            liftIO $ atomically $ writeCQueue queue (uri, task)
-          where                                
-            readAndParseObject filePath uri = 
-                liftIO (getSizeAndContent filePath) >>= \case                    
-                    Left e        -> pure $! T2 uri (Right $! SError e)
-                    Right (_, bs) -> 
-                        liftIO $ roTx objectStore $ \tx -> do
-                            -- Check if the object is already in the storage
-                            -- before parsing ASN1 and serialising it.
-                            let hash = U.sha256s bs  
-                            exists <- DB.hashExists tx objectStore hash
-                            pure $! if exists 
-                                then T2 uri (Left hash)
-                                else 
-                                    case first ParseE $ readObject uri bs of
-                                        Left e -> T2 uri (Right $! SError e)
-                                        -- All these bangs here make sense because
-                                        -- 
-                                        -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                                        -- force computation of the serialised object and gain some parallelism
-                                        -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                        -- a slow CPU-intensive transaction (verify that it's the case)
-                                        Right ro -> T2 uri (Right $! SObject $ toStorableObject ro)
-        
-        saveObjects worldVersion queue = do            
-            mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
-                DB.rwAppTx objectStore go
-          where
-            go tx = 
-                liftIO (atomically (readCQueue queue)) >>= \case 
-                    Nothing       -> pure ()
-                    Just (uri, a) -> do 
-                        r <- try $ waitTask a
-                        process tx uri r
-                        go tx
+    traverseDirectory queue currentPath = do
+        objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database
+        names <- liftIO $ getDirectoryContents currentPath
+        let properNames = filter (`notElem` [".", ".."]) names
+        forM_ properNames $ \name -> do
+            let path = currentPath </> name
+            liftIO (doesDirectoryExist path) >>= \case
+                True  -> traverseDirectory queue path
+                False -> 
+                    when (supportedExtension path) $ do         
+                        let uri = pathToUri repositoryUrl rootPath path
+                        task <- readAndParseObject path (RsyncU uri) `strictTask` threads                                                                      
+                        liftIO $ atomically $ writeCQueue queue (uri, task)
+      where                                
+        readAndParseObject filePath uri = 
+            liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
+                Left e        -> pure $! T2 uri (Right $! SError e)
+                Right (_, bs) -> 
+                    liftIO $ roTx objectStore $ \tx -> do
+                        -- Check if the object is already in the storage
+                        -- before parsing ASN1 and serialising it.
+                        let hash = U.sha256s bs  
+                        exists <- DB.hashExists tx objectStore hash
+                        pure $! if exists 
+                            then T2 uri (Left hash)
+                            else 
+                                case first ParseE $ readObject uri bs of
+                                    Left e -> T2 uri (Right $! SError e)
+                                    -- All these bangs here make sense because
+                                    -- 
+                                    -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
+                                    -- force computation of the serialised object and gain some parallelism
+                                    -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
+                                    -- a slow CPU-intensive transaction (verify that it's the case)
+                                    Right ro -> T2 uri (Right $! SObject $ toStorableObject ro)
+    
+    saveObjects worldVersion queue = do            
+        mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
+            DB.rwAppTx objectStore go
+        where
+        go tx = 
+            liftIO (atomically (readCQueue queue)) >>= \case 
+                Nothing       -> pure ()
+                Just (uri, a) -> do 
+                    r <- try $ waitTask a
+                    process tx uri r
+                    go tx
 
-            process tx rpkiURL@(RsyncURL uri) = \case
-                Left (e :: SomeException) -> 
-                    throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
-                
-                Right (T2 rpkiURL (Left hash)) -> do
-                    DB.linkObjectToUrl tx objectStore rpkiURL hash
+        process tx rpkiURL@(RsyncURL uri) = \case
+            Left (e :: SomeException) -> 
+                throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
+            
+            Right (T2 rpkiURL (Left hash)) -> do
+                DB.linkObjectToUrl tx objectStore rpkiURL hash
 
-                Right (T2 rpkiURL (Right (SError e))) -> do
-                    logErrorM logger [i|An error parsing or serialising the object #{rpkiURL}: #{e}|]
-                    appWarn e
+            Right (T2 rpkiURL (Right (SError e))) -> do
+                logErrorM logger [i|An error parsing or serialising the object #{rpkiURL}: #{e}|]
+                appWarn e
 
-                Right (T2 rpkiURL (Right (SObject so@StorableObject {..}))) -> do                        
-                    alreadyThere <- DB.hashExists tx objectStore (getHash object)
-                    unless alreadyThere $ do 
-                        DB.putObject tx objectStore so worldVersion                                               
-                        DB.linkObjectToUrl tx objectStore rpkiURL (getHash object)                                    
-                        updateMetric @RsyncMetric @_ (& #processed %~ (+1))
+            Right (T2 rpkiURL (Right (SObject so@StorableObject {..}))) -> do                        
+                alreadyThere <- DB.hashExists tx objectStore (getHash object)
+                unless alreadyThere $ do 
+                    DB.putObject tx objectStore so worldVersion                                               
+                    DB.linkObjectToUrl tx objectStore rpkiURL (getHash object)                                    
+                    updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                                 
                     
 
@@ -235,8 +235,8 @@ rsyncDestination root u = let
 fileContent :: FilePath -> IO BS.ByteString 
 fileContent = BS.readFile                              
 
-getSizeAndContent :: FilePath -> IO (Either AppError (Integer, BS.ByteString))
-getSizeAndContent path = do 
+getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))
+getSizeAndContent vc path = do 
     r <- first (RsyncE . FileReadError . U.fmtEx) <$> readSizeAndContet
     pure $ r >>= \case 
                 (_, Left e)  -> Left e
@@ -245,7 +245,7 @@ getSizeAndContent path = do
     readSizeAndContet = try $ do
         withFile path ReadMode $ \h -> do
             size <- hFileSize h
-            case validateSize size of
+            case validateSize vc size of
                 Left e  -> pure (size, Left $ ValidationE e)
                 Right _ -> do
                     r <- BS.hGetContents h                                
