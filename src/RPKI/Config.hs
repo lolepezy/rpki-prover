@@ -59,13 +59,31 @@ data RrdpConf = RrdpConf {
 data ManifestProcessing = RFC6486_Strict | RFC6486
     deriving stock (Show, Eq, Ord, Generic)
 
-data ValidationConfig = ValidationConfig {
+data ValidationConfig = ValidationConfig {    
     revalidationInterval           :: Seconds,
     rrdpRepositoryRefreshInterval  :: Seconds,
-    rsyncRepositoryRefreshInterval :: Seconds,    
+    rsyncRepositoryRefreshInterval :: Seconds,
+
+    -- Used mainly for testing and doesn't really make sense
+    -- in a production environment    
     dontFetch                      :: Bool,
+    
     manifestProcessing             :: ManifestProcessing,
-    maxCertificatePathDepth        :: Int
+
+    -- Maximal object tree depth measured in number of CAs
+    maxCertificatePathDepth        :: Int,
+
+    -- How many objects we allow in the tree for one TA.
+    -- There needs to be some finite number to limit total
+    -- tree validation and prevent DOS attacks.
+    maxTotalTreeSize               :: Int,
+
+    -- How many different repositories we allow to add
+    -- during one TA top-down validation
+    maxTaRepositories              :: Int,
+
+    -- Maximal allowed size of an individual object 
+    maxObjectSize                  :: Int
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {
@@ -105,7 +123,10 @@ defaultConfig = Config {
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         dontFetch                      = False,
         manifestProcessing             = RFC6486,
-        maxCertificatePathDepth        = 64
+        maxCertificatePathDepth        = 64,
+        maxTotalTreeSize               = 5_000_000,
+        maxObjectSize                  = 32 * 1024 * 1024,
+        maxTaRepositories              = 1000
     },
     httpApiConf = HttpApiConfig {
         port = 9999

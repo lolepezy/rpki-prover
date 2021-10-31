@@ -78,6 +78,8 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         CertificateDoesntHaveSIA | 
                         CircularReference Hash Locations |
                         CertificatePathTooDeep Locations |
+                        TreeIsTooBig Locations |
+                        TooManyRepositories Locations |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
