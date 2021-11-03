@@ -321,34 +321,34 @@ validateCaCertificate
 
     -- Check and report for the maximal tree depth
     let treeDepthLimit = (
-            (pure $ currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
-            (do 
+            pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
+            do 
                 logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum tree depth is reached.|]
                 vError $ CertificatePathTooDeep 
                             (getLocations certificate) 
-                            (validationConfig ^. #maxCertificatePathDepth))
+                            (validationConfig ^. #maxCertificatePathDepth)
             )
 
     -- Check and report for the maximal number of objects in the tree
     let visitedObjectCountLimit = (
-            ((> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes),
-            (do 
+            (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes,
+            do 
                 logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total object number in the tree is reached.|]
                 vError $ TreeIsTooBig 
                             (getLocations certificate) 
-                            (validationConfig ^. #maxTotalTreeSize))
+                            (validationConfig ^. #maxTotalTreeSize)
             )
 
     -- Check and report for the maximal increase in the repository number
     let repositoryCountLimit = (
-            (do 
+            do 
                 pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-                pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories),
-            (do 
+                pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
+            do 
                 logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total new repository count is reached.|]
                 vError $ TooManyRepositories 
                             (getLocations certificate) 
-                            (validationConfig ^. #maxTaRepositories))
+                            (validationConfig ^. #maxTaRepositories)
             )
                 
     let actuallyValidate = 
