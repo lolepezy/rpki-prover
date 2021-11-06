@@ -20,6 +20,7 @@ import qualified Data.Text as Text
 
 import           Data.Maybe (fromMaybe)
 import           Data.List (nub)
+import           Data.Coerce
 
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
@@ -57,7 +58,7 @@ applySlurm slurm (Vrps vrps) =
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions
       where
         toVrp PrefixAssertion {..} = 
-            Vrp asn prefix (fromMaybe (prefixLen prefix) maxPrefixLength)
+            Vrp (coerce asn) prefix (fromMaybe (prefixLen prefix) maxPrefixLength)
 
     filterFunc (Vrp vAsn vPrefix _) = 
             not 
@@ -65,9 +66,9 @@ applySlurm slurm (Vrps vrps) =
             $ slurm ^. #validationOutputFilters . #prefixFilters
       where
         matchesFilter z = case z ^. #asnAndPrefix of
-            This asn         -> asn == vAsn
+            This asn         -> coerce asn == vAsn
             That prefix      -> vPrefix `isInsideOf` prefix
-            These asn prefix -> asn == vAsn && vPrefix `isInsideOf` prefix
+            These asn prefix -> coerce asn == vAsn && vPrefix `isInsideOf` prefix
         
         isInsideOf (Ipv4P pS) (Ipv4P pB) = pB `contains` pS
         isInsideOf (Ipv6P pS) (Ipv6P pB) = pB `contains` pS
@@ -107,10 +108,11 @@ validateNoOverlaps slurms = do
 
     let asns = [ (fileName, assertAsns <> filterAsns) |                        
                 (fileName, slurm) <- slurms,
-                let assertAsns = map (^. #asn) $ slurm ^. #locallyAddedAssertions . #bgpsecAssertions,
-                let filterAsns = [ asn | 
+                let assertAsns = map (coerce . (^. #asn)) 
+                        $ slurm ^. #locallyAddedAssertions . #bgpsecAssertions,
+                let filterAsns = [ coerce asn | 
                             bgpsecFilter <- slurm ^. #validationOutputFilters . #bgpsecFilters,
-                            This asn  <- [ bgpsecFilter ^. #asnAndSKI ]
+                            This asn <- [ bgpsecFilter ^. #asnAndSKI ]
                         ]
             ]      
 

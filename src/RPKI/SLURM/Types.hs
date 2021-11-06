@@ -19,15 +19,13 @@ import Data.These
 import           Data.Aeson as Json
 import           Data.Aeson.Types
 
-import           Data.Set (Set)
-
 import qualified Data.HashMap.Strict as HM
 import           Data.String.Interpolate.IsString
 
 import           Data.Semigroup
 import           Data.Monoid.Generic
 
-
+import           Data.Word (Word32)
 import           GHC.Generics
 
 import           RPKI.Domain
@@ -44,6 +42,10 @@ newtype SlurmVersion = SlurmVersion Int
 
 instance Monoid SlurmVersion where
     mempty = SlurmVersion 1
+
+newtype NumericASN = NumericASN Word32
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data Slurm = Slurm {
         slurmVersion :: SlurmVersion,
@@ -74,21 +76,21 @@ data LocallyAddedAssertions = LocallyAddedAssertions {
     deriving Monoid    via GenericMonoid LocallyAddedAssertions    
 
 data PrefixFilter = PrefixFilter {
-        asnAndPrefix :: These ASN IpPrefix,                
+        asnAndPrefix :: These NumericASN IpPrefix,                
         comment      :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
 data BgpsecFilter = BgpsecFilter {
-        asnAndSKI :: These ASN DecodedBase64,  
+        asnAndSKI :: These NumericASN DecodedBase64,  
         comment   :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
 data PrefixAssertion = PrefixAssertion {
-        asn    :: ASN,
+        asn    :: NumericASN,
         prefix :: IpPrefix,
         maxPrefixLength :: Maybe PrefixLength,
         comment :: Maybe Text      
@@ -97,7 +99,7 @@ data PrefixAssertion = PrefixAssertion {
     deriving anyclass Serialise 
 
 data BgpsecAssertion = BgpsecAssertion {
-        asn :: ASN,
+        asn :: NumericASN,
         ski :: DecodedBase64,
         routerPublicKey :: DecodedBase64,
         comment :: Maybe Text      
@@ -107,6 +109,7 @@ data BgpsecAssertion = BgpsecAssertion {
 
 instance FromJSON Slurm
 instance FromJSON SlurmVersion
+instance FromJSON NumericASN
 instance FromJSON ValidationOutputFilters
 instance FromJSON LocallyAddedAssertions
 
@@ -145,6 +148,7 @@ parseOneOrBoth o t1 t2 =
 
 instance ToJSON Slurm
 instance ToJSON SlurmVersion
+instance ToJSON NumericASN
 instance ToJSON ValidationOutputFilters
 instance ToJSON LocallyAddedAssertions
 
