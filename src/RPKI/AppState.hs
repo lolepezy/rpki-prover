@@ -9,7 +9,6 @@ import           Control.Concurrent.STM
 import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics
-import           Data.Set
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
@@ -62,14 +61,6 @@ versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
--- allCurrentVrps :: AppState -> STM (Set Vrp)
--- allCurrentVrps AppState {..} = do 
---     readTVar flatCurrentVrps >>= \case
---         Nothing -> do             
---             a <- allVrps <$> readTVar currentVrps
---             writeTVar flatCurrentVrps (Just a)
---             pure a
---         Just c -> pure c
 
 -- Block on version updates
 waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Vrps)

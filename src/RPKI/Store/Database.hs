@@ -17,12 +17,11 @@ import           Control.Monad.Reader     (ask)
 import           Data.IORef.Lifted
 
 import qualified Data.List                as List
-import           Data.Maybe               (fromMaybe, catMaybes)
+import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
 
 import           GHC.Generics
 
-import           RPKI.AppState
 import           RPKI.Config              (Size)
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -39,12 +38,10 @@ import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
 import           RPKI.Parallel
-import           RPKI.Time                (Instant)
 import           RPKI.Util                (increment, ifJust, ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
-import           RPKI.Repository
 import           RPKI.Store.Repository
 
 -- | RPKI objects store

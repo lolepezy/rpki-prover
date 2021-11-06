@@ -24,7 +24,6 @@ import qualified Data.ByteString.Lazy             as BSL
 
 import           Data.List.Split                  (chunksOf)
 
-import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
 import           Data.Ord

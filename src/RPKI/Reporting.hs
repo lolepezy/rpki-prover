@@ -24,7 +24,7 @@ import           Data.Tuple.Strict
 
 import           Codec.Serialise
 import qualified Data.List                   as List
-import           Data.List.NonEmpty          (NonEmpty (..), (<|))
+import           Data.List.NonEmpty          (NonEmpty (..))
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
