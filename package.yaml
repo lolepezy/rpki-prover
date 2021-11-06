@@ -127,7 +127,7 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     dependencies:
     - rpki-prover  
 
@@ -140,7 +140,7 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     - -fPIC
     cc-options: -static
     ld-options: -static -pthread 
