@@ -13,15 +13,16 @@ import           Data.Set
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
+import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
 
 
 data AppState = AppState {
-        world           :: TVar WorldState,
-        currentVrps     :: TVar Vrps,
-        flatCurrentVrps :: TVar (Maybe (Set Vrp)),
-        readSlurm       :: Maybe (ValidatorT IO Slurm)
+        world        :: TVar WorldState,
+        currentVrps  :: TVar Vrps,
+        filteredVrps :: TVar Vrps,
+        readSlurm    :: Maybe (ValidatorT IO Slurm)
     } deriving stock (Generic)
 
 -- 
@@ -31,7 +32,7 @@ newAppState = do
     atomically $ AppState <$> 
                     newTVar (WorldState (instantToVersion instant) NewVersion) <*>
                     newTVar mempty <*>
-                    newTVar Nothing <*>
+                    newTVar mempty <*>
                     pure Nothing
 
 -- 
@@ -42,11 +43,12 @@ updateWorldVerion AppState {..} = do
     atomically $ writeTVar world $ WorldState wolrdVersion NewVersion
     pure wolrdVersion
 
-completeCurrentVersion :: AppState -> Vrps -> STM ()
-completeCurrentVersion AppState {..} vrps = do 
+completeCurrentVersion :: AppState -> Vrps -> Maybe Slurm -> STM ()
+completeCurrentVersion AppState {..} vrps slurm = do 
     modifyTVar' world (& typed @VersionState .~ CompletedVersion)
     writeTVar currentVrps vrps
-    writeTVar flatCurrentVrps (Just $ allVrps vrps)
+    let slurmed = maybe vrps (`applySlurm` vrps) slurm
+    writeTVar filteredVrps slurmed
 
 getWorldVerionIO :: AppState -> IO WorldVersion
 getWorldVerionIO = atomically . getWorldVerion
@@ -60,15 +62,6 @@ versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
-allCurrentVrps :: AppState -> STM (Set Vrp)
-allCurrentVrps AppState {..} = do 
-    readTVar flatCurrentVrps >>= \case
-        Nothing -> do             
-            a <- allVrps <$> readTVar currentVrps
-            writeTVar flatCurrentVrps (Just a)
-            pure a
-        Just c -> pure c
-
 -- allCurrentVrps :: AppState -> STM (Set Vrp)
 -- allCurrentVrps AppState {..} = do 
 --     readTVar flatCurrentVrps >>= \case
@@ -76,7 +69,7 @@ allCurrentVrps AppState {..} = do
 --             a <- allVrps <$> readTVar currentVrps
 --             writeTVar flatCurrentVrps (Just a)
 --             pure a
---         Just c -> pure c        
+--         Just c -> pure c
 
 -- Block on version updates
 waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Vrps)

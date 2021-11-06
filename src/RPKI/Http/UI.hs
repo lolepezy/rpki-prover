@@ -24,9 +24,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict (getMonoidalMap)
 
-import           Servant.API
-import           Servant.HTML.Blaze
-
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
 
@@ -40,8 +37,6 @@ import           RPKI.Util                   (ifJust)
 import RPKI.Http.Types
 import RPKI.Http.Messages
 
-
-type UI = Get '[HTML] Html
 
 mainPage :: Maybe WorldVersion -> [ValidationResult] -> AppMetric -> Html
 mainPage worldVersion vResults metrics = 
@@ -58,25 +53,25 @@ mainPage worldVersion vResults metrics =
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
     
-        H.div ! A.class_ "main" $ do            
-            H.a ! A.id "overall" $ "" 
-            H.br
-            H.section $ H.text "Overall"
-            H.br
-            overallHtml worldVersion
-            H.br >> H.br            
-            H.a ! A.id "validation-metrics" $ "" 
-            H.section $ H.text "Validation metrics"
-            validationMetricsHtml $ validationMetrics metrics
-            H.a ! A.id "rrdp-metrics" $ ""
-            H.section $ H.text "RRDP metrics"
-            rrdpMetricsHtml $ rrdpMetrics metrics 
-            H.a ! A.id "rsync-metrics" $ ""
-            H.section $ H.text "Rsync metrics"
-            rsyncMetricsHtml $ rsyncMetrics metrics        
-            H.a ! A.id "validation-details" $ ""
-            H.section $ H.text "Validation details"
-            validaionDetailsHtml vResults
+            H.div ! A.class_ "main" $ do            
+                H.a ! A.id "overall" $ "" 
+                H.br
+                H.section $ H.text "Overall"
+                H.br
+                overallHtml worldVersion
+                H.br >> H.br            
+                H.a ! A.id "validation-metrics" $ "" 
+                H.section $ H.text "Validation metrics"
+                validationMetricsHtml $ validationMetrics metrics
+                H.a ! A.id "rrdp-metrics" $ ""
+                H.section $ H.text "RRDP metrics"
+                rrdpMetricsHtml $ rrdpMetrics metrics 
+                H.a ! A.id "rsync-metrics" $ ""
+                H.section $ H.text "Rsync metrics"
+                rsyncMetricsHtml $ rsyncMetrics metrics        
+                H.a ! A.id "validation-details" $ ""
+                H.section $ H.text "Validation details"
+                validaionDetailsHtml vResults
 
 
 overallHtml :: Maybe WorldVersion -> Html

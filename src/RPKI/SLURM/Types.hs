@@ -131,7 +131,7 @@ instance FromJSON BgpsecAssertion where
                         f     -> f
                 }
 
-instance FromJSON PrefixAssertion
+instance FromJSON PrefixAssertion    
 
 parseOneOrBoth :: (FromJSON a, FromJSON b) => 
                   Object -> Text -> Text -> Parser (These a b)
@@ -142,3 +142,35 @@ parseOneOrBoth o t1 t2 =
         (Just a, Just b)   -> These <$> parseJSON a <*> parseJSON b
         (Nothing, Nothing) -> fail [i|At least one of "#{t1}" or "#{t2}" must be there|]
 
+
+instance ToJSON Slurm
+instance ToJSON SlurmVersion
+instance ToJSON ValidationOutputFilters
+instance ToJSON LocallyAddedAssertions
+
+instance ToJSON PrefixAssertion where
+    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+
+instance ToJSON BgpsecAssertion where
+    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+
+instance ToJSON BgpsecFilter where
+    toJSON BgpsecFilter {..} = object $ 
+           oneOrBothToJSON asnAndSKI "asn" "SKI" 
+        <> jsonComment comment
+
+instance ToJSON PrefixFilter where
+    toJSON PrefixFilter {..} = object $ 
+           oneOrBothToJSON asnAndPrefix "asn" "prefix" 
+        <> jsonComment comment        
+
+oneOrBothToJSON :: (ToJSON a, ToJSON b) => 
+                  These a b -> Text -> Text -> [Pair]
+oneOrBothToJSON these t1 t2 =     
+    case these of 
+        This a    -> [ t1 .= toJSON a ]
+        That b    -> [ t2 .= toJSON b ]
+        These a b -> [ t1 .= toJSON a, t2 .= toJSON b ]
+
+jsonComment Nothing = []
+jsonComment (Just c) = [ "comment" .= toJSON c ]

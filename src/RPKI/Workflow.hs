@@ -18,7 +18,6 @@ import           Control.Lens                     ((^.), (%~), (&))
 import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)
-import qualified Data.Set                         as Set
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -80,6 +79,7 @@ runWorkflow appContext@AppContext {..} tals = do
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
             generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageCompactionInterval compact,
+            -- generatePeriodicTask (1 * 1_000_000) storageCompactionInterval compact,
             rtrServer   
         ]
     where
@@ -126,30 +126,29 @@ runWorkflow appContext@AppContext {..} tals = do
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
 
                     -- Apply SLURM if it is set in the appState
-                    (slurmedVrps, slurmValidations, saveSlurm) <- 
+                    (slurmedVrps, slurmValidations, maybeSlurm) <- 
                         case appState ^. #readSlurm of
-                            Nothing -> pure (vrps, mempty, \_ -> pure ())
+                            Nothing -> pure (vrps, mempty, Nothing)
                             Just readFunc -> do 
                                 logInfoM logger [i|Re-reading and re-validating SLURM files.|]
                                 (z, vs) <- runValidatorT (newValidatorPath "read-slurm") readFunc
                                 case z of 
                                     Left e -> do 
                                         logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
-                                        pure (vrps, vs, \_ -> pure ())
+                                        pure (vrps, vs, Nothing)
                                     Right slurm -> do 
                                         logInfoM logger [i|Applying SLURM filters and assertions.|]
-                                        let saveSlurm tx = putSlurm tx database' worldVersion slurm
-                                        pure (slurm `applySlurm` vrps, vs, saveSlurm)
+                                        pure (slurm `applySlurm` vrps, vs, Just slurm)
 
                     -- Save all the results into LMDB
                     let updatedValidation = slurmValidations <> topDownValidations ^. typed
-                    rwTx database' $ \tx -> do                        
+                    rwTx database' $ \tx -> do
                         putValidations tx database' worldVersion (updatedValidation ^. typed)
                         putMetrics tx database' worldVersion (topDownValidations ^. typed)                        
-                        putVrps tx database' slurmedVrps worldVersion
-                        saveSlurm tx                        
+                        putVrps tx database' vrps worldVersion
+                        ifJust maybeSlurm $ putSlurm tx database' worldVersion
                         completeWorldVersion tx database' worldVersion
-                        atomically $ completeCurrentVersion appState slurmedVrps
+                        atomically $ completeCurrentVersion appState vrps maybeSlurm
 
                     pure (vrps, slurmedVrps)
 
@@ -227,10 +226,11 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do 
                     (vrps, elapsed) <- timedMS $ do             
-                        -- TODO It takes 350ms, which is pretty strange, profile it.           
-                        !vrps <- getVrps tx database' lastVersion
+                        -- TODO It takes 350-400ms, which is pretty strange, profile it.           
+                        !vrps  <- getVrps tx database' lastVersion
+                        !slurm <- slurmForVersion tx database' lastVersion
                         --
-                        ifJust vrps $ atomically . completeCurrentVersion appState
+                        ifJust vrps $ \vrps' -> atomically $ completeCurrentVersion appState vrps' slurm
                         pure vrps
                     ifJust vrps $ \v -> 
                         logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 

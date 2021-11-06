@@ -16,11 +16,15 @@ import           Data.Text                   (Text)
 import qualified Data.Csv                    as Csv
 
 import           Servant.API
+import           Servant.API.Generic
 import           Servant.CSV.Cassava
+import           Servant.HTML.Blaze (HTML)
+import           Text.Blaze.Html5 (Html)
 
 import           RPKI.Reporting
 import           RPKI.Store.Types
-import RPKI.Http.Types
+import           RPKI.Http.Types
+import           RPKI.SLURM.Types
 
 
 data CSVOptions = CSVOptions
@@ -30,19 +34,30 @@ instance EncodeOpts CSVOptions where
 
 type CSVType = CSV' 'HasHeader CSVOptions
 
-type API = "api" :> (     
-                 "vrps.csv"  :> Get '[CSVType] [VrpDto]
-            :<|> "vrps.json" :> Get '[JSON] [VrpDto]
-            :<|> "vrps-filtered.csv"  :> Get '[CSVType] [VrpDto]
-            :<|> "vrps-filtered.json" :> Get '[JSON] [VrpDto]            
-            :<|> "validation-results" :> Get '[JSON] [ValidationResult]
-            :<|> "app-metrics"    :> Get '[JSON] AppMetric
-            :<|> "lmdb-stats" :> Get '[JSON] TotalDBStats
-            :<|> "object"     :> QueryParam "uri" Text 
-                              :> QueryParam "hash" Text 
-                              :> Get '[JSON] [RObject]
-        )
+data API api = API {
+        vrpsCsv  :: api :- "vrps.csv"  :> Get '[CSVType] [VrpDto],
+        vrpsJson :: api :- "vrps.json" :> Get '[JSON] [VrpDto],
 
-type PrometheusAPI = "metrics" :> Get '[PlainText] Text 
+        vrpsCsvFiltered  :: api :- "vrps-filtered.csv"  :> Get '[CSVType] [VrpDto],
+        vrpsJsonFiltered :: api :- "vrps-filtered.json" :> Get '[JSON] [VrpDto],
 
-type StaticContent = "static" :> Raw
+        slurm :: api :- "slurm.json" :> Get '[JSON] Slurm,
+                
+        validationResults :: api :- "validation-results" :> Get '[JSON] [ValidationResult],
+        appMetrics        :: api :- "app-metrics"        :> Get '[JSON] AppMetric,
+                
+        lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
+
+        objectView :: api :- "object" :> QueryParam "uri" Text 
+                                    :> QueryParam "hash" Text 
+                                    :> Get '[JSON] [RObject]
+    }
+    deriving (Generic)
+
+data HttpApi route = HttpApi {
+        api     :: route :- "api" :> ToServant API AsApi,
+        metrics :: route :- "metrics" :> Get '[PlainText] Text,
+        staticContent :: route :- "static" :> Raw,
+        ui            :: route :- Get '[HTML] Html
+    }
+    deriving (Generic)

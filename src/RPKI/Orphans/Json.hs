@@ -101,7 +101,7 @@ instance ToJSON Domain.Serial where
     toJSON (Serial s) = toJSON s
 
 instance ToJSON Domain.EncodedBase64 where
-    toJSON (EncodedBase64 bs) = toJSON bs
+    toJSON (EncodedBase64 bs) = toJSON (U.convert bs :: Text)
 
 instance ToJSON BS.ByteString where
     toJSON = toJSON . showHex
@@ -291,4 +291,7 @@ instance FromJSON DecodedBase64 where
         case U.decodeBase64 encoded s of 
             Left e        -> fail [i|Broken base64: #{e}|]
             Right decoded -> pure decoded        
+
+instance ToJSON DecodedBase64 where
+    toJSON = toJSON . U.encodeBase64
 

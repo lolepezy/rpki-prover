@@ -131,3 +131,7 @@ decodeBase64 (EncodedBase64 bs) context =
         (\e -> BadBase64 (e <> " for " <> Text.pack (show context)) $ convert bs)
         DecodedBase64
         $ B64.decodeBase64 bs 
+
+encodeBase64 :: DecodedBase64 -> EncodedBase64
+encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64.encodeBase64' bs
+    
