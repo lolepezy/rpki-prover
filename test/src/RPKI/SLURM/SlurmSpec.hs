@@ -114,7 +114,7 @@ test_reject_partial_prefix_duplicates = do
         locallyAddedAssertions = mempty {
             prefixAssertions = [
                 PrefixAssertion {
-                    asn = ASN 64496, 
+                    asn = NumericASN 64496, 
                     prefix = Ipv4P (readIp4 "192.0.0.0/16"), 
                     maxPrefixLength = Nothing, 
                     comment = Just "My other important route"
@@ -138,7 +138,7 @@ test_reject_partial_asn_duplicates = do
         validationOutputFilters = mempty {
             bgpsecFilters = [
                 BgpsecFilter {
-                    asnAndSKI = This (ASN 64496), 
+                    asnAndSKI = This (NumericASN 64496), 
                     comment = Just "All keys for ASN"
                 }
             ]     
@@ -148,7 +148,7 @@ test_reject_partial_asn_duplicates = do
         locallyAddedAssertions = mempty {
             bgpsecAssertions = [
                 BgpsecAssertion {
-                    asn = ASN 64496, 
+                    asn = NumericASN 64496, 
                     ski = DecodedBase64 "<some base64 SKI>", 
                     routerPublicKey = DecodedBase64 "<some base64 public key>", 
                     comment = Just "My known key for my important ASN"
@@ -174,17 +174,17 @@ bigTestSlurm = Slurm {
                 comment = Just "All VRPs encompassed by prefix"
             },
             PrefixFilter {
-                asnAndPrefix = This (ASN 64496), 
+                asnAndPrefix = This (NumericASN 64496), 
                 comment = Just "All VRPs matching ASN"
             },
             PrefixFilter {
-                asnAndPrefix = These (ASN 64497) (Ipv4P $ readIp4 "198.51.100.0/24"), 
+                asnAndPrefix = These (NumericASN 64497) (Ipv4P $ readIp4 "198.51.100.0/24"), 
                 comment = Just "All VRPs encompassed by prefix, matching ASN"
             }
         ], 
         bgpsecFilters = [
             BgpsecFilter {
-                asnAndSKI = This (ASN 64496), 
+                asnAndSKI = This (NumericASN 64496), 
                 comment = Just "All keys for ASN"
             },
             BgpsecFilter {
@@ -192,7 +192,7 @@ bigTestSlurm = Slurm {
                 comment = Just "Key matching Router SKI"
             },
             BgpsecFilter {
-                asnAndSKI = These (ASN 64497) (DecodedBase64 "bar"), 
+                asnAndSKI = These (NumericASN 64497) (DecodedBase64 "bar"), 
                 comment = Just "Key for ASN 64497 matching Router SKI"
             }
         ]
@@ -200,13 +200,13 @@ bigTestSlurm = Slurm {
     locallyAddedAssertions = LocallyAddedAssertions {
         prefixAssertions = [
             PrefixAssertion {
-                asn = ASN 64496, 
+                asn = NumericASN 64496, 
                 prefix = Ipv4P (readIp4 "198.51.100.0/24"), 
                 maxPrefixLength = Nothing, 
                 comment = Just "My other important route"
             },
             PrefixAssertion {
-                asn = ASN 64496, 
+                asn = NumericASN 64496, 
                 prefix = Ipv6P (readIp6 "2001:db8::/32"), 
                 maxPrefixLength = Just (PrefixLength 48), 
                 comment = Just "My other important de-aggregated routes"
@@ -214,7 +214,7 @@ bigTestSlurm = Slurm {
         ], 
         bgpsecAssertions = [
             BgpsecAssertion {
-                asn = ASN 64496, 
+                asn = NumericASN 64496, 
                 ski = DecodedBase64 "<some base64 SKI>", 
                 routerPublicKey = DecodedBase64 "<some base64 public key>", 
                 comment = Just "My known key for my important ASN"
