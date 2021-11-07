@@ -42,12 +42,13 @@ updateWorldVerion AppState {..} = do
     atomically $ writeTVar world $ WorldState wolrdVersion NewVersion
     pure wolrdVersion
 
-completeCurrentVersion :: AppState -> Vrps -> Maybe Slurm -> STM ()
+completeCurrentVersion :: AppState -> Vrps -> Maybe Slurm -> STM Vrps
 completeCurrentVersion AppState {..} vrps slurm = do 
     modifyTVar' world (& typed @VersionState .~ CompletedVersion)
     writeTVar currentVrps vrps
     let slurmed = maybe vrps (`applySlurm` vrps) slurm
     writeTVar filteredVrps slurmed
+    pure slurmed
 
 getWorldVerionIO :: AppState -> IO WorldVersion
 getWorldVerionIO = atomically . getWorldVerion

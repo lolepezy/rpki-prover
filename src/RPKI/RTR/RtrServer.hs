@@ -41,6 +41,7 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
+import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.Parallel
 import           RPKI.Time
@@ -127,8 +128,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             (rtrState', previousVersion, newVersion, newVrps) 
                 <- atomically $ 
                     readTVar rtrState >>= \case 
-                        -- this shouldn't really happen
-                        Nothing         -> retry
+                        Nothing        -> retry
                         Just rtrState' -> do
                             let knownVersion = rtrState' ^. #lastKnownWorldVersion
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
@@ -136,9 +136,12 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 
             database' <- readTVarIO database
 
-            previousVrps <- fmap (maybe Set.empty allVrps) 
-                    $ roTx database' 
-                    $ \tx -> getVrps tx database' previousVersion
+            previousVrps <- roTx database' $ \tx -> 
+                            getVrps tx database' previousVersion >>= \case 
+                                Nothing   -> pure Set.empty 
+                                Just vrps -> do  
+                                    slurm <- slurmForVersion tx database' previousVersion
+                                    pure $ allVrps $ maybe vrps (`applySlurm` vrps) slurm
 
             let newVrpsFlattened = allVrps newVrps
             let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 

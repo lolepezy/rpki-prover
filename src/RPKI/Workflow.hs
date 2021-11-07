@@ -45,11 +45,9 @@ import           RPKI.Time
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust)
-import           RPKI.SLURM.SlurmProcessing ( applySlurm )
 
 
 type AppLmdbEnv = AppContext LmdbStorage
-
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
                 AppContext s -> [TAL] -> IO ()
@@ -126,19 +124,19 @@ runWorkflow appContext@AppContext {..} tals = do
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
 
                     -- Apply SLURM if it is set in the appState
-                    (slurmedVrps, slurmValidations, maybeSlurm) <- 
+                    (slurmValidations, maybeSlurm) <- 
                         case appState ^. #readSlurm of
-                            Nothing -> pure (vrps, mempty, Nothing)
+                            Nothing       -> pure (mempty, Nothing)
                             Just readFunc -> do 
                                 logInfoM logger [i|Re-reading and re-validating SLURM files.|]
                                 (z, vs) <- runValidatorT (newValidatorPath "read-slurm") readFunc
                                 case z of 
                                     Left e -> do 
                                         logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
-                                        pure (vrps, vs, Nothing)
+                                        pure (vs, Nothing)
                                     Right slurm -> do 
-                                        logInfoM logger [i|Applying SLURM filters and assertions.|]
-                                        pure (slurm `applySlurm` vrps, vs, Just slurm)
+                                        logInfoM logger [i|Will use SLURM filters and assertions to adjust VRPs.|]
+                                        pure (vs, Just slurm)
 
                     -- Save all the results into LMDB
                     let updatedValidation = slurmValidations <> topDownValidations ^. typed
@@ -148,9 +146,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         putVrps tx database' vrps worldVersion
                         ifJust maybeSlurm $ putSlurm tx database' worldVersion
                         completeWorldVersion tx database' worldVersion
-                        atomically $ completeCurrentVersion appState vrps maybeSlurm
-
-                    pure (vrps, slurmedVrps)
+                        slurmedVrps <- atomically $ completeCurrentVersion appState vrps maybeSlurm
+                        pure (vrps, slurmedVrps)
 
         cacheGC worldVersion = do
             let now = versionToMoment worldVersion
@@ -230,7 +227,8 @@ loadStoredAppState AppContext {..} = do
                         !vrps  <- getVrps tx database' lastVersion
                         !slurm <- slurmForVersion tx database' lastVersion
                         --
-                        ifJust vrps $ \vrps' -> atomically $ completeCurrentVersion appState vrps' slurm
+                        ifJust vrps $ \vrps' -> void $ 
+                                atomically $ completeCurrentVersion appState vrps' slurm
                         pure vrps
                     ifJust vrps $ \v -> 
                         logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
