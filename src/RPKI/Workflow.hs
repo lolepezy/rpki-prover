@@ -134,8 +134,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                     Left e -> do 
                                         logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
                                         pure (vs, Nothing)
-                                    Right slurm -> do 
-                                        logInfoM logger [i|Will use SLURM filters and assertions to adjust VRPs.|]
+                                    Right slurm -> 
                                         pure (vs, Just slurm)
 
                     -- Save all the results into LMDB
