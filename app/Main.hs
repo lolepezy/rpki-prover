@@ -175,15 +175,19 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     appState <- liftIO newAppState
     tvarDatabase <- liftIO $ newTVarIO database
 
+    let readSlurms files = do 
+            logDebugM logger [i|Reading SLURM files: #{files}|]
+            readSlurmFiles files
+
     -- Read the files first to fail fast
     unless (null localExceptions) $ do 
-        void $ readSlurmFiles localExceptions        
+        void $ readSlurms localExceptions        
 
     -- Set the function that re-reads SLURM files with every re-validation.
     let appState' =
             case localExceptions of
                 []         -> appState
-                slurmFiles -> appState & #readSlurm ?~ readSlurmFiles slurmFiles
+                slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles
 
     let appContext = AppContext {
         appState = appState',
