@@ -54,7 +54,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) "Deltas are fine."),
+            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) "Deltas look good."),
 
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
         let sessionId = SessionId "something"

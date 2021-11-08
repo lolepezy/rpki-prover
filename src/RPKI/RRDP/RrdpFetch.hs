@@ -229,7 +229,7 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
                             pure $ UseSnapshot snapshotInfo [i|There are too many deltas: #{length chosenDeltas}.|]                        
 
                         | otherwise ->
-                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas are fine."
+                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas look good."
 
                 (_, nc) -> appError $ RrdpE $ NonConsecutiveDeltaSerials nc
                 
