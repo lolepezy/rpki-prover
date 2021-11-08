@@ -10,26 +10,18 @@
 
 module RPKI.Http.Types where
 
-import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as BSL
-import qualified Data.ByteString.Short       as BSS
 import           Data.Bifunctor
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
-import           Data.ByteArray              (convert)
-import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
+import           Data.Text.Encoding          (encodeUtf8)
 
 import           Data.Aeson                  hiding ((.=))
-import qualified Data.Aeson                  as Json
 import           Data.Csv                    (DefaultOrdered, ToField (..), ToNamedRecord, ToRecord, (.=))
 import qualified Data.Csv                    as Csv
-import           Data.Tuple.Strict
 import           GHC.Generics                (Generic)
 
-import qualified Crypto.PubKey.Curve25519    as C25519
-import qualified Crypto.PubKey.Curve448      as C448
 import           Crypto.PubKey.DSA           (Params (..), PublicKey (..))
 import           Crypto.PubKey.ECC.Types
 import qualified Crypto.PubKey.Ed25519       as E25519
@@ -68,7 +60,8 @@ data ValidationResult = ValidationResult {
 data VrpDto = VrpDto {
     asn       :: ASN,
     prefix    :: IpPrefix,
-    maxLength :: PrefixLength
+    maxLength :: PrefixLength,
+    ta        :: Text
 } deriving stock (Eq, Show, Generic)
 
 newtype RObject = RObject (Located RpkiObject)
@@ -84,7 +77,7 @@ instance ToRecord VrpDto where
         asn = ASN as, 
         maxLength = PrefixLength ml,
         ..
-    } = Csv.record [ "AS" <> toField as, toField prefix, toField ml ]
+    } = Csv.record [ "AS" <> toField as, toField prefix, toField ml, toField ta ]
     
 instance DefaultOrdered VrpDto
 
@@ -94,9 +87,10 @@ instance ToNamedRecord VrpDto where
         maxLength = PrefixLength ml,
         ..
     } = Csv.namedRecord [ 
-            "asn"       .= ("AS" <> toField as), 
-            "prefix"    .= toField prefix, 
-            "maxLength" .= toField ml 
+            "ASN"        .= ("AS" <> toField as), 
+            "IP Prefix"  .= toField prefix, 
+            "Max Length" .= toField ml,
+            "Trust Anchor" .= toField ta
         ]
     
 instance ToField IpPrefix where

@@ -137,7 +137,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         
         rs <- forConcurrently tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
-            logInfo_ logger [i|Validated #{getTaName tal}, got #{vrpCount vrps} VRPs, took #{elapsed}ms|]
+            logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{vrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
         -- save publication points state    
@@ -174,7 +174,7 @@ validateTA appContext tal worldVersion repositoryProcessing = do
                 pure vrps
 
     case r of 
-        (Left e, vs) -> 
+        (Left _, vs) -> 
             pure $ TopDownResult mempty vs
         (Right vrps, vs) ->            
             pure $ TopDownResult (newVrps taName vrps) vs
@@ -235,9 +235,7 @@ validateFromTACert
     topDownContext@TopDownContext { .. } 
     initialRepos@(PublicationPointAccess initialAccess) 
     taCert 
-    = do  
-    
-    let taURIContext = newValidatorPath $ locationsToText $ taCert ^. #locations
+  = do      
     
     unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $ do
         -- Merge the main repositories in first, all these PPs will be stored 
@@ -251,9 +249,10 @@ validateFromTACert
         void $ fetchPPWithFallback appContext repositoryProcessing now initialRepos    
         
     -- Do the tree descend, gather validation results and VRPs            
+    vp <- askEnv
     T2 vrps validationState <- fromTry 
                 (\e -> UnspecifiedE (unTaName taName) (fmtEx e)) 
-                (validateCA appContext taURIContext topDownContext taCert)
+                (validateCA appContext vp topDownContext taCert)
 
     embedState validationState    
     pure vrps
@@ -439,8 +438,7 @@ validateCaCertificate
                         -- or a validation error.
                         let markAllEntriesAsVisited = 
                                 visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
-                        
-                        vp <- askEnv
+                                                
                         let processChildren = do 
                                 -- this indicates the difeerence between RFC6486-bis 
                                 -- version 02 (strict) and version 03 and later (more loose).                                                                                            
@@ -536,7 +534,7 @@ validateCaCertificate
         pure nonCrlChildren
         where
             longerThanOne [_] = False
-            longerThanOne []  = False            
+            longerThanOne []  = False
             longerThanOne _   = True
 
 
@@ -575,7 +573,7 @@ validateCaCertificate
                     vError $ BadFileNameOnMFT filename 
                                 ("Unsupported characters in filename: '" <> badChars <> "'")
 
-            somethingElse -> 
+            _somethingElse -> 
                 vError $ BadFileNameOnMFT filename 
                             "Filename doesn't have exactly one DOT"            
 
@@ -613,11 +611,8 @@ validateCaCertificate
                     inSubVPath (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
-                            oneMoreRoa
-                            
-                            let vrps = getCMSContent $ cmsPayload roa                            
-                            -- logDebugM logger [i|Roa #{vPath}, vrps = #{length vrps}.|]
-                            pure $ Set.fromList vrps
+                            oneMoreRoa                            
+                            pure $ Set.fromList $ getCMSContent $ cmsPayload roa
 
             GbrRO gbr -> do                
                     validateObjectLocations child
@@ -627,8 +622,11 @@ validateCaCertificate
                             oneMoreGbr
                             pure mempty
 
-            -- TODO Anything else?
-            _ -> pure mempty
+            -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
+            -- they will emit a warning.
+            _somethingElse -> do 
+                logWarnM logger [i|Unsupported type of object: #{locations}.|]
+                pure mempty
 
         where                
             -- In case of RevokedResourceCertificate error, the whole manifest is not be considered 

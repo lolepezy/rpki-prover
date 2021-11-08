@@ -494,7 +494,7 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps (Map TaName (Set Vrp))
+newtype Vrps = Vrps { unVrps :: Map TaName (Set Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving Semigroup via GenericSemigroup Vrps

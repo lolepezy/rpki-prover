@@ -20,6 +20,7 @@ import           Servant.Server.Generic
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe, maybeToList)
 import qualified Data.Set                         as Set
+import qualified Data.Map.Strict                  as Map
 import           Data.Text                       (Text)
 
 import           RPKI.AppContext
@@ -73,20 +74,24 @@ getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
 getVRPValidated appContext = getVRPs appContext (readTVar . (^. #currentVrps))
 
 getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
-getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))
+getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))         
+
 
 getVRPs :: Storage s => AppContext s -> (AppState -> STM Vrps) -> IO [VrpDto] 
 getVRPs AppContext {..} func = do 
-    vrps <- do 
-        vrps <- allVrps <$> atomically (func appState)
-        if Set.null vrps
-            then do 
-                db <- readTVarIO database                 
-                maybe [] (Set.toList . allVrps) <$> getLatestVRPs db
+    z <- do 
+        vrps <- atomically (func appState)
+        if vrps == mempty
+            then                  
+                getLatestVRPs =<< readTVarIO database                
             else 
-                pure $! Set.toList vrps
-
-    pure $! map (\(Vrp a p len) -> VrpDto a p len) vrps                    
+                pure $ Just vrps
+    pure $ case z of 
+        Nothing   -> []
+        Just vrps -> [ VrpDto a p len (unTaName ta) | 
+                        (ta, vrpSet)  <- Map.toList $ unVrps vrps,
+                        (Vrp a p len) <- Set.toList vrpSet
+                    ]    
 
 getVResults :: Storage s => AppContext s -> IO [ValidationResult]
 getVResults AppContext {..} = do 

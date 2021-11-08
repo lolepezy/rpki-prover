@@ -100,14 +100,14 @@ runValidatorApp appContext@AppContext {..} = do
     worldVersion <- updateWorldVerion appState
     talNames <- listTALFiles $ talDirectory config
     let validationContext = newValidatorPath "validation-root"
-    (tals, validationState) <- runValidatorT validationContext $
+    (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVPath (convert taName) $ parseTALFromFile talFilePath
+            inSubVPath (convert taName) $ parseTALFromFile talFilePath (Text.pack taName)
 
-    logInfo_ logger [i|Successfully loaded #{length talNames} TALs.|]
+    logInfo_ logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 
     database' <- readTVarIO database
-    rwTx database' $ \tx -> putValidations tx database' worldVersion (validationState ^. typed)
+    rwTx database' $ \tx -> putValidations tx database' worldVersion (vs ^. typed)
     case tals of
         Left e -> do
             logError_ logger [i|Error reading some of the TALs, e = #{e}.|]
@@ -118,9 +118,9 @@ runValidatorApp appContext@AppContext {..} = do
                 `finally`
                 closeStorage appContext
     where
-        parseTALFromFile talFileName = do
+        parseTALFromFile talFileName taName = do
             talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
-            vHoist $ fromEither $ first TAL_E $ parseTAL $ convert talContent
+            vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
 runHttpApi :: Storage s => AppContext s -> IO ()
