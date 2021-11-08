@@ -39,7 +39,6 @@ dependencies:
 - binary
 - blaze-html
 - bytestring
-- cassava
 - cborg
 - containers
 - co-log
@@ -56,9 +55,10 @@ dependencies:
 - generic-monoid
 - hexpat
 - hourglass
-- http-types
 - http-client
 - http-conduit
+- http-media
+- http-types
 - hw-ip
 - interpolate
 - lens
@@ -79,7 +79,6 @@ dependencies:
 - prometheus-metrics-ghc
 - serialise
 - servant
-- servant-cassava
 - servant-server
 - servant-blaze
 - split

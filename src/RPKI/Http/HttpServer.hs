@@ -17,6 +17,9 @@ import           FileEmbedLzma
 import           Servant hiding (URI)
 import           Servant.Server.Generic
 
+import qualified Data.ByteString.Builder          as BS
+
+import           Data.List                        (intersperse)
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe, maybeToList)
 import qualified Data.Set                         as Set
@@ -34,6 +37,7 @@ import           RPKI.Http.Types
 import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Resources.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
@@ -48,10 +52,10 @@ httpApi appContext = genericServe HttpApi {
     }
   where
     apiServer = genericServer API {
-        vrpsCsv  = liftIO (getVRPValidated appContext),
         vrpsJson = liftIO (getVRPValidated appContext),
+        vrpsCsv = liftIO (getVRPValidatedRaw appContext),
 
-        vrpsCsvFiltered  = liftIO (getVRPSlurmed appContext),
+        vrpsCsvFiltered  = liftIO (getVRPSlurmedRaw appContext),
         vrpsJsonFiltered = liftIO (getVRPSlurmed appContext),
 
         slurm = getSlurm appContext,
@@ -69,12 +73,19 @@ httpApi appContext = genericServe HttpApi {
         pure $ mainPage worldVersion vResults metrics    
 
 
--- TODO CSV should contain TA name as well
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
 getVRPValidated appContext = getVRPs appContext (readTVar . (^. #currentVrps))
 
 getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
 getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))         
+
+getVRPValidatedRaw :: Storage s => AppContext s -> IO RawCVS
+getVRPValidatedRaw appContext = 
+    rawCSV <$> getVRPs appContext (readTVar . (^. #currentVrps))    
+
+getVRPSlurmedRaw :: Storage s => AppContext s -> IO RawCVS
+getVRPSlurmedRaw appContext =
+    rawCSV <$> getVRPs appContext (readTVar . (^. #filteredVrps))
 
 
 getVRPs :: Storage s => AppContext s -> (AppState -> STM Vrps) -> IO [VrpDto] 
@@ -89,9 +100,9 @@ getVRPs AppContext {..} func = do
     pure $ case z of 
         Nothing   -> []
         Just vrps -> [ VrpDto a p len (unTaName ta) | 
-                        (ta, vrpSet)  <- Map.toList $ unVrps vrps,
-                        (Vrp a p len) <- Set.toList vrpSet
-                    ]    
+                            (ta, vrpSet) <- Map.toList $ unVrps vrps,
+                            Vrp a p len  <- Set.toList vrpSet
+                     ]    
 
 getVResults :: Storage s => AppContext s -> IO [ValidationResult]
 getVResults AppContext {..} = do 
@@ -170,3 +181,25 @@ getRpkiObject AppContext {..} uri hash =
             throwError $ err400 { errBody = 
                 "Only 'uri' or 'hash' must be provided, not both." }
 
+
+rawCSV :: [VrpDto] -> RawCVS
+rawCSV vrpDtos = 
+    RawCVS $ BS.toLazyByteString $ header <> body
+  where
+    header = str "ASN,IP Prefix,Max Length,Trust Anchor\n"    
+    body = mconcat $ intersperse (ch '\n') $ map toBS vrpDtos
+
+    toBS VrpDto {
+            asn = ASN as, 
+            maxLength = PrefixLength ml,
+            ..
+        } = str "AS" <> str (show as) <> ch ',' <> 
+            str (prefixStr prefix) <> ch ',' <> 
+            str (show ml) <> ch ',' <> 
+            str (convert ta)
+    
+    prefixStr (Ipv4P (Ipv4Prefix p)) = show p
+    prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+
+    str = BS.stringUtf8
+    ch  = BS.charUtf8    
