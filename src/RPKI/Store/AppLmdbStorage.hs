@@ -154,7 +154,7 @@ compactStorageWithTmpDir AppContext {..} = do
             createDirectory newLmdbDirName
             logDebug_ logger [i|Created #{newLmdbDirName} for storage copy.|]
 
-            newLmdb      <- mkLmdb newLmdbDirName (config ^. #lmdbSize) maxReadersDefault
+            newLmdb      <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb) maxReadersDefault
             newNativeEnv <- atomically $ getNativeEnv newLmdb
 
             stats <- copyEnv oldNativeEnv newNativeEnv

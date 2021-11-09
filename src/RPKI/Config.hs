@@ -36,7 +36,7 @@ data Config = Config {
     cacheLifeTime             :: Seconds,
     oldVersionsLifetime       :: Seconds,
     storageCompactionInterval :: Seconds,
-    lmdbSize                  :: Size,
+    lmdbSizeMb                :: Size,
     localExceptions           :: [FilePath]
 } deriving stock (Show, Eq, Ord, Generic)
 
@@ -141,7 +141,7 @@ defaultConfig = Config {
     cacheLifeTime             = Seconds $ 60 * 60 * 72,
     oldVersionsLifetime       = Seconds $ 60 * 60 * 10,
     storageCompactionInterval = Seconds $ 60 * 60 * 24,
-    lmdbSize                  = Size $ 32 * 1024 * 1024 * 1024,
+    lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = []    
 }
 

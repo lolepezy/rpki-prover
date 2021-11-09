@@ -136,7 +136,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
 
     let defaults = defaultConfig
 
-    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSize)
+    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
     lmdbEnv <- setupLmdbCache 
                     (if resetCache then Reset else UseExisting)
                     logger
@@ -214,7 +214,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-                & #lmdbSize .~ lmdbRealSize            
+                & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
     }
 
