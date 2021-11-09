@@ -187,7 +187,7 @@ rawCSV vrpDtos =
     RawCVS $ BS.toLazyByteString $ header <> body
   where
     header = str "ASN,IP Prefix,Max Length,Trust Anchor\n"    
-    body = mconcat $ intersperse (ch '\n') $ map toBS vrpDtos
+    body = mconcat $ map toBS vrpDtos
 
     toBS VrpDto {
             asn = ASN as, 
@@ -196,7 +196,7 @@ rawCSV vrpDtos =
         } = str "AS" <> str (show as) <> ch ',' <> 
             str (prefixStr prefix) <> ch ',' <> 
             str (show ml) <> ch ',' <> 
-            str (convert ta)
+            str (convert ta) <> ch '\n'
     
     prefixStr (Ipv4P (Ipv4Prefix p)) = show p
     prefixStr (Ipv6P (Ipv6Prefix p)) = show p
