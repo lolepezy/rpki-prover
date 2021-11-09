@@ -40,7 +40,6 @@ dependencies:
 - blaze-html
 - bytestring
 - bytestring-mmap
-- cassava
 - cborg
 - containers
 - co-log
@@ -57,9 +56,10 @@ dependencies:
 - generic-monoid
 - hexpat
 - hourglass
-- http-types
 - http-client
 - http-conduit
+- http-media
+- http-types
 - hw-ip
 - interpolate
 - lens
@@ -80,7 +80,6 @@ dependencies:
 - prometheus-metrics-ghc
 - serialise
 - servant
-- servant-cassava
 - servant-server
 - servant-blaze
 - split
@@ -89,6 +88,7 @@ dependencies:
 - strict-tuple
 - string-conversions
 - text
+- these
 - typed-process
 - transformers
 - temporary
@@ -101,8 +101,9 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
-- vector
 - unix
+- unordered-containers
+- vector
 - warp
 - xeno
 
@@ -126,7 +127,7 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     dependencies:
     - rpki-prover  
 
@@ -139,7 +140,7 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     - -fPIC
     cc-options: -static
     ld-options: -static -pthread 

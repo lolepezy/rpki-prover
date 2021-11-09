@@ -1,12 +1,11 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE RecordWildCards     #-}
-
-{-# LANGUAGE StrictData #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DerivingVia        #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.Fetch where
 
@@ -35,7 +34,6 @@ import           Data.Maybe (mapMaybe)
 import GHC.Generics (Generic)
 
 import Time.Types
-import System.Timeout
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -68,7 +66,7 @@ fValidationState (FetchFailure _ vs) = vs
 
 
 
--- Main entry point: fetch reposiutory using the cache of tasks.
+-- Main entry point: fetch repository using the cache of tasks.
 -- It is guaranteed that every fetch happens only once.
 --
 -- Fall-back means that the function will try to fetch all the PPs in the 

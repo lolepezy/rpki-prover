@@ -25,7 +25,7 @@ import qualified Data.ByteString.Lazy             as BSL
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
-import qualified Data.List                         as List
+import qualified Data.List                        as List
 import           Data.Ord
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
@@ -41,6 +41,7 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
+import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.Parallel
 import           RPKI.Time
@@ -52,8 +53,6 @@ import           RPKI.Store.Database
 
 import           System.Timeout                   (timeout)
 import           Time.Types
-import Data.Set (Set)
-
 
 
 defaultRtrPort :: Num p => p
@@ -111,13 +110,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --
     listenToAppStateUpdates rtrState updateBroadcastChan = do
 
-        -- Wait until a complete world version is generted (or are read from the cache)      
+        -- Wait until a complete world version is generated (or is read from the cache)      
         worldVersion <- atomically $ waitForCompleteVersion appState            
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         vrps <- readTVarIO (appState ^. #currentVrps)
-        let maxStoredDiffs = 3 * length vrps
+        let maxStoredDiffs = 3 * vrpCount vrps
                 
         atomically $ writeTVar rtrState $ 
                         Just $ newRtrState worldVersion maxStoredDiffs
@@ -129,22 +128,26 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             (rtrState', previousVersion, newVersion, newVrps) 
                 <- atomically $ 
                     readTVar rtrState >>= \case 
-                        -- this shouldn't really happen
-                        Nothing         -> retry
+                        Nothing        -> retry
                         Just rtrState' -> do
                             let knownVersion = rtrState' ^. #lastKnownWorldVersion
                             (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps)
                 
             database' <- readTVarIO database
-            previousVrps <- fmap Set.fromList 
-                                $ roTx database' 
-                                $ \tx -> getVrps tx database' previousVersion
 
-            let vrpDiff            = evalVrpDiff previousVrps newVrps                         
+            previousVrps <- roTx database' $ \tx -> 
+                            getVrps tx database' previousVersion >>= \case 
+                                Nothing   -> pure Set.empty 
+                                Just vrps -> do  
+                                    slurm <- slurmForVersion tx database' previousVersion
+                                    pure $ allVrps $ maybe vrps (`applySlurm` vrps) slurm
+
+            let newVrpsFlattened = allVrps newVrps
+            let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
-            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrps}|]
+            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrpsFlattened}|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreVrpUpdates
@@ -182,10 +185,10 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     serveConnection connection peer updateBroadcastChan rtrState = do        
         logDebug_ logger [i|Waiting first PDU from the client #{peer}|]
         firstPdu <- recv connection 1024
-        (rtrState', currentVrps', outboxQueue) <- 
+        (rtrState', vrps, outboxQueue) <- 
             atomically $ (,,) <$> 
                     readTVar rtrState <*>
-                    readTVar (currentVrps appState) <*>
+                    (readTVar $ filteredVrps appState) <*>
                     newCQueue 10
 
         let firstPduLazy = BSL.fromStrict firstPdu
@@ -199,7 +202,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         ifJust message $ logError_ logger
 
         ifJust versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' currentVrps' versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' vrps versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduToBytes errorPdu' V0
                     logError_ logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
@@ -249,10 +252,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 -- empty just silently stop doing anything
                 unless (BS.null pduBytes) $
                     join $ atomically $ do 
-                        -- all the real work happens inside of pure `responseAction`, for better testability.
-                        rtrState'   <- readTVar rtrState
-                        currentVrps <- readTVar $ currentVrps appState                    
-                        case responseAction logger peer session rtrState' currentVrps pduBytes of 
+                        -- all the real work happens inside of pure `responseAction`, 
+                        -- for better testability.
+                        rtrState'       <- readTVar rtrState
+                        flatCurrentVrps <- readTVar $ filteredVrps appState                    
+                        case responseAction logger peer session rtrState' flatCurrentVrps pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io
@@ -267,14 +271,14 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 -- TODO Do something with contravariant logging here, it's the right place.
 -- 
 responseAction :: (Show peer, Logger logger) => 
-                    logger 
+                   logger 
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 
-                -> Set Vrp
+                -> Vrps
                 -> BS.ByteString 
                 -> Either ([Pdu], IO ()) ([Pdu], IO ())
-responseAction logger peer session rtrState currentVrps pduBytes = 
+responseAction logger peer session rtrState vrps pduBytes = 
     let 
         pduBytesLazy = BSL.fromStrict pduBytes
 
@@ -288,7 +292,7 @@ responseAction logger peer session rtrState currentVrps pduBytes =
         response pdu = let 
             r = respondToPdu 
                     rtrState
-                    currentVrps
+                    vrps
                     (toVersioned session pdu)
                     pduBytesLazy
                     session
@@ -313,7 +317,7 @@ responseAction logger peer session rtrState currentVrps pduBytes =
 -- | Helper function to reduce repeated code.
 -- 
 analyzePdu :: Show peer => 
-                peer 
+               peer 
             -> BSL.ByteString 
             -> Either PduParseError VersionedPdu 
             -> (Maybe Pdu, Maybe Text, Maybe VersionedPdu)
@@ -344,43 +348,43 @@ analyzePdu peer pduBytes = \case
 -- | Process the first PDU and do the protocol version negotiation.
 -- 
 processFirstPdu :: Maybe RtrState 
-                -> Set Vrp
+                -> Vrps
                 -> VersionedPdu
                 -> BSL.ByteString 
                 -> Either (Pdu, Text) ([Pdu], Session, Maybe Text)
 processFirstPdu 
     rtrState 
-    currentVrps 
+    vrps 
     versionedPdu@(VersionedPdu pdu protocolVersion) 
     pduBytes =                
     case pdu of 
         SerialQueryPdu _ _ -> let 
             session' = Session protocolVersion
-            r = respondToPdu rtrState currentVrps versionedPdu pduBytes session'
+            r = respondToPdu rtrState vrps versionedPdu pduBytes session'
             in fmap (\(pdus, message) -> (pdus, session', message)) r
 
         ResetQueryPdu -> let
             session' = Session protocolVersion
-            r = respondToPdu rtrState currentVrps versionedPdu pduBytes session'
+            r = respondToPdu rtrState vrps versionedPdu pduBytes session'
             in fmap (\(pdus, message) -> (pdus, session', message)) r
 
-        otherPdu -> 
-            let 
-                text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, but received " <> show otherPdu
-                in Left (ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
+        otherPdu -> let 
+            text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, " <> 
+                             "but received " <> show otherPdu
+            in Left (ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
 
 
 -- | Generate PDUs that would be an appropriate response the request PDU.
 -- 
 respondToPdu :: Maybe RtrState
-                -> Set Vrp
+                -> Vrps
                 -> VersionedPdu 
                 -> BSL.ByteString 
                 -> Session
                 -> Either (Pdu, Text) ([Pdu], Maybe Text)
 respondToPdu 
     rtrState
-    currentVrps 
+    vrps 
     (VersionedPdu pdu pduProtocol) 
     pduBytes 
     (Session sessionProtocol) =
@@ -395,7 +399,7 @@ respondToPdu
                             if clientSerial == currentSerial 
                                 then let 
                                     pdus = [CacheResponsePdu sessionId] 
-                                          <> [EndOfDataPdu sessionId currentSerial defIntervals]
+                                        <> [EndOfDataPdu sessionId currentSerial defIntervals]
                                     in Right (pdus, Nothing)
                                 else 
                                     case diffsFromSerial rtrState clientSerial of
@@ -415,7 +419,7 @@ respondToPdu
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $ let
                             pdus = [CacheResponsePdu currentSessionId] 
-                                    <> currentCachePayloadPdus currentVrps
+                                    <> currentCachePayloadPdus vrps
                                     <> [EndOfDataPdu currentSessionId currentSerial defIntervals]
                             in Right (pdus, Nothing) 
 
@@ -453,9 +457,9 @@ diffPayloadPdus Diff {..} =
     map (toPdu Withdrawal) (Set.toList deleted) <>
     map (toPdu Announcement) (sortVrps $ Set.toList added)  
     
-currentCachePayloadPdus :: Set Vrp -> [Pdu]
+currentCachePayloadPdus :: Vrps -> [Pdu]
 currentCachePayloadPdus vrps =
-    map (toPdu Announcement) $ sortVrps $ Set.toList vrps  
+    map (toPdu Announcement) $ sortVrps $ Set.toList $ allVrps vrps  
     
 
 -- Sort VRPs to before sending them to routers
@@ -466,7 +470,7 @@ sortVrps = List.sortBy compareVrps
   where
     compareVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
         compare asn1 asn2 <> 
-        -- Sorti prefixes backwards since it automatically means that 
+        -- Sort prefixes backwards since it automatically means that 
         -- smaller prefixes will be in front of larger ones.
         compare (Down p1) (Down p2) <> 
         -- smaller max length should precede?

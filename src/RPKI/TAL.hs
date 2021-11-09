@@ -1,13 +1,16 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.TAL where
 
 import Data.Bifunctor (first, bimap)
 
+import           Control.Lens                     ((^.))
 import           Control.Monad
 
 import           Codec.Serialise
@@ -37,11 +40,13 @@ data TAL = PropertiesTAL {
         caName              :: Maybe Text.Text,
         certificateLocation :: Locations,
         publicKeyInfo       :: EncodedBase64,
-        prefetchUris        :: [RpkiURL]
+        prefetchUris        :: [RpkiURL],
+        taName              :: TaName
     } 
     | RFC_TAL {
         certificateLocations :: Locations,
-        publicKeyInfo        :: EncodedBase64
+        publicKeyInfo        :: EncodedBase64,
+        taName               :: TaName
     } 
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (Serialise)
@@ -50,14 +55,17 @@ talCertLocations :: TAL -> Locations
 talCertLocations PropertiesTAL {..} = certificateLocation
 talCertLocations RFC_TAL {..}       = certificateLocations
 
+-- getTaName :: TAL -> TaName
+-- getTaName tal = case tal of 
+--     PropertiesTAL {..} -> maybe (uri2TaName $ pickLocation certificateLocation) TaName caName
+--     RFC_TAL {..}       -> uri2TaName $ pickLocation certificateLocations
+--     where 
+--         uri2TaName u = 
+--             let URI t = getURL u
+--             in TaName t
+
 getTaName :: TAL -> TaName
-getTaName tal = case tal of 
-    PropertiesTAL {..} -> maybe (uri2TaName $ pickLocation certificateLocation) TaName caName
-    RFC_TAL {..}       -> uri2TaName $ pickLocation certificateLocations
-    where 
-        uri2TaName u = 
-            let URI t = getURL u
-            in TaName t
+getTaName = (^. #taName)    
 
 getTaCertURL :: TAL -> RpkiURL
 getTaCertURL PropertiesTAL {..} = pickLocation certificateLocation
@@ -67,8 +75,8 @@ newLocation :: Text.Text -> NonEmpty RpkiURL
 newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 
 -- | Parse TAL object from raw text
-parseTAL :: Text.Text -> Either TALError TAL
-parseTAL bs = 
+parseTAL :: Text.Text -> Text.Text -> Either TALError TAL
+parseTAL bs taName = 
     case (parseAsProperties, parseRFC) of
         (Right t, _)       -> Right t
         (Left _,  Right t) -> Right t
@@ -88,7 +96,8 @@ parseTAL bs =
                         getCaName properties <*>
                         getCertificateLocation properties <*>
                         getPublicKeyInfo properties <*>
-                        getPrefetchUris properties      
+                        getPrefetchUris properties <*>     
+                        pure (TaName taName)
             where 
                 -- Lines that are not comments are the ones not startig with '#'
                 nonComments = List.filter $ not . ("#" `Text.isPrefixOf`) . Text.stripStart 
@@ -129,7 +138,8 @@ parseTAL bs =
                             pure $ RFC_TAL {
                                 certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
-                                    Text.concat $ filter (not . Text.null) $ map Text.strip base64
+                                    Text.concat $ filter (not . Text.null) $ map Text.strip base64,
+                                taName = TaName taName
                             }
             where 
                 looksLikeUri s = any (`Text.isPrefixOf` s) ["rsync://", "http://", "https://"]

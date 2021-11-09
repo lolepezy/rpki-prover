@@ -186,10 +186,6 @@ inSubMetricPath :: Monad m =>
                 Text -> ValidatorT m r -> ValidatorT m r
 inSubMetricPath text = local (& typed @MetricPath %~ (newPath text <>))
 
-inSubPath :: Monad m => 
-                Text -> ValidatorT m r -> ValidatorT m r
-inSubPath text va = inSubVPath text $ inSubMetricPath text va    
-
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
                 (metric -> metric) -> ValidatorT m ()

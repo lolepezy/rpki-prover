@@ -24,7 +24,7 @@ import           Data.Tuple.Strict
 
 import           Codec.Serialise
 import qualified Data.List                   as List
-import           Data.List.NonEmpty          (NonEmpty (..), (<|))
+import           Data.List.NonEmpty          (NonEmpty (..))
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
@@ -149,6 +149,11 @@ newtype InitError = InitError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
+data SlurmError = SlurmFileError Text |
+                  SlurmParseError Text |
+                  SlurmValidationError Text
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
 
 data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 
@@ -157,6 +162,7 @@ data AppError = ParseE (ParseError Text) |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
+                SlurmE SlurmError |
                 UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -168,6 +174,7 @@ newtype VWarning = VWarning AppError
 data VProblem = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
+
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
 

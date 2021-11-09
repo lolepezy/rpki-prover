@@ -10,6 +10,7 @@ import RPKI.ResourcesSpec
 import RPKI.AppMonadSpec
 import RPKI.RepositorySpec
 import RPKI.RTR.RtrSpec
+import RPKI.SLURM.SlurmSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -20,5 +21,6 @@ main = defaultMain $ testGroup "All tests" [
         resourceGroup,        
         repositoryGroup,
         rtrGroup,
-        httpSpec
+        httpSpec,
+        slurmGroup
     ]  

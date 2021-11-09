@@ -21,6 +21,7 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv4    as V4
 import qualified HaskellWorks.Data.Network.Ip.Ipv6    as V6
 import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Word128
+import           HaskellWorks.Data.Network.Ip.Ip      as Ips
 
 import           RPKI.Resources.IntervalSet           as IS
 import           RPKI.Resources.Types
@@ -329,6 +330,20 @@ ipv4PrefixLen (Ipv4Prefix (V4.IpBlock _ (V4.IpNetMask mask))) = PrefixLength mas
 ipv6PrefixLen :: Ipv6Prefix -> PrefixLength      
 ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask
 
-
+prefixLen :: IpPrefix -> PrefixLength 
+prefixLen (Ipv4P p) = ipv4PrefixLen p
+prefixLen (Ipv6P p) = ipv6PrefixLen p
+ 
+-- These are mainly for statically known values in tests
+-- 
 readIp4 :: String -> Ipv4Prefix
 readIp4 s = Ipv4Prefix (read s :: V4.IpBlock V4.Canonical)
+
+readIp6 :: String -> Ipv6Prefix
+readIp6 s = 
+    case Ips.canonicalise (read s) of
+        Nothing -> error $ "Invalid IPv6: " <> show s
+        Just cb -> case cb of 
+                    IpBlockV4 b -> error $ "Invalid IPv6: " <> show s
+                    IpBlockV6 b -> Ipv6Prefix b    
+    

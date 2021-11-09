@@ -230,7 +230,7 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
                             pure $ UseSnapshot snapshotInfo [i|There are too many deltas: #{length chosenDeltas}.|]                        
 
                         | otherwise ->
-                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas are fine."
+                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas look good."
 
                 (_, nc) -> appError $ RrdpE $ NonConsecutiveDeltaSerials nc
                 
@@ -326,7 +326,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                     pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
                 Right rpkiURL ->
-                    case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
+                    case first RrdpE $ U.decodeBase64 encodedb64 rpkiURL of
                         Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
                         Right (DecodedBase64 decoded) -> do                             
                             case validateSizeOfBS validationConfig decoded of 
