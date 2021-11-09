@@ -1,4 +1,4 @@
-FROM utdemir/ghc-musl:v19-ghc8104 as rpki-prover-builder
+FROM utdemir/ghc-musl:v19-ghc8107 as rpki-prover-builder
 
 RUN apk add --update --no-cache expat-dev lmdb-dev lmdb expat-static lmdb
 
