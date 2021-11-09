@@ -12,8 +12,6 @@ import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           Lmdb.Connection
 import           Lmdb.Types hiding (Size)
 
-import           Data.Int                 (Int64)
-
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
 import           RPKI.Store.Database
@@ -75,8 +73,8 @@ createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> crea
 
 
 mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
-mkLmdb fileName size maxReaders = do 
-    nativeEnv <- newNativeLmdb fileName size maxReaders
+mkLmdb fileName maxSizeMb maxReaders = do 
+    nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         createSemaphore maxReaders    

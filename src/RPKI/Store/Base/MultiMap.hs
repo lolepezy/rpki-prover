@@ -1,17 +1,13 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE InstanceSigs          #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module RPKI.Store.Base.MultiMap where
 
 import Codec.Serialise
 
-import qualified Data.ByteString          as BS
+import GHC.TypeLits
 
-import           GHC.TypeLits
-
-import           RPKI.Store.Base.Storable
-import           RPKI.Store.Base.Storage  as S
+import RPKI.Store.Base.Storable
+import RPKI.Store.Base.Storage  as S
 
 
 data SMultiMap (name :: Symbol) s k v where

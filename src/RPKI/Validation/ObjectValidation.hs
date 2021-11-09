@@ -8,7 +8,6 @@ module RPKI.Validation.ObjectValidation where
 import           Control.Monad
 
 import           Control.Lens
-import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 
 import           Data.ASN1.BinaryEncoding
@@ -25,6 +24,7 @@ import           Data.X509.Validation               hiding (InvalidSignature)
 import           GHC.Generics
 
 import           RPKI.AppMonad
+import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
@@ -35,7 +35,7 @@ import           RPKI.Time
 import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
-import RPKI.Resources.Resources
+import           RPKI.Resources.Resources
 
 
 newtype Validated a = Validated a
@@ -306,16 +306,16 @@ signatureCheck sv = case sv of
     SignatureFailed e -> vPureError $ InvalidSignature $ convert $ show e
     SignaturePass -> pure ()
 
-validateSizeOfBS :: BS.ByteString -> PureValidatorT BS.ByteString
-validateSizeOfBS bs = validateSizeM (toInteger $ BS.length bs) >> pure bs
+validateSizeM :: ValidationConfig -> Integer -> PureValidatorT Integer
+validateSizeM vc s = vFromEither $ validateSize vc s
 
-validateSizeM :: Integer -> PureValidatorT Integer
-validateSizeM s = vFromEither $ validateSize s
+validateSizeOfBS :: ValidationConfig -> BS.ByteString -> Either ValidationError Integer
+validateSizeOfBS vc bs = validateSize vc (toInteger $ BS.length bs)
 
-validateSize :: Integer -> Either ValidationError Integer
-validateSize s =
+validateSize :: ValidationConfig -> Integer -> Either ValidationError Integer
+validateSize vc s =    
     case () of
         _
-            | s < 10 -> Left $ ObjectIsTooSmall s
-            | s > 10_000_000 -> Left $ ObjectIsTooBig s
-            | otherwise -> pure s
+            | s < vc ^. #minObjectSize -> Left $ ObjectIsTooSmall s
+            | s > vc ^. #maxObjectSize -> Left $ ObjectIsTooBig s
+            | otherwise                -> pure s

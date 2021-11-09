@@ -134,8 +134,10 @@ createAppContext cliOptions@CLIOptions{..} logger = do
 
     (tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
-    let lmdbRealSize = Size $ lmdbSize `orDefault` 32768
-    lmdbEnv <- setupLmdbCache
+    let defaults = defaultConfig
+
+    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSize)
+    lmdbEnv <- setupLmdbCache 
                     (if resetCache then Reset else UseExisting)
                     logger
                     cached
@@ -193,11 +195,11 @@ createAppContext cliOptions@CLIOptions{..} logger = do
         appState = appState',
         database = tvarDatabase,
         appBottlenecks = appBottlenecks,
-        logger = logger,
-        config = defaultConfig
-                & #talDirectory .~ tald
-                & #tmpDirectory .~ tmpd
-                & #cacheDirectory .~ cached
+        logger = logger,        
+        config = defaults 
+                & #talDirectory .~ tald 
+                & #tmpDirectory .~ tmpd 
+                & #cacheDirectory .~ cached 
                 & #parallelism .~ Parallelism cpuParallelism ioParallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
