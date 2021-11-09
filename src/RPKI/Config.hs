@@ -126,7 +126,7 @@ defaultConfig = Config {
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         dontFetch                      = False,
         manifestProcessing             = RFC6486,
-        maxCertificatePathDepth        = 64,
+        maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
         maxObjectSize                  = 32 * 1024 * 1024,
         minObjectSize                  = 32,
@@ -140,7 +140,7 @@ defaultConfig = Config {
     cacheLifeTime             = Seconds $ 60 * 60 * 72,
     oldVersionsLifetime       = Seconds $ 60 * 60 * 10,
     storageCompactionInterval = Seconds $ 60 * 60 * 24,
-    lmdbSize                  = Size $ 8 * 1024 * 1024 * 1024
+    lmdbSize                  = Size $ 32 * 1024 * 1024 * 1024
 }
 
 defaultRtrConfig :: RtrConfig

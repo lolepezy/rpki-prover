@@ -72,8 +72,8 @@ createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> crea
 
 
 mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
-mkLmdb fileName size maxReaders = do 
-    nativeEnv <- newNativeLmdb fileName size maxReaders
+mkLmdb fileName maxSizeMb maxReaders = do 
+    nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         createSemaphore maxReaders    
