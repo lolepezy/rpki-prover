@@ -12,8 +12,6 @@ import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           Lmdb.Connection
 import           Lmdb.Types hiding (Size)
 
-import           Data.Int                 (Int64)
-
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
 import           RPKI.Store.Database
