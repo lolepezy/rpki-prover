@@ -12,17 +12,16 @@ Implemented features are
 - Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
 - Basic UI for reporting metrics and found problems
 - Output of VRPs in CSV and JSON formats
+- Support of SLURM (RFC 8416)
 - Cache cleanup, scheduled revalidation, cache compaction, so it can run unlimited time without draining resources
 - Support for RTR protocol, both version 0 and 1
 - Static binaries for Linux
 - Docker image.
 
 Current and future work
-- SLURM support
 - History of validations in UI
 - Ergonomics for long-running processes (more subtle automatic cleanups, cache DB migration, etc.)
-- CPU and memory optimisations
- 
+- CPU and memory optimisations 
 
 
 # Using rpki-prover
