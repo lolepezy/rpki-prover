@@ -607,3 +607,11 @@ adjustSucceededUrl u pps =
         Nothing     -> pps
         Just status -> pps & typed %~ succeededFromStatus u status
 
+-- Number of repositories
+repositoryCount :: PublicationPoints -> Int
+repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =     
+    Map.size rrdps + 
+    Map.foldr countRoots 0 rsyncs
+  where
+    countRoots (Root _) c = c + 1
+    countRoots _        c = c

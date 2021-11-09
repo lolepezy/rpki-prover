@@ -6,7 +6,7 @@
 
 module RPKI.TAL where
 
-import Data.Bifunctor (first, second, bimap)
+import Data.Bifunctor (first, bimap)
 
 import           Control.Monad
 

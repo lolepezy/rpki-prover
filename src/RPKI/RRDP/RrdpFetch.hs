@@ -15,7 +15,7 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
 import           Data.Text (Text)
-import qualified Data.ByteString.Lazy             as LBS
+import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
@@ -38,6 +38,7 @@ import           RPKI.Repository
 import           RPKI.RRDP.Http
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
+import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database              (rwAppTx)
@@ -57,8 +58,8 @@ import qualified RPKI.Util                        as U
 -- 
 downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository 
-                        -> (RrdpURL -> Notification -> LBS.ByteString -> ValidatorT IO ()) 
-                        -> (RrdpURL -> Notification -> RrdpSerial -> LBS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) 
+                        -> (RrdpURL -> Notification -> RrdpSerial -> BS.ByteString -> ValidatorT IO ()) 
                         -> ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
@@ -271,13 +272,13 @@ updateObjectForRrdpRepository appContext repository =
 {- 
     Snapshot case, done in parallel by two thread
         - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
-        - another thread read parsing tasks, waits for them and saves the results into the DB.
+        - another thread reads parsing tasks, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
                 AppContext s 
                 -> RrdpURL
                 -> Notification 
-                -> LBS.ByteString 
+                -> BS.ByteString 
                 -> ValidatorT IO ()
 saveSnapshot appContext repoUri notification snapshotContent = do      
     -- TODO Bad idea if we are lagging behind, put WorldVersion in the reader?
@@ -306,13 +307,13 @@ saveSnapshot appContext repoUri notification snapshotContent = do
 
         void $ txFoldPipeline 
                     cpuParallelism
-                    (S.mapM (newStorable1 objectStore) $ S.each snapshotItems)
+                    (S.mapM (newStorable objectStore) $ S.each snapshotItems)
                     (savingTx sessionId serial)
                     (saveStorable objectStore)
                     (mempty :: ())
       where        
 
-        newStorable1 objectStore (SnapshotPublish uri encodedb64) =             
+        newStorable objectStore (SnapshotPublish uri encodedb64) =             
             if supportedExtension $ U.convert uri 
                 then do 
                     task <- readBlob `strictTask` bottleneck
@@ -327,21 +328,24 @@ saveSnapshot appContext repoUri notification snapshotContent = do
                 Right rpkiURL ->
                     case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
                         Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
-                        Right (DecodedBase64 decoded) ->
-                            liftIO $ roTx objectStore $ \tx -> do     
-                                let hash = U.sha256s decoded  
-                                exists <- DB.hashExists tx objectStore hash
-                                pure $! if exists 
-                                    -- The object is already in cache. Do not parse-serialise
-                                    -- anything, just skip it. We are not afraid of possible 
-                                    -- race-conditions here, it's not a problem to double-insert
-                                    -- an object and delete-insert race will never happen in practice
-                                    -- since deletion is never concurrent with insertion.
-                                    then HashExists rpkiURL hash
-                                    else
-                                        case first ParseE $ readObject rpkiURL decoded of 
-                                            Left e   -> ObjectParsingProblem rpkiURL (VErr e)
-                                            Right ro -> Success rpkiURL (toStorableObject ro)
+                        Right (DecodedBase64 decoded) -> do                             
+                            case validateSizeOfBS validationConfig decoded of 
+                                Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)
+                                Right _ -> 
+                                    liftIO $ roTx objectStore $ \tx -> do     
+                                        let hash = U.sha256s decoded  
+                                        exists <- DB.hashExists tx objectStore hash
+                                        pure $! if exists 
+                                            -- The object is already in cache. Do not parse-serialise
+                                            -- anything, just skip it. We are not afraid of possible 
+                                            -- race-conditions here, it's not a problem to double-insert
+                                            -- an object and delete-insert race will never happen in practice
+                                            -- since deletion is never concurrent with insertion.
+                                            then HashExists rpkiURL hash
+                                            else
+                                                case first ParseE $ readObject rpkiURL decoded of 
+                                                    Left e   -> ObjectParsingProblem rpkiURL (VErr e)
+                                                    Right ro -> Success rpkiURL (toStorableObject ro)
                                         
         saveStorable _ _ (Left (e, uri)) _ = 
             inSubVPath (unURI uri) $ appWarn e             
@@ -369,6 +373,7 @@ saveSnapshot appContext repoUri notification snapshotContent = do
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
     bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
+    validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
 
 
@@ -385,7 +390,7 @@ saveDelta :: Storage s =>
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
-            -> LBS.ByteString 
+            -> BS.ByteString 
             -> ValidatorT IO ()
 saveDelta appContext repoUri notification currentSerial deltaContent = do        
     worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
@@ -442,15 +447,19 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                     else    
                         pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
 
-            readBlob uri encodedb64 = case U.parseRpkiURL $ unURI uri of
-                Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
-                Right rpkiURL -> do 
-                    case first RrdpE $ decodeBase64 encodedb64 rpkiURL of
-                        Left e   -> DecodingTrouble rpkiURL (VErr e)
-                        Right (DecodedBase64 decoded) -> 
-                            case first ParseE $ readObject rpkiURL decoded of 
-                                Left e   -> ObjectParsingProblem rpkiURL (VErr e)
-                                Right ro -> Success rpkiURL (toStorableObject ro)            
+            readBlob uri encodedb64 = 
+                case U.parseRpkiURL $ unURI uri of
+                    Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                    Right rpkiURL -> do 
+                        case decodeBase64 encodedb64 rpkiURL of
+                            Left e -> DecodingTrouble rpkiURL (VErr $ RrdpE e)
+                            Right (DecodedBase64 decoded) -> do 
+                                case validateSizeOfBS validationConfig decoded of 
+                                    Left e  -> ObjectParsingProblem rpkiURL (VErr $ ValidationE e)
+                                    Right _ ->                                 
+                                        case readObject rpkiURL decoded of 
+                                            Left e   -> ObjectParsingProblem rpkiURL (VErr $ ParseE e)
+                                            Right ro -> Success rpkiURL (toStorableObject ro)                     
 
         saveStorable objectStore tx r _ = 
           case r of 
@@ -529,9 +538,10 @@ saveDelta appContext repoUri notification currentSerial deltaContent = do
                     
                                                                                   
 
-    logger          = appContext ^. typed @AppLogger           
-    cpuParallelism  = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
-    bottleneck      = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
+    logger           = appContext ^. typed @AppLogger           
+    cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+    bottleneck       = appContext ^. typed @AppBottleneck . #cpuBottleneck                      
+    validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
 
 addedObject, deletedObject :: Monad m => ValidatorT m ()

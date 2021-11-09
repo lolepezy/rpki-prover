@@ -59,12 +59,34 @@ data RrdpConf = RrdpConf {
 data ManifestProcessing = RFC6486_Strict | RFC6486
     deriving stock (Show, Eq, Ord, Generic)
 
-data ValidationConfig = ValidationConfig {
+data ValidationConfig = ValidationConfig {    
     revalidationInterval           :: Seconds,
     rrdpRepositoryRefreshInterval  :: Seconds,
-    rsyncRepositoryRefreshInterval :: Seconds,    
+    rsyncRepositoryRefreshInterval :: Seconds,
+
+    -- Used mainly for testing and doesn't really make sense
+    -- in a production environment    
     dontFetch                      :: Bool,
-    manifestProcessing             :: ManifestProcessing
+    
+    manifestProcessing             :: ManifestProcessing,
+
+    -- Maximal object tree depth measured in number of CAs
+    maxCertificatePathDepth        :: Int,
+
+    -- How many objects we allow in the tree for one TA.
+    -- There needs to be some finite number to limit total
+    -- tree validation and prevent DOS attacks.
+    maxTotalTreeSize               :: Int,
+
+    -- How many different repositories we allow to add
+    -- during one TA top-down validation
+    maxTaRepositories              :: Int,
+
+    -- Maximal allowed size of an individual object 
+    maxObjectSize                  :: Integer,
+
+    -- Manimal allowed size of an individual object 
+    minObjectSize                  :: Integer
 } deriving stock (Show, Eq, Ord, Generic)
 
 data HttpApiConfig = HttpApiConfig {
@@ -103,7 +125,12 @@ defaultConfig = Config {
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         dontFetch                      = False,
-        manifestProcessing             = RFC6486
+        manifestProcessing             = RFC6486,
+        maxCertificatePathDepth        = 32,
+        maxTotalTreeSize               = 5_000_000,
+        maxObjectSize                  = 32 * 1024 * 1024,
+        minObjectSize                  = 32,
+        maxTaRepositories              = 1000
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -113,7 +140,7 @@ defaultConfig = Config {
     cacheLifeTime             = Seconds $ 60 * 60 * 72,
     oldVersionsLifetime       = Seconds $ 60 * 60 * 10,
     storageCompactionInterval = Seconds $ 60 * 60 * 24,
-    lmdbSize                  = Size $ 8 * 1024 * 1024 * 1024
+    lmdbSize                  = Size $ 32 * 1024 * 1024 * 1024
 }
 
 defaultRtrConfig :: RtrConfig

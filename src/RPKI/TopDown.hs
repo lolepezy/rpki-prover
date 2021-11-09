@@ -60,16 +60,22 @@ import           RPKI.Metrics
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext s = TopDownContext {    
-        verifiedResources    :: Maybe (VerifiedRS PrefixesAndAsns),    
-        taName               :: TaName,         
-        now                  :: Now,
-        worldVersion         :: WorldVersion,
-        validManifests       :: TVar (Map AKI Hash),
-        visitedHashes        :: TVar (Set Hash),
-        repositoryProcessing :: RepositoryProcessing
+        verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),    
+        taName                  :: TaName,         
+        now                     :: Now,
+        worldVersion            :: WorldVersion,
+        validManifests          :: TVar (Map AKI Hash),
+        visitedHashes           :: TVar (Set Hash),
+        repositoryProcessing    :: RepositoryProcessing,
+        currentPathDepth        :: Int,
+        startingRepositoryCount :: Int,
+        interruptedByLimit      :: TVar Limited
     }
     deriving stock (Generic)
 
+
+data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
+    deriving stock (Show, Eq, Ord, Generic)
 
 data TopDownResult = TopDownResult {
         vrps          :: Set Vrp,
@@ -77,7 +83,7 @@ data TopDownResult = TopDownResult {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup TopDownResult   
-    deriving Monoid    via GenericMonoid TopDownResult
+    deriving Monoid    via GenericMonoid TopDownResult       
 
 
 fromValidations :: ValidationState -> TopDownResult
@@ -94,8 +100,11 @@ newTopDownContext :: MonadIO m =>
 newTopDownContext worldVersion taName now certificate repositoryProcessing = 
     liftIO $ atomically $ do    
         let verifiedResources = Just $ createVerifiedResources certificate        
-        visitedHashes     <- newTVar mempty
-        validManifests    <- newTVar mempty        
+        let currentPathDepth = 0        
+        startingRepositoryCount <- fmap repositoryCount $ readTVar $ repositoryProcessing ^. #publicationPoints  
+        visitedHashes          <- newTVar mempty
+        validManifests         <- newTVar mempty                
+        interruptedByLimit     <- newTVar CanProceed
         pure $ TopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
@@ -107,6 +116,24 @@ createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
     VerifiedRS $ toPrefixesAndAsns $ withRFC certificate resources
 
+
+verifyLimit :: STM Bool -> TVar Limited -> STM Limited
+verifyLimit hitTheLimit limit = do 
+    z <- readTVar limit
+    case z of 
+        CanProceed -> do 
+            h <- hitTheLimit
+            if h then do
+                writeTVar limit FirstToHitLimit
+                pure FirstToHitLimit
+            else 
+                pure CanProceed
+        FirstToHitLimit -> do 
+            writeTVar limit AlreadyReportedLimit
+            pure AlreadyReportedLimit
+        AlreadyReportedLimit -> 
+            pure AlreadyReportedLimit
+            
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TA starting from their TALs.  
@@ -136,7 +163,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         rs <- forConcurrently tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
             logInfo_ logger [i|Validated #{getTaName tal}, got #{length vrps} VRPs, took #{elapsed}ms|]
-            pure r    
+            pure r
 
         -- save publication points state    
         mapException (AppException . storageError) $
@@ -171,11 +198,9 @@ validateTA appContext tal worldVersion repositoryProcessing = do
                 setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
                 pure vrps
 
-    case r of 
-        (Left e, vs) -> 
-            pure $ TopDownResult mempty vs
-        (Right vrps, vs) ->            
-            pure $ TopDownResult vrps vs
+    pure $ case r of 
+        (Left _,     vs) -> TopDownResult mempty vs
+        (Right vrps, vs) -> TopDownResult vrps vs
   where
 
     taContext = newValidatorPath $ unTaName $ getTaName tal        
@@ -229,9 +254,9 @@ validateFromTACert :: Storage s =>
                     Located CerObject ->                     
                     ValidatorT IO (Set Vrp)
 validateFromTACert 
-    appContext@AppContext {..} 
+    appContext
     topDownContext@TopDownContext { .. } 
-    initialRepos@(PublicationPointAccess initialAccess) 
+    initialRepos@(PublicationPointAccess taPublicationPoints) 
     taCert 
     = do  
     
@@ -242,7 +267,7 @@ validateFromTACert
         -- in `#publicationPoints` with the status 'Pending'
         liftIO $ atomically $ modifyTVar' 
                     (repositoryProcessing ^. #publicationPoints)
-                    (\pubPoints -> foldr mergePP pubPoints initialAccess) 
+                    (\pubPoints -> foldr mergePP pubPoints taPublicationPoints) 
         
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
@@ -289,37 +314,91 @@ validateCaCertificate
     topDownContext@TopDownContext {..} 
     certificate = do          
     
-    if appContext ^. typed @Config . typed @ValidationConfig . #dontFetch 
-        -- Don't add anything with the pending repositories
-        -- Just expect all the objects to be already cached        
-        then validateThisCertAndGoDown 
-        else 
-            case getPublicationPointsFromCertObject (certificate ^. #payload) of            
-                Left e         -> appError $ ValidationE e
-                Right ppAccess -> do                    
-                    fetches <- fetchPPWithFallback appContext repositoryProcessing now ppAccess                                   
-                    if anySuccess fetches                    
-                        then validateThisCertAndGoDown                            
-                        else do                             
-                            fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
-                                Never       -> pure mempty
-                                AtLeastOnce -> validateThisCertAndGoDown
-  where    
-    -- Here we do the following
-    -- 
-    --  1) get the latest manifest (latest by the validatory period)
-    --  2) find CRL on it
-    --  3) make sure they both are valid
-    --  4) go through the manifest children and either 
-    --     + validate them as signed objects
-    --     + or valdiate them recursively as CA certificates
-    -- 
-    -- If anything falled, try to fetch previously latest cached 
-    -- valid manifest and repeat (2) - (4) for it.
+    let validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
-    -- Everything else is either extra checks or metrics.
-    -- 
+    -- First check if we have reached some limit for the total depth of the CA tree
+    -- it's total size of the number of repositories. 
+
+    -- Check and report for the maximal tree depth
+    let treeDepthLimit = (
+            pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
+            do 
+                logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum tree depth is reached.|]
+                vError $ CertificatePathTooDeep 
+                            (getLocations certificate) 
+                            (validationConfig ^. #maxCertificatePathDepth)
+            )
+
+    -- Check and report for the maximal number of objects in the tree
+    let visitedObjectCountLimit = (
+            (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes,
+            do 
+                logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total object number in the tree is reached.|]
+                vError $ TreeIsTooBig 
+                            (getLocations certificate) 
+                            (validationConfig ^. #maxTotalTreeSize)
+            )
+
+    -- Check and report for the maximal increase in the repository number
+    let repositoryCountLimit = (
+            do 
+                pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+                pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
+            do 
+                logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total new repository count is reached.|]
+                vError $ TooManyRepositories 
+                            (getLocations certificate) 
+                            (validationConfig ^. #maxTaRepositories)
+            )
+                
+    let actuallyValidate = 
+            if validationConfig ^. #dontFetch 
+                -- Don't add anything with the pending repositories
+                -- Just expect all the objects to be already cached        
+                then validateThisCertAndGoDown 
+                else 
+                    case getPublicationPointsFromCertObject (certificate ^. #payload) of            
+                        Left e         -> vError e
+                        Right ppAccess -> do                    
+                            fetches <- fetchPPWithFallback appContext repositoryProcessing now ppAccess                                   
+                            if anySuccess fetches                    
+                                then validateThisCertAndGoDown                            
+                                else do                             
+                                    fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
+                                        Never       -> pure mempty
+                                        AtLeastOnce -> validateThisCertAndGoDown
+
+    -- This is to make sure that the error of hitting a limit
+    -- is reported only by the thread that first hits it
+    let checkAndReport (condition, report) nextOne = do
+            z <- liftIO $ atomically $ verifyLimit condition interruptedByLimit
+            case z of 
+                CanProceed           -> nextOne
+                FirstToHitLimit      -> report
+                AlreadyReportedLimit -> pure mempty
+
+    checkAndReport treeDepthLimit 
+            $ checkAndReport visitedObjectCountLimit 
+            $ checkAndReport repositoryCountLimit
+            $ actuallyValidate
+
+  where    
+
     validateThisCertAndGoDown = do            
+        -- Here we do the following
+        -- 
+        --  1) get the latest manifest (latest by the validatory period)
+        --  2) find CRL on it
+        --  3) make sure they both are valid
+        --  4) go through the manifest children and either 
+        --     + validate them as signed objects
+        --     + or valdiate them recursively as CA certificates
+        -- 
+        -- If anything falled, try to fetch previously latest cached 
+        -- valid manifest and repeat (2) - (4) for it.
+
+        -- Everything else is either extra checks or metrics.
+        --         
         let childrenAki    = toAKI $ getSKI certificate
         let certLocations = getLocations certificate        
         
@@ -598,9 +677,9 @@ validateCaCertificate
                                     Validated validCert <- validateResourceCert 
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
-                            let childTopDownContext = topDownContext { 
-                                    verifiedResources = Just childVerifiedResources 
-                                }                            
+                            let childTopDownContext = topDownContext 
+                                    & #verifiedResources .~ (Just childVerifiedResources)  
+                                    & #currentPathDepth %~ (+ 1)                            
                             validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
 
                 embedState validationState

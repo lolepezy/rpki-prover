@@ -68,6 +68,8 @@ import           RPKI.Store.Base.LMDB hiding (getEnv)
 
 import RPKI.RRDP.Types
 
+import RPKI.Rsync (getFileSize)
+
 import qualified RPKI.Store.MakeLmdb as Lmdb
 import RPKI.Store.AppLmdbStorage
 
@@ -88,8 +90,10 @@ testSnapshotLoad = do
             (Left e, x) -> do 
                 putStrLn $ "Error: " <> show e        
 
-            (Right appContext, _) -> do 
-                snapshotContent <- readB "../tmp/test-data/snapshot.xml"
+            (Right appContext, _) -> do
+                let fileName =  "../tmp/test-data/snapshot.xml"
+                fileSize <- Size . fromIntegral <$> getFileSize fileName
+                snapshotContent <- readB fileName fileSize
                 logDebug_ logger [i|Starting |]        
                 let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (RrdpSerial 673)
                 void $ forever $ do 
