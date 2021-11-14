@@ -29,28 +29,16 @@ data AppState = AppState {
 newAppState :: IO AppState
 newAppState = do        
     atomically $ AppState <$> 
-                    -- newTVar (WorldState (instantToVersion instant) NewVersion) <*>
                     newTVar Nothing <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
                     pure Nothing
 
--- 
--- updateWorldVersion :: AppState -> IO WorldVersion
--- updateWorldVersion AppState {..} = do
---     Now now <- thisInstant    
---     let wolrdVersion = instantToVersion now
---     -- atomically $ writeTVar world $ WorldState wolrdVersion NewVersion
---     atomically $ writeTVar world $ Just wolrdVersion
---     pure wolrdVersion
-
 setCurrentVersion :: AppState -> WorldVersion -> STM ()
 setCurrentVersion AppState {..} = writeTVar world . Just
 
-
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
-
 
 completeVersion :: AppState -> WorldVersion -> Vrps -> Maybe Slurm -> STM Vrps
 completeVersion AppState {..} worldVersion vrps slurm = do 
@@ -85,12 +73,6 @@ waitForNewVersion AppState {..} knownWorldVersion = do
             | w > knownWorldVersion -> (w,) <$> readTVar filteredVrps
             | otherwise             -> retry
         _                           -> retry
-
--- waitForCompleteVersion :: AppState -> STM WorldVersion
--- waitForCompleteVersion AppState {..} =
---     readTVar world >>= \case
---             WorldState w CompletedVersion -> pure w
---             _                             -> retry
 
 waitForVersion :: AppState -> STM WorldVersion
 waitForVersion AppState {..} =

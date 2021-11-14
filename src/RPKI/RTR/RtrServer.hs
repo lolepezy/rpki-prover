@@ -48,22 +48,17 @@ import           RPKI.Time
 import           RPKI.Util                        (convert, hexL, ifJust)
 
 import           RPKI.AppState
-import           RPKI.AppTypes
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
 import           System.Timeout                   (timeout)
 import           Time.Types
 
-
-defaultRtrPort :: Num p => p
-defaultRtrPort = 8283
-
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
-runRtrServer :: Storage s => AppContext s -> RtrConfig -> Maybe WorldVersion -> IO ()
-runRtrServer AppContext {..} RtrConfig {..} currentWorldVersion = do         
+runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
+runRtrServer AppContext {..} RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
     rtrState <- newTVarIO Nothing
@@ -113,10 +108,8 @@ runRtrServer AppContext {..} RtrConfig {..} currentWorldVersion = do
 
         -- If a version is recovered from the storage after the start, 
         -- use it, otherwise wait until some complete version is generated        
-        worldVersion <- 
-            case currentWorldVersion of 
-                Nothing              -> atomically $ waitForVersion appState           
-                Just restoredVersion -> pure restoredVersion    
+        logInfo_ logger [i|RTR server: waiting for the first complete world version.|] 
+        worldVersion <- atomically $ waitForVersion appState                
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat

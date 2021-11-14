@@ -60,11 +60,11 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Fill in the current state if it's not too old.
     -- It is useful in case of restarts.        
-    currentWorldVersion <- loadStoredAppState appContext
+    loadStoredAppState appContext
 
     -- Run RTR server thread when rtrConfig is present in the AppConfig.  
     -- If not needed it will the an noop.  
-    rtrServer <- initRtrIfNeeded currentWorldVersion   
+    rtrServer <- initRtrIfNeeded
 
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics
@@ -99,10 +99,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         [i|Generated first world version #{newVersion}.|]                
                     Just oldWorldVersion ->
                         [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]                                
-                atomically $ do 
-                    writeCQueue globalQueue (validateAllTAs prometheusMetrics newVersion)     
-                    setCurrentVersion appState newVersion       
-                    pure Repeat
+                atomically $ writeCQueue globalQueue (validateAllTAs prometheusMetrics newVersion)                        
+                pure Repeat
 
             atomically $ closeCQueue globalQueue
 
@@ -150,7 +148,9 @@ runWorkflow appContext@AppContext {..} tals = do
                         putVrps tx database' vrps worldVersion
                         ifJust maybeSlurm $ putSlurm tx database' worldVersion
                         completeWorldVersion tx database' worldVersion
-                        slurmedVrps <- atomically $ completeVersion appState worldVersion vrps maybeSlurm
+                        slurmedVrps <- atomically $ do 
+                            setCurrentVersion appState worldVersion
+                            completeVersion appState worldVersion vrps maybeSlurm
                         pure (vrps, slurmedVrps)
 
         cacheGC worldVersion = do            
@@ -188,12 +188,12 @@ runWorkflow appContext@AppContext {..} tals = do
                     (r, elapsed) <- timedMS f
                     onRight r elapsed
 
-        initRtrIfNeeded currentWorldVersion = 
+        initRtrIfNeeded = 
             case rtrConfig of 
                 Nothing -> do 
                     pure $ \_ -> pure ()
                 Just rtrConfig' -> 
-                    pure $ \_ -> runRtrServer appContext rtrConfig' currentWorldVersion
+                    pure $ \_ -> runRtrServer appContext rtrConfig'
 
 
         -- Write an action to the global queue with given interval.
