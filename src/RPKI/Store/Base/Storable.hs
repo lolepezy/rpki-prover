@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
 
@@ -17,14 +18,17 @@ import Data.Monoid.Generic
 
 import RPKI.Config
 
-newtype Storable = Storable { unStorable :: BS.ByteString }
-    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
+newtype Storable = Storable { unStorable :: BS.ByteString }    
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (NFData, Serialise)
 
 newtype SValue = SValue { unSValue :: Storable }
-    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (NFData, Serialise)
 
 newtype SKey = SKey { unSKey :: Storable }
-    deriving (Show, Eq, Ord, Generic, NFData, Serialise)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (NFData, Serialise)
 
 -- Strictness here is important
 data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e

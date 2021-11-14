@@ -132,7 +132,7 @@ runHttpApi appContext = let
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
 createAppContext cliOptions@CLIOptions{..} logger = do
 
-    (tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
+    (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
     let defaults = defaultConfig
 
@@ -197,6 +197,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
         appBottlenecks = appBottlenecks,
         logger = logger,        
         config = defaults 
+                & #rootDirectory .~ root
                 & #talDirectory .~ tald 
                 & #tmpDirectory .~ tmpd 
                 & #cacheDirectory .~ cached 
@@ -235,7 +236,7 @@ initialiseFS cliOptions logger = do
                     logInfoM logger [i|Initialising FS layout...|]
 
                     -- this one checks that "tals" exists
-                    (tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
+                    (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
 
                     let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
                     let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
@@ -274,7 +275,7 @@ adding --agree-with-arin-rpa option.
 fsLayout :: CLIOptions Unwrapped
         -> AppLogger
         -> TALsHandle
-        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath)
+        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cli logger talsHandle = do
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let root = getRootrDirectory cli
@@ -291,7 +292,7 @@ fsLayout cli logger talsHandle = do
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
     cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir
-    pure (tald, rsyncd, tmpd, cached)
+    pure (rootDir, tald, rsyncd, tmpd, cached)
 
 
 orDefault :: Maybe a -> a -> a

@@ -23,6 +23,7 @@ data Parallelism = Parallelism {
 } deriving stock (Show, Eq, Ord, Generic)
 
 data Config = Config {
+    rootDirectory             :: FilePath,
     talDirectory              :: FilePath,
     tmpDirectory              :: FilePath,
     cacheDirectory            :: FilePath,
@@ -108,6 +109,7 @@ setCpuCount = setNumCapabilities . fromIntegral
 
 defaultConfig :: Config
 defaultConfig = Config {
+    rootDirectory = "",
     talDirectory = "",
     tmpDirectory = "",
     cacheDirectory = "",

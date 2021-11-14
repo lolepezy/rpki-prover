@@ -3,6 +3,7 @@
 {-# LANGUAGE StrictData         #-}
 
 module RPKI.AppTypes where
+    
 import           Codec.Serialise
 import           Data.Int
 import           GHC.Generics

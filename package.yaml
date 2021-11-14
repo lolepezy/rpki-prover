@@ -52,6 +52,7 @@ dependencies:
 - directory
 - filepath
 - file-embed-lzma
+- FindBin
 - generic-lens
 - generic-monoid
 - hexpat
