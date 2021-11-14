@@ -37,6 +37,7 @@ import Time.Types
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -83,12 +84,14 @@ fValidationState (FetchFailure _ vs) = vs
 fetchPPWithFallback :: (MonadIO m, Storage s) => 
                             AppContext s                         
                         -> RepositoryProcessing
+                        -> WorldVersion
                         -> Now 
                         -> PublicationPointAccess  
                         -> ValidatorT m [FetchResult]
 fetchPPWithFallback 
     appContext@AppContext {..}     
     repositoryProcessing
+    worldVersion
     now 
     ppAccess = do 
         parentPath <- askEnv         
@@ -202,7 +205,7 @@ fetchPPWithFallback
     fetchPP parentPath repo rpkiUrl = do         
         let launchFetch = async $ do               
                 let repoPath = validatorSubPath (toText rpkiUrl) parentPath
-                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext repo                
+                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
 
@@ -243,9 +246,13 @@ fetchPPWithFallback
 -- Returned repository has all the metadata updated (in case of RRDP session and serial)
 --
 fetchRepository :: (Storage s) => 
-                    AppContext s -> Repository -> ValidatorT IO Repository
+                    AppContext s 
+                -> WorldVersion
+                -> Repository 
+                -> ValidatorT IO Repository
 fetchRepository 
     appContext@AppContext {..}
+    worldVersion
     repo = do
         logInfoM logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
@@ -261,7 +268,7 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (updateObjectForRsyncRepository appContext r)
+                                    (updateObjectForRsyncRepository appContext worldVersion r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
@@ -275,7 +282,7 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (updateObjectForRrdpRepository appContext r)
+                                    (updateObjectForRrdpRepository appContext worldVersion r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 

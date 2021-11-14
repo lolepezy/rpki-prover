@@ -8,10 +8,10 @@
 
 module RPKI.Workflow where
 
-import           Control.Concurrent.Async.Lifted
-import           Control.Concurrent.Lifted
+import           Control.Concurrent.Async
+import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
 
 import           Control.Lens                     ((^.), (%~), (&))
@@ -56,15 +56,15 @@ runWorkflow appContext@AppContext {..} tals = do
     -- operations and such should not run at the same time with validation 
     -- (not only for consistency reasons, but we also want to avoid locking 
     -- the DB for long time by a cleanup process).
-    globalQueue <- newCQueueIO 10
-
-    -- Run RTR server thread when rtrConfig is present in the AppConfig.  
-    -- If not needed it will the an noop.  
-    rtrServer <- initRtrIfNeeded
+    globalQueue <- newCQueueIO 10    
 
     -- Fill in the current state if it's not too old.
     -- It is useful in case of restarts.        
-    loadStoredAppState appContext
+    currentWorldVersion <- loadStoredAppState appContext
+
+    -- Run RTR server thread when rtrConfig is present in the AppConfig.  
+    -- If not needed it will the an noop.  
+    rtrServer <- initRtrIfNeeded currentWorldVersion   
 
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics
@@ -91,12 +91,17 @@ runWorkflow appContext@AppContext {..} tals = do
         -- periodically update world version and generate command 
         -- to re-validate all TAs
         generateNewWorldVersion prometheusMetrics globalQueue = do            
-            periodically revalidationInterval $ do 
-                oldWorldVersion <- getWorldVerionIO appState
-                newWorldVersion <- updateWorldVerion appState
-                logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]                
+            periodically revalidationInterval $ do                 
+                newVersion <- newWorldVersion      
+                z <- getWorldVerionIO appState          
+                logDebug_ logger $ case z of
+                    Nothing -> 
+                        [i|Generated first world version #{newVersion}.|]                
+                    Just oldWorldVersion ->
+                        [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]                                
                 atomically $ do 
-                    writeCQueue globalQueue (validateAllTAs prometheusMetrics newWorldVersion)                    
+                    writeCQueue globalQueue (validateAllTAs prometheusMetrics newVersion)     
+                    setCurrentVersion appState newVersion       
                     pure Repeat
 
             atomically $ closeCQueue globalQueue
@@ -145,14 +150,13 @@ runWorkflow appContext@AppContext {..} tals = do
                         putVrps tx database' vrps worldVersion
                         ifJust maybeSlurm $ putSlurm tx database' worldVersion
                         completeWorldVersion tx database' worldVersion
-                        slurmedVrps <- atomically $ completeCurrentVersion appState vrps maybeSlurm
+                        slurmedVrps <- atomically $ completeVersion appState worldVersion vrps maybeSlurm
                         pure (vrps, slurmedVrps)
 
-        cacheGC worldVersion = do
-            let now = versionToMoment worldVersion
+        cacheGC worldVersion = do            
             database' <- readTVarIO database 
             executeOrDie 
-                (cleanObjectCache database' $ versionIsOld now cacheLifeTime)
+                (cleanObjectCache database' $ versionIsOld (versionToMoment worldVersion) cacheLifeTime)
                 (\CleanUpResult {..} elapsed -> 
                     logInfo_ logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <> 
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms|])
@@ -184,19 +188,19 @@ runWorkflow appContext@AppContext {..} tals = do
                     (r, elapsed) <- timedMS f
                     onRight r elapsed
 
-        initRtrIfNeeded = 
+        initRtrIfNeeded currentWorldVersion = 
             case rtrConfig of 
                 Nothing -> do 
                     pure $ \_ -> pure ()
                 Just rtrConfig' -> 
-                    pure $ \_ -> runRtrServer appContext rtrConfig' 
+                    pure $ \_ -> runRtrServer appContext rtrConfig' currentWorldVersion
 
 
         -- Write an action to the global queue with given interval.
         generatePeriodicTask delay interval action globalQueue = do
             threadDelay delay
             periodically interval $ do
-                worldVersion <- getWorldVerionIO appState
+                worldVersion <- getOrCreateWorldVerion appState
                 atomically $ do 
                     closed <- isClosedCQueue globalQueue
                     unless closed $ 
@@ -207,31 +211,35 @@ runWorkflow appContext@AppContext {..} tals = do
 
 -- | Load the state corresponding to the last completed version.
 -- 
-loadStoredAppState :: Storage s => AppContext s -> IO ()
+loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do     
     Now now' <- thisInstant    
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
     database' <- readTVarIO database 
     roTx database' $ \tx -> 
         getLastCompletedVersion database' tx >>= \case 
-            Nothing          -> pure ()
+            Nothing          -> pure Nothing
 
             Just lastVersion             
-                | versionIsOld now' revalidationInterval lastVersion ->                     
+                | versionIsOld now' revalidationInterval lastVersion -> do
                     logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used, will re-run validation.|]
+                    pure Nothing
 
-                | otherwise -> do 
+                | otherwise -> do                     
                     (vrps, elapsed) <- timedMS $ do             
                         -- TODO It takes 350-400ms, which is pretty strange, profile it.           
                         !vrps  <- getVrps tx database' lastVersion
                         !slurm <- slurmForVersion tx database' lastVersion
                         --
                         ifJust vrps $ \vrps' -> void $ 
-                                atomically $ completeCurrentVersion appState vrps' slurm
+                                atomically $ do 
+                                    setCurrentVersion appState lastVersion
+                                    completeVersion appState lastVersion vrps' slurm
                         pure vrps
                     ifJust vrps $ \v -> 
                         logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
-                                          [i|current state (#{vrpCount v} VRPs), took #{elapsed}ms.|]
+                                        [i|current state (#{vrpCount v} VRPs), took #{elapsed}ms.|]
+                    pure $ Just lastVersion             
                 
 
 -- 

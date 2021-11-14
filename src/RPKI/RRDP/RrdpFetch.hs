@@ -28,6 +28,7 @@ import           System.Mem                       (performGC)
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -258,15 +259,16 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
 -- 
 updateObjectForRrdpRepository :: Storage s => 
                                 AppContext s 
+                            -> WorldVersion         
                             -> RrdpRepository 
                             -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext repository =
+updateObjectForRrdpRepository appContext worldVersion repository =
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
             appContext 
             repository 
-            (saveSnapshot appContext)  
-            (saveDelta appContext)    
+            (saveSnapshot appContext worldVersion)  
+            (saveDelta appContext worldVersion)    
 
 
 {- 
@@ -275,100 +277,95 @@ updateObjectForRrdpRepository appContext repository =
         - another thread reads parsing tasks, waits for them and saves the results into the DB.
 -} 
 saveSnapshot :: Storage s => 
-                AppContext s 
+                AppContext s        
+                -> WorldVersion         
                 -> RrdpURL
                 -> Notification 
                 -> BS.ByteString 
                 -> ValidatorT IO ()
-saveSnapshot appContext repoUri notification snapshotContent = do      
-    -- TODO Bad idea if we are lagging behind, put WorldVersion in the reader?
-    worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
-    doSaveObjects worldVersion 
-  where
-      -- 
-    doSaveObjects worldVersion = do 
-        db <- liftIO $ readTVarIO $ appContext ^. #database
-        let objectStore     = db ^. #objectStore
-        let repositoryStore = db ^. #repositoryStore   
-        (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
-            fromEither $ first RrdpE $ parseSnapshot snapshotContent
+saveSnapshot appContext worldVersion repoUri notification snapshotContent = do              
+    db <- liftIO $ readTVarIO $ appContext ^. #database
+    let objectStore     = db ^. #objectStore
+    let repositoryStore = db ^. #repositoryStore   
+    (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
+        fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
-        let notificationSessionId = notification ^. typed @SessionId
-        when (sessionId /= notificationSessionId) $ 
-            appError $ RrdpE $ SnapshotSessionMismatch sessionId notificationSessionId
+    let notificationSessionId = notification ^. typed @SessionId
+    when (sessionId /= notificationSessionId) $ 
+        appError $ RrdpE $ SnapshotSessionMismatch sessionId notificationSessionId
 
-        let notificationSerial = notification ^. typed @RrdpSerial
-        when (serial /= notificationSerial) $ 
-            appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
+    let notificationSerial = notification ^. typed @RrdpSerial
+    when (serial /= notificationSerial) $ 
+        appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-        let savingTx sessionId serial f = 
-                rwAppTx objectStore $ \tx -> 
-                    f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+    let savingTx sessionId serial f = 
+            rwAppTx objectStore $ \tx -> 
+                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
-        void $ txFoldPipeline 
-                    cpuParallelism
-                    (S.mapM (newStorable objectStore) $ S.each snapshotItems)
-                    (savingTx sessionId serial)
-                    (saveStorable objectStore)
-                    (mempty :: ())
-      where        
+    void $ txFoldPipeline 
+                cpuParallelism
+                (S.mapM (newStorable objectStore) $ S.each snapshotItems)
+                (savingTx sessionId serial)
+                (saveStorable objectStore)
+                (mempty :: ())
+    where        
 
-        newStorable objectStore (SnapshotPublish uri encodedb64) =             
-            if supportedExtension $ U.convert uri 
-                then do 
-                    task <- readBlob `strictTask` bottleneck
-                    pure $ Right (uri, task)
-                else
-                    pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
-          where 
-            readBlob = case U.parseRpkiURL $ unURI uri of
-                Left e -> 
-                    pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+    newStorable objectStore (SnapshotPublish uri encodedb64) =             
+        if supportedExtension $ U.convert uri 
+            then do 
+                task <- readBlob `strictTask` bottleneck
+                pure $ Right (uri, task)
+            else
+                pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
+        where 
+        readBlob = case U.parseRpkiURL $ unURI uri of
+            Left e -> 
+                pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
-                Right rpkiURL ->
-                    case first RrdpE $ U.decodeBase64 encodedb64 rpkiURL of
-                        Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
-                        Right (DecodedBase64 decoded) -> do                             
-                            case validateSizeOfBS validationConfig decoded of 
-                                Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)
-                                Right _ -> 
-                                    liftIO $ roTx objectStore $ \tx -> do     
-                                        let hash = U.sha256s decoded  
-                                        exists <- DB.hashExists tx objectStore hash
-                                        pure $! if exists 
-                                            -- The object is already in cache. Do not parse-serialise
-                                            -- anything, just skip it. We are not afraid of possible 
-                                            -- race-conditions here, it's not a problem to double-insert
-                                            -- an object and delete-insert race will never happen in practice
-                                            -- since deletion is never concurrent with insertion.
-                                            then HashExists rpkiURL hash
-                                            else
-                                                case first ParseE $ readObject rpkiURL decoded of 
-                                                    Left e   -> ObjectParsingProblem rpkiURL (VErr e)
-                                                    Right ro -> Success rpkiURL (toStorableObject ro)
-                                        
-        saveStorable _ _ (Left (e, uri)) _ = 
-            inSubVPath (unURI uri) $ appWarn e             
+            Right rpkiURL ->
+                case first RrdpE $ U.decodeBase64 encodedb64 rpkiURL of
+                    Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
+                    Right (DecodedBase64 decoded) -> do                             
+                        case validateSizeOfBS validationConfig decoded of 
+                            Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)
+                            Right _ -> 
+                                liftIO $ roTx objectStore $ \tx -> do     
+                                    let hash = U.sha256s decoded  
+                                    exists <- DB.hashExists tx objectStore hash
+                                    pure $! if exists 
+                                        -- The object is already in cache. Do not parse-serialise
+                                        -- anything, just skip it. We are not afraid of possible 
+                                        -- race-conditions here, it's not a problem to double-insert
+                                        -- an object and delete-insert race will never happen in practice
+                                        -- since deletion is never concurrent with insertion.
+                                        then HashExists rpkiURL hash
+                                        else
+                                            case first ParseE $ readObject rpkiURL decoded of 
+                                                Left e   -> ObjectParsingProblem rpkiURL (VErr e)
+                                                Right ro -> Success rpkiURL (toStorableObject ro)
+                                    
+    saveStorable _ _ (Left (e, uri)) _ = 
+        inSubVPath (unURI uri) $ appWarn e             
 
-        saveStorable objectStore tx (Right (uri, a)) _ =           
-            waitTask a >>= \case     
-                HashExists rpkiURL hash ->
-                    DB.linkObjectToUrl tx objectStore rpkiURL hash
-                UnparsableRpkiURL uri (VWarn (VWarning e)) -> do                    
-                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    inSubVPath (unURI uri) $ appWarn e 
-                DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
-                ObjectParsingProblem rpkiUrl (VErr e) -> do                    
-                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
-                Success rpkiUrl so@StorableObject {..} -> do 
-                    DB.putObject tx objectStore so worldVersion                    
-                    DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
-                    addedObject                     
-                other -> 
-                    logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
+    saveStorable objectStore tx (Right (uri, a)) _ =           
+        waitTask a >>= \case     
+            HashExists rpkiURL hash ->
+                DB.linkObjectToUrl tx objectStore rpkiURL hash
+            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do                    
+                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                inSubVPath (unURI uri) $ appWarn e 
+            DecodingTrouble rpkiUrl (VErr e) -> do
+                logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
+            ObjectParsingProblem rpkiUrl (VErr e) -> do                    
+                logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                inSubVPath (unURI $ getURL rpkiUrl) $ appError e                 
+            Success rpkiUrl so@StorableObject {..} -> do 
+                DB.putObject tx objectStore so worldVersion                    
+                DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
+                addedObject                     
+            other -> 
+                logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
 
     logger         = appContext ^. typed @AppLogger           
     cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
@@ -387,156 +384,153 @@ saveSnapshot appContext repoUri notification snapshotContent = do
 -}
 saveDelta :: Storage s => 
             AppContext s 
+            -> WorldVersion         
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
             -> BS.ByteString 
             -> ValidatorT IO ()
-saveDelta appContext repoUri notification currentSerial deltaContent = do        
-    worldVersion <- liftIO $ getWorldVerionIO $ appContext ^. typed @AppState
-    doSaveObjects worldVersion
-  where
-    doSaveObjects worldVersion = do
-        db <- liftIO $ readTVarIO $ appContext ^. #database
-        let objectStore     = db ^. #objectStore
-        let repositoryStore = db ^. #repositoryStore   
+saveDelta appContext worldVersion repoUri notification currentSerial deltaContent = do                
+    db <- liftIO $ readTVarIO $ appContext ^. #database
+    let objectStore     = db ^. #objectStore
+    let repositoryStore = db ^. #repositoryStore   
 
-        Delta _ sessionId serial deltaItems <- 
-            vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
+    Delta _ sessionId serial deltaItems <- 
+        vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
 
-        let notificationSessionId = notification ^. typed @SessionId
-        when (sessionId /= notificationSessionId) $ 
-            appError $ RrdpE $ DeltaSessionMismatch sessionId notificationSessionId
+    let notificationSessionId = notification ^. typed @SessionId
+    when (sessionId /= notificationSessionId) $ 
+        appError $ RrdpE $ DeltaSessionMismatch sessionId notificationSessionId
 
-        let notificationSerial = notification ^. typed @RrdpSerial
-        when (serial > notificationSerial) $ 
-            appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
+    let notificationSerial = notification ^. typed @RrdpSerial
+    when (serial > notificationSerial) $ 
+        appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
 
-        when (currentSerial /= serial) $
-            appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
-        
-        let savingTx sessionId serial f = 
-                rwAppTx objectStore $ \tx -> 
-                    f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+    when (currentSerial /= serial) $
+        appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
+    
+    let savingTx sessionId serial f = 
+            rwAppTx objectStore $ \tx -> 
+                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
-        -- Propagate exceptions from here, anything that can happen here 
-        -- (storage failure, file read failure) should stop the validation and 
-        -- probably stop the whole program.
-        txFoldPipeline 
-                cpuParallelism
-                (S.mapM newStorable $ S.each deltaItems)
-                (savingTx sessionId serial)
-                (saveStorable objectStore)
-                (mempty :: ())
-      where        
+    -- Propagate exceptions from here, anything that can happen here 
+    -- (storage failure, file read failure) should stop the validation and 
+    -- probably stop the whole program.
+    txFoldPipeline 
+            cpuParallelism
+            (S.mapM newStorable $ S.each deltaItems)
+            (savingTx sessionId serial)
+            (saveStorable objectStore)
+            (mempty :: ())
+    where        
 
-        newStorable item = do 
-            case item of
-                DP (DeltaPublish uri hash encodedb64) -> 
-                    processSupportedTypes uri $ do 
-                        task <- readBlob uri encodedb64 `pureTask` bottleneck
-                        pure $ Right $ maybe (Add uri task) (Replace uri task) hash
-                        
-                DW (DeltaWithdraw uri hash) -> 
-                    processSupportedTypes uri $                     
-                        pure $ Right $ Delete uri hash                    
-          where
-            processSupportedTypes uri f = 
-                if supportedExtension $ U.convert uri 
-                    then f
-                    else    
-                        pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
-
-            readBlob uri encodedb64 = 
-                case U.parseRpkiURL $ unURI uri of
-                    Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
-                    Right rpkiURL -> do 
-                        case decodeBase64 encodedb64 rpkiURL of
-                            Left e -> DecodingTrouble rpkiURL (VErr $ RrdpE e)
-                            Right (DecodedBase64 decoded) -> do 
-                                case validateSizeOfBS validationConfig decoded of 
-                                    Left e  -> ObjectParsingProblem rpkiURL (VErr $ ValidationE e)
-                                    Right _ ->                                 
-                                        case readObject rpkiURL decoded of 
-                                            Left e   -> ObjectParsingProblem rpkiURL (VErr $ ParseE e)
-                                            Right ro -> Success rpkiURL (toStorableObject ro)                     
-
-        saveStorable objectStore tx r _ = 
-          case r of 
-            Left (e, uri)                         -> inSubVPath (unURI uri) $ appWarn e             
-            Right (Add uri task)                  -> addObject objectStore tx uri task 
-            Right (Replace uri task existingHash) -> replaceObject objectStore tx uri task existingHash
-            Right (Delete uri existingHash)       -> deleteObject objectStore tx uri existingHash                                        
-        
-
-        deleteObject objectStore tx uri existingHash = do 
-            existsLocally <- DB.hashExists tx objectStore existingHash
-            if existsLocally
-                -- Ignore withdraws and just use the time-based garbage collection
-                then deletedObject
-                else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
-            
-
-        addObject objectStore tx uri a =
-            waitTask a >>= \case
-                UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
-                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    inSubVPath (unURI uri) $ appWarn e 
-                DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                     
-                ObjectParsingProblem rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
-                Success rpkiUrl so@StorableObject {..} -> do 
-                    let hash' = getHash object
-                    alreadyThere <- DB.hashExists tx objectStore hash'
-                    if alreadyThere 
-                        then 
-                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                        else do                                    
-                            DB.putObject tx objectStore so worldVersion                      
-                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                            addedObject
-                other -> 
-                    logDebugM logger [i|Weird thing happened in `addObject` #{other}.|]
-
-        replaceObject objectStore tx uri a oldHash = do            
-            waitTask a >>= \case
-                UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
-                    logErrorM logger [i|Skipped object #{uri}, error #{e} |]
-                    inSubVPath (unURI uri) $ appWarn e 
-                DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                           
-                ObjectParsingProblem rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
-                    inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
-                Success rpkiUrl so@StorableObject {..} -> do 
-                    oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
-                    if oldOneIsAlreadyThere 
-                        then do 
-                            -- Ignore withdraws and just use the time-based garbage collection
-                            deletedObject
-                        else do 
-                            logErrorM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                            inSubVPath (unURI uri) $ 
-                                appError $ RrdpE $ NoObjectToReplace uri oldHash
-
-                    let hash' = getHash object
-                    newOneIsAlreadyThere <- DB.hashExists tx objectStore hash'
-                    if newOneIsAlreadyThere
-                        then 
-                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                        else do                            
-                            DB.putObject tx objectStore so worldVersion
-                            DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                            addedObject
-
-                other -> 
-                    logDebugM logger [i|Weird thing happened in `replaceObject` #{other}.|]
+    newStorable item = do 
+        case item of
+            DP (DeltaPublish uri hash encodedb64) -> 
+                processSupportedTypes uri $ do 
+                    task <- readBlob uri encodedb64 `pureTask` bottleneck
+                    pure $ Right $ maybe (Add uri task) (Replace uri task) hash
                     
-                                                                                  
+            DW (DeltaWithdraw uri hash) -> 
+                processSupportedTypes uri $                     
+                    pure $ Right $ Delete uri hash                    
+        where
+        processSupportedTypes uri f = 
+            if supportedExtension $ U.convert uri 
+                then f
+                else    
+                    pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
+
+        readBlob uri encodedb64 = 
+            case U.parseRpkiURL $ unURI uri of
+                Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                Right rpkiURL -> do 
+                    case decodeBase64 encodedb64 rpkiURL of
+                        Left e -> DecodingTrouble rpkiURL (VErr $ RrdpE e)
+                        Right (DecodedBase64 decoded) -> do 
+                            case validateSizeOfBS validationConfig decoded of 
+                                Left e  -> ObjectParsingProblem rpkiURL (VErr $ ValidationE e)
+                                Right _ ->                                 
+                                    case readObject rpkiURL decoded of 
+                                        Left e   -> ObjectParsingProblem rpkiURL (VErr $ ParseE e)
+                                        Right ro -> Success rpkiURL (toStorableObject ro)                     
+
+    saveStorable objectStore tx r _ = 
+        case r of 
+        Left (e, uri)                         -> inSubVPath (unURI uri) $ appWarn e             
+        Right (Add uri task)                  -> addObject objectStore tx uri task 
+        Right (Replace uri task existingHash) -> replaceObject objectStore tx uri task existingHash
+        Right (Delete uri existingHash)       -> deleteObject objectStore tx uri existingHash                                        
+    
+
+    deleteObject objectStore tx uri existingHash = do 
+        existsLocally <- DB.hashExists tx objectStore existingHash
+        if existsLocally
+            -- Ignore withdraws and just use the time-based garbage collection
+            then deletedObject
+            else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
+        
+
+    addObject objectStore tx uri a =
+        waitTask a >>= \case
+            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
+                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                inSubVPath (unURI uri) $ appWarn e 
+            DecodingTrouble rpkiUrl (VErr e) -> do
+                logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                     
+            ObjectParsingProblem rpkiUrl (VErr e) -> do
+                logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
+            Success rpkiUrl so@StorableObject {..} -> do 
+                let hash' = getHash object
+                alreadyThere <- DB.hashExists tx objectStore hash'
+                if alreadyThere 
+                    then 
+                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                    else do                                    
+                        DB.putObject tx objectStore so worldVersion                      
+                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                        addedObject
+            other -> 
+                logDebugM logger [i|Weird thing happened in `addObject` #{other}.|]
+
+    replaceObject objectStore tx uri a oldHash = do            
+        waitTask a >>= \case
+            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
+                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+                inSubVPath (unURI uri) $ appWarn e 
+            DecodingTrouble rpkiUrl (VErr e) -> do
+                logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                inSubVPath (unURI $ getURL rpkiUrl) $ appError e                                           
+            ObjectParsingProblem rpkiUrl (VErr e) -> do
+                logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                inSubVPath (unURI $ getURL rpkiUrl) $ appError e 
+            Success rpkiUrl so@StorableObject {..} -> do 
+                oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
+                if oldOneIsAlreadyThere 
+                    then do 
+                        -- Ignore withdraws and just use the time-based garbage collection
+                        deletedObject
+                    else do 
+                        logErrorM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
+                        inSubVPath (unURI uri) $ 
+                            appError $ RrdpE $ NoObjectToReplace uri oldHash
+
+                let hash' = getHash object
+                newOneIsAlreadyThere <- DB.hashExists tx objectStore hash'
+                if newOneIsAlreadyThere
+                    then 
+                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                    else do                            
+                        DB.putObject tx objectStore so worldVersion
+                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
+                        addedObject
+
+            other -> 
+                logDebugM logger [i|Weird thing happened in `replaceObject` #{other}.|]
+                
+                                                                                
 
     logger           = appContext ^. typed @AppLogger           
     cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism

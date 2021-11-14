@@ -48,6 +48,7 @@ import           RPKI.Time
 import           RPKI.Util                        (convert, hexL, ifJust)
 
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
@@ -61,8 +62,8 @@ defaultRtrPort = 8283
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
-runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
-runRtrServer AppContext {..} RtrConfig {..} = do         
+runRtrServer :: Storage s => AppContext s -> RtrConfig -> Maybe WorldVersion -> IO ()
+runRtrServer AppContext {..} RtrConfig {..} currentWorldVersion = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
     rtrState <- newTVarIO Nothing
@@ -108,16 +109,22 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --   - generate the diff, update stored diffs, increment serials, etc. in RtrState 
     --   - send 'notify PDU' to all clients using `broadcastChan`.
     --
-    listenToAppStateUpdates rtrState updateBroadcastChan = do
+    listenToAppStateUpdates rtrState updateBroadcastChan = do        
 
-        -- Wait until a complete world version is generated (or is read from the cache)      
-        worldVersion <- atomically $ waitForCompleteVersion appState            
+        -- If a version is recovered from the storage after the start, 
+        -- use it, otherwise wait until some complete version is generated        
+        worldVersion <- 
+            case currentWorldVersion of 
+                Nothing              -> atomically $ waitForVersion appState           
+                Just restoredVersion -> pure restoredVersion    
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
-        vrps <- readTVarIO (appState ^. #currentVrps)
+        vrps <- readTVarIO (appState ^. #filteredVrps)
         let maxStoredDiffs = 3 * vrpCount vrps
                 
+        logDebug_ logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
+
         atomically $ writeTVar rtrState $ 
                         Just $ newRtrState worldVersion maxStoredDiffs
 
@@ -131,17 +138,17 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         Nothing        -> retry
                         Just rtrState' -> do
                             let knownVersion = rtrState' ^. #lastKnownWorldVersion
-                            (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
+                            (newVersion, newVrps) <- waitForNewVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps)
                 
             database' <- readTVarIO database
 
             previousVrps <- roTx database' $ \tx -> 
-                            getVrps tx database' previousVersion >>= \case 
-                                Nothing   -> pure Set.empty 
-                                Just vrps -> do  
-                                    slurm <- slurmForVersion tx database' previousVersion
-                                    pure $ allVrps $ maybe vrps (`applySlurm` vrps) slurm
+                                getVrps tx database' previousVersion >>= \case 
+                                    Nothing   -> pure Set.empty 
+                                    Just vrps1 -> do  
+                                        slurm <- slurmForVersion tx database' previousVersion
+                                        pure $ allVrps $ maybe vrps1 (`applySlurm` vrps1) slurm
 
             let newVrpsFlattened = allVrps newVrps
             let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 
