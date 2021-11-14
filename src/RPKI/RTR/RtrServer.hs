@@ -114,7 +114,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         vrps <- readTVarIO (appState ^. #filteredVrps)
-        let maxStoredDiffs = 3 * vrpCount vrps
+        let maxStoredDiffs = vrpCount vrps
                 
         logDebug_ logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
