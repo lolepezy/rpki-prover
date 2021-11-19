@@ -62,6 +62,7 @@ instance ToJSON VProblem
 instance ToJSON VWarning
 instance ToJSON AppError
 instance ToJSON InitError
+instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON  a => ToJSON (ParseError a)
 instance ToJSON ValidationError

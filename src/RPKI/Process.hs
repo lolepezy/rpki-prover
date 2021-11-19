@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -36,6 +37,7 @@ import           System.Exit
 import           System.Process.Typed
 import           System.Environment.FindBin
 
+import           RPKI.AppContext
 import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -45,9 +47,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
-import           RPKI.TopDown
 
-import           RPKI.AppContext
 import           RPKI.Metrics
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
@@ -56,36 +56,55 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
-import           RPKI.Util (ifJust)
+import           RPKI.Util (ifJust, fmtEx)
 
-
-data SubProcess = RrdpFetch | Validator | Compaction
 
 data SubProcessInput = SubProcessInput Text
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
+data ProcessError = ProcessError Text
 
-runSubProcess :: (Serialise a, Serialise r) => 
+
+runSubProcess :: (Serialise r) => 
                 AppContext s 
-            -> a
+            -> SubProcessParams
             -> [String] 
-            -> IO (r, LBS.ByteString)
+            -> ValidatorT IO (r, LBS.ByteString)
   
-runSubProcess AppContext {..} argument cli = do     
+runSubProcess AppContext {..} argument extraCli = do     
+    let stdin = serialise argument
     let subProcess = 
-            setStdin (byteStringInput $ serialise argument) $             
+            setStdin (byteStringInput stdin) $             
                 proc __Bin__ 
-                    $ [ "--rpki-root-directory",  config ^. typed @Config . #rootDirectory ] <> cli
+                    $  [ "--sub-process", subProcessType argument ]
+                    <> [ "--rpki-root-directory",  config ^. typed @Config . #rootDirectory ] 
+                    <> [ "--cpu-count",           show $ config ^. #parallelism . #cpuCount ] 
+                    <> extraCli
 
-    (exitCode, out, err) <- readProcess subProcess
-    let r = deserialise out
-
+    (exitCode, stdout, stderr) <- fromTry (InternalE . InternalError . fmtEx) 
+                                    $ readProcess subProcess
     case exitCode of  
-        ExitFailure errorCode -> do
-            pure (r, err)
+        ExitFailure errorCode ->
+            appError $ InternalE $ InternalError [i|Exit status #{errorCode}, stderr = #{stderr}$|]  
         ExitSuccess -> do
-            pure (r, err)
+            r <- fromTry (InternalE . InternalError . fmtEx) $ pure $ deserialise stdout
+            pure (r, stderr)    
+    
 
-    pure (r, err)
+data SubProcessParams = RrdpFetch { uri :: RrdpURL }
+                    |  Compaction { from :: FilePath, to :: FilePath }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
+subProcessType :: SubProcessParams -> String
+subProcessType RrdpFetch {..} = "rrdp-fetch"
+subProcessType Compaction {..} = "compaction"
+
+rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
+
+rtsMaxMemory, rtsA, rtsAL :: String -> String
+rtsMaxMemory m = "-M" <> m
+rtsA m = "-A" <> m
+rtsAL m = "-AL" <> m
+rtsN n = "-AL" <> show n

@@ -153,20 +153,11 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
     liftIO $ setCpuCount cpuCount'
-
-    -- BUT: create 2 times more asyncs/tasks than there're capabilities. In most 
-    -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
-    let cpuParallelism = 2 * cpuCount'
-
-    -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
-    -- that many IO operations (http downloads, LMDB reads, etc.) at once.
-    -- 
-    -- TODO There should be distinction between network operations and file/LMDB IO.
-    let ioParallelism = 64
+    let parallelism = defaultParallelism cpuCount'
 
     appBottlenecks <- liftIO $ AppBottleneck <$>
-                        newBottleneckIO cpuParallelism <*>
-                        newBottleneckIO ioParallelism
+                        newBottleneckIO (parallelism ^. #cpuParallelism) <*>
+                        newBottleneckIO (parallelism ^. #ioParallelism)
 
     let rtrConfig = if withRtr
             then Just $ defaultRtrConfig
@@ -201,7 +192,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & #talDirectory .~ tald 
                 & #tmpDirectory .~ tmpd 
                 & #cacheDirectory .~ cached 
-                & #parallelism .~ Parallelism cpuParallelism ioParallelism
+                & #parallelism .~ parallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd

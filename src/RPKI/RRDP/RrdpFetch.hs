@@ -32,6 +32,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Process
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
@@ -48,6 +49,41 @@ import           RPKI.Time
 import qualified RPKI.Util                        as U
 
 
+
+runRrdpFetch :: AppContext s -> RrdpRepository -> ValidatorT IO RrdpRepository
+runRrdpFetch appContext repository = do
+
+    -- Do not allow fetch process to have more than 4 CPUs to avoid memory bloat.
+    let maxCpuPerFetch = 4    
+    let adjustedParallelism = appContext 
+            & typed @Config . typed @Parallelism . #cpuCount 
+            %~ (min maxCpuPerFetch)
+
+    (r, stderr) <- runSubProcess 
+                        adjustedParallelism 
+                        (RrdpFetch $ repository ^. #uri)   
+                        -- these are reasonable heuristics aimed at making RRDP process smaller                     
+                        (rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ])
+    pure r
+
+
+-- | 
+--  Update RRDP repository, actually saving all the objects in the DB.
+--
+-- NOTE: It will update the sessionId and serial of the repository 
+-- in the same transaction it stores the data in.
+-- 
+updateObjectForRrdpRepository :: Storage s => 
+                                AppContext s 
+                            -> RrdpRepository 
+                            -> ValidatorT IO RrdpRepository
+updateObjectForRrdpRepository appContext repository =
+    timedMetric (Proxy :: Proxy RrdpMetric) $ 
+        downloadAndUpdateRRDP 
+            appContext 
+            repository 
+            (saveSnapshot appContext)  
+            (saveDelta appContext)    
 
 -- | 
 --  Update RRDP repository, i.e. do the full cycle
@@ -248,25 +284,6 @@ deltaSerial (DeltaInfo _ _ s) = s
 
 nextSerial :: RrdpSerial -> RrdpSerial
 nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
-
-
--- | 
---  Update RRDP repository, actually saving all the objects in the DB.
---
--- NOTE: It will update the sessionId and serial of the repository 
--- in the same transaction it stores the data in.
--- 
-updateObjectForRrdpRepository :: Storage s => 
-                                AppContext s 
-                            -> RrdpRepository 
-                            -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext repository =
-    timedMetric (Proxy :: Proxy RrdpMetric) $ 
-        downloadAndUpdateRRDP 
-            appContext 
-            repository 
-            (saveSnapshot appContext)  
-            (saveDelta appContext)    
 
 
 {- 

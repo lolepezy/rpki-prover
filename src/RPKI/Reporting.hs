@@ -149,6 +149,11 @@ newtype InitError = InitError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
+newtype InternalError = InternalError Text 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype Semigroup
+
 data SlurmError = SlurmFileError Text |
                   SlurmParseError Text |
                   SlurmValidationError Text
@@ -163,6 +168,7 @@ data AppError = ParseE (ParseError Text) |
                 ValidationE ValidationError |
                 InitE InitError |
                 SlurmE SlurmError |
+                InternalE InternalError |
                 UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
