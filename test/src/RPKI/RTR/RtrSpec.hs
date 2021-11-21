@@ -220,11 +220,11 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
     appState <- newAppState
 
     let update rtrState n m = do 
-            newVersion <- updateWorldVerion appState
+            newVersion <- getOrCreateWorldVerion appState
             diff <- Diff <$> generateVrps n <*> generateVrps m
             pure $! updatedRtrState rtrState newVersion diff
     
-    worldVersion <- getWorldVerionIO appState
+    worldVersion <- getOrCreateWorldVerion appState
     let z = newRtrState worldVersion 10
     let rtrState = z { maxSerialsPerSession = 2, maxTotalDiffSize = 40 }
 

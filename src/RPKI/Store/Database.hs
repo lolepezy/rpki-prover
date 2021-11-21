@@ -346,7 +346,7 @@ deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx 
 completeWorldVersion :: Storage s => 
                         Tx s 'RW -> DB s -> WorldVersion -> IO ()
 completeWorldVersion tx database worldVersion =    
-    putVersion tx database worldVersion CompletedVersion
+    putVersion tx database worldVersion $ VersionState "stub"
 
 
 putMetrics :: (MonadIO m, Storage s) => 
@@ -465,30 +465,26 @@ deleteOldVersions :: (MonadIO m, Storage s) =>
                     m Int
 deleteOldVersions database tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do
-
-    versions <- roTx database $ \tx -> allVersions tx database    
-    let toDelete = 
-            case [ version | (version, CompletedVersion) <- versions ] of
-                []       -> 
-                    case versions of 
-                        []  -> []
-                        [_] -> [] -- don't delete the last one
-                        _ -> filter (tooOld . fst) versions            
-
-                finished -> 
-                    -- delete all too old except for the last finished one    
-                    let lastFinished = List.maximum finished 
-                    in filter (( /= lastFinished) . fst) $ filter (tooOld . fst) versions
     
-    rwTx database $ \tx -> 
-        forM_ toDelete $ \(worldVersion, _) -> do
-            deleteVersion tx database worldVersion
-            deleteValidations tx database worldVersion
-            deleteVRPs tx database worldVersion            
-            deleteMetrics tx database worldVersion
-            deleteSlurms tx database worldVersion
-    
-    pure $! List.length toDelete
+        let toDelete versions = 
+                case versions of            
+                    []       -> []                
+                    finished -> 
+                        -- delete all too old except for the last finished one    
+                        let lastFinished = List.maximum finished 
+                        in filter ( /= lastFinished) $ filter tooOld versions
+
+        rwTx database $ \tx -> do 
+            versions <- map fst <$> allVersions tx database    
+            let toDel = toDelete versions
+            forM_ toDel $ \worldVersion -> do
+                deleteVersion tx database worldVersion
+                deleteValidations tx database worldVersion
+                deleteVRPs tx database worldVersion            
+                deleteMetrics tx database worldVersion
+                deleteSlurms tx database worldVersion
+        
+            pure $! List.length toDel
 
 
 -- | Find the latest completed world version 
@@ -496,8 +492,8 @@ deleteOldVersions database tooOld =
 getLastCompletedVersion :: (Storage s) => 
                         DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
 getLastCompletedVersion database tx = do 
-        vs <- allVersions tx database
-        pure $! case [ v | (v, CompletedVersion) <- vs ] of         
+        vs <- map fst <$> allVersions tx database
+        pure $! case vs of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
 

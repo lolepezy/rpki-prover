@@ -26,6 +26,7 @@ import           Data.Tuple.Strict
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -82,11 +83,13 @@ rsyncRpkiObject AppContext{..} uri = do
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: Storage s => 
-                                  AppContext s ->
-                                  RsyncRepository ->     
-                                  ValidatorT IO RsyncRepository
+                                  AppContext s
+                               -> WorldVersion 
+                               -> RsyncRepository 
+                               -> ValidatorT IO RsyncRepository
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
+    worldVersion
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
@@ -108,7 +111,7 @@ updateObjectForRsyncRepository
             ExitSuccess -> do 
                 -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
                 -- they will hold too much files open.            
-                loadRsyncRepository appContext uri destination objectStore
+                loadRsyncRepository appContext worldVersion uri destination objectStore
                             `finally` liftIO performGC            
                 pure repo
             ExitFailure errorCode -> do
@@ -124,13 +127,13 @@ updateObjectForRsyncRepository
 -- 
 -- | Is not supposed to throw exceptions.
 loadRsyncRepository :: Storage s =>                         
-                        AppContext s ->
-                        RsyncURL -> 
-                        FilePath -> 
-                        DB.RpkiObjectStore s -> 
-                        ValidatorT IO ()
-loadRsyncRepository AppContext{..} repositoryUrl rootPath objectStore = do       
-    worldVersion <- liftIO $ getWorldVerionIO appState    
+                        AppContext s 
+                    -> WorldVersion 
+                    -> RsyncURL 
+                    -> FilePath 
+                    -> DB.RpkiObjectStore s 
+                    -> ValidatorT IO ()
+loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectStore =    
     void $ bracketChanClosable 
         -- it makes sense to run slightly more tasks because they 
         -- will spend some time waiting for the file IO to finish.

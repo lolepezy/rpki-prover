@@ -271,7 +271,7 @@ validateFromTACert
         
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing now initialRepos    
+        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion now initialRepos    
         
     -- Do the tree descend, gather validation results and VRPs            
     vp <- askEnv
@@ -353,14 +353,14 @@ validateCaCertificate
                 
     let actuallyValidate = 
             if validationConfig ^. #dontFetch 
-                -- Don't add anything with the pending repositories
+                -- Don't do anything with the pending repositories
                 -- Just expect all the objects to be already cached        
                 then validateThisCertAndGoDown 
                 else 
                     case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                         Left e         -> vError e
                         Right ppAccess -> do                    
-                            fetches <- fetchPPWithFallback appContext repositoryProcessing now ppAccess                                   
+                            fetches <- fetchPPWithFallback appContext repositoryProcessing worldVersion now ppAccess                                   
                             if anySuccess fetches                    
                                 then validateThisCertAndGoDown                            
                                 else do                             

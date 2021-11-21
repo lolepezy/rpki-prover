@@ -54,10 +54,6 @@ import           RPKI.Store.Database
 import           System.Timeout                   (timeout)
 import           Time.Types
 
-
-defaultRtrPort :: Num p => p
-defaultRtrPort = 8283
-
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
@@ -108,16 +104,20 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --   - generate the diff, update stored diffs, increment serials, etc. in RtrState 
     --   - send 'notify PDU' to all clients using `broadcastChan`.
     --
-    listenToAppStateUpdates rtrState updateBroadcastChan = do
+    listenToAppStateUpdates rtrState updateBroadcastChan = do        
 
-        -- Wait until a complete world version is generated (or is read from the cache)      
-        worldVersion <- atomically $ waitForCompleteVersion appState            
+        -- If a version is recovered from the storage after the start, 
+        -- use it, otherwise wait until some complete version is generated        
+        logInfo_ logger [i|RTR server: waiting for the first complete world version.|] 
+        worldVersion <- atomically $ waitForVersion appState                
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
-        vrps <- readTVarIO (appState ^. #currentVrps)
-        let maxStoredDiffs = 3 * vrpCount vrps
+        vrps <- readTVarIO (appState ^. #filteredVrps)
+        let maxStoredDiffs = vrpCount vrps
                 
+        logDebug_ logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
+
         atomically $ writeTVar rtrState $ 
                         Just $ newRtrState worldVersion maxStoredDiffs
 
@@ -131,17 +131,17 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         Nothing        -> retry
                         Just rtrState' -> do
                             let knownVersion = rtrState' ^. #lastKnownWorldVersion
-                            (newVersion, newVrps) <- waitForNewCompleteVersion appState knownVersion
+                            (newVersion, newVrps) <- waitForNewVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps)
                 
             database' <- readTVarIO database
 
             previousVrps <- roTx database' $ \tx -> 
-                            getVrps tx database' previousVersion >>= \case 
-                                Nothing   -> pure Set.empty 
-                                Just vrps -> do  
-                                    slurm <- slurmForVersion tx database' previousVersion
-                                    pure $ allVrps $ maybe vrps (`applySlurm` vrps) slurm
+                                getVrps tx database' previousVersion >>= \case 
+                                    Nothing   -> pure Set.empty 
+                                    Just vrps1 -> do  
+                                        slurm <- slurmForVersion tx database' previousVersion
+                                        pure $ allVrps $ maybe vrps1 (`applySlurm` vrps1) slurm
 
             let newVrpsFlattened = allVrps newVrps
             let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 

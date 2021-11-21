@@ -97,7 +97,7 @@ main = do
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
-    worldVersion <- updateWorldVerion appState
+    worldVersion <- newWorldVersion
     talNames <- listTALFiles $ talDirectory config
     let validationContext = newValidatorPath "validation-root"
     (tals, vs) <- runValidatorT validationContext $

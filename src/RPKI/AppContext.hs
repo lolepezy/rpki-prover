@@ -6,7 +6,6 @@ import           Control.Concurrent.STM (TVar)
 import           GHC.Generics
 import           RPKI.AppState
 import           RPKI.Config
-import           RPKI.Repository
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
