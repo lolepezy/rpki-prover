@@ -79,9 +79,9 @@ readSlurmFiles :: [String] -> ValidatorT IO Slurm
 readSlurmFiles slurmFiles = do 
     slurms :: [Slurm] <- 
         forM slurmFiles $ \f -> do
-            s <- fromTry (SlurmE . SlurmFileError . fmtEx) $ LBS.readFile f
+            s <- fromTry (SlurmE . SlurmFileError (Text.pack f) . fmtEx) $ LBS.readFile f
             vHoist $ fromEither 
-                   $ first (SlurmE . SlurmParseError . Text.pack) 
+                   $ first (SlurmE . SlurmParseError (Text.pack f) . Text.pack) 
                    $ Json.eitherDecode s
         
     vHoist $ validateNoOverlaps $ zip slurmFiles slurms
