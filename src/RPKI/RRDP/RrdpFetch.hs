@@ -29,7 +29,6 @@ import           System.Mem                       (performGC)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
-import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
@@ -66,7 +65,8 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
             %~ (min maxCpuPerFetch)
 
     vp <- askEnv
-    (r, stderr) <- runWorker 
+    ((z, vs), stderr) <- 
+                    runWorker 
                         appContext
                         adjustedParallelism 
                         (RrdpFetchParams vp repository)
@@ -75,8 +75,13 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
                         ([ "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri) ] <> 
                         -- these are reasonable heuristics aimed at making RRDP process smaller                     
                         rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ])
-    logDebugM logger $ "Worker's stderr: " <> (decodeUtf8 $ LBS.toStrict stderr)
-    pure r
+    
+    embedState vs
+    case z of 
+        Left e  -> appError e
+        Right r -> do 
+            logDebugM logger $ "Worker's stderr: \n" <> (decodeUtf8 $ LBS.toStrict stderr)    
+            pure r
 
 
 -- | 
@@ -312,6 +317,13 @@ saveSnapshot :: Storage s =>
                 -> BS.ByteString 
                 -> ValidatorT IO ()
 saveSnapshot appContext worldVersion repoUri notification snapshotContent = do              
+
+    -- If we are going for the snapshot we are going to need a lot of CPU
+    -- time, so bump the number of CPUs to the maximum possible values    
+    let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
+    liftIO $ setCpuCount maxCpuAvailable
+    let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
+
     db <- liftIO $ readTVarIO $ appContext ^. #database
     let objectStore     = db ^. #objectStore
     let repositoryStore = db ^. #repositoryStore   
@@ -396,7 +408,7 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
                 logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
 
     logger         = appContext ^. typed @AppLogger           
-    cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+    
     bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 

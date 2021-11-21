@@ -54,17 +54,17 @@ logDebugM logger t = liftIO $ logDebug_ logger t
 
 
 withMainAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withMainAppLogger logLevel f = withLogger logLevel stdout f  
+withMainAppLogger logLevel f = withLogger logLevel (stdout, logTextStdout) f  
 
 withWorkerLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withWorkerLogger logLevel f = withLogger logLevel stderr f  
+withWorkerLogger logLevel f = withLogger logLevel (stderr, logTextStderr) f  
 
-withLogger :: LogLevel -> Handle -> (AppLogger -> LoggerT Text IO a) -> IO a
-withLogger logLevel stream f = do     
+withLogger :: LogLevel -> (Handle, LogAction IO Text) -> (AppLogger -> LoggerT Text IO a) -> IO a
+withLogger logLevel (stream, streamLogger) f = do     
     hSetBuffering stream LineBuffering
     withBackgroundLogger
         defCapacity
-        logTextStdout
+        streamLogger
         (\logg -> usingLoggerT logg $ f $ AppLogger logLevel (fullMessageAction logg))
   where
     fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 

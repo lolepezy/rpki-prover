@@ -12,19 +12,12 @@ module RPKI.Process where
 
 import           Codec.Serialise
 
-import           Control.Concurrent.Lifted
-import           Control.Concurrent.STM
 import           Control.Exception.Lifted
-import           Control.Monad
+import           Control.Monad.IO.Class
 
 import           Control.Lens                     ((^.), (%~), (&))
-import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString.Lazy as LBS
-
-import           Data.Int                         (Int64)
-
-import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           Data.Text                        (Text)
@@ -34,14 +27,11 @@ import           GHC.Generics
 
 import           System.Exit
 import           System.Process.Typed
-import           System.FilePath
 
 import           RPKI.AppContext
-import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
-import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Logging
@@ -49,9 +39,7 @@ import           RPKI.Parallel
 import           RPKI.Store.Database
 
 import           RPKI.Metrics
-import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
-import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.Base.LMDB
@@ -66,7 +54,7 @@ import           RPKI.Util (ifJust, fmtEx)
 data ProcessError = ProcessError Text
 
 
-runWorker :: (Serialise r) => 
+runWorker :: (Serialise r, Show r) => 
             AppContext s -> 
                 Config
             -> WorkerParams            
@@ -80,16 +68,26 @@ runWorker AppContext {..} config1 argument worldVersion extraCli = do
             setStdin (byteStringInput stdin) $             
                 proc binaryToRun $  [ "--worker" ] <> extraCli
 
-    logDebugM logger [i|worker = #{worker}|]
+    logDebugM logger [i|Running worker: #{worker}|]    
 
-    (exitCode, stdout, stderr) <- fromTry (InternalE . InternalError . fmtEx) 
-                                    $ readProcess worker
-    case exitCode of  
-        ExitFailure errorCode ->
-            appError $ InternalE $ InternalError [i|Exit status #{errorCode}, stderr = #{stderr}$|]  
-        ExitSuccess -> do
-            r <- fromTry (InternalE . InternalError . fmtEx) $ pure $ deserialise stdout
-            pure (r, stderr)
+    z <- liftIO $ try $ readProcess worker
+    case z of 
+        Left (e :: SomeException) -> 
+            complain [i|Worker failed with #{fmtEx e}|]              
+        Right (exitCode, stdout, stderr) ->                             
+            case exitCode of  
+                ExitFailure errorCode -> do 
+                    complain [i|Worker exited with code = #{errorCode}|]                    
+                ExitSuccess -> 
+                    case deserialiseOrFail stdout of 
+                        Left e -> 
+                            complain [i|Failed to deserialise stdout, #{e}, stdout = #{stdout}|]                             
+                        Right r -> 
+                            pure (r, stderr)
+  where
+    complain message = do 
+        logErrorM logger message
+        appError $ InternalE $ InternalError message
     
 
 data WorkerParams = RrdpFetchParams { 

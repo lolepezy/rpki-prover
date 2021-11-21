@@ -136,8 +136,8 @@ setCpuCount = setNumCapabilities . fromIntegral
 -- that many IO operations (http downloads, LMDB reads, etc.) at once.
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
-defaultParallelism :: Natural -> Parallelism
-defaultParallelism cpus = Parallelism cpus (2 * cpus) 64
+makeParallelism :: Natural -> Parallelism
+makeParallelism cpus = Parallelism cpus (2 * cpus) 64
 
 defaultConfig :: Config
 defaultConfig = Config {
@@ -146,7 +146,7 @@ defaultConfig = Config {
     talDirectory = "",
     tmpDirectory = "",
     cacheDirectory = "",
-    parallelism = defaultParallelism 2,
+    parallelism = makeParallelism 2,
     rsyncConf = RsyncConf {
         rsyncRoot    = "",
         rsyncTimeout = 7 * 60

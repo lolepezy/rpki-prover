@@ -183,7 +183,7 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
     liftIO $ setCpuCount cpuCount'
-    let parallelism = defaultParallelism cpuCount'
+    let parallelism = makeParallelism cpuCount'
 
     appBottlenecks <- liftIO $ AppBottleneck <$>
                         newBottleneckIO (parallelism ^. #cpuParallelism) <*>
@@ -372,16 +372,16 @@ getRootDirectory CLIOptions{..} =
         s  -> Just $ Prelude.last s
 
 
--- This it running worker processes
+-- This is for running worker processes
 executeWork :: Storage s => 
                 WorkerParams 
             -> AppContext s 
             -> WorldVersion
             -> IO ()
-executeWork argument appContext worldVersion = do 
+executeWork argument appContext@AppContext {..} worldVersion = do 
     case argument of
         RrdpFetchParams {..} -> do 
-            z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository
+            z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository            
             LBS.hPut stdout $ serialise z
 
 
@@ -402,7 +402,7 @@ readWorkerContext cliOptions@CLIOptions{..} logger = do
     database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
 
     let cpuCount' = fromMaybe getRtsCpuCount cpuCount
-    let parallelism = defaultParallelism cpuCount'
+    let parallelism = makeParallelism cpuCount'
 
     appBottlenecks <- liftIO $ AppBottleneck <$>
                         newBottleneckIO (parallelism ^. #cpuParallelism) <*>
