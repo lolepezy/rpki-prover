@@ -12,7 +12,7 @@ import Control.Monad (when)
 import Control.Monad.IO.Class
 
 import GHC.Stack (callStack)
-import System.IO (BufferMode (..), hSetBuffering, stdout)
+import System.IO (BufferMode (..), Handle, hSetBuffering, stdout, stderr)
 
 
 class Logger logger where
@@ -53,9 +53,15 @@ logInfoM logger t  = liftIO $ logInfo_ logger t
 logDebugM logger t = liftIO $ logDebug_ logger t
 
 
-withAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withAppLogger logLevel f = do     
-    hSetBuffering stdout LineBuffering
+withMainAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
+withMainAppLogger logLevel f = withLogger logLevel stdout f  
+
+withWorkerLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
+withWorkerLogger logLevel f = withLogger logLevel stderr f  
+
+withLogger :: LogLevel -> Handle -> (AppLogger -> LoggerT Text IO a) -> IO a
+withLogger logLevel stream f = do     
+    hSetBuffering stream LineBuffering
     withBackgroundLogger
         defCapacity
         logTextStdout
@@ -67,4 +73,4 @@ withAppLogger logLevel f = do
     formatRichMessage _ (maybe "" showTime -> time) Msg{..} =
         showSeverity msgSeverity
         <> time            
-        <> msgText        
+        <> msgText           

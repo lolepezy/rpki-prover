@@ -117,7 +117,7 @@ parseSnapshot bs = runST $ do
     let snapshotPublishes = do
             ps <- (lift . readSTRef) publishes
             pure $ map (\(uri, base64) -> 
-                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ removeSpaces base64))
+                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ trim base64))
                         $ reverse ps
 
     let snapshot = Snapshot <$>
@@ -190,7 +190,7 @@ parseDelta bs = runST $ do
                     Left  (uri, hash) -> 
                         DW $ DeltaWithdraw (URI $ convert uri) hash                
                     Right (uri, hash, base64) -> 
-                        DP $ DeltaPublish (URI $ convert uri) hash (EncodedBase64 $ removeSpaces base64))
+                        DP $ DeltaPublish (URI $ convert uri) hash (EncodedBase64 $ trim base64))
                     $ reverse is
 
 

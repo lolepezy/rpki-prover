@@ -14,8 +14,10 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
-import           Data.Text (Text)
+import           Data.Text (Text, unpack)
+import           Data.Text.Encoding
 import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
@@ -51,19 +53,24 @@ import qualified RPKI.Util                        as U
 
 
 runRrdpFetch :: AppContext s -> RrdpRepository -> ValidatorT IO RrdpRepository
-runRrdpFetch appContext repository = do
+runRrdpFetch appContext@AppContext {..} repository = do
 
     -- Do not allow fetch process to have more than 4 CPUs to avoid memory bloat.
     let maxCpuPerFetch = 4    
-    let adjustedParallelism = appContext 
-            & typed @Config . typed @Parallelism . #cpuCount 
+    let adjustedParallelism = (appContext ^. typed @Config)
+            & typed @Parallelism . #cpuCount
             %~ (min maxCpuPerFetch)
 
-    (r, stderr) <- runSubProcess 
+    vp <- askEnv
+    (r, stderr) <- runWorker 
+                        appContext
                         adjustedParallelism 
-                        (RrdpFetch $ repository ^. #uri)   
+                        (RrdpFetchParams vp repository)
+                        -- this is for humans to read in `top` or `ps`                        
+                        ([ "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri) ] <> 
                         -- these are reasonable heuristics aimed at making RRDP process smaller                     
-                        (rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ])
+                        rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ])
+    logDebugM logger $ "Worker's stderr: " <> (decodeUtf8 $ LBS.toStrict stderr)
     pure r
 
 

@@ -8,6 +8,8 @@
 
 module Main where
 
+import           Codec.Serialise
+
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent.STM (readTVarIO)
@@ -22,7 +24,7 @@ import           Control.Exception.Lifted
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
-import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.Text                        as Text
 
 import           Data.Hourglass
@@ -40,8 +42,10 @@ import qualified Network.Wai.Handler.Warp         as Warp
 
 import           System.IO (hPutStrLn, stderr)
 import           System.Directory
+import           System.Exit
 import           System.Environment
 import           System.FilePath                  ((</>))
+import           System.IO (stdin, stdout)
 
 import           Options.Generic
 
@@ -62,19 +66,24 @@ import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
 import           RPKI.SLURM.SlurmProcessing
 
+import           RPKI.RRDP.RrdpFetch
+
+import           RPKI.Process
 import           RPKI.TAL
-import           RPKI.Util               (convert, fmtEx)
+import           RPKI.Util               (convert, fmtEx, trimL)
 import           RPKI.Workflow
 
 main :: IO ()
-main = do
+main = do    
     cliOptions :: CLIOptions Unwrapped <- unwrapRecord
         "RPKI prover, relying party software for RPKI"
+    inProcess cliOptions
 
+
+mainProcess cliOptions = do 
     withLogLevel cliOptions $ \logLevel ->
-        -- load config file and apply command line options    
-        withAppLogger logLevel $ \logger -> liftIO $ do
-
+        withMainAppLogger logLevel $ \logger -> liftIO $ do
+            logDebug_ logger [i|Main process.|]
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -92,6 +101,26 @@ main = do
                                 (runHttpApi appContext')
                                 (runValidatorApp appContext')
 
+inProcess :: CLIOptions Unwrapped -> IO ()
+inProcess cliOptions@CLIOptions{..} =
+    if not (isJust worker)
+        then do             
+            mainProcess cliOptions
+        else do           
+           withLogLevel cliOptions $ \logLevel ->
+                withWorkerLogger logLevel $ \logger -> do 
+                    logDebugM logger [i|Worker, #{cliOptions}.|]
+                    liftIO $ worker1 logger
+  where 
+    worker1 logger = do         
+        (appContext, validations) <- do
+                    runValidatorT (newValidatorPath "worker-create-app-context")
+                        $ readWorkerContext cliOptions logger
+        case appContext of
+            Left e ->
+                logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+            Right (argument, appContext') -> 
+                executeWork argument appContext'                
 
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
@@ -119,7 +148,7 @@ runValidatorApp appContext@AppContext {..} = do
                 closeStorage appContext
     where
         parseTALFromFile talFileName taName = do
-            talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
+            talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
             vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
@@ -182,13 +211,15 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 []         -> appState
                 slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles
 
+    programPath <- liftIO getExecutablePath
     let appContext = AppContext {
         appState = appState',
         database = tvarDatabase,
         appBottlenecks = appBottlenecks,
         logger = logger,        
-        config = defaults 
-                & #rootDirectory .~ root
+        config = defaults               
+                & #programBinaryPath .~ programPath
+                & #rootDirectory .~ root                
                 & #talDirectory .~ tald 
                 & #tmpDirectory .~ tmpd 
                 & #cacheDirectory .~ cached 
@@ -269,7 +300,7 @@ fsLayout :: CLIOptions Unwrapped
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cli logger talsHandle = do
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let root = getRootrDirectory cli
+    let root = getRootDirectory cli
     let rootDir = root `orDefault` (home </> ".rpki")
 
     let message =
@@ -303,14 +334,20 @@ listTALFiles talDirectory = do
     cutOfTalExtension s = List.take (List.length s - 4) s
 
 
+cacheDirN, rsyncDirN, talsDirN, tmpDirN :: FilePath
+cacheDirN = "cache"
+rsyncDirN = "rsync"
+talsDirN  = "tals"
+tmpDirN   = "tmp"
+
 talsDir :: FilePath -> TALsHandle -> IO (Either Text FilePath)
-talsDir root CreateTALs      = createSubDirectoryIfNeeded root "tals"
-talsDir root CheckTALsExists = checkSubDirectory root "tals"
+talsDir root CreateTALs      = createSubDirectoryIfNeeded root talsDirN
+talsDir root CheckTALsExists = checkSubDirectory root talsDirN
 
 rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
-rsyncDir root = createSubDirectoryIfNeeded root "rsync"
-tmpDir root   = createSubDirectoryIfNeeded root "tmp"
-cacheDir root = createSubDirectoryIfNeeded root "cache"
+rsyncDir root = createSubDirectoryIfNeeded root rsyncDirN
+tmpDir root   = createSubDirectoryIfNeeded root tmpDirN
+cacheDir root = createSubDirectoryIfNeeded root cacheDirN
 
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
@@ -327,14 +364,67 @@ createSubDirectoryIfNeeded root sub = do
     unless exists $ createDirectory subDirectory
     pure $ Right subDirectory
 
-getRootrDirectory :: CLIOptions Unwrapped -> Maybe FilePath
-getRootrDirectory CLIOptions{..} =
+getRootDirectory :: CLIOptions Unwrapped -> Maybe FilePath
+getRootDirectory CLIOptions{..} =
     case rpkiRootDirectory of
         [] -> Nothing
         s  -> Just $ Prelude.last s
 
+
+-- This it running worker processes
+executeWork :: Storage s => 
+                WorkerParams 
+            -> AppContext s 
+            -> IO ()
+executeWork argument appContext = do 
+    case argument of
+        RrdpFetchParams {..} -> do 
+            z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext rrdpRepository
+            LBS.hPut stdout $ serialise z
+
+
+readWorkerContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO (WorkerParams, AppLmdbEnv)
+readWorkerContext cliOptions@CLIOptions{..} logger = do
+
+    bs <- liftIO $ LBS.hGetContents stdin
+    let (argument :: WorkerParams, config) = deserialise $  bs
+    
+    logDebugM logger [i|argument = #{argument}.|]
+
+    lmdbEnv <- setupLmdbCache 
+                    UseExisting
+                    logger
+                    (config ^. #cacheDirectory)
+                    (config ^. #lmdbSizeMb)
+
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
+
+    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
+    let parallelism = defaultParallelism cpuCount'
+
+    appBottlenecks <- liftIO $ AppBottleneck <$>
+                        newBottleneckIO (parallelism ^. #cpuParallelism) <*>
+                        newBottleneckIO (parallelism ^. #ioParallelism)        
+
+    appState     <- liftIO newAppState
+    tvarDatabase <- liftIO $ newTVarIO database
+
+    let appContext = AppContext {
+            appState = appState,
+            database = tvarDatabase,
+            appBottlenecks = appBottlenecks,
+            logger = logger,        
+            config = config
+        }   
+    pure (argument, appContext)
+
+
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
+
+    -- It is not documented since it's for internal machinery
+    worker :: wrapped ::: Maybe String,
+
     initialise :: wrapped ::: Bool <?>
         ("If set, the FS layout will be created and TAL files will be downloaded." ),
 

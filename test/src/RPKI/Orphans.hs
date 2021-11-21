@@ -431,6 +431,10 @@ instance Arbitrary InitError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary InternalError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary SlurmError where
     arbitrary = genericArbitrary
     shrink = genericShrink

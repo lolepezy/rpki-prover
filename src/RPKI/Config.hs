@@ -1,9 +1,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StrictData #-}
 
 module RPKI.Config where
+
+import Codec.Serialise
 
 import GHC.Conc
 import Numeric.Natural
@@ -18,88 +22,105 @@ import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
 data Parallelism = Parallelism {
-    cpuCount :: Natural,
-    cpuParallelism :: Natural,
-    ioParallelism :: Natural
-} deriving stock (Show, Eq, Ord, Generic)
+        cpuCount :: Natural,
+        cpuParallelism :: Natural,
+        ioParallelism :: Natural
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 data Config = Config {
-    rootDirectory             :: FilePath,
-    talDirectory              :: FilePath,
-    tmpDirectory              :: FilePath,
-    cacheDirectory            :: FilePath,
-    parallelism               :: Parallelism,
-    rsyncConf                 :: RsyncConf,
-    rrdpConf                  :: RrdpConf,
-    validationConfig          :: ValidationConfig,
-    httpApiConf               :: HttpApiConfig,
-    rtrConfig                 :: Maybe RtrConfig,
-    cacheCleanupInterval      :: Seconds,
-    cacheLifeTime             :: Seconds,
-    oldVersionsLifetime       :: Seconds,
-    storageCompactionInterval :: Seconds,
-    lmdbSizeMb                :: Size,
-    localExceptions           :: [FilePath]
-} deriving stock (Show, Eq, Ord, Generic)
+        programBinaryPath         :: FilePath,
+        rootDirectory             :: FilePath,
+        talDirectory              :: FilePath,
+        tmpDirectory              :: FilePath,
+        cacheDirectory            :: FilePath,
+        parallelism               :: Parallelism,
+        rsyncConf                 :: RsyncConf,
+        rrdpConf                  :: RrdpConf,
+        validationConfig          :: ValidationConfig,
+        httpApiConf               :: HttpApiConfig,
+        rtrConfig                 :: Maybe RtrConfig,
+        cacheCleanupInterval      :: Seconds,
+        cacheLifeTime             :: Seconds,
+        oldVersionsLifetime       :: Seconds,
+        storageCompactionInterval :: Seconds,
+        lmdbSizeMb                :: Size,
+        localExceptions           :: [FilePath]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 data RsyncConf = RsyncConf {
-    rsyncRoot    :: FilePath,
-    rsyncTimeout :: Seconds
-} deriving stock (Show, Eq, Ord, Generic)
+        rsyncRoot    :: FilePath,
+        rsyncTimeout :: Seconds
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 newtype Size = Size Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
+    deriving anyclass (Serialise)
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
 
 data RrdpConf = RrdpConf {
-    tmpRoot     :: FilePath,
-    maxSize     :: Size,
-    rrdpTimeout :: Seconds
-} deriving stock (Show, Eq, Ord, Generic)
+        tmpRoot     :: FilePath,
+        maxSize     :: Size,
+        rrdpTimeout :: Seconds
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 data ManifestProcessing = RFC6486_Strict | RFC6486
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 data ValidationConfig = ValidationConfig {    
-    revalidationInterval           :: Seconds,
-    rrdpRepositoryRefreshInterval  :: Seconds,
-    rsyncRepositoryRefreshInterval :: Seconds,
+        revalidationInterval           :: Seconds,
+        rrdpRepositoryRefreshInterval  :: Seconds,
+        rsyncRepositoryRefreshInterval :: Seconds,
 
-    -- Used mainly for testing and doesn't really make sense
-    -- in a production environment    
-    dontFetch                      :: Bool,
-    
-    manifestProcessing             :: ManifestProcessing,
+        -- Used mainly for testing and doesn't really make sense
+        -- in a production environment    
+        dontFetch                      :: Bool,
+        
+        manifestProcessing             :: ManifestProcessing,
 
-    -- Maximal object tree depth measured in number of CAs
-    maxCertificatePathDepth        :: Int,
+        -- Maximal object tree depth measured in number of CAs
+        maxCertificatePathDepth        :: Int,
 
-    -- How many objects we allow in the tree for one TA.
-    -- There needs to be some finite number to limit total
-    -- tree validation and prevent DOS attacks.
-    maxTotalTreeSize               :: Int,
+        -- How many objects we allow in the tree for one TA.
+        -- There needs to be some finite number to limit total
+        -- tree validation and prevent DOS attacks.
+        maxTotalTreeSize               :: Int,
 
-    -- How many different repositories we allow to add
-    -- during one TA top-down validation
-    maxTaRepositories              :: Int,
+        -- How many different repositories we allow to add
+        -- during one TA top-down validation
+        maxTaRepositories              :: Int,
 
-    -- Maximal allowed size of an individual object 
-    maxObjectSize                  :: Integer,
+        -- Maximal allowed size of an individual object 
+        maxObjectSize                  :: Integer,
 
-    -- Manimal allowed size of an individual object 
-    minObjectSize                  :: Integer
-} deriving stock (Show, Eq, Ord, Generic)
+        -- Manimal allowed size of an individual object 
+        minObjectSize                  :: Integer
+    } 
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 data HttpApiConfig = HttpApiConfig {
-    port :: Word16    
-} deriving stock (Show, Eq, Ord, Generic)
+        port :: Word16    
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 data RtrConfig = RtrConfig {
-    rtrAddress :: String,
-    rtrPort    :: Int16
-} deriving stock (Show, Eq, Ord, Generic)
+        rtrAddress :: String,
+        rtrPort    :: Int16
+    } 
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 getRtsCpuCount :: Natural 
 getRtsCpuCount = fromMaybe 1 $ toNatural numCapabilities
@@ -120,6 +141,7 @@ defaultParallelism cpus = Parallelism cpus (2 * cpus) 64
 
 defaultConfig :: Config
 defaultConfig = Config {
+    programBinaryPath = "rpki-prover",
     rootDirectory = "",
     talDirectory = "",
     tmpDirectory = "",

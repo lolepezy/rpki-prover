@@ -10,10 +10,11 @@ import           Data.Bifunctor
 
 import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
+import qualified Data.ByteString.Lazy.Char8  as LC
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
@@ -48,7 +49,7 @@ unhex hexed =
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
 
-hexL :: BSL.ByteString -> BSL.ByteString
+hexL :: LBS.ByteString -> LBS.ByteString
 hexL = HexLazy.encode    
 
 class ConvertibleAsSomethigString s1 s2 where
@@ -77,6 +78,9 @@ normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
 
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
+
+trimL :: LBS.ByteString -> LBS.ByteString
+trimL = LC.takeWhile (not . isSpace) . LC.dropWhile isSpace
 
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)

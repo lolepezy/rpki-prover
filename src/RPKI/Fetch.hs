@@ -275,7 +275,8 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (updateObjectForRrdpRepository appContext r)
+                                    -- (updateObjectForRrdpRepository appContext r)
+                                    (runRrdpFetch appContext r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 

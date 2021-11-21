@@ -12,7 +12,6 @@ module RPKI.Process where
 
 import           Codec.Serialise
 
-import           Control.Concurrent.Async.Lifted
 import           Control.Concurrent.Lifted
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
@@ -35,7 +34,7 @@ import           GHC.Generics
 
 import           System.Exit
 import           System.Process.Typed
-import           System.Environment.FindBin
+import           System.FilePath
 
 import           RPKI.AppContext
 import           RPKI.AppState
@@ -44,6 +43,7 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
+import           RPKI.Repository
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
@@ -59,47 +59,56 @@ import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust, fmtEx)
 
 
-data SubProcessInput = SubProcessInput Text
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+-- data WorkerInput = WorkerInput Text
+--     deriving stock (Eq, Ord, Show, Generic)
+--     deriving anyclass (Serialise)
 
 data ProcessError = ProcessError Text
 
 
-runSubProcess :: (Serialise r) => 
-                AppContext s 
-            -> SubProcessParams
+runWorker :: (Serialise r) => 
+            AppContext s -> 
+                Config
+            -> WorkerParams            
             -> [String] 
-            -> ValidatorT IO (r, LBS.ByteString)
-  
-runSubProcess AppContext {..} argument extraCli = do     
-    let stdin = serialise argument
-    let subProcess = 
+            -> ValidatorT IO (r, LBS.ByteString)  
+runWorker AppContext {..} config1 argument extraCli = do     
+    let binaryToRun = config1 ^. #programBinaryPath
+    let stdin = serialise (argument, config1)
+    let worker = 
             setStdin (byteStringInput stdin) $             
-                proc __Bin__ 
-                    $  [ "--sub-process", subProcessType argument ]
-                    <> [ "--rpki-root-directory",  config ^. typed @Config . #rootDirectory ] 
-                    <> [ "--cpu-count",           show $ config ^. #parallelism . #cpuCount ] 
-                    <> extraCli
+                proc binaryToRun $  [ "--worker" ] <> extraCli
+
+    logDebugM logger [i|worker = #{worker}|]
 
     (exitCode, stdout, stderr) <- fromTry (InternalE . InternalError . fmtEx) 
-                                    $ readProcess subProcess
+                                    $ readProcess worker
     case exitCode of  
         ExitFailure errorCode ->
             appError $ InternalE $ InternalError [i|Exit status #{errorCode}, stderr = #{stderr}$|]  
         ExitSuccess -> do
             r <- fromTry (InternalE . InternalError . fmtEx) $ pure $ deserialise stdout
-            pure (r, stderr)    
+            pure (r, stderr)
     
 
-data SubProcessParams = RrdpFetch { uri :: RrdpURL }
-                    |  Compaction { from :: FilePath, to :: FilePath }
+data WorkerParams = RrdpFetchParams { 
+                validatorPath :: ValidatorPath, 
+                rrdpRepository :: RrdpRepository 
+            }
+        |  CompactionParams { 
+                from :: FilePath, 
+                to :: FilePath 
+            }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
-subProcessType :: SubProcessParams -> String
-subProcessType RrdpFetch {..} = "rrdp-fetch"
-subProcessType Compaction {..} = "compaction"
+-- workerType :: WorkerParams -> String
+-- workerType RrdpFetchParams {..}  = "rrdp-fetch"
+-- workerType CompactionParams {..} = "compaction"
+
+-- getWorkerType "rrdp-fetch" = Right RrdpFetch
+-- getWorkerType "compaction" = Right Compaction
+-- getWorkerType t            = Left $ "Unknown sub-process: " <> show t
 
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
 
@@ -107,4 +116,6 @@ rtsMaxMemory, rtsA, rtsAL :: String -> String
 rtsMaxMemory m = "-M" <> m
 rtsA m = "-A" <> m
 rtsAL m = "-AL" <> m
-rtsN n = "-AL" <> show n
+
+rtsN :: Int -> String
+rtsN n = "-N" <> show n
