@@ -30,10 +30,13 @@ toMessage = \case
     RrdpE r  -> toRrdpMessage r
     RsyncE r -> toRsyncMessage r
     TAL_E (TALError t) -> t
-    InitE (InitError t) -> t
+    InitE (InitError t) -> t    
     
     StorageE (StorageError t) -> t
     StorageE (DeserialisationError t) -> t
+
+    SlurmE r -> toSlurmMessage r
+    InternalE (InternalError t) -> t
     
     UnspecifiedE context e -> 
         [i|Unspecified error #{context}, details: #{e}.|]
@@ -260,6 +263,12 @@ toValidationMessage = \case
                     List.intersperse "," . 
                     map (\(h, fs) -> Text.pack $ "Hash: " <> show h <> " -> " <> show fs)
 
+
+toSlurmMessage :: SlurmError -> Text
+toSlurmMessage = \case 
+    SlurmFileError file t  -> [i|Failed to read SLURM file #{file}: #{t}.|]
+    SlurmParseError file t -> [i|Failed to parse SLURM file #{file}: #{t}.|]
+    SlurmValidationError t -> [i|Invalid SLURM file(s): #{t}.|]
 
 fmtLocations :: Locations -> Text
 fmtLocations = mconcat . 

@@ -154,8 +154,8 @@ newtype InternalError = InternalError Text
     deriving anyclass Serialise
     deriving newtype Semigroup
 
-data SlurmError = SlurmFileError Text |
-                  SlurmParseError Text |
+data SlurmError = SlurmFileError Text Text |
+                  SlurmParseError Text Text |
                   SlurmValidationError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
