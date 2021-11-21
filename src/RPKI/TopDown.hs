@@ -785,7 +785,7 @@ markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
             pure (Set.size vhs, Map.size vmfts)
 
     logInfo_ logger 
-        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, took #{elapsed}ms.|]
+        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid for TA #{unTaName taName}, took #{elapsed}ms.|]
 
 
 
