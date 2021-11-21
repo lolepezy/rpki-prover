@@ -8,7 +8,7 @@
 module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM           (readTVarIO)
-import           Control.Exception.Lifted         (finally)
+import           Control.Exception.Lifted         (try, finally)
 import           Control.Lens                     ((.~), (%~), (&), (^.))
 import           Control.Monad.Except
 import           Data.Generics.Product.Typed
@@ -64,6 +64,7 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
             & typed @Parallelism . #cpuCount
             %~ (min maxCpuPerFetch)
 
+    let workerId = "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri)
     vp <- askEnv
     ((z, vs), stderr) <- 
                     runWorker 
@@ -72,7 +73,7 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
                         (RrdpFetchParams vp repository)
                         worldVersion
                         -- this is for humans to read in `top` or `ps`                        
-                        ([ "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri) ] <> 
+                        ([ workerId ] <> 
                         -- these are reasonable heuristics aimed at making RRDP process smaller                     
                         rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ])
     
@@ -80,7 +81,10 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
     case z of 
         Left e  -> appError e
         Right r -> do 
-            logDebugM logger $ "Worker's stderr: \n" <> (decodeUtf8 $ LBS.toStrict stderr)    
+            let formattedWorkerLog =             
+                    [i|<worker-log #{workerId}> 
+#{(decodeUtf8 $ LBS.toStrict stderr)}</worker-log>|]                
+            logDebugM logger formattedWorkerLog                
             pure r
 
 
@@ -327,7 +331,7 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
     db <- liftIO $ readTVarIO $ appContext ^. #database
     let objectStore     = db ^. #objectStore
     let repositoryStore = db ^. #repositoryStore   
-    (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
+    (Snapshot _ sessionId serial snapshotItems) <- vHoist $         
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
     let notificationSessionId = notification ^. typed @SessionId
