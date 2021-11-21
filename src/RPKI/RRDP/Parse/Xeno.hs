@@ -8,6 +8,8 @@ import           Control.Monad.ST
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Except
 
+import           Control.Exception.Lifted
+
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 
@@ -24,12 +26,20 @@ import           RPKI.Util
 
 import           RPKI.RRDP.Parse.Common
 
+import           System.IO.Unsafe (unsafePerformIO)
+
+catchExceptions :: Either RrdpError a -> Either RrdpError a
+catchExceptions parser = 
+    unsafePerformIO $ 
+        evaluate parser 
+        `catches` [Handler $ pure . Left . BrokenXml . fmtEx]
+
 
 -- | Parse RRDP notification file from a strict bytestring.
 -- (https://tools.ietf.org/html/rfc8182#section-3.5.1)
 -- 
 parseNotification :: BS.ByteString -> Either RrdpError Notification
-parseNotification bs = runST $ do
+parseNotification bs = catchExceptions $ runST $ do
     deltas       <- newSTRef []
     version      <- newSTRef Nothing
     snapshotUri  <- newSTRef Nothing
@@ -84,7 +94,7 @@ parseNotification bs = runST $ do
 -- (https://tools.ietf.org/html/rfc8182#section-3.5.2)
 --
 parseSnapshot :: BS.ByteString -> Either RrdpError Snapshot
-parseSnapshot bs = runST $ do
+parseSnapshot bs = catchExceptions $ runST $ do
     publishes <- newSTRef []
     sessionId <- newSTRef Nothing
     serial    <- newSTRef Nothing
@@ -117,7 +127,7 @@ parseSnapshot bs = runST $ do
     let snapshotPublishes = do
             ps <- (lift . readSTRef) publishes
             pure $ map (\(uri, base64) -> 
-                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ trim base64))
+                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ removeSpaces base64))
                         $ reverse ps
 
     let snapshot = Snapshot <$>
@@ -133,7 +143,7 @@ parseSnapshot bs = runST $ do
 -- (https://tools.ietf.org/html/rfc8182#section-3.5.3)
 --
 parseDelta :: BS.ByteString -> Either RrdpError Delta
-parseDelta bs = runST $ do
+parseDelta bs = catchExceptions $ runST $ do
     deltaItems <- newSTRef []
     sessionId  <- newSTRef Nothing
     serial     <- newSTRef Nothing
@@ -190,7 +200,7 @@ parseDelta bs = runST $ do
                     Left  (uri, hash) -> 
                         DW $ DeltaWithdraw (URI $ convert uri) hash                
                     Right (uri, hash, base64) -> 
-                        DP $ DeltaPublish (URI $ convert uri) hash (EncodedBase64 $ trim base64))
+                        DP $ DeltaPublish (URI $ convert uri) hash (EncodedBase64 $ removeSpaces base64))
                     $ reverse is
 
 
