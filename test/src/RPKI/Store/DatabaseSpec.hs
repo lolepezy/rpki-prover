@@ -257,7 +257,7 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
     db@DB {..} <- io
     vrs :: Validations <- QC.generate arbitrary      
 
-    world <- getWorldVerionIO =<< newAppState
+    world <- getOrCreateWorldVerion =<< newAppState
 
     rwTx validationsStore $ \tx -> putValidations tx db world vrs
     vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world

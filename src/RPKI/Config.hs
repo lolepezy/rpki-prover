@@ -35,7 +35,7 @@ data Config = Config {
         talDirectory              :: FilePath,
         tmpDirectory              :: FilePath,
         cacheDirectory            :: FilePath,
-        parallelism               :: Parallelism,
+        parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
         validationConfig          :: ValidationConfig,

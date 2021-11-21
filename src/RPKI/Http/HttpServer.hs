@@ -73,14 +73,14 @@ httpApi appContext = genericServe HttpApi {
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
-getVRPValidated appContext = getVRPs appContext (readTVar . (^. #currentVrps))
+getVRPValidated appContext = getVRPs appContext (readTVar . (^. #validatedVrps))
 
 getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
 getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))         
 
 getVRPValidatedRaw :: Storage s => AppContext s -> IO RawCVS
 getVRPValidatedRaw appContext = 
-    rawCSV <$> getVRPs appContext (readTVar . (^. #currentVrps))    
+    rawCSV <$> getVRPs appContext (readTVar . (^. #validatedVrps))    
 
 getVRPSlurmedRaw :: Storage s => AppContext s -> IO RawCVS
 getVRPSlurmedRaw appContext =

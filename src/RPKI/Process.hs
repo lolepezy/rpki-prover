@@ -70,11 +70,12 @@ runWorker :: (Serialise r) =>
             AppContext s -> 
                 Config
             -> WorkerParams            
+            -> WorldVersion            
             -> [String] 
             -> ValidatorT IO (r, LBS.ByteString)  
-runWorker AppContext {..} config1 argument extraCli = do     
+runWorker AppContext {..} config1 argument worldVersion extraCli = do     
     let binaryToRun = config1 ^. #programBinaryPath
-    let stdin = serialise (argument, config1)
+    let stdin = serialise (argument, worldVersion, config1)
     let worker = 
             setStdin (byteStringInput stdin) $             
                 proc binaryToRun $  [ "--worker" ] <> extraCli

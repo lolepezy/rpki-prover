@@ -52,6 +52,7 @@ import           Options.Generic
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -113,20 +114,20 @@ inProcess cliOptions@CLIOptions{..} =
                     liftIO $ worker1 logger
   where 
     worker1 logger = do         
-        (appContext, validations) <- do
+        (z, validations) <- do
                     runValidatorT (newValidatorPath "worker-create-app-context")
                         $ readWorkerContext cliOptions logger
-        case appContext of
+        case z of
             Left e ->
                 logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-            Right (argument, appContext') -> 
-                executeWork argument appContext'                
+            Right (argument, worldVersion, appContext) -> 
+                executeWork argument appContext worldVersion
 
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
-    worldVersion <- updateWorldVerion appState
+    worldVersion <- newWorldVersion
     talNames <- listTALFiles $ talDirectory config
     let validationContext = newValidatorPath "validation-root"
     (tals, vs) <- runValidatorT validationContext $
@@ -375,19 +376,20 @@ getRootDirectory CLIOptions{..} =
 executeWork :: Storage s => 
                 WorkerParams 
             -> AppContext s 
+            -> WorldVersion
             -> IO ()
-executeWork argument appContext = do 
+executeWork argument appContext worldVersion = do 
     case argument of
         RrdpFetchParams {..} -> do 
-            z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext rrdpRepository
+            z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository
             LBS.hPut stdout $ serialise z
 
 
-readWorkerContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO (WorkerParams, AppLmdbEnv)
+readWorkerContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO (WorkerParams, WorldVersion, AppLmdbEnv)
 readWorkerContext cliOptions@CLIOptions{..} logger = do
 
     bs <- liftIO $ LBS.hGetContents stdin
-    let (argument :: WorkerParams, config) = deserialise $  bs
+    let (argument :: WorkerParams, worldVersion, config) = deserialise $  bs
     
     logDebugM logger [i|argument = #{argument}.|]
 
@@ -416,7 +418,7 @@ readWorkerContext cliOptions@CLIOptions{..} logger = do
             logger = logger,        
             config = config
         }   
-    pure (argument, appContext)
+    pure (argument, worldVersion, appContext)
 
 
 -- CLI Options-related machinery
