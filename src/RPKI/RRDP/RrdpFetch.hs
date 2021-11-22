@@ -64,25 +64,28 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
             & typed @Parallelism . #cpuCount
             %~ (min maxCpuPerFetch)
 
+    -- this is for humans to read in `top` or `ps`                        
     let workerId = "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri)
+
+    let arguments = 
+            [ workerId ] <>
+            rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
+
     vp <- askEnv
-    ((z, vs), stderr) <- 
-                    runWorker 
+    (((z, vs), stderr), elapsed) <- 
+                timedMS $ runWorker 
                         appContext
                         adjustedParallelism 
                         (RrdpFetchParams vp repository)
                         worldVersion
-                        -- this is for humans to read in `top` or `ps`                        
-                        ([ workerId ] <> 
-                        -- these are reasonable heuristics aimed at making RRDP process smaller                     
-                        rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ])
-    
+                        arguments                        
     embedState vs
     case z of 
         Left e  -> appError e
         Right r -> do 
             let formattedWorkerLog =             
-                    [i|<worker-log #{workerId}> 
+                    [i|Worker #{workerId}> done, took #{elapsed}ms, 
+<worker-log> 
 #{(decodeUtf8 $ LBS.toStrict stderr)}</worker-log>|]                
             logDebugM logger formattedWorkerLog                
             pure r
