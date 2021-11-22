@@ -1,15 +1,20 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 module RPKI.Logging where
 
+import Codec.Serialise
 import Colog
 
 import Data.Text (Text)
 
 import Control.Monad (when)
 import Control.Monad.IO.Class
+
+import GHC.Generics (Generic)
 
 import GHC.Stack (callStack)
 import System.IO (BufferMode (..), Handle, hSetBuffering, stdout, stderr)
@@ -22,7 +27,8 @@ class Logger logger where
     logDebug_ :: logger -> Text -> IO ()
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
-    deriving (Show, Eq, Ord)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 data AppLogger = AppLogger {
         logLevel :: LogLevel,
@@ -41,6 +47,9 @@ instance Logger AppLogger where
 
     logDebug_ AppLogger {..} s = 
         when (logLevel >= DebugL) $ logWhat D logAction s        
+
+defaultsLogLevel :: LogLevel
+defaultsLogLevel = InfoL
 
 logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
 logWhat sev la textMessage = la <& Msg sev callStack textMessage    

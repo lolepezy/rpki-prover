@@ -18,6 +18,7 @@ import Data.Hourglass
 import Data.Maybe (fromMaybe)
 import Data.Monoid
 
+import RPKI.Logging
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
@@ -29,7 +30,7 @@ data Parallelism = Parallelism {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
 
-data Config = Config {
+data Config = Config {        
         programBinaryPath         :: FilePath,
         rootDirectory             :: FilePath,
         talDirectory              :: FilePath,
@@ -46,7 +47,8 @@ data Config = Config {
         oldVersionsLifetime       :: Seconds,
         storageCompactionInterval :: Seconds,
         lmdbSizeMb                :: Size,
-        localExceptions           :: [FilePath]
+        localExceptions           :: [FilePath],
+        logLevel                  :: LogLevel
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -140,7 +142,7 @@ makeParallelism :: Natural -> Parallelism
 makeParallelism cpus = Parallelism cpus (2 * cpus) 64
 
 defaultConfig :: Config
-defaultConfig = Config {
+defaultConfig = Config {    
     programBinaryPath = "rpki-prover",
     rootDirectory = "",
     talDirectory = "",
@@ -177,7 +179,8 @@ defaultConfig = Config {
     oldVersionsLifetime       = Seconds $ 60 * 60 * 10,
     storageCompactionInterval = Seconds $ 60 * 60 * 24,
     lmdbSizeMb                = Size $ 32 * 1024,
-    localExceptions = []    
+    localExceptions = [],
+    logLevel = defaultsLogLevel
 }
 
 defaultRtrConfig :: RtrConfig

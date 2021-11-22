@@ -12,6 +12,7 @@ import           Codec.Serialise
 
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
+import           Control.Concurrent (threadDelay)
 import           Control.Concurrent.STM (readTVarIO)
 import           Control.Concurrent.STM.TVar (newTVarIO)
 
@@ -46,13 +47,13 @@ import           System.Exit
 import           System.Environment
 import           System.FilePath                  ((</>))
 import           System.IO (stdin, stdout)
+import           System.Posix.Process
 
 import           Options.Generic
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
-import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -71,7 +72,7 @@ import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Process
 import           RPKI.TAL
-import           RPKI.Util               (convert, fmtEx, trimL)
+import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Workflow
 
 main :: IO ()
@@ -93,7 +94,7 @@ mainProcess cliOptions = do
                     -- run the validator
                     (appContext, validations) <- do
                                 runValidatorT (newValidatorPath "initialise")
-                                    $ createAppContext cliOptions logger
+                                    $ createAppContext cliOptions logger logLevel
                     case appContext of
                         Left e ->
                             logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
@@ -107,21 +108,18 @@ inProcess cliOptions@CLIOptions{..} =
     if not (isJust worker)
         then do             
             mainProcess cliOptions
-        else do           
-           withLogLevel cliOptions $ \logLevel ->
-                withWorkerLogger logLevel $ \logger -> do 
-                    logDebugM logger [i|Worker, #{cliOptions}.|]
-                    liftIO $ worker1 logger
-  where 
-    worker1 logger = do         
-        (z, validations) <- do
-                    runValidatorT (newValidatorPath "worker-create-app-context")
-                        $ readWorkerContext cliOptions logger
-        case z of
-            Left e ->
-                logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-            Right (argument, worldVersion, appContext) -> 
-                executeWork argument appContext worldVersion
+        else do         
+            input <- readWorkerInput
+            let logLevel = input ^. typed @Config . #logLevel
+            withWorkerLogger logLevel $ \logger -> liftIO $ do
+                (z, validations) <- do
+                            runValidatorT (newValidatorPath "worker-create-app-context")
+                                $ readWorkerContext input logger
+                case z of
+                    Left e ->                        
+                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                    Right (params, appContext) -> 
+                        executeWork input appContext
 
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
@@ -159,8 +157,8 @@ runHttpApi appContext = let
     in Warp.run httpPort $ httpApi appContext
 
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
-createAppContext cliOptions@CLIOptions{..} logger = do
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
+createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
@@ -240,9 +238,10 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
+                & #logLevel .~ derivedLogLevel
     }
 
-    logInfoM logger [i|Created application context: #{config appContext}|]
+    logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
     pure appContext
 
 
@@ -374,36 +373,42 @@ getRootDirectory CLIOptions{..} =
 
 -- This is for running worker processes
 executeWork :: Storage s => 
-                WorkerParams 
+                WorkerInput 
             -> AppContext s 
-            -> WorldVersion
             -> IO ()
-executeWork argument appContext@AppContext {..} worldVersion = do 
-    case argument of
-        RrdpFetchParams {..} -> do 
-            z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository            
-            LBS.hPut stdout $ serialise z
+executeWork input appContext = 
+    void $ race actualWork suicideCheck 
+  where
+    actualWork = do 
+        case input ^. #params of
+            RrdpFetchParams {..} -> do 
+                z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository            
+                LBS.hPut stdout $ serialise z
+    suicideCheck = 
+        forever $ do
+            parentId <- getParentProcessID            
+            when (parentId /= input ^. #initialParentId) $ 
+                -- current parent process is not the same as we started with, which 
+                -- can only happened if parent exited/killed. Exit the worker as well.
+                exitWith parentDied    
+            threadDelay 500_000
 
 
-readWorkerContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO (WorkerParams, WorldVersion, AppLmdbEnv)
-readWorkerContext cliOptions@CLIOptions{..} logger = do
+readWorkerInput :: (MonadIO m) => m WorkerInput
+readWorkerInput = liftIO $ deserialise <$> LBS.hGetContents stdin        
 
-    bs <- liftIO $ LBS.hGetContents stdin
-    let (argument :: WorkerParams, worldVersion, config) = deserialise $  bs
-    
-    logDebugM logger [i|argument = #{argument}.|]
+readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO (WorkerParams, AppLmdbEnv)
+readWorkerContext input logger = do    
 
     lmdbEnv <- setupLmdbCache 
                     UseExisting
                     logger
-                    (config ^. #cacheDirectory)
-                    (config ^. #lmdbSizeMb)
+                    (input ^. #config . #cacheDirectory)
+                    (input ^. #config . #lmdbSizeMb)
 
     database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
-
-    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
-    let parallelism = makeParallelism cpuCount'
-
+    
+    let parallelism = input ^. #config . #parallelism
     appBottlenecks <- liftIO $ AppBottleneck <$>
                         newBottleneckIO (parallelism ^. #cpuParallelism) <*>
                         newBottleneckIO (parallelism ^. #ioParallelism)        
@@ -416,9 +421,9 @@ readWorkerContext cliOptions@CLIOptions{..} logger = do
             database = tvarDatabase,
             appBottlenecks = appBottlenecks,
             logger = logger,        
-            config = config
+            config = input ^. #config
         }   
-    pure (argument, worldVersion, appContext)
+    pure (input ^. #params, appContext)
 
 
 -- CLI Options-related machinery
@@ -509,7 +514,7 @@ type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
 withLogLevel :: CLIOptions Unwrapped -> (LogLevel -> IO ()) -> IO ()
 withLogLevel CLIOptions{..} f =
     case logLevel of
-        Nothing -> f InfoL
+        Nothing -> f defaultsLogLevel
         Just s  ->
             case Text.toLower $ Text.pack s of
                 "error" -> f ErrorL

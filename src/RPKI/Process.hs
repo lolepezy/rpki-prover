@@ -24,6 +24,8 @@ import           GHC.Generics
 
 import           System.Exit
 import           System.Process.Typed
+import           System.Posix.Types
+import           System.Posix.Process
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -35,16 +37,43 @@ import           RPKI.Logging
 import           RPKI.Util (fmtEx)
 
 
+data WorkerParams = RrdpFetchParams { 
+                validatorPath :: ValidatorPath, 
+                rrdpRepository :: RrdpRepository,
+                worldVersion :: WorldVersion 
+            }
+        |  CompactionParams { 
+                from :: FilePath, 
+                to :: FilePath 
+            }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+
+
+data WorkerInput = WorkerInput {
+        params          :: WorkerParams,
+        config          :: Config,
+        initialParentId :: ProcessID
+    } 
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+
+
+class Worker where
+    launchWorker :: WorkerParams -> IO ()
+
+
 runWorker :: (Serialise r, Show r) => 
             AppContext s -> 
                 Config
-            -> WorkerParams            
-            -> WorldVersion            
+            -> WorkerParams                 
             -> [String] 
             -> ValidatorT IO (r, LBS.ByteString)  
-runWorker appContext config argument worldVersion extraCli = do     
-    let binaryToRun = config ^. #programBinaryPath
-    let stdin = serialise (argument, worldVersion, config)
+runWorker appContext config1 params extraCli = do  
+    thisProcessId <- liftIO $ getProcessID
+
+    let binaryToRun = config1 ^. #programBinaryPath    
+    let stdin = serialise $ WorkerInput params config1 thisProcessId
     let worker = 
             setStdin (byteStringInput stdin) $             
                 proc binaryToRun $ [ "--worker" ] <> extraCli
@@ -70,18 +99,7 @@ runWorker appContext config argument worldVersion extraCli = do
     complain message = do 
         logErrorM logger message
         appError $ InternalE $ InternalError message
-    
 
-data WorkerParams = RrdpFetchParams { 
-                validatorPath :: ValidatorPath, 
-                rrdpRepository :: RrdpRepository 
-            }
-        |  CompactionParams { 
-                from :: FilePath, 
-                to :: FilePath 
-            }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
 
 rtsArguments :: [String] -> [String]
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
@@ -93,3 +111,6 @@ rtsAL m = "-AL" <> m
 
 rtsN :: Int -> String
 rtsN n = "-N" <> show n
+
+parentDied :: ExitCode
+parentDied = ExitFailure 11

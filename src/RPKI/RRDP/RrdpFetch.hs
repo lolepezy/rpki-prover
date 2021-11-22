@@ -76,8 +76,7 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
                 timedMS $ runWorker 
                         appContext
                         adjustedParallelism 
-                        (RrdpFetchParams vp repository)
-                        worldVersion
+                        (RrdpFetchParams vp repository worldVersion)                        
                         arguments                        
     embedState vs
     case z of 
@@ -195,9 +194,9 @@ downloadAndUpdateRRDP
 
     useDeltas sortedDeltas notification = do
         let repoURI = getURL $ repo ^. #uri
-        let message = if minSerial == maxSerial 
-                then [i|#{repoURI}: downloading delta #{minSerial}.|]
-                else [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
+        let message = if minDeltaSerial == maxDeltaSerial 
+                then [i|#{repoURI}: downloading delta #{minDeltaSerial}.|]
+                else [i|#{repoURI}: downloading deltas from #{minDeltaSerial} to #{maxDeltaSerial}.|]
         
         logInfoM logger message
 
@@ -240,10 +239,10 @@ downloadAndUpdateRRDP
             pure (rawContent, serial, deltaUri)
 
         serials = map (^. typed @RrdpSerial) sortedDeltas
-        maxSerial = List.maximum serials
-        minSerial = List.minimum serials
+        maxDeltaSerial = List.maximum serials
+        minDeltaSerial = List.minimum serials
 
-        rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)            
+        rrdpMeta' = Just (notification ^. typed @SessionId, maxDeltaSerial)            
 
 
 data Step
@@ -345,17 +344,17 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-    let savingTx sessionId serial f = 
+    let savingTx serial f = 
             rwAppTx objectStore $ \tx -> 
                 f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
     void $ txFoldPipeline 
                 cpuParallelism
                 (S.mapM (newStorable objectStore) $ S.each snapshotItems)
-                (savingTx sessionId serial)
+                (savingTx serial)
                 (saveStorable objectStore)
                 (mempty :: ())
-    where        
+  where        
 
     newStorable objectStore (SnapshotPublish uri encodedb64) =             
         if supportedExtension $ U.convert uri 
