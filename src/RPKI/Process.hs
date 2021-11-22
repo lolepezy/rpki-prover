@@ -47,13 +47,6 @@ import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust, fmtEx)
 
 
--- data WorkerInput = WorkerInput Text
---     deriving stock (Eq, Ord, Show, Generic)
---     deriving anyclass (Serialise)
-
-data ProcessError = ProcessError Text
-
-
 runWorker :: (Serialise r, Show r) => 
             AppContext s -> 
                 Config
@@ -66,7 +59,7 @@ runWorker AppContext {..} config1 argument worldVersion extraCli = do
     let stdin = serialise (argument, worldVersion, config1)
     let worker = 
             setStdin (byteStringInput stdin) $             
-                proc binaryToRun $  [ "--worker" ] <> extraCli
+                proc binaryToRun $ [ "--worker" ] <> extraCli
 
     logDebugM logger [i|Running worker: #{worker}|]    
 
@@ -100,14 +93,6 @@ data WorkerParams = RrdpFetchParams {
             }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
-
--- workerType :: WorkerParams -> String
--- workerType RrdpFetchParams {..}  = "rrdp-fetch"
--- workerType CompactionParams {..} = "compaction"
-
--- getWorkerType "rrdp-fetch" = Right RrdpFetch
--- getWorkerType "compaction" = Right Compaction
--- getWorkerType t            = Left $ "Unknown sub-process: " <> show t
 
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
 
