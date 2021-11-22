@@ -20,9 +20,6 @@ import           Control.Lens                     ((^.), (%~), (&))
 import qualified Data.ByteString.Lazy as LBS
 import           Data.String.Interpolate.IsString
 
-import           Data.Text                        (Text)
-import qualified Data.Text                        as Text
-
 import           GHC.Generics
 
 import           System.Exit
@@ -35,16 +32,7 @@ import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Logging
-import           RPKI.Parallel
-import           RPKI.Store.Database
-
-import           RPKI.Metrics
-import           RPKI.Store.Base.Storage
-import           RPKI.Time
-
-import           RPKI.Store.Base.LMDB
-import           RPKI.Store.AppStorage
-import           RPKI.Util (ifJust, fmtEx)
+import           RPKI.Util (fmtEx)
 
 
 runWorker :: (Serialise r, Show r) => 
@@ -54,9 +42,9 @@ runWorker :: (Serialise r, Show r) =>
             -> WorldVersion            
             -> [String] 
             -> ValidatorT IO (r, LBS.ByteString)  
-runWorker AppContext {..} config1 argument worldVersion extraCli = do     
-    let binaryToRun = config1 ^. #programBinaryPath
-    let stdin = serialise (argument, worldVersion, config1)
+runWorker appContext config argument worldVersion extraCli = do     
+    let binaryToRun = config ^. #programBinaryPath
+    let stdin = serialise (argument, worldVersion, config)
     let worker = 
             setStdin (byteStringInput stdin) $             
                 proc binaryToRun $ [ "--worker" ] <> extraCli
@@ -78,6 +66,7 @@ runWorker AppContext {..} config1 argument worldVersion extraCli = do
                         Right r -> 
                             pure (r, stderr)
   where
+    logger = appContext ^. #logger
     complain message = do 
         logErrorM logger message
         appError $ InternalE $ InternalError message
@@ -94,6 +83,7 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
+rtsArguments :: [String] -> [String]
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
 
 rtsMaxMemory, rtsA, rtsAL :: String -> String

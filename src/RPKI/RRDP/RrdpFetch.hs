@@ -8,7 +8,7 @@
 module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM           (readTVarIO)
-import           Control.Exception.Lifted         (try, finally)
+import           Control.Exception.Lifted         (finally)
 import           Control.Lens                     ((.~), (%~), (&), (^.))
 import           Control.Monad.Except
 import           Data.Generics.Product.Typed
