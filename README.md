@@ -26,9 +26,11 @@ Current and future work
 
 # Using rpki-prover
 
-`rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enables RTR server that sends VRP updates to the RTR clients.
+Running `rpki-prover --help` gives some reasonable help on the CLI options.
 
-There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Running `rpki-prover --help` gives some help on the CLI options.
+`rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enables RTR server that sends VRP updates to RTR clients.
+
+There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
 
 There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. The awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
 
