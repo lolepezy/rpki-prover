@@ -15,9 +15,7 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
 import           Data.Text (Text, unpack)
-import           Data.Text.Encoding
 import qualified Data.ByteString                  as BS
-import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
@@ -74,7 +72,7 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
     vp <- askEnv
     (((z, vs), stderr), elapsed) <- 
                 timedMS $ runWorker 
-                        appContext
+                        logger
                         adjustedParallelism 
                         (RrdpFetchParams vp repository worldVersion)                        
                         arguments                        
@@ -85,7 +83,7 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
             let formattedWorkerLog =             
                     [i|Worker #{workerId}> done, took #{elapsed}ms, 
 <worker-log> 
-#{(decodeUtf8 $ LBS.toStrict stderr)}</worker-log>|]                
+#{U.textual stderr}</worker-log>|]                
             logDebugM logger formattedWorkerLog                
             pure r
 
@@ -344,9 +342,9 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-    let savingTx serial f = 
-            rwAppTx objectStore $ \tx -> 
-                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+    let savingTx serial' f = 
+            rwAppTx objectStore $ \tx ->
+                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
     void $ txFoldPipeline 
                 cpuParallelism

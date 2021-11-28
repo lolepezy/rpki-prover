@@ -102,7 +102,7 @@ updateObjectForRsyncRepository
         void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             createDirectoryIfMissing True destination
             
-        logDebugM logger [i|Runnning #{rsync}...|]
+        logDebugM logger [i|Runnning #{U.trimS $ show rsync}...|]
         (exitCode, out, err) <- fromTry 
                 (RsyncE . RsyncRunningError . U.fmtEx) $ 
                 readProcess rsync

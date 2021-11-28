@@ -54,6 +54,6 @@ all tx (SMultiMap _ s) = reverse <$> S.foldMu tx s f []
 
 stats :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> IO SStats
-stats tx (SMultiMap _ s) = S.foldMu tx s f (SStats 0 0 0)
+stats tx (SMultiMap _ s) = S.foldMu tx s f (SStats 0 0 0 0)
     where
         f stat skey svalue = pure $! incrementStats stat skey svalue

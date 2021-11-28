@@ -83,7 +83,8 @@ data DBStats = DBStats {
     sequenceStats   :: SStats,
     slurmStats      :: SStats
 } deriving stock (Show, Eq, Generic)
+
 data TotalDBStats = TotalDBStats {
-    dbStats         :: DBStats,
-    total :: SStats    
+    dbStats :: DBStats,
+    total   :: SStats    
 } deriving stock (Show, Eq, Generic)

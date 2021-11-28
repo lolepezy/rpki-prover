@@ -82,6 +82,7 @@ main = do
     inProcess cliOptions
 
 
+mainProcess :: CLIOptions Unwrapped -> IO ()
 mainProcess cliOptions = do 
     withLogLevel cliOptions $ \logLevel ->
         withMainAppLogger logLevel $ \logger -> liftIO $ do
@@ -110,15 +111,15 @@ inProcess cliOptions@CLIOptions{..} =
             mainProcess cliOptions
         else do         
             input <- readWorkerInput
-            let logLevel = input ^. typed @Config . #logLevel
-            withWorkerLogger logLevel $ \logger -> liftIO $ do
+            let logLevel' = input ^. typed @Config . #logLevel
+            withWorkerLogger logLevel' $ \logger -> liftIO $ do
                 (z, validations) <- do
                             runValidatorT (newValidatorPath "worker-create-app-context")
                                 $ readWorkerContext input logger
                 case z of
                     Left e ->                        
                         logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                    Right (params, appContext) -> 
+                    Right appContext -> 
                         executeWork input appContext
 
 
@@ -372,9 +373,8 @@ getRootDirectory CLIOptions{..} =
 
 
 -- This is for running worker processes
-executeWork :: Storage s => 
-                WorkerInput 
-            -> AppContext s 
+executeWork :: WorkerInput 
+            -> AppLmdbEnv 
             -> IO ()
 executeWork input appContext = 
     void $ race actualWork suicideCheck 
@@ -383,6 +383,9 @@ executeWork input appContext =
         case input ^. #params of
             RrdpFetchParams {..} -> do 
                 z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository            
+                LBS.hPut stdout $ serialise z
+            CompactionParams {..} -> do 
+                z <- copyLmdbEnvironment appContext targetLmdbEnv
                 LBS.hPut stdout $ serialise z
     suicideCheck = 
         forever $ do
@@ -397,11 +400,10 @@ executeWork input appContext =
 readWorkerInput :: (MonadIO m) => m WorkerInput
 readWorkerInput = liftIO $ deserialise <$> LBS.hGetContents stdin        
 
-readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO (WorkerParams, AppLmdbEnv)
+readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO AppLmdbEnv
 readWorkerContext input logger = do    
 
-    lmdbEnv <- setupLmdbCache 
-                    UseExisting
+    lmdbEnv <- setupWorkerLmdbCache                     
                     logger
                     (input ^. #config . #cacheDirectory)
                     (input ^. #config . #lmdbSizeMb)
@@ -423,7 +425,7 @@ readWorkerContext input logger = do
             logger = logger,        
             config = input ^. #config
         }   
-    pure (input ^. #params, appContext)
+    pure appContext
 
 
 -- CLI Options-related machinery

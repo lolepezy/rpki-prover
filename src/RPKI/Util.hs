@@ -22,6 +22,7 @@ import           Data.Char
 import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
+import           Data.Text.Encoding          (decodeUtf8)
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -82,6 +83,9 @@ trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
 trimL :: LBS.ByteString -> LBS.ByteString
 trimL = LC.takeWhile (not . isSpace) . LC.dropWhile isSpace
 
+trimS :: String -> String
+trimS = takeWhile (not . isSpace) . dropWhile isSpace
+
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)
 
@@ -139,3 +143,5 @@ decodeBase64 (EncodedBase64 bs) context =
 encodeBase64 :: DecodedBase64 -> EncodedBase64
 encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64.encodeBase64' bs
     
+textual :: LBS.ByteString -> Text
+textual = decodeUtf8 . LBS.toStrict
