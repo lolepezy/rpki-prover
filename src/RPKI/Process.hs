@@ -18,6 +18,8 @@ import           Control.Monad.IO.Class
 import           Control.Lens                     ((^.), (%~), (&))
 
 import qualified Data.ByteString.Lazy as LBS
+import           Data.Text (Text)
+import           Data.String
 import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
@@ -112,3 +114,13 @@ rtsN n = "-N" <> show n
 
 parentDied :: ExitCode
 parentDied = ExitFailure 11
+
+workerLogMessage :: (Show t, Show s, IsString s) => s -> LBS.ByteString -> t -> s
+workerLogMessage workerId stderr elapsed = 
+    let workerLog = 
+            if LBS.null stderr 
+                then "" 
+                else [i|, <worker-log> 
+#{textual stderr}
+</worker-log>|]            
+            in [i|Worker #{workerId} done, took #{elapsed}ms#{workerLog}|]  

@@ -14,7 +14,7 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 
-import           Control.Lens                     ((^.), (%~), (&))
+import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)

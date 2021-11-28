@@ -15,8 +15,6 @@ import           Control.Monad.IO.Class
 
 import           Control.Lens                     ((^.))
 
-import qualified Data.ByteString.Lazy            as LBS
-
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -275,7 +273,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             [ workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
-    ((z, vs), elapsed) <- timedMS $ 
+    ((z, _), elapsed) <- timedMS $ 
                     runValidatorT 
                         (newValidatorPath "lmdb-compaction-worker") $ 
                             runWorker 
@@ -289,11 +287,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             let message = [i|Failed to run compaction worker: #{e}|]
             logError_ logger message            
             throwIO $ AppException $ InternalE $ InternalError message
-        Right (_  :: (), stderr) -> do
-            let workerLog = if LBS.null stderr then "" else 
-                    [i|, <worker-log> 
-#{textual stderr}
-</worker-log>|]            
-            logDebug_ logger [i|Worker #{workerId} done, took #{elapsed}ms#{workerLog}|]                
+        Right (_  :: (), stderr) ->
+            logDebugM logger $ workerLogMessage (convert workerId) stderr elapsed
             
     

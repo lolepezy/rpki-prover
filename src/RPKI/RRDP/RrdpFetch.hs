@@ -80,11 +80,7 @@ runRrdpFetch appContext@AppContext {..} worldVersion repository = do
     case z of 
         Left e  -> appError e
         Right r -> do 
-            let formattedWorkerLog =             
-                    [i|Worker #{workerId}> done, took #{elapsed}ms, 
-<worker-log> 
-#{U.textual stderr}</worker-log>|]                
-            logDebugM logger formattedWorkerLog                
+            logDebugM logger $ workerLogMessage (U.convert workerId) stderr elapsed            
             pure r
 
 
