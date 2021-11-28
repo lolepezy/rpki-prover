@@ -16,9 +16,13 @@ import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.IORef.Lifted
 
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
+import qualified Data.Hashable            as H
+import           Data.Text.Encoding       (encodeUtf8)
 
 import           GHC.Generics
 
@@ -66,7 +70,7 @@ data RpkiObjectStore s = RpkiObjectStore {
     objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
 
     -- Object URL mapping
-    uriToUriKey    :: SMap "uri-to-uri-key" s RpkiURL UrlKey,
+    uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
     uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
     urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
@@ -134,8 +138,8 @@ getByHash_ tx store@RpkiObjectStore {..} h = liftIO $ runMaybeT $ do
             
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> RpkiURL -> m [Located RpkiObject]
-getByUri tx store@RpkiObjectStore {..} uri = liftIO $ do 
-    M.get tx uriToUriKey uri >>= \case 
+getByUri tx store@RpkiObjectStore {..} uri = liftIO $
+    M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
         Nothing -> pure []
         Just uriKey ->         
             fmap catMaybes $ 
@@ -186,9 +190,10 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> Hash
                 -> m ()
 linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do    
+    let safeUrl = makeSafeUrl rpkiURL
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
-        z <- M.get tx uriToUriKey rpkiURL 
-        urlKey <- maybe (saveUrl rpkiURL) pure z                
+        z <- M.get tx uriToUriKey safeUrl 
+        urlKey <- maybe (saveUrl safeUrl) pure z                
         
         M.get tx objectKeyToUrlKeys objectKey >>= \case 
             Nothing -> do 
@@ -199,11 +204,11 @@ linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do
                     M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
                     MM.put tx urlKeyToObjectKey urlKey objectKey
   where
-    saveUrl url = do 
+    saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys
         let urlKey = UrlKey $ ArtificialKey k
-        M.put tx uriToUriKey url urlKey
-        M.put tx uriKeyToUri urlKey url            
+        M.put tx uriToUriKey safeUrl urlKey
+        M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
 
 
@@ -442,7 +447,7 @@ cleanObjectCache DB {..} tooOld = do
                         rwTx objectStore $ \tx ->
                             forM_ quuElems $ \(urlKey, url) -> do 
                                 M.delete tx (uriKeyToUri objectStore) urlKey
-                                M.delete tx (uriToUriKey objectStore) url
+                                M.delete tx (uriToUriKey objectStore) (makeSafeUrl url)
                                 increment deletedURLs
 
             bracketChanClosable 
@@ -665,3 +670,23 @@ data TxRollbackException = TxRollbackException AppError ValidationState
 
 instance Exception TxRollbackException
 
+-- Utils of different sorts
+
+-- | URLs can potentially be much larger than 512 bytes that are allowed as LMDB
+-- keys. So we calculate hash truncate them 
+-- 
+makeSafeUrl :: RpkiURL -> SafeUrlAsKey
+makeSafeUrl u = 
+    let         
+        maxLmdbKeyBytes = 512
+        URI urlText = getURL u        
+        hashBytes = show $ H.hash urlText
+        -- We only keep the first "512 - hash bytes" of the URL
+        maxTxtUrlBytes = maxLmdbKeyBytes - length hashBytes
+
+        bsUrlFull = encodeUtf8 urlText
+        bsUrlKey = BS.concat [
+                        BS.take maxTxtUrlBytes bsUrlFull,
+                        C8.pack hashBytes
+                   ]
+    in SafeUrlAsKey $ toShortBS bsUrlKey
