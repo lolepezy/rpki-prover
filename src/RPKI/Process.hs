@@ -120,7 +120,8 @@ workerLogMessage workerId stderr elapsed =
     let workerLog = 
             if LBS.null stderr 
                 then "" 
-                else [i|, <worker-log> 
+                else [i|, 
+<worker-log> 
 #{textual stderr}
 </worker-log>|]            
             in [i|Worker #{workerId} done, took #{elapsed}ms#{workerLog}|]  
