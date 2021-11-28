@@ -673,8 +673,10 @@ instance Exception TxRollbackException
 -- Utils of different sorts
 
 -- | URLs can potentially be much larger than 512 bytes that are allowed as LMDB
--- keys. So we calculate hash truncate them 
--- 
+-- keys. So we 
+--     - calculate hash 
+--     - truncate the URL so that that truncated version + hash fit into 512 bytes.
+--     - use "truncated URL + hash" as a key
 makeSafeUrl :: RpkiURL -> SafeUrlAsKey
 makeSafeUrl u = 
     let         
