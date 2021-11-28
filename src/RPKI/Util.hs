@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import           Data.Char
+import qualified Data.List                   as List
 import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
@@ -80,11 +81,8 @@ normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
 
-trimL :: LBS.ByteString -> LBS.ByteString
-trimL = LC.takeWhile (not . isSpace) . LC.dropWhile isSpace
-
-trimS :: String -> String
-trimS = takeWhile (not . isSpace) . dropWhile isSpace
+trimmed :: Show a => a -> Text
+trimmed = Text.strip . Text.pack . show
 
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)

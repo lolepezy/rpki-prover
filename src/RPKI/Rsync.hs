@@ -7,7 +7,6 @@
 module RPKI.Rsync where
     
 import           Control.Lens                     ((%~), (&), (+=), (^.))
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -17,7 +16,6 @@ import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.Except
-import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 import           Data.String.Interpolate.IsString
@@ -102,7 +100,7 @@ updateObjectForRsyncRepository
         void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             createDirectoryIfMissing True destination
             
-        logDebugM logger [i|Runnning #{U.trimS $ show rsync}...|]
+        logDebugM logger [i|Runnning #{U.trimmed rsync}...|]
         (exitCode, out, err) <- fromTry 
                 (RsyncE . RsyncRunningError . U.fmtEx) $ 
                 readProcess rsync

@@ -18,7 +18,6 @@ import           Control.Monad.IO.Class
 import           Control.Lens                     ((^.), (%~), (&))
 
 import qualified Data.ByteString.Lazy as LBS
-import           Data.Text (Text)
 import           Data.String
 import           Data.String.Interpolate.IsString
 
@@ -29,7 +28,6 @@ import           System.Process.Typed
 import           System.Posix.Types
 import           System.Posix.Process
 
-import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -122,6 +120,5 @@ workerLogMessage workerId stderr elapsed =
                 then "" 
                 else [i|, 
 <worker-log> 
-#{textual stderr}
-</worker-log>|]            
+#{textual stderr}</worker-log>|]            
             in [i|Worker #{workerId} done, took #{elapsed}ms#{workerLog}|]  
