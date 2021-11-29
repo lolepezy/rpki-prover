@@ -50,11 +50,11 @@ import qualified RPKI.Util                        as U
 
 
 
-runRrdpFetch :: AppContext s 
+runRrdpFetchWorker :: AppContext s 
             -> WorldVersion
             -> RrdpRepository             
             -> ValidatorT IO RrdpRepository
-runRrdpFetch appContext@AppContext {..} worldVersion repository = do
+runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
 
     -- Do not allow fetch process to have more than 4 CPUs to avoid memory bloat.
     let maxCpuPerFetch = 4    
