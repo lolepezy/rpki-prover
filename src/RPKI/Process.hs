@@ -15,7 +15,7 @@ import           Codec.Serialise
 import           Control.Exception.Lifted
 import           Control.Monad.IO.Class
 
-import           Control.Lens                     ((^.), (%~), (&))
+import           Control.Lens ((^.))
 
 import qualified Data.ByteString.Lazy as LBS
 import           Data.String
@@ -34,7 +34,7 @@ import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Logging
-import           RPKI.Util (fmtEx, textual)
+import           RPKI.Util (fmtEx, textual, trimmed)
 
 
 data WorkerParams = RrdpFetchParams { 
@@ -77,7 +77,7 @@ runWorker logger config1 params extraCli = do
             setStdin (byteStringInput stdin) $             
                 proc binaryToRun $ [ "--worker" ] <> extraCli
 
-    logDebugM logger [i|Running worker: #{[ binaryToRun ] <> [ "--worker" ] <> extraCli}|]    
+    logDebugM logger [i|Running worker: #{trimmed worker}|]    
 
     z <- liftIO $ try $ readProcess worker
     case z of 
@@ -117,7 +117,7 @@ workerLogMessage :: (Show t, Show s, IsString s) => s -> LBS.ByteString -> t -> 
 workerLogMessage workerId stderr elapsed = 
     let workerLog = 
             if LBS.null stderr 
-                then "" 
+                then "" :: String
                 else [i|, 
 <worker-log> 
 #{textual stderr}</worker-log>|]            
