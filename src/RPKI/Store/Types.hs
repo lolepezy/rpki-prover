@@ -11,6 +11,7 @@ module RPKI.Store.Types where
 import           Codec.Serialise
 import           Data.Int
 import qualified Data.Set                 as Set
+import qualified Data.ByteString.Short    as BSS
 
 import           GHC.Generics
 import           RPKI.Domain
@@ -42,13 +43,20 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving anyclass (Serialise)
 
 newtype UrlKey = UrlKey ArtificialKey
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 newtype ObjectKey = ObjectKey ArtificialKey
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 newtype ArtificialKey = ArtificialKey Int64
-    deriving (Show, Eq, Ord, Generic, Serialise)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
+
+newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)        
 
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,

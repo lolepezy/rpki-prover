@@ -21,6 +21,8 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
+import           Data.Text.Encoding               (encodeUtf8)
+import qualified Data.ByteString                  as BS
 
 import           GHC.Generics
 
@@ -55,15 +57,6 @@ talCertLocations :: TAL -> Locations
 talCertLocations PropertiesTAL {..} = certificateLocation
 talCertLocations RFC_TAL {..}       = certificateLocations
 
--- getTaName :: TAL -> TaName
--- getTaName tal = case tal of 
---     PropertiesTAL {..} -> maybe (uri2TaName $ pickLocation certificateLocation) TaName caName
---     RFC_TAL {..}       -> uri2TaName $ pickLocation certificateLocations
---     where 
---         uri2TaName u = 
---             let URI t = getURL u
---             in TaName t
-
 getTaName :: TAL -> TaName
 getTaName = (^. #taName)    
 
@@ -77,12 +70,16 @@ newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 -- | Parse TAL object from raw text
 parseTAL :: Text.Text -> Text.Text -> Either TALError TAL
 parseTAL bs taName = 
-    case (parseAsProperties, parseRFC) of
-        (Right t, _)       -> Right t
-        (Left _,  Right t) -> Right t
-        (Left (TALError e1), Left (TALError e2)) -> Left $ TALError $ e1 <> " | " <> e2    
+    case validTaName taName of 
+        Left e -> Left e
+        Right taName' -> 
+            case (parseAsProperties taName', parseRFC taName') of
+                (Right t, _)       -> Right t
+                (Left _,  Right t) -> Right t
+                (Left (TALError e1), Left (TALError e2)) -> 
+                    Left $ TALError $ e1 <> " | " <> e2    
     where
-        parseAsProperties = 
+        parseAsProperties taName' = 
             case Text.lines bs of 
                 [] -> Left $ TALError "Couldn't find newline character."
                 lns -> do     
@@ -97,7 +94,7 @@ parseTAL bs taName =
                         getCertificateLocation properties <*>
                         getPublicKeyInfo properties <*>
                         getPrefetchUris properties <*>     
-                        pure (TaName taName)
+                        pure taName'
             where 
                 -- Lines that are not comments are the ones not startig with '#'
                 nonComments = List.filter $ not . ("#" `Text.isPrefixOf`) . Text.stripStart 
@@ -125,7 +122,7 @@ parseTAL bs taName =
                         Nothing -> Left $ TALError [i|'#{name}' is not defined.|]
                         Just cl -> Right cl
 
-        parseRFC =      
+        parseRFC taName' =      
             case List.span looksLikeUri $ Text.lines bs of        
                 (_, [])        -> Left $ TALError "Empty public key info"
                 (uris, base64) ->
@@ -139,7 +136,16 @@ parseTAL bs taName =
                                 certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
                                     Text.concat $ filter (not . Text.null) $ map Text.strip base64,
-                                taName = TaName taName
+                                taName = taName'
                             }
             where 
                 looksLikeUri s = any (`Text.isPrefixOf` s) ["rsync://", "http://", "https://"]
+
+
+validTaName :: Text.Text -> Either TALError TaName
+validTaName taName = 
+    if BS.length (encodeUtf8 taName) > 512
+        then 
+            Left $ TALError [i|TA name #{taName} is too long, it should be <= 512 bytes.|]
+        else
+            Right $ TaName taName
