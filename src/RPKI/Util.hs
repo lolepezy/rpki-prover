@@ -20,6 +20,7 @@ import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import           Data.Char
 import qualified Data.List                   as List
+import           Data.Foldable (toList)
 import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
@@ -143,3 +144,10 @@ encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64.encodeBase64' bs
     
 textual :: LBS.ByteString -> Text
 textual = decodeUtf8 . LBS.toStrict
+
+fmtLocations :: Locations -> Text
+fmtLocations = mconcat . 
+               List.intersperse "," . 
+               map (Text.pack . show) . 
+               toList . 
+               unLocations

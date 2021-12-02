@@ -54,7 +54,7 @@ import           RPKI.Store.Repository
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx, ifJust)
+import           RPKI.Util                        (fmtEx, ifJust, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
 import           RPKI.Metrics
@@ -323,7 +323,7 @@ validateCaCertificate
     let treeDepthLimit = (
             pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
             do 
-                logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum tree depth is reached.|]
+                logErrorM logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum tree depth is reached.|]
                 vError $ CertificatePathTooDeep 
                             (getLocations certificate) 
                             (validationConfig ^. #maxCertificatePathDepth)
@@ -333,7 +333,7 @@ validateCaCertificate
     let visitedObjectCountLimit = (
             (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes,
             do 
-                logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total object number in the tree is reached.|]
+                logErrorM logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total object number in the tree is reached.|]
                 vError $ TreeIsTooBig 
                             (getLocations certificate) 
                             (validationConfig ^. #maxTotalTreeSize)
@@ -345,7 +345,7 @@ validateCaCertificate
                 pps <- readTVar $ repositoryProcessing ^. #publicationPoints
                 pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
             do 
-                logErrorM logger [i|Interrupting validation on #{getLocations certificate}, maximum total new repository count is reached.|]
+                logErrorM logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total new repository count is reached.|]
                 vError $ TooManyRepositories 
                             (getLocations certificate) 
                             (validationConfig ^. #maxTaRepositories)
@@ -438,11 +438,12 @@ validateCaCertificate
             --
             findCachedLatestValidMft childrenAki >>= \case
                 Nothing             -> throwError e
-                Just latestValidMft ->                         
-                    case latestMft of 
+                Just latestValidMft ->             
+                    let mftLoc = fmtLocations $ getLocations latestValidMft            
+                    in case latestMft of 
                         Nothing -> do 
                             appWarn e      
-                            logDebugM logger [i|Failed to process manifest: #{e}, will try previous valid version.|]
+                            logDebugM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
                             tryManifest latestValidMft childrenAki certLocations                                
                         Just latestMft'
                             | getHash latestMft' == getHash latestValidMft 
@@ -451,7 +452,8 @@ validateCaCertificate
                                 -> throwError e
                             | otherwise -> do 
                                 appWarn e                                    
-                                logWarnM logger [i|Failed to process latest valid manifest: #{e}, fetch is invalid.|]
+                                logWarnM logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
+                                                  [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
                                 tryManifest latestValidMft childrenAki certLocations
 
 
