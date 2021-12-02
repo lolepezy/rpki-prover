@@ -20,6 +20,7 @@ import           Control.Lens ((^.))
 import qualified Data.ByteString.Lazy as LBS
 import           Data.String
 import           Data.String.Interpolate.IsString
+import           Data.Hourglass
 
 import           GHC.Generics
 
@@ -48,31 +49,42 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
+newtype Timeout = Timeout Seconds
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
-        initialParentId :: ProcessID
+        initialParentId :: ProcessID,
+        workerTimeout    :: Timeout
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
 
-class Worker input ouput where
-    executeWorkerJob :: (Serialise input, Serialise ouput) => input -> IO ouput
+newtype RrdpFetchResult = RrdpFetchResult 
+                            (Either AppError RrdpRepository, ValidationState)    
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+
+newtype CompactionResult = CompactionResult ()                             
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 
 runWorker :: (Serialise r, Show r) => 
             AppLogger 
-            -> Config
+            -> Config            
             -> WorkerParams                 
+            -> Timeout
             -> [String] 
             -> ValidatorT IO (r, LBS.ByteString)  
-runWorker logger config1 params extraCli = do  
+runWorker logger config params timeout extraCli = do  
     thisProcessId <- liftIO $ getProcessID
 
-    let binaryToRun = config1 ^. #programBinaryPath    
-    let stdin = serialise $ WorkerInput params config1 thisProcessId
+    let binaryToRun = config ^. #programBinaryPath    
+    let stdin = serialise $ WorkerInput params config thisProcessId timeout
     let worker = 
             setStdin (byteStringInput stdin) $             
                 proc binaryToRun $ [ "--worker" ] <> extraCli
@@ -82,15 +94,24 @@ runWorker logger config1 params extraCli = do
     z <- liftIO $ try $ readProcess worker
     case z of 
         Left (e :: SomeException) -> 
-            complain [i|Worker failed with #{fmtEx e}|]              
+            -- skip async exceptions
+            case fromException (toException e) of                
+                Just (SomeAsyncException _) -> throwIO e
+                Nothing -> complain [i|Worker failed with #{fmtEx e}|]              
+                
         Right (exitCode, stdout, stderr) ->                             
             case exitCode of  
-                ExitFailure errorCode -> do 
-                    complain [i|Worker exited with code = #{errorCode}, stderr = #{textual stderr}|]                    
+                exit@(ExitFailure errorCode)
+                    | exit == exitTimeout -> do                     
+                        let message = [i|Worker execution timed out, stderr = [#{textual stderr}]|]
+                        logErrorM logger message
+                        appError $ InternalE $ WorkerTimeout message
+                    | otherwise ->     
+                        complain [i|Worker exited with code = #{errorCode}, stderr = [#{textual stderr}]|]
                 ExitSuccess -> 
                     case deserialiseOrFail stdout of 
                         Left e -> 
-                            complain [i|Failed to deserialise stdout, #{e}, stdout = #{stdout}|]                             
+                            complain [i|Failed to deserialise stdout, #{e}, stdout = [#{stdout}]|]                             
                         Right r -> 
                             pure (r, stderr)
   where    
@@ -110,8 +131,9 @@ rtsAL m = "-AL" <> m
 rtsN :: Int -> String
 rtsN n = "-N" <> show n
 
-parentDied :: ExitCode
-parentDied = ExitFailure 11
+exitParentDied, exitTimeout :: ExitCode
+exitParentDied = ExitFailure 11
+exitTimeout = ExitFailure 12
 
 workerLogMessage :: (Show t, Show s, IsString s) => s -> LBS.ByteString -> t -> s
 workerLogMessage workerId stderr elapsed = 

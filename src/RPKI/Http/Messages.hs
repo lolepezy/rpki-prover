@@ -12,15 +12,14 @@ module RPKI.Http.Messages where
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
-
-import Data.Foldable (toList)
-
-import qualified Data.List          as List
+import qualified Data.List                   as List
 
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
+
 import           RPKI.Domain                 as Domain
 import           RPKI.Reporting
+import           RPKI.Util (fmtLocations)
 
 
 toMessage :: AppError -> Text
@@ -35,8 +34,8 @@ toMessage = \case
     StorageE (StorageError t) -> t
     StorageE (DeserialisationError t) -> t
 
-    SlurmE r -> toSlurmMessage r
-    InternalE (InternalError t) -> t
+    SlurmE r    -> toSlurmMessage r
+    InternalE t -> toInternalErrorMessage t
     
     UnspecifiedE context e -> 
         [i|Unspecified error #{context}, details: #{e}.|]
@@ -270,9 +269,7 @@ toSlurmMessage = \case
     SlurmParseError file t -> [i|Failed to parse SLURM file #{file}: #{t}.|]
     SlurmValidationError t -> [i|Invalid SLURM file(s): #{t}.|]
 
-fmtLocations :: Locations -> Text
-fmtLocations = mconcat . 
-               List.intersperse "," . 
-               map (Text.pack . show) . 
-               toList . 
-               unLocations
+toInternalErrorMessage :: InternalError -> Text
+toInternalErrorMessage = \case 
+    InternalError t -> [i|Internal error: #{t}.|]
+    WorkerTimeout t -> [i|Worker timeout: #{t}.|]    

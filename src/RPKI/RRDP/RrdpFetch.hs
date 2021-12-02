@@ -54,15 +54,10 @@ runRrdpFetchWorker :: AppContext s
             -> WorldVersion
             -> RrdpRepository             
             -> ValidatorT IO RrdpRepository
-runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
-
-    -- Do not allow fetch process to have more than 4 CPUs to avoid memory bloat.
-    let maxCpuPerFetch = 4    
-    let adjustedParallelism = (appContext ^. typed @Config)
-            & typed @Parallelism . #cpuCount
-            %~ (min maxCpuPerFetch)
-
-    -- this is for humans to read in `top` or `ps`                        
+runRrdpFetchWorker AppContext {..} worldVersion repository = do
+        
+    -- This is for humans to read in `top` or `ps`, actual parameters
+    -- are passed as 'RrdpFetchParams'.
     let workerId = "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri)
 
     let arguments = 
@@ -70,12 +65,13 @@ runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
 
     vp <- askEnv
-    (((z, vs), stderr), elapsed) <- 
-                timedMS $ runWorker 
-                        logger
-                        adjustedParallelism 
-                        (RrdpFetchParams vp repository worldVersion)                        
-                        arguments                        
+    ((RrdpFetchResult (z, vs), stderr), elapsed) <- 
+                    timedMS $ runWorker 
+                                logger
+                                config 
+                                (RrdpFetchParams vp repository worldVersion)                        
+                                (Timeout $ config ^. typed @RrdpConf . #rrdpTimeout)
+                                arguments                        
     embedState vs
     case z of 
         Left e  -> appError e

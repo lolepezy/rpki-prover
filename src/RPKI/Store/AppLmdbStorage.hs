@@ -16,6 +16,7 @@ import           Control.Monad.IO.Class
 import           Control.Lens                     ((^.))
 
 import           Data.String.Interpolate.IsString
+import           Data.Hourglass
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -273,21 +274,25 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             [ workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
-    ((z, _), elapsed) <- timedMS $ 
-                    runValidatorT 
-                        (newValidatorPath "lmdb-compaction-worker") $ 
-                            runWorker 
-                                logger
-                                config
-                                (CompactionParams targetLmdbPath)                        
-                                arguments
+    ((z, _ignoreStderr), elapsed) <- 
+                    timedMS $ 
+                        runValidatorT 
+                            (newValidatorPath "lmdb-compaction-worker") $ 
+                                runWorker 
+                                    logger
+                                    config
+                                    (CompactionParams targetLmdbPath)                        
+                                    -- timebox it to 30 minutes, it should be enough even 
+                                    -- for a huge cache on a very slow machine
+                                    (Timeout $ Seconds $ 30 * 60)
+                                    arguments
     case z of 
         Left e  -> do 
             -- Make it more consistent if it makes sense
             let message = [i|Failed to run compaction worker: #{e}|]
             logError_ logger message            
             throwIO $ AppException $ InternalE $ InternalError message
-        Right (_  :: (), stderr) ->
+        Right (CompactionResult _, stderr) ->
             logDebugM logger $ workerLogMessage (convert workerId) stderr elapsed
             
     

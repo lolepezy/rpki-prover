@@ -142,17 +142,15 @@ data StorageError = StorageError Text |
 newtype TALError = TALError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
 
 newtype InitError = InitError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
 
-newtype InternalError = InternalError Text 
+data InternalError = WorkerTimeout Text 
+                   | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
 
 data SlurmError = SlurmFileError Text Text |
                   SlurmParseError Text Text |
@@ -293,10 +291,7 @@ instance Monoid HttpStatus where
     mempty = HttpStatus 200
 
 instance Semigroup HttpStatus where
-    s1 <> s2 
-        | not (isHttpSuccess s2) = s2
-        | not (isHttpSuccess s1) = s1
-        | isHttpSuccess s1 = s2    
+    s1 <> s2 = if isHttpSuccess s1 then s2 else s1
 
 data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)

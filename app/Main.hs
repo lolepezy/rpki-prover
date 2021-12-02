@@ -13,14 +13,13 @@ import           Codec.Serialise
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent (threadDelay)
-import           Control.Concurrent.STM (readTVarIO)
-import           Control.Concurrent.STM.TVar (newTVarIO)
+import           Control.Concurrent.STM
+import           Control.Concurrent.Async
+
+import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.IO.Class
-
-import           Control.Concurrent.Async.Lifted
-import           Control.Exception.Lifted
 
 import           Data.Generics.Product.Typed
 
@@ -121,7 +120,6 @@ inProcess cliOptions@CLIOptions{..} =
                         logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
                     Right appContext -> 
                         executeWork input appContext
-
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
@@ -372,30 +370,39 @@ getRootDirectory CLIOptions{..} =
         s  -> Just $ Prelude.last s
 
 
--- This is for running worker processes
+-- This is for worker processes
 executeWork :: WorkerInput 
             -> AppLmdbEnv 
             -> IO ()
 executeWork input appContext = 
-    void $ race actualWork suicideCheck 
+    void $ race actualWork (race suicideCheck timeoutWait)
   where
     actualWork = do 
         case input ^. #params of
-            RrdpFetchParams {..} -> do 
-                z <- runValidatorT validatorPath $ updateObjectForRrdpRepository appContext worldVersion rrdpRepository            
-                LBS.hPut stdout $ serialise z
+            RrdpFetchParams {..} -> do
+                z <- runValidatorT validatorPath $ 
+                            updateObjectForRrdpRepository appContext worldVersion rrdpRepository                            
+                output $ RrdpFetchResult z
             CompactionParams {..} -> do 
-                z <- copyLmdbEnvironment appContext targetLmdbEnv
-                LBS.hPut stdout $ serialise z
+                z <- copyLmdbEnvironment appContext targetLmdbEnv                
+                output $ CompactionResult z
+
+    output = LBS.hPut stdout . serialise
+
+    -- Keep track of who's the current process parent: if it is not the same 
+    -- as we started with then parent exited/is killed. Exit the worker as well.
     suicideCheck = 
         forever $ do
-            parentId <- getParentProcessID            
+            parentId <- getParentProcessID                    
             when (parentId /= input ^. #initialParentId) $ 
-                -- current parent process is not the same as we started with, which 
-                -- can only happened if parent exited/killed. Exit the worker as well.
-                exitWith parentDied    
-            threadDelay 500_000
+                exitWith exitParentDied    
+            threadDelay 500_000                
 
+    timeoutWait = do
+        let Timeout (Seconds s) = input ^. #workerTimeout
+        threadDelay $ 1_000_000 * fromIntegral s        
+        exitWith exitTimeout
+   
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
 readWorkerInput = liftIO $ deserialise <$> LBS.hGetContents stdin        
@@ -418,14 +425,13 @@ readWorkerContext input logger = do
     appState     <- liftIO newAppState
     tvarDatabase <- liftIO $ newTVarIO database
 
-    let appContext = AppContext {
+    pure AppContext {
             appState = appState,
             database = tvarDatabase,
             appBottlenecks = appBottlenecks,
             logger = logger,        
             config = input ^. #config
-        }   
-    pure appContext
+        }       
 
 
 -- CLI Options-related machinery
