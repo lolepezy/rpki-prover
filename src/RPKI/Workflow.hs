@@ -23,6 +23,8 @@ import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           System.Exit
+import           System.Directory
+import           System.FilePath                  ((</>))
 
 import           RPKI.AppState
 import           RPKI.AppMonad
@@ -60,7 +62,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Fill in the current state if it's not too old.
     -- It is useful in case of restarts.        
-    loadStoredAppState appContext
+    void $ loadStoredAppState appContext
 
     -- Run RTR server thread when rtrConfig is present in the AppConfig.  
     -- If not needed it will the an noop.  
@@ -114,13 +116,18 @@ runWorkflow appContext@AppContext {..} tals = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
             database' <- readTVarIO database 
             executeOrDie
-                (processTALs database' tals)
+                (processTALs database' `finally` cleanupAfterValidation)
                 (\(vrps, slurmedVrps) elapsed ->                    
                     logInfoM logger $
                         [i|Validated all TAs, got #{vrpCount vrps} VRPs, |] <> 
                         [i|#{vrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where 
-                processTALs database' tals = do
+                cleanupAfterValidation = do 
+                    let tmpDir = config ^. #tmpDirectory
+                    logDebugM logger [i|Cleaning up temporary directory #{tmpDir}.|]                    
+                    listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
+                    
+                processTALs database' = do
                     TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
                                 validateMutlipleTAs appContext worldVersion tals                        
 
