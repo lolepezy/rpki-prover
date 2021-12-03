@@ -52,11 +52,11 @@ Since `rpki-prover` needs to have some persistent directory to use for TALs, cac
 docker volume create rpki-data
 docker pull lolepezy/rpki-prover:latest
 docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --initialise --agree-with-arin-rpa
-docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
+docker run -p 9999:9999 --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
 ``` 
 The important part here is `target=/rpki-data`, this directory is created by default inside of the docker container. Otherwise it can be adjusted as in
 ```
-docker run --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
+docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
 ```
 
 ## Building from sources
