@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
 
-module RPKI.Process where
+module RPKI.Worker where
 
 import           Codec.Serialise
 
@@ -94,7 +94,7 @@ runWorker logger config params timeout extraCli = do
     z <- liftIO $ try $ readProcess worker
     case z of 
         Left (e :: SomeException) -> 
-            -- skip async exceptions
+            -- rethrow async exceptions
             case fromException (toException e) of                
                 Just (SomeAsyncException _) -> throwIO e
                 Nothing -> complain [i|Worker failed with #{fmtEx e}|]              

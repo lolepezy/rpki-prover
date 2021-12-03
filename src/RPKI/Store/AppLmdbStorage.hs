@@ -21,7 +21,7 @@ import           Data.Hourglass
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Logging
-import           RPKI.Process
+import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Storage

@@ -69,7 +69,7 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
 
-import           RPKI.Process
+import           RPKI.Worker
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Workflow
