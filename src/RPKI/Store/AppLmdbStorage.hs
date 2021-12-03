@@ -284,7 +284,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
                                     (CompactionParams targetLmdbPath)                        
                                     -- timebox it to 30 minutes, it should be enough even 
                                     -- for a huge cache on a very slow machine
-                                    (Timeout $ Seconds $ 30 * 60)
+                                    (Timebox $ Seconds $ 30 * 60)
                                     arguments
     case z of 
         Left e  -> do 

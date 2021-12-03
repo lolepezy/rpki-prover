@@ -49,7 +49,7 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
-newtype Timeout = Timeout Seconds
+newtype Timebox = Timebox Seconds
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
@@ -57,7 +57,7 @@ data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
         initialParentId :: ProcessID,
-        workerTimeout    :: Timeout
+        workerTimeout    :: Timebox
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
@@ -77,7 +77,7 @@ runWorker :: (Serialise r, Show r) =>
             AppLogger 
             -> Config            
             -> WorkerParams                 
-            -> Timeout
+            -> Timebox
             -> [String] 
             -> ValidatorT IO (r, LBS.ByteString)  
 runWorker logger config params timeout extraCli = do  

@@ -70,7 +70,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                                 logger
                                 config 
                                 (RrdpFetchParams vp repository worldVersion)                        
-                                (Timeout $ config ^. typed @RrdpConf . #rrdpTimeout)
+                                (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
                                 arguments                        
     embedState vs
     case z of 

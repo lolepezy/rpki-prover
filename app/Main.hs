@@ -399,7 +399,7 @@ executeWork input appContext =
             threadDelay 500_000                
 
     timeoutWait = do
-        let Timeout (Seconds s) = input ^. #workerTimeout
+        let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
         exitWith exitTimeout
    
@@ -474,11 +474,11 @@ data CLIOptions wrapped = CLIOptions {
        +++ "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for RRDP repositories, in seconds. If fetching of a repository does not "
+        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for rsync repositories, in seconds. If fetching of a repository does not "
+        ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     httpApiPort :: wrapped ::: Maybe Word16 <?>
