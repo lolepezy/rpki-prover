@@ -148,6 +148,7 @@ newtype InitError = InitError Text
     deriving anyclass Serialise
 
 data InternalError = WorkerTimeout Text 
+                   | WorkerOutOfMemory Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise

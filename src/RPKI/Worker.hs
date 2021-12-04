@@ -12,11 +12,8 @@ module RPKI.Worker where
 
 import           Codec.Serialise
 
-import           Control.Concurrent.Async
 import           Control.Exception.Lifted
 import           Control.Monad.IO.Class
-
-import Data.Typeable
 
 import           Control.Lens ((^.))
 
@@ -96,7 +93,7 @@ runWorker logger config params timeout extraCli = do
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,
-            Handler $ \(e :: IOException)       -> complain "Worker died/killed",
+            Handler $ \(_ :: IOException)       -> complain "Worker died/killed",
             Handler $ \e@(SomeException _)      -> complain [i|Worker died in a strange way: #{fmtEx e}|]       
         ] 
   where    
@@ -108,6 +105,10 @@ runWorker logger config params timeout extraCli = do
                     let message = [i|Worker execution timed out, stderr = [#{textual stderr}]|]
                     logErrorM logger message
                     appError $ InternalE $ WorkerTimeout message
+                | exit == exitOutOfMemory -> do                     
+                    let message = [i|Worker ran out of memory, stderr = [#{textual stderr}]|]
+                    logErrorM logger message
+                    appError $ InternalE $ WorkerOutOfMemory message
                 | otherwise ->     
                     complain [i|Worker exited with code = #{errorCode}, stderr = [#{textual stderr}]|]
             ExitSuccess -> 
@@ -136,6 +137,7 @@ rtsN n = "-N" <> show n
 exitParentDied, exitTimeout :: ExitCode
 exitParentDied = ExitFailure 11
 exitTimeout = ExitFailure 12
+exitOutOfMemory = ExitFailure 251
 
 workerLogMessage :: (Show t, Show s, IsString s) => s -> LBS.ByteString -> t -> s
 workerLogMessage workerId stderr elapsed = 

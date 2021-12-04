@@ -271,5 +271,6 @@ toSlurmMessage = \case
 
 toInternalErrorMessage :: InternalError -> Text
 toInternalErrorMessage = \case 
-    InternalError t -> [i|Internal error: #{t}.|]
-    WorkerTimeout t -> [i|Worker timeout: #{t}.|]    
+    InternalError t     -> t
+    WorkerTimeout t     -> t
+    WorkerOutOfMemory t -> t
