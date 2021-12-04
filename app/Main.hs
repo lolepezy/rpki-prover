@@ -275,8 +275,8 @@ initialiseFS cliOptions logger = do
                                         [i|Error downloading TAL #{tal} from #{talUrl}|]
                                         [i|Http status #{unHttpStatus httpStatus}|]
             case r of
-                Left e ->
-                    logErrorM logger [i|Failed to initialise: #{e}. |] <>
+                Left e -> do
+                    logErrorM logger [i|Failed to initialise: #{e}.|]
                     logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
                 Right _ ->
                     logInfoM logger [i|Done.|]
