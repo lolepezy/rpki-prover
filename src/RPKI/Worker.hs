@@ -12,8 +12,11 @@ module RPKI.Worker where
 
 import           Codec.Serialise
 
+import           Control.Concurrent.Async
 import           Control.Exception.Lifted
 import           Control.Monad.IO.Class
+
+import Data.Typeable
 
 import           Control.Lens ((^.))
 
@@ -91,30 +94,29 @@ runWorker logger config params timeout extraCli = do
 
     logDebugM logger [i|Running worker: #{trimmed worker}|]    
 
-    z <- liftIO $ try $ readProcess worker
-    case z of 
-        Left (e :: SomeException) -> 
-            -- rethrow async exceptions
-            case fromException (toException e) of                
-                Just (SomeAsyncException _) -> throwIO e
-                Nothing -> complain [i|Worker failed with #{fmtEx e}|]              
-                
-        Right (exitCode, stdout, stderr) ->                             
-            case exitCode of  
-                exit@(ExitFailure errorCode)
-                    | exit == exitTimeout -> do                     
-                        let message = [i|Worker execution timed out, stderr = [#{textual stderr}]|]
-                        logErrorM logger message
-                        appError $ InternalE $ WorkerTimeout message
-                    | otherwise ->     
-                        complain [i|Worker exited with code = #{errorCode}, stderr = [#{textual stderr}]|]
-                ExitSuccess -> 
-                    case deserialiseOrFail stdout of 
-                        Left e -> 
-                            complain [i|Failed to deserialise stdout, #{e}, stdout = [#{stdout}]|]                             
-                        Right r -> 
-                            pure (r, stderr)
+    runIt worker `catches` [                    
+            Handler $ \e@(SomeAsyncException _) -> throwIO e,
+            Handler $ \(e :: IOException)       -> complain "Worker died/killed",
+            Handler $ \e@(SomeException _)      -> complain [i|Worker died in a strange way: #{fmtEx e}|]       
+        ] 
   where    
+    runIt worker = do   
+        (exitCode, stdout, stderr) <- liftIO $ readProcess worker                                
+        case exitCode of  
+            exit@(ExitFailure errorCode)
+                | exit == exitTimeout -> do                     
+                    let message = [i|Worker execution timed out, stderr = [#{textual stderr}]|]
+                    logErrorM logger message
+                    appError $ InternalE $ WorkerTimeout message
+                | otherwise ->     
+                    complain [i|Worker exited with code = #{errorCode}, stderr = [#{textual stderr}]|]
+            ExitSuccess -> 
+                case deserialiseOrFail stdout of 
+                    Left e -> 
+                        complain [i|Failed to deserialise stdout, #{e}, stdout = [#{stdout}]|]                             
+                    Right r -> 
+                        pure (r, stderr)
+
     complain message = do 
         logErrorM logger message
         appError $ InternalE $ InternalError message
