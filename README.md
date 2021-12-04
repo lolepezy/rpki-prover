@@ -28,6 +28,8 @@ Current and future work
 
 Running `rpki-prover --help` gives some reasonable help on CLI options.
 
+The only dependency needed for `rpki-prover` to run is `rsync` client.
+
 `rpki-prover` is a daemon that runs periodic re-validation of all TAs in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the `--with-rtr` option enables RTR server pushing VRP updates to RTR clients.
 
 There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
@@ -50,11 +52,11 @@ Since `rpki-prover` needs to have some persistent directory to use for TALs, cac
 docker volume create rpki-data
 docker pull lolepezy/rpki-prover:latest
 docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --initialise --agree-with-arin-rpa
-docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
+docker run -p 9999:9999 --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
 ``` 
 The important part here is `target=/rpki-data`, this directory is created by default inside of the docker container. Otherwise it can be adjusted as in
 ```
-docker run --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
+docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
 ```
 
 ## Building from sources
