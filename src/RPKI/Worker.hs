@@ -20,6 +20,7 @@ import           Control.Concurrent.Async
 
 import           Control.Lens ((^.))
 
+import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
 import           Data.String
 import           Data.String.Interpolate.IsString
@@ -51,6 +52,13 @@ Every worker
 
 
 -}
+
+newtype WorkerId = WorkerId Text
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Serialise)
+
+instance Show WorkerId where
+    show (WorkerId w) = show w
 
 data WorkerParams = RrdpFetchParams { 
                 validatorPath :: ValidatorPath, 
@@ -90,12 +98,13 @@ newtype CompactionResult = CompactionResult ()
 runWorker :: (Serialise r, Show r) => 
             AppLogger 
             -> Config            
-            -> WorkerParams                 
+            -> WorkerId
+            -> WorkerParams                             
             -> Timebox
             -> [String] 
             -> ValidatorT IO (r, LBS.ByteString)  
-runWorker logger config params timeout extraCli = do  
-    thisProcessId <- liftIO $ getProcessID
+runWorker logger config workerId params timeout extraCli = do  
+    thisProcessId <- liftIO getProcessID
 
     let binaryToRun = config ^. #programBinaryPath    
     let workerStdin = serialise $ WorkerInput params config thisProcessId timeout
@@ -107,8 +116,8 @@ runWorker logger config params timeout extraCli = do
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,
-            Handler $ \(_ :: IOException)       -> complain "Worker died/killed",
-            Handler $ \e@(SomeException _)      -> complain [i|Worker died in a strange way: #{fmtEx e}|]       
+            Handler $ \(_ :: IOException)       -> complain [i|Worker #{workerId} died/killed.|],
+            Handler $ \e@(SomeException _)      -> complain [i|Worker #{workerId} died in a strange way: #{fmtEx e}|]       
         ] 
   where    
     runIt worker = do   
@@ -116,19 +125,29 @@ runWorker logger config params timeout extraCli = do
         case exitCode of  
             exit@(ExitFailure errorCode)
                 | exit == exitTimeout -> do                     
-                    let message = [i|Worker execution timed out, stderr = [#{textual workerStderr}]|]
+                    let message = [i|Worker #{workerId} execution timed out, stderr = [#{textual workerStderr}]|]
                     logErrorM logger message
                     appError $ InternalE $ WorkerTimeout message
                 | exit == exitOutOfMemory -> do                     
-                    let message = [i|Worker ran out of memory, stderr = [#{textual workerStderr}]|]
+                    let message = [i|Worker #{workerId} ran out of memory, stderr = [#{textual workerStderr}]|]
                     logErrorM logger message
                     appError $ InternalE $ WorkerOutOfMemory message
+                | exit == exitKillByTypedProcess -> do              
+                    -- This is a hack to work around a problem in `readProcess`:
+                    -- it apparently catches an async exception, kills the process (with some signal?)
+                    -- but doesn't rethrow the exception, so all we have is the worker that exited 
+                    -- with error code '-2'.
+                    --
+                    -- TODO try to find a way to fix with `typed-process` features.
+                    -- TODO Otherwise make sure it's safe to assume it's always '-2'.
+                    logErrorM logger [i|Worker #{workerId} was killed by `readProcess` internal machinery.|]
+                    throwIO AsyncCancelled                    
                 | otherwise ->     
-                    complain [i|Worker exited with code = #{errorCode}, stderr = [#{textual workerStderr}]|]
+                    complain [i|Worker #{workerId} exited with code = #{errorCode}, stderr = [#{textual workerStderr}]|]
             ExitSuccess -> 
                 case deserialiseOrFail workerStdout of 
                     Left e -> 
-                        complain [i|Failed to deserialise stdout, #{e}, stdout = [#{workerStdout}]|]                             
+                        complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
                     Right r -> 
                         pure (r, workerStderr)
 
@@ -176,10 +195,11 @@ rtsAL m = "-AL" <> m
 rtsN :: Int -> String
 rtsN n = "-N" <> show n
 
-exitParentDied, exitTimeout, exitOutOfMemory :: ExitCode
+exitParentDied, exitTimeout, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
 exitParentDied  = ExitFailure 11
 exitTimeout     = ExitFailure 12
 exitOutOfMemory = ExitFailure 251
+exitKillByTypedProcess = ExitFailure (-2)
 
 workerLogMessage :: (Show t, Show s, IsString s) => s -> LBS.ByteString -> t -> s
 workerLogMessage workerId stderr elapsed = 
@@ -190,3 +210,7 @@ workerLogMessage workerId stderr elapsed =
 <worker-log #{workerId}> 
 #{textual stderr}</worker-log>|]            
             in [i|Worker #{workerId} done, took #{elapsed}ms#{workerLog}|]  
+
+
+worderIdS :: WorkerId -> String
+worderIdS (WorkerId w) = unpack w

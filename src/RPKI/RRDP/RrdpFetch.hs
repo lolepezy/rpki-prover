@@ -14,7 +14,7 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
-import           Data.Text (Text, unpack)
+import           Data.Text                        (Text)
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -58,17 +58,18 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RrdpFetchParams'.
-    let workerId = "rrdp-fetch:" <> unpack (unURI $ getURL $ repository ^. #uri)
+    let workerId = WorkerId $ "rrdp-fetch:" <> unURI (getURL $ repository ^. #uri)
 
     let arguments = 
-            [ workerId ] <>
+            [ worderIdS workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
 
     vp <- askEnv
     ((RrdpFetchResult (z, vs), stderr), elapsed) <- 
                     timedMS $ runWorker 
                                 logger
-                                config 
+                                config
+                                workerId 
                                 (RrdpFetchParams vp repository worldVersion)                        
                                 (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
                                 arguments                        
@@ -76,7 +77,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
     case z of 
         Left e  -> appError e
         Right r -> do 
-            logDebugM logger $ workerLogMessage (U.convert workerId) stderr elapsed            
+            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr elapsed            
             pure r
 
 
@@ -445,7 +446,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     when (currentSerial /= serial) $
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
-    let savingTx sessionId serial f = 
+    let savingTx serial f = 
             rwAppTx objectStore $ \tx -> 
                 f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
@@ -455,7 +456,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     txFoldPipeline 
             cpuParallelism
             (S.mapM newStorable $ S.each deltaItems)
-            (savingTx sessionId serial)
+            (savingTx serial)
             (saveStorable objectStore)
             (mempty :: ())
     where        

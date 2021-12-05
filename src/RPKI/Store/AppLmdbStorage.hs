@@ -264,14 +264,14 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 -- 
 runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
 runCopyWorker AppContext {..} dbtats targetLmdbPath = do 
-    let workerId :: String = "lmdb-compaction"
+    let workerId = WorkerId "lmdb-compaction"
     
     let maxMemoryMb = let 
             Size maxMemory = max (dbtats ^. #statMaxKVBytes * 20) 128 
             in maxMemory `div` 1024 `div` 1024
 
     let arguments = 
-            [ workerId ] <>
+            [ worderIdS workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
     ((z, _ignoreStderr), elapsed) <- 
@@ -281,6 +281,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
                                 runWorker 
                                     logger
                                     config
+                                    workerId
                                     (CompactionParams targetLmdbPath)                        
                                     -- timebox it to 30 minutes, it should be enough even 
                                     -- for a huge cache on a very slow machine
@@ -293,6 +294,6 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             logError_ logger message            
             throwIO $ AppException $ InternalE $ InternalError message
         Right (CompactionResult _, stderr) ->
-            logDebugM logger $ workerLogMessage (convert workerId) stderr elapsed
+            logDebugM logger $ workerLogMessage (convert $ worderIdS workerId) stderr elapsed
             
     
