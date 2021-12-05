@@ -364,17 +364,17 @@ getRootDirectory CLIOptions{..} =
         s  -> Just $ Prelude.last s
         
 
--- This is for worker processes
+-- This is for worker processes.
 executeWorker :: WorkerInput 
             -> AppLmdbEnv 
             -> IO ()
 executeWorker input appContext = 
-    executeWork input $ \_ ->   
+    executeWork input $ \_ returnResult ->   
         case input ^. #params of
             RrdpFetchParams {..} -> do
                 z <- runValidatorT validatorPath $ 
                             updateObjectForRrdpRepository appContext worldVersion rrdpRepository                            
-                writeWorkerOutput $ RrdpFetchResult z
+                returnResult $ RrdpFetchResult z
             CompactionParams {..} -> do 
                 z <- copyLmdbEnvironment appContext targetLmdbEnv                
                 writeWorkerOutput $ CompactionResult z

@@ -43,13 +43,20 @@ import           RPKI.Logging
 import           RPKI.Util (fmtEx, textual, trimmed)
 
 
-{- | This is to run worker processes for some code that is better to execute in an isolated process.
+{- | This is to run worker processes for some code that is better to be executed in an isolated process.
 
 Every worker 
- - Reads serialised parameters from its stdin (WorkerInput and WorkerParams)
+ - Reads serialised parameters from its stdin (WorkerInput)
  - Writes serialised result to its stdout
- - Logs to stderr 
+ - Logs to stderr (see `withWorkerLogger` in RPKI.Logging)
 
+Running a worker is done using `runWorker` which handles all the process machinery, error handling, etc.
+
+Every worker calls `executeWork` that takes care of worker lifecycle.
+
+`WorkerInput` is used by all workers, `WorkerParams` is individual for every worker type.
+
+Some of the machinery is also in Main.
 
 -}
 
@@ -132,7 +139,8 @@ runWorker logger config workerId params timeout extraCli = do
                     let message = [i|Worker #{workerId} ran out of memory, stderr = [#{textual workerStderr}]|]
                     logErrorM logger message
                     appError $ InternalE $ WorkerOutOfMemory message
-                | exit == exitKillByTypedProcess -> do              
+                | exit == exitKillByTypedProcess -> do
+                    -- 
                     -- This is a hack to work around a problem in `readProcess`:
                     -- it apparently catches an async exception, kills the process (with some signal?)
                     -- but doesn't rethrow the exception, so all we have is the worker that exited 
@@ -140,7 +148,12 @@ runWorker logger config workerId params timeout extraCli = do
                     --
                     -- TODO try to find a way to fix with `typed-process` features.
                     -- TODO Otherwise make sure it's safe to assume it's always '-2'.
-                    logErrorM logger [i|Worker #{workerId} was killed by `readProcess` internal machinery.|]
+                    -- 
+                    -- This logging message is slightly deceiving: it's not that just the worker 
+                    -- was killed, but we also know that there was an asynchronous exception, which 
+                    -- we retrow here to make sure "outer threads" know about it.
+                    --
+                    logErrorM logger [i|Worker #{workerId} died/killed.|]
                     throwIO AsyncCancelled                    
                 | otherwise ->     
                     complain [i|Worker #{workerId} exited with code = #{errorCode}, stderr = [#{textual workerStderr}]|]
@@ -156,15 +169,20 @@ runWorker logger config workerId params timeout extraCli = do
         appError $ InternalE $ InternalError message
 
 
--- This is for worker processes
-executeWork :: WorkerInput 
-            -> (WorkerInput -> IO ())
+-- Entry point for a worker. It is supposed to run withing a worker process 
+-- and do the actual work.
+-- 
+executeWork :: Serialise a => 
+                WorkerInput 
+            -> (WorkerInput -> (a -> IO ()) -> IO ()) -- ^ Actual work to be executed. 
+                                                      -- Second argument is the result handler.
             -> IO ()
 executeWork input actualWork = 
-    void $ race (actualWork input) (race suicideCheck timeoutWait)
+    void $ race (actualWork input writeWorkerOutput) (race suicideCheck timeoutWait)
   where    
     -- Keep track of who's the current process parent: if it is not the same 
-    -- as we started with then parent exited/is killed. Exit the worker as well.
+    -- as we started with then parent exited/is killed. Exit the worker as well,
+    -- there's no point continuing.
     suicideCheck = 
         forever $ do
             parentId <- getParentProcessID                    
@@ -172,6 +190,7 @@ executeWork input actualWork =
                 exitWith exitParentDied    
             threadDelay 500_000                
 
+    -- Time bomb. Wait for the certain timeout and then simply exit.
     timeoutWait = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
@@ -210,7 +229,6 @@ workerLogMessage workerId stderr elapsed =
 <worker-log #{workerId}> 
 #{textual stderr}</worker-log>|]            
             in [i|Worker #{workerId} done, took #{elapsed}ms#{workerLog}|]  
-
 
 worderIdS :: WorkerId -> String
 worderIdS (WorkerId w) = unpack w
