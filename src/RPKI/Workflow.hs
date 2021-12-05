@@ -44,16 +44,14 @@ import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
 
-import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust)
 
 
-type AppLmdbEnv = AppContext LmdbStorage
-
 runWorkflow :: (Storage s, MaintainableStorage s) => 
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
+
     -- Use a command queue to avoid fully concurrent operations, i.e. cleanup 
     -- operations and such should not run at the same time with validation 
     -- (not only for consistency reasons, but we also want to avoid locking 
@@ -71,8 +69,9 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics
 
-    -- Run threads that periodicallly generate tasks and put them 
-    -- to the queue and one thread that executes the tasks.
+    -- Run threads that periodicallly generate tasks and one thread that 
+    -- executes the tasks. Tasks are put into the queue after having been 
+    -- generated. `taskExecutor` picks them up from the queue and executes.
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion prometheusMetrics, 
