@@ -167,7 +167,9 @@ defaultConfig = Config {
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
         maxObjectSize                  = 32 * 1024 * 1024,
-        minObjectSize                  = 32,
+        -- every object contains at least 256 bytes of RSA key, 
+        -- couple of dates and a few extenions
+        minObjectSize                  = 300,
         maxTaRepositories              = 1000
     },
     httpApiConf = HttpApiConfig {

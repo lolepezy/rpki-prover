@@ -220,7 +220,9 @@ data RsyncMode = RsyncOneFile | RsyncDirectory
 rsyncProcess :: ValidationConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
 rsyncProcess vc (RsyncURL (URI uri)) destination rsyncMode = 
     proc "rsync" $ 
-        [ "--timeout=300",  "--update",  "--times", "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
+        [ "--timeout=300",  "--update",  "--times" ] <> 
+        [ "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
+        [ "--min-size=" <> show (vc ^. #minObjectSize) ] <> 
         extraOptions <> 
         [ Text.unpack uri, destination ]
     where 
