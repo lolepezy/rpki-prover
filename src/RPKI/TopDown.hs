@@ -73,7 +73,7 @@ data TopDownContext s = TopDownContext {
         startingRepositoryCount :: Int,
         interruptedByLimit      :: TVar Limited
     }
-    deriving stock (Generic)
+    deriving stock (Generic)    
 
 
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
@@ -120,9 +120,8 @@ createVerifiedResources (getRC -> ResourceCertificate certificate) =
 
 
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited
-verifyLimit hitTheLimit limit = do 
-    z <- readTVar limit
-    case z of 
+verifyLimit hitTheLimit limit =
+    readTVar limit >>= \case    
         CanProceed -> do 
             h <- hitTheLimit
             if h then do
@@ -188,7 +187,7 @@ validateTA :: Storage s =>
 validateTA appContext tal worldVersion repositoryProcessing = do    
     r <- runValidatorT taContext $
             timedMetric (Proxy :: Proxy ValidationMetric) $ do 
-                ((taCert, repos, _), elapsed) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
+                ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations 
                 let now = Now $ versionToMoment worldVersion
                 topDownContext <- newTopDownContext worldVersion 

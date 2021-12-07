@@ -71,8 +71,8 @@ data WorkerParams = RrdpFetchParams {
                 validatorPath :: ValidatorPath, 
                 rrdpRepository :: RrdpRepository,
                 worldVersion :: WorldVersion 
-            }
-        |  CompactionParams { 
+            } | 
+            CompactionParams { 
                 targetLmdbEnv :: FilePath 
             }
     deriving stock (Eq, Ord, Show, Generic)
@@ -190,7 +190,7 @@ executeWork input actualWork =
                 exitWith exitParentDied    
             threadDelay 500_000                
 
-    -- Time bomb. Wait for the certain timeout and then simply exit.
+    -- Time bomb. Wait for the certain timeout and then exit.
     timeoutWait = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        

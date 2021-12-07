@@ -99,7 +99,7 @@ mainProcess cliOptions = do
 
 inProcess :: CLIOptions Unwrapped -> IO ()
 inProcess cliOptions@CLIOptions{..} =
-    if not (isJust worker)
+    if isNothing worker
         then do             
             mainProcess cliOptions
         else do         
