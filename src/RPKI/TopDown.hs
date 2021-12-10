@@ -224,8 +224,8 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore (getTaName tal)
     case taByName of
         Nothing -> fetchValidateAndStore taStore now
-        Just StorableTA { taCert, initialRepositories, fetchStatus }
-            | needsFetching (getTaCertURL tal) fetchStatus validationConfig now ->
+        Just StorableTA { taCert, initialRepositories, fetchStatus = fs }
+            | needsFetching (getTaCertURL tal) fs validationConfig now ->
                 fetchValidateAndStore taStore now
             | otherwise -> do
                 logInfoM logger [i|Not re-fetching TA certificate #{getTaCertURL tal}, it's up-to-date.|]
@@ -565,7 +565,7 @@ validateCaCertificate
             $ \(T2 filename hash') -> runValidatorT vp $ do 
                     ro <- findManifestEntryObject filename hash' 
                     -- if failed this one interrupts the whole MFT valdiation
-                    validateMftObject ro hash' filename validCrl                
+                    validateMftObject ro filename validCrl                
 
     independentMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
@@ -581,7 +581,7 @@ validateCaCertificate
                         -- 
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
-                        (z, vs') <- runValidatorT vp $ validateMftObject ro hash' filename validCrl
+                        (z, vs') <- runValidatorT vp $ validateMftObject ro filename validCrl
                         pure $ case z of                             
                             Left _ -> (Right mempty, vs')
                             _      -> (z, vs')     
@@ -597,8 +597,8 @@ validateCaCertificate
     -- Check manifest entries as a whole, without doing anything 
     -- with the objects they are pointing to.    
     validateMftEntries mft crlHash = do         
-        let children = mftEntries $ getCMSContent $ cmsPayload mft
-        let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') children
+        let mftChildren = mftEntries $ getCMSContent $ cmsPayload mft
+        let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') mftChildren
                     
         -- Make sure all the entries are unique
         let entryMap = Map.fromListWith (<>) $ map (\(T2 f h) -> (h, [f])) nonCrlChildren
@@ -616,7 +616,7 @@ validateCaCertificate
             longerThanOne _   = True
 
 
-    validateMftObject ro hash' filename validCrl = do
+    validateMftObject ro filename validCrl = do
         -- warn about names on the manifest mismatching names in the object URLs
         let objectLocations = getLocations ro
         let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
@@ -669,7 +669,6 @@ validateCaCertificate
         parentContext <- ask        
         case ro of
             CerRO childCert -> do 
-                let TopDownContext{..} = topDownContext
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
                         inSubVPath (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 

@@ -388,8 +388,8 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
         waitTask a >>= \case     
             HashExists rpkiURL hash ->
                 DB.linkObjectToUrl tx objectStore rpkiURL hash
-            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do                    
-                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
+                logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubVPath (unURI uri) $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
@@ -446,9 +446,9 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     when (currentSerial /= serial) $
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
-    let savingTx serial f = 
+    let savingTx serial' f = 
             rwAppTx objectStore $ \tx -> 
-                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
     -- Propagate exceptions from here, anything that can happen here 
     -- (storage failure, file read failure) should stop the validation and 
@@ -510,8 +510,8 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
 
     addObject objectStore tx uri a =
         waitTask a >>= \case
-            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
-                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
+                logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubVPath (unURI uri) $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
@@ -534,8 +534,8 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
 
     replaceObject objectStore tx uri a oldHash = do            
         waitTask a >>= \case
-            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
-                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
+                logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubVPath (unURI uri) $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
