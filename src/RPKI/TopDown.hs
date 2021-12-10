@@ -11,7 +11,6 @@
 module RPKI.TopDown where
 
 import           Control.Concurrent.STM
-import           Control.Concurrent.Async (forConcurrently)
 import           Control.Exception.Lifted
 import           Control.Monad.Except
 import           Control.Monad.Reader
@@ -161,7 +160,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
                 pps <- getPublicationPoints tx (repositoryStore database')    
                 atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
         
-        rs <- forConcurrently tals $ \tal -> do           
+        rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
             logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{vrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
@@ -561,7 +560,7 @@ validateCaCertificate
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
         liftIO $ inParallelUnordered
-            (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
+            (totalBottleneck appBottlenecks)
             nonCrlChildren
             $ \(T2 filename hash') -> runValidatorT vp $ do 
                     ro <- findManifestEntryObject filename hash' 
@@ -571,7 +570,7 @@ validateCaCertificate
     independentMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
         liftIO $ inParallelUnordered
-            (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
+            (totalBottleneck appBottlenecks)
             nonCrlChildren
             $ \(T2 filename hash') -> do 
                 (r, vs) <- runValidatorT vp $ findManifestEntryObject filename hash' 
@@ -840,3 +839,6 @@ addTotalValidationMetric totalValidationResult =
             #unMetricMap . 
             #getMonoidalMap    
     
+
+totalBottleneck :: AppBottleneck -> Bottleneck
+totalBottleneck AppBottleneck {..} = cpuBottleneck <> ioBottleneck
