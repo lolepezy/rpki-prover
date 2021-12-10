@@ -560,7 +560,7 @@ validateCaCertificate
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
-        liftIO $ inParallel
+        liftIO $ inParallelUnordered
             (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
             nonCrlChildren
             $ \(T2 filename hash') -> runValidatorT vp $ do 
@@ -570,7 +570,7 @@ validateCaCertificate
 
     independentMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
-        liftIO $ inParallel
+        liftIO $ inParallelUnordered
             (cpuBottleneck appBottlenecks <> ioBottleneck appBottlenecks)
             nonCrlChildren
             $ \(T2 filename hash') -> do 
@@ -580,8 +580,8 @@ validateCaCertificate
                     Right ro -> do 
                         -- We are cheating here a little by faking the empty VRP set.
                         -- 
-                        -- if failed this one will result in the empty VRP set
-                        -- while keeping errors and warning are in the `vs'` value.
+                        -- if failed, this one will result in the empty VRP set
+                        -- while keeping errors and warning in the `vs'` value.
                         (z, vs') <- runValidatorT vp $ validateMftObject ro hash' filename validCrl
                         pure $ case z of                             
                             Left _ -> (Right mempty, vs')
@@ -678,7 +678,7 @@ validateCaCertificate
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
                             let childTopDownContext = topDownContext 
-                                    & #verifiedResources .~ (Just childVerifiedResources)  
+                                    & #verifiedResources ?~ childVerifiedResources  
                                     & #currentPathDepth %~ (+ 1)                            
                             validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
 
