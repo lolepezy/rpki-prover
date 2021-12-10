@@ -299,56 +299,9 @@ concurrentTasks v1 v2 = do
 
 data Slot = Free | Taken | NotForTaking
 
--- | Compute a function for a list of inputs in parallel using the bottleneck.
--- The otder of the results in the list will be corresponding to the ordere of 
--- the inputs, moreover, they will be execited more or less "in order".
--- 
-inParallelOrdered :: Bottleneck 
-                    -> [a] 
-                    -> (a -> IO b) 
-                    -> IO [b]
-inParallelOrdered bottleneck as f = do     
-    let size = maxBottleneckSize bottleneck
-    queue <- atomically $ newCQueue size    
-    snd <$> concurrently
-                (writeAll queue `finally` closeQ queue) 
-                (readAll queue `finally` closeQ queue)
-            `finally`
-                killAll queue cancel        
-  where                
-    closeQ q = liftIO $ atomically $ closeCQueue q
-    writeAll queue = go as  
-        where 
-        go [] = pure ()
-        go (s : ss) = do 
-            slot <- liftIO $ newTVarIO Free
-
-            -- It is important to create the async first and then try to acquire 
-            -- the slot in the bottleneck, otherwise there's potential for 
-            -- deadlock in the system. 
-            a <- async $ do                     
-                    z <- f s 
-                            `finally` 
-                        atomically (releaseSlot bottleneck slot)
-                    pure $! z
-
-            queueClosed <- 
-                atomically (parallePutToTheQueueWhenReady queue bottleneck slot a)
-                    `onException` 
-                cancel a
-
-            unless queueClosed $ go ss                            
-        
-    readAll queue = 
-        atomically (readCQueue queue) >>= \case             
-            Nothing -> pure []
-            Just t  -> do                     
-                z    <- wait t
-                rest <- readAll queue 
-                pure $! z : rest                    
 
 -- | Compute a function for a list of inputs in parallel using the bottleneck.
--- The otder of the results in the list is random and based on how fast each 
+-- The order of the results in the list is random and based on how fast each 
 -- of the inputs is processed.
 -- 
 inParallelUnordered :: 
