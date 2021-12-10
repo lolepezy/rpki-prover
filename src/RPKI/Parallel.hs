@@ -299,7 +299,10 @@ concurrentTasks v1 v2 = do
 
 data Slot = Free | Taken | NotForTaking
 
-
+-- | Compute a function for a list of inputs in parallel using the bottleneck.
+-- The otder of the results in the list will be corresponding to the ordere of 
+-- the inputs, moreover, they will be execited more or less "in order".
+-- 
 inParallelOrdered :: Bottleneck 
                     -> [a] 
                     -> (a -> IO b) 
@@ -344,7 +347,10 @@ inParallelOrdered bottleneck as f = do
                 rest <- readAll queue 
                 pure $! z : rest                    
 
-
+-- | Compute a function for a list of inputs in parallel using the bottleneck.
+-- The otder of the results in the list is random and based on how fast each 
+-- of the inputs is processed.
+-- 
 inParallelUnordered :: 
                     Bottleneck 
                     -> [a]
