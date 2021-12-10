@@ -119,7 +119,8 @@ fetchPPWithFallback
                     pure $ bracketOnError 
                                 (async $ do 
                                     -- logDebug_ logger [i|ppAccess = #{ppAccess}, ppsKey = #{ppsKey}.|]
-                                    fetchWithFallback parentPath $ NonEmpty.toList $ unPublicationPointAccess ppAccess) 
+                                    !z <- fetchWithFallback parentPath $ NonEmpty.toList $ unPublicationPointAccess ppAccess
+                                    pure z) 
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
       where
