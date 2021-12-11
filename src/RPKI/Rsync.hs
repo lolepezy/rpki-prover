@@ -49,8 +49,32 @@ import           System.Process.Typed
 import           System.Mem                       (performGC)
 import Data.Proxy
 import Data.Functor ((<&>))
+import Data.Maybe (fromMaybe)
 
 
+
+checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
+checkRsyncInPath rsyncClientPath = do 
+    let client = fromMaybe "rsync" rsyncClientPath    
+    z <- liftIO $ try $ readProcess $ proc client [ "--version" ]
+    case z of
+        Left (e :: SomeException) -> do 
+            let message = maybe 
+                    [i|rsync client is not in he $PATH, can't proceed: #{U.fmtEx e}|]
+                    (\rc -> [i|rsync client #{rc} is not found, can't proceed: #{U.fmtEx e}|])
+                    rsyncClientPath
+            appError $ InitE $ InitError message
+                    
+        Right (exit, stdout, stderr) -> 
+            case exit of 
+                ExitSuccess -> pure ()
+                ExitFailure failure -> do 
+                    appError $ InitE $ InitError 
+                        [i|#{client} --version returned non-zero exit code #{exit}, 
+stdout = [#{U.textual stdout}], 
+stderr = [#{U.textual stderr}]|]
+
+    
 
 -- | Download one file using rsync
 -- | 

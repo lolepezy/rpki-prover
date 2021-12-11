@@ -54,6 +54,7 @@ data Config = Config {
     deriving anyclass (Serialise)
 
 data RsyncConf = RsyncConf {
+        rsyncClientPath :: Maybe FilePath,
         rsyncRoot    :: FilePath,
         rsyncTimeout :: Seconds
     } 
@@ -150,6 +151,7 @@ defaultConfig = Config {
     cacheDirectory = "",
     parallelism = makeParallelism 2,
     rsyncConf = RsyncConf {
+        rsyncClientPath = Nothing,
         rsyncRoot    = "",
         rsyncTimeout = 7 * 60
     },

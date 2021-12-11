@@ -63,9 +63,10 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
 
-import           RPKI.Worker
+import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
+import           RPKI.Worker
 import           RPKI.Workflow
 
 main :: IO ()
@@ -84,18 +85,20 @@ mainProcess cliOptions = do
                 then
                     -- init the FS layout and download TALs
                     void $ liftIO $ initialiseFS cliOptions logger
-                else do
+                else do                                                                                
                     -- run the validator
                     (appContext, validations) <- do
-                                runValidatorT (newValidatorPath "initialise")
-                                    $ createAppContext cliOptions logger logLevel
+                                runValidatorT (newValidatorPath "initialise") $ do 
+                                    checkPreconditions cliOptions
+                                    createAppContext cliOptions logger logLevel
                     case appContext of
-                        Left e ->
-                            logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                        Left _ ->
+                            logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
                         Right appContext' ->
                             void $ race
                                 (runHttpApi appContext')
                                 (runValidatorApp appContext')
+
 
 inProcess :: CLIOptions Unwrapped -> IO ()
 inProcess cliOptions@CLIOptions{..} =
@@ -217,6 +220,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #cacheDirectory .~ cached 
                 & #parallelism .~ parallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
+                & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
                 & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
@@ -406,6 +410,10 @@ readWorkerContext input logger = do
             config = input ^. #config
         }       
 
+-- | Check some crucial things before running the validator
+checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
+checkPreconditions CLIOptions {..} = do 
+    checkRsyncInPath rsyncClientPath           
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
@@ -454,12 +462,16 @@ data CLIOptions wrapped = CLIOptions {
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
+    rsyncClientPath :: wrapped ::: Maybe String <?>
+        ("Path to rsync client. By default rsync client is expected to be in the $PATH."),
+
     httpApiPort :: wrapped ::: Maybe Word16 <?>
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that about 1Gb of cache is "
-       +++ "required for every extra 24 hours of cache life time."),
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " 
+       +++ "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. "
+       +++ "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
 
     withRtr :: wrapped ::: Bool <?>
         "Start RTR server (default is false)",
