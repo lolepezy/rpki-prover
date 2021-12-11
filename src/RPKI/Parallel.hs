@@ -315,14 +315,14 @@ inParallelUnordered bottleneck as f = do
     queue   <- liftIO $ atomically $ newCQueue $ 2 * size    
 
     snd <$> concurrently
-                (writeAll taskMap queue `finally` atomically (closeCQueue queue)) 
-                (readAll queue)
+                (runAll taskMap queue `finally` atomically (closeCQueue queue)) 
+                (readResults queue)
             `finally` (do                   
                 t <- readTVarIO taskMap
                 mapM_ cancel $ IM.elems t)
   where                
     
-    writeAll taskMap queue = do
+    runAll taskMap queue = do
         forM_ (zip as [1..]) $ \(s, nextKey) -> do                                 
             slot <- liftIO $ newTVarIO Free
             a <- async $ do                     
@@ -330,8 +330,9 @@ inParallelUnordered bottleneck as f = do
                     `finally` (do 
                             atomically $ releaseSlot bottleneck slot
                             atomically $ do 
-                                check . IM.member nextKey =<< readTVar taskMap
-                                modifyTVar' taskMap $ IM.delete nextKey)                        
+                                t <- readTVar taskMap
+                                check $ IM.member nextKey t                                
+                                writeTVar taskMap $ IM.delete nextKey t)                        
 
             atomically $ modifyTVar' taskMap $ IM.insert nextKey a
             atomically (takeSlot slot bottleneck `orElse` void (waitSTM a))
@@ -340,11 +341,11 @@ inParallelUnordered bottleneck as f = do
         atomically $ check . IM.null =<< readTVar taskMap
             
         
-    readAll queue = 
+    readResults queue = 
         atomically (readCQueue queue) >>= \case             
             Nothing                          -> pure []
             Just (Left (e :: SomeException)) -> throwIO e
-            Just (Right z)                   -> (z : ) <$> readAll queue                 
+            Just (Right z)                   -> (z : ) <$> readResults queue                 
 
 
 
