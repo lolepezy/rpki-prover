@@ -53,18 +53,6 @@ forMShouldSavesState = do
          VWarn (VWarning (UnspecifiedE "z" "z-bla"))])
 
 
-concurrentTasksPreservesState :: QC.Property
-concurrentTasksPreservesState = monadicIO $ do
-  z1 :: (Either AppError (), ValidationState) <- pick arbitrary 
-  z2 :: (Either AppError (), ValidationState) <- pick arbitrary 
-  q <- run $ runValidatorT (newValidatorPath "zzz") $ 
-                concurrentTasks 
-                    (validatorT $ pure z1)
-                    (validatorT $ pure z2)
-  assert $ snd q == snd z1 <> snd z2
-  assert $ fst q == ((,) <$> fst z1 <*> fst z2)
-
-
 appMonadSpec :: TestTree
 appMonadSpec = testGroup "AppMonad" [
         QC.testProperty "ValidationState is a semigroup" (isSemigroup @ValidationState),
@@ -73,10 +61,6 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty
             "runValidatorT . validatorT == id"
             runValidatorTAndvalidatorTShouldBeId,
-
-        QC.testProperty
-            "concurrentTasks keeps the state and validity"
-            concurrentTasksPreservesState,
             
         HU.testCase
             "forM saves state"

@@ -284,17 +284,6 @@ cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m ()
 cancelTask (RequestorTask _) = pure ()
 cancelTask (AsyncTask a)     = cancel a
 
-concurrentTasks :: (MonadBaseControl IO m, MonadIO m) =>  
-                    ValidatorT m a -> ValidatorT m b -> ValidatorT m (a, b)
-concurrentTasks v1 v2 = do
-    env <- askEnv
-    embedValidatorT $ do 
-        ((r1, vs1), (r2, vs2)) <- 
-            concurrently 
-                (runValidatorT env v1) 
-                (runValidatorT env v2)        
-        pure ((,) <$> r1 <*> r2, vs1 <> vs2)
-
 
 
 data Slot = Free | Taken | NotForTaking
