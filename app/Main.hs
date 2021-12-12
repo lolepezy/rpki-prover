@@ -373,19 +373,19 @@ executeWorker :: WorkerInput
             -> AppLmdbEnv 
             -> IO ()
 executeWorker input appContext = 
-    executeWork input $ \_ ->   
+    executeWork input $ \_ resultHandler ->   
         case input ^. #params of
             RrdpFetchParams {..} -> do
                 z <- runValidatorT validatorPath $ 
                             updateObjectForRrdpRepository appContext worldVersion rrdpRepository                            
-                writeWorkerOutput $ RrdpFetchResult z
+                resultHandler $ RrdpFetchResult z
             RsyncFetchParams {..} -> do
                 z <- runValidatorT validatorPath $ 
                             updateObjectForRsyncRepository appContext worldVersion rsyncRepository                            
-                writeWorkerOutput $ RsyncFetchResult z
+                resultHandler $ RsyncFetchResult z
             CompactionParams {..} -> do 
                 z <- copyLmdbEnvironment appContext targetLmdbEnv                
-                writeWorkerOutput $ CompactionResult z
+                resultHandler $ CompactionResult z
    
 
 readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO AppLmdbEnv

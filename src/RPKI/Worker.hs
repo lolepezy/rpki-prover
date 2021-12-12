@@ -183,10 +183,10 @@ runWorker logger config workerId params timeout extraCli = do
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (WorkerInput -> IO ()) -- ^ Actual work to be executed.                
+            -> (WorkerInput -> (forall a . Serialise a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
 executeWork input actualWork = 
-    void $ race (actualWork input) (race suicideCheck timeoutWait)
+    void $ race (actualWork input writeWorkerOutput) (race suicideCheck timeoutWait)
   where    
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
