@@ -183,20 +183,15 @@ validateTA :: Storage s =>
             -> WorldVersion             
             -> RepositoryProcessing 
             -> IO TopDownResult
-validateTA appContext tal worldVersion repositoryProcessing = do    
-    r <- runValidatorT taContext $
-            timedMetric (Proxy :: Proxy ValidationMetric) $ do 
-                ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-                -- this will be used as the "now" in all subsequent time and period validations 
-                let now = Now $ versionToMoment worldVersion
-                topDownContext <- newTopDownContext worldVersion 
-                                    taName
-                                    now  
-                                    (taCert ^. #payload)  
-                                    repositoryProcessing
-                vrps <- validateFromTACert appContext topDownContext repos taCert
-                setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
-                pure vrps
+validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do    
+    let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
+    r <- runValidatorT taContext $ 
+            timeoutVT 
+                maxDuration
+                validateFromTAL
+                (do 
+                    logErrorM logger [i|Validation for TA #{taName} did not finish within #{maxDuration}s and was interrupted.|]
+                    appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
 
     pure $ case r of 
         (Left _,     vs) -> TopDownResult mempty vs
@@ -204,6 +199,20 @@ validateTA appContext tal worldVersion repositoryProcessing = do
   where
     taName = getTaName tal
     taContext = newValidatorPath $ unTaName taName
+
+    validateFromTAL = do 
+        timedMetric (Proxy :: Proxy ValidationMetric) $ do 
+            ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
+            -- this will be used as the "now" in all subsequent time and period validations 
+            let now = Now $ versionToMoment worldVersion
+            topDownContext <- newTopDownContext worldVersion 
+                                taName
+                                now  
+                                (taCert ^. #payload)  
+                                repositoryProcessing
+            vrps <- validateFromTACert appContext topDownContext repos taCert
+            setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
+            pure vrps
 
 
 data TACertStatus = Existing | Updated

@@ -85,6 +85,9 @@ data ValidationConfig = ValidationConfig {
         rrdpRepositoryRefreshInterval  :: Seconds,
         rsyncRepositoryRefreshInterval :: Seconds,
 
+        -- Maximum time for top-down validation for one TA
+        topDownTimeout                 :: Seconds,
+
         -- Used mainly for testing and doesn't really make sense
         -- in a production environment    
         dontFetch                      :: Bool,
@@ -164,6 +167,7 @@ defaultConfig = Config {
         revalidationInterval           = Seconds $ 13 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
+        topDownTimeout                 = Seconds $ 60 * 60,    
         dontFetch                      = False,
         manifestProcessing             = RFC6486,
         maxCertificatePathDepth        = 32,

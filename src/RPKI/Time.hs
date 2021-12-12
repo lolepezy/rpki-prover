@@ -72,7 +72,6 @@ closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
 closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds = 
     timeDiff secondMoment firstMoment < intervalSeconds
 
-
 uiDateFormat :: Instant -> String
 uiDateFormat (Instant d) = timePrint format d
   where 
@@ -84,3 +83,6 @@ uiDateFormat (Instant d) = timePrint format d
         ]
     dash = Format_Text '-'
     colon = Format_Text ':'   
+
+secondsToInt :: Seconds -> Int
+secondsToInt (Seconds s) = fromIntegral s
