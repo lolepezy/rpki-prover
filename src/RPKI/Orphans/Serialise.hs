@@ -36,6 +36,8 @@ import qualified Crypto.PubKey.Ed448 as E448
 
 import Crypto.PubKey.ECC.Types
 
+import System.Posix.Types
+
 import RPKI.Orphans.Generics
 
 instance Serialise X509.Certificate
@@ -44,6 +46,7 @@ instance Serialise X509.RevokedCertificate
 instance Serialise a => Serialise (X509.SignedExact a)    
 instance Serialise a => Serialise (X509.Signed a) 
     
+instance Serialise NullParam 
 instance Serialise SignatureALG
 
 instance Serialise DateTime
@@ -108,3 +111,10 @@ deriving instance (Ord a, Serialise a) => Serialise (NESet a)
 deriving instance (Ord a, Serialise a, Serialise b) => Serialise (MonoidalMap a b)
 
 deriving instance (Serialise a, Serialise b) => Serialise (These a b)
+
+
+instance (Serialise CPid) where
+    encode (CPid i) = encode i
+    decode = CPid <$> decode
+
+

@@ -186,7 +186,7 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N -s"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     - -Wall
     - -O2
     dependencies:

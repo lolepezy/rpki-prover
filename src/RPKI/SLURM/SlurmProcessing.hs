@@ -23,7 +23,7 @@ import           Data.List (nub)
 import           Data.Coerce
 
 import qualified Data.Set as Set
-import qualified Data.Map.Strict as Map
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Data.Aeson as Json
 
@@ -49,9 +49,9 @@ slurmVrpName = TaName "slurm"
 
 applySlurm :: Slurm -> Vrps -> Vrps
 applySlurm slurm (Vrps vrps) = 
-    Vrps $ filteredVrps <> Map.singleton slurmVrpName assertedVrps
+    Vrps $ filteredVrps <> MonoidalMap.singleton slurmVrpName assertedVrps
   where     
-    filteredVrps = Map.map (Set.filter filterFunc) vrps
+    filteredVrps = MonoidalMap.map (Set.filter filterFunc) vrps
 
     assertedVrps = Set.fromList 
         $ map toVrp 
@@ -79,9 +79,9 @@ readSlurmFiles :: [String] -> ValidatorT IO Slurm
 readSlurmFiles slurmFiles = do 
     slurms :: [Slurm] <- 
         forM slurmFiles $ \f -> do
-            s <- fromTry (SlurmE . SlurmFileError . fmtEx) $ LBS.readFile f
+            s <- fromTry (SlurmE . SlurmFileError (Text.pack f) . fmtEx) $ LBS.readFile f
             vHoist $ fromEither 
-                   $ first (SlurmE . SlurmParseError . Text.pack) 
+                   $ first (SlurmE . SlurmParseError (Text.pack f) . Text.pack) 
                    $ Json.eitherDecode s
         
     vHoist $ validateNoOverlaps $ zip slurmFiles slurms

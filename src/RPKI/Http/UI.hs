@@ -203,7 +203,7 @@ validaionDetailsHtml result =
                 tr $ td ! colspan "2" $                                         
                     H.div ! class_ "flex switch" $ do                        
                         H.div ! class_ "ta-header" $ do 
-                            toHtml ta
+                            toHtml ta >> ":"
                             space >> space >> space
                             let (e, w) = countProblems vrs
                             toHtml e >> " errors, "

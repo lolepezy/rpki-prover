@@ -59,12 +59,13 @@ instance Blob LBS.ByteString where
 
 instance Blob BS.ByteString where    
     sizeB = Size . fromIntegral . BS.length 
-    readB f s = 
-        if s < 50_000_000 
+    readB f _ = mapFile f
+        -- if s < 50_000_000 
             -- read relatively small files in memory entirely
             -- and mmap bigger ones.
-            then fsRead f
-            else mapFile f
+            -- then fsRead f
+            -- else 
+                
 
 
 -- | Download HTTP content to a temporary file and return the context as lazy/strict ByteString. 

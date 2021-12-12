@@ -7,7 +7,6 @@
 module RPKI.Rsync where
     
 import           Control.Lens                     ((%~), (&), (+=), (^.))
-import           Data.Generics.Product.Fields
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -17,7 +16,6 @@ import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.Except
-import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 import           Data.String.Interpolate.IsString
@@ -51,8 +49,32 @@ import           System.Process.Typed
 import           System.Mem                       (performGC)
 import Data.Proxy
 import Data.Functor ((<&>))
+import Data.Maybe (fromMaybe)
 
 
+
+checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
+checkRsyncInPath rsyncClientPath = do 
+    let client = fromMaybe "rsync" rsyncClientPath    
+    z <- liftIO $ try $ readProcess $ proc client [ "--version" ]
+    case z of
+        Left (e :: SomeException) -> do 
+            let message = maybe 
+                    [i|rsync client is not in he $PATH, can't proceed: #{U.fmtEx e}|]
+                    (\rc -> [i|rsync client #{rc} is not found, can't proceed: #{U.fmtEx e}|])
+                    rsyncClientPath
+            appError $ InitE $ InitError message
+                    
+        Right (exit, stdout, stderr) -> 
+            case exit of 
+                ExitSuccess -> pure ()
+                ExitFailure failure -> do 
+                    appError $ InitE $ InitError 
+                        [i|#{client} --version returned non-zero exit code #{exit}, 
+stdout = [#{U.textual stdout}], 
+stderr = [#{U.textual stderr}]|]
+
+    
 
 -- | Download one file using rsync
 -- | 
@@ -102,7 +124,7 @@ updateObjectForRsyncRepository
         void $ fromTry (RsyncE . FileReadError . U.fmtEx) $ 
             createDirectoryIfMissing True destination
             
-        logDebugM logger [i|Runnning #{rsync}...|]
+        logDebugM logger [i|Runnning #{U.trimmed rsync}|]
         (exitCode, out, err) <- fromTry 
                 (RsyncE . RsyncRunningError . U.fmtEx) $ 
                 readProcess rsync
@@ -222,7 +244,9 @@ data RsyncMode = RsyncOneFile | RsyncDirectory
 rsyncProcess :: ValidationConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
 rsyncProcess vc (RsyncURL (URI uri)) destination rsyncMode = 
     proc "rsync" $ 
-        [ "--timeout=300",  "--update",  "--times", "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
+        [ "--timeout=300",  "--update",  "--times" ] <> 
+        [ "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
+        [ "--min-size=" <> show (vc ^. #minObjectSize) ] <> 
         extraOptions <> 
         [ Text.unpack uri, destination ]
     where 

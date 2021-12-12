@@ -20,10 +20,10 @@ import           Data.Generics.Product.Typed
 import           Data.Proxy
 import           Data.Text                   (Text)
 
-import           RPKI.Reporting
-import           RPKI.Time
 import           System.Timeout
 
+import           RPKI.Reporting
+import           RPKI.Time
 
 
 -- Application monad stack

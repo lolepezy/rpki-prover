@@ -76,7 +76,7 @@ main = do
                 let now = versionToMoment worldVersion
                 let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
                 (results, elapsed) <- timedMS $
-                    inParallel
+                    inParallelOrdered
                         (appContext ^. #appBottlenecks . #cpuBottleneck 
                          <> appContext ^. #appBottlenecks . #ioBottleneck) 
                     -- forConcurrently

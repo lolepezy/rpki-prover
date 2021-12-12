@@ -10,19 +10,18 @@ module Main where
 
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
-import           Control.Concurrent.STM (readTVarIO)
-import           Control.Concurrent.STM.TVar (newTVarIO)
+import           Control.Concurrent.STM
+import           Control.Concurrent.Async
+
+import           Control.Exception.Lifted
 
 import           Control.Monad
 import           Control.Monad.IO.Class
 
-import           Control.Concurrent.Async.Lifted
-import           Control.Exception.Lifted
-
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
-import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.Text                        as Text
 
 import           Data.Hourglass
@@ -38,10 +37,10 @@ import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
-import           System.IO (hPutStrLn, stderr)
 import           System.Directory
 import           System.Environment
 import           System.FilePath                  ((</>))
+import           System.IO (hPutStrLn, stderr)
 
 import           Options.Generic
 
@@ -62,37 +61,62 @@ import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
 import           RPKI.SLURM.SlurmProcessing
 
+import           RPKI.RRDP.RrdpFetch
+
+import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
+import           RPKI.Worker
 import           RPKI.Workflow
 
 main :: IO ()
-main = do
+main = do    
     cliOptions :: CLIOptions Unwrapped <- unwrapRecord
         "RPKI prover, relying party software for RPKI"
+    inProcess cliOptions
 
+
+mainProcess :: CLIOptions Unwrapped -> IO ()
+mainProcess cliOptions = do 
     withLogLevel cliOptions $ \logLevel ->
-        -- load config file and apply command line options    
-        withAppLogger logLevel $ \logger -> liftIO $ do
-
+        withMainAppLogger logLevel $ \logger -> liftIO $ do
+            logDebug_ logger [i|Main process.|]
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
                     void $ liftIO $ initialiseFS cliOptions logger
-                else do
+                else do                                                                                
                     -- run the validator
                     (appContext, validations) <- do
-                                runValidatorT (newValidatorPath "initialise")
-                                    $ createAppContext cliOptions logger
+                                runValidatorT (newValidatorPath "initialise") $ do 
+                                    checkPreconditions cliOptions
+                                    createAppContext cliOptions logger logLevel
                     case appContext of
-                        Left e ->
-                            logError_ logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                        Left _ ->
+                            logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
                         Right appContext' ->
                             void $ race
                                 (runHttpApi appContext')
                                 (runValidatorApp appContext')
 
 
+inProcess :: CLIOptions Unwrapped -> IO ()
+inProcess cliOptions@CLIOptions{..} =
+    if isNothing worker
+        then do             
+            mainProcess cliOptions
+        else do         
+            input <- readWorkerInput
+            let logLevel' = input ^. typed @Config . #logLevel
+            withWorkerLogger logLevel' $ \logger -> liftIO $ do
+                (z, validations) <- do
+                            runValidatorT (newValidatorPath "worker-create-app-context")
+                                $ readWorkerContext input logger
+                case z of
+                    Left e ->                        
+                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                    Right appContext -> 
+                        executeWorker input appContext
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
@@ -119,7 +143,7 @@ runValidatorApp appContext@AppContext {..} = do
                 closeStorage appContext
     where
         parseTALFromFile talFileName taName = do
-            talContent <- fromTry (TAL_E . TALError . fmtEx) $ BS.readFile talFileName
+            talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
             vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
@@ -129,10 +153,10 @@ runHttpApi appContext = let
     in Warp.run httpPort $ httpApi appContext
 
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
-createAppContext cliOptions@CLIOptions{..} logger = do
+createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
+createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
-    (tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
+    (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
     let defaults = defaultConfig
 
@@ -153,20 +177,11 @@ createAppContext cliOptions@CLIOptions{..} logger = do
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
     liftIO $ setCpuCount cpuCount'
-
-    -- BUT: create 2 times more asyncs/tasks than there're capabilities. In most 
-    -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
-    let cpuParallelism = 2 * cpuCount'
-
-    -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
-    -- that many IO operations (http downloads, LMDB reads, etc.) at once.
-    -- 
-    -- TODO There should be distinction between network operations and file/LMDB IO.
-    let ioParallelism = 64
+    let parallelism = makeParallelism cpuCount'
 
     appBottlenecks <- liftIO $ AppBottleneck <$>
-                        newBottleneckIO cpuParallelism <*>
-                        newBottleneckIO ioParallelism
+                        newBottleneckIO (parallelism ^. #cpuParallelism) <*>
+                        newBottleneckIO (parallelism ^. #ioParallelism)
 
     let rtrConfig = if withRtr
             then Just $ defaultRtrConfig
@@ -191,17 +206,21 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 []         -> appState
                 slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles
 
+    programPath <- liftIO getExecutablePath
     let appContext = AppContext {
         appState = appState',
         database = tvarDatabase,
         appBottlenecks = appBottlenecks,
         logger = logger,        
-        config = defaults 
+        config = defaults               
+                & #programBinaryPath .~ programPath
+                & #rootDirectory .~ root                
                 & #talDirectory .~ tald 
                 & #tmpDirectory .~ tmpd 
                 & #cacheDirectory .~ cached 
-                & #parallelism .~ Parallelism cpuParallelism ioParallelism
+                & #parallelism .~ parallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
+                & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
                 & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
@@ -216,9 +235,10 @@ createAppContext cliOptions@CLIOptions{..} logger = do
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
+                & #logLevel .~ derivedLogLevel
     }
 
-    logInfoM logger [i|Created application context: #{config appContext}|]
+    logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
     pure appContext
 
 
@@ -235,7 +255,7 @@ initialiseFS cliOptions logger = do
                     logInfoM logger [i|Initialising FS layout...|]
 
                     -- this one checks that "tals" exists
-                    (tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
+                    (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
 
                     let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
                     let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
@@ -253,8 +273,8 @@ initialiseFS cliOptions logger = do
                                         [i|Error downloading TAL #{tal} from #{talUrl}|]
                                         [i|Http status #{unHttpStatus httpStatus}|]
             case r of
-                Left e ->
-                    logErrorM logger [i|Failed to initialise: #{e}. |] <>
+                Left e -> do
+                    logErrorM logger [i|Failed to initialise: #{e}.|]
                     logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
                 Right _ ->
                     logInfoM logger [i|Done.|]
@@ -274,10 +294,10 @@ adding --agree-with-arin-rpa option.
 fsLayout :: CLIOptions Unwrapped
         -> AppLogger
         -> TALsHandle
-        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath)
+        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cli logger talsHandle = do
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let root = getRootrDirectory cli
+    let root = getRootDirectory cli
     let rootDir = root `orDefault` (home </> ".rpki")
 
     let message =
@@ -291,7 +311,7 @@ fsLayout cli logger talsHandle = do
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
     cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir
-    pure (tald, rsyncd, tmpd, cached)
+    pure (rootDir, tald, rsyncd, tmpd, cached)
 
 
 orDefault :: Maybe a -> a -> a
@@ -311,14 +331,20 @@ listTALFiles talDirectory = do
     cutOfTalExtension s = List.take (List.length s - 4) s
 
 
+cacheDirN, rsyncDirN, talsDirN, tmpDirN :: FilePath
+cacheDirN = "cache"
+rsyncDirN = "rsync"
+talsDirN  = "tals"
+tmpDirN   = "tmp"
+
 talsDir :: FilePath -> TALsHandle -> IO (Either Text FilePath)
-talsDir root CreateTALs      = createSubDirectoryIfNeeded root "tals"
-talsDir root CheckTALsExists = checkSubDirectory root "tals"
+talsDir root CreateTALs      = createSubDirectoryIfNeeded root talsDirN
+talsDir root CheckTALsExists = checkSubDirectory root talsDirN
 
 rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
-rsyncDir root = createSubDirectoryIfNeeded root "rsync"
-tmpDir root   = createSubDirectoryIfNeeded root "tmp"
-cacheDir root = createSubDirectoryIfNeeded root "cache"
+rsyncDir root = createSubDirectoryIfNeeded root rsyncDirN
+tmpDir root   = createSubDirectoryIfNeeded root tmpDirN
+cacheDir root = createSubDirectoryIfNeeded root cacheDirN
 
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
@@ -335,14 +361,66 @@ createSubDirectoryIfNeeded root sub = do
     unless exists $ createDirectory subDirectory
     pure $ Right subDirectory
 
-getRootrDirectory :: CLIOptions Unwrapped -> Maybe FilePath
-getRootrDirectory CLIOptions{..} =
+getRootDirectory :: CLIOptions Unwrapped -> Maybe FilePath
+getRootDirectory CLIOptions{..} =
     case rpkiRootDirectory of
         [] -> Nothing
         s  -> Just $ Prelude.last s
+        
+
+-- This is for worker processes.
+executeWorker :: WorkerInput 
+            -> AppLmdbEnv 
+            -> IO ()
+executeWorker input appContext = 
+    executeWork input $ \_ returnResult ->   
+        case input ^. #params of
+            RrdpFetchParams {..} -> do
+                z <- runValidatorT validatorPath $ 
+                            updateObjectForRrdpRepository appContext worldVersion rrdpRepository                            
+                returnResult $ RrdpFetchResult z
+            CompactionParams {..} -> do 
+                z <- copyLmdbEnvironment appContext targetLmdbEnv                
+                writeWorkerOutput $ CompactionResult z
+   
+
+readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO AppLmdbEnv
+readWorkerContext input logger = do    
+
+    lmdbEnv <- setupWorkerLmdbCache                     
+                    logger
+                    (input ^. #config . #cacheDirectory)
+                    (input ^. #config . #lmdbSizeMb)
+
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
+    
+    let parallelism = input ^. #config . #parallelism
+    appBottlenecks <- liftIO $ AppBottleneck <$>
+                        newBottleneckIO (parallelism ^. #cpuParallelism) <*>
+                        newBottleneckIO (parallelism ^. #ioParallelism)        
+
+    appState     <- liftIO newAppState
+    tvarDatabase <- liftIO $ newTVarIO database
+
+    pure AppContext {
+            appState = appState,
+            database = tvarDatabase,
+            appBottlenecks = appBottlenecks,
+            logger = logger,        
+            config = input ^. #config
+        }       
+
+-- | Check some crucial things before running the validator
+checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
+checkPreconditions CLIOptions {..} = do 
+    checkRsyncInPath rsyncClientPath           
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
+
+    -- It is not documented since it's for internal machinery
+    worker :: wrapped ::: Maybe String,
+
     initialise :: wrapped ::: Bool <?>
         ("If set, the FS layout will be created and TAL files will be downloaded." ),
 
@@ -377,19 +455,23 @@ data CLIOptions wrapped = CLIOptions {
        +++ "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for RRDP repositories, in seconds. If fetching of a repository does not "
+        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for rsync repositories, in seconds. If fetching of a repository does not "
+        ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
+
+    rsyncClientPath :: wrapped ::: Maybe String <?>
+        ("Path to rsync client. By default rsync client is expected to be in the $PATH."),
 
     httpApiPort :: wrapped ::: Maybe Word16 <?>
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that about 1Gb of cache is "
-       +++ "required for every extra 24 hours of cache life time."),
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " 
+       +++ "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. "
+       +++ "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
 
     withRtr :: wrapped ::: Bool <?>
         "Start RTR server (default is false)",
@@ -425,7 +507,7 @@ type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
 withLogLevel :: CLIOptions Unwrapped -> (LogLevel -> IO ()) -> IO ()
 withLogLevel CLIOptions{..} f =
     case logLevel of
-        Nothing -> f InfoL
+        Nothing -> f defaultsLogLevel
         Just s  ->
             case Text.toLower $ Text.pack s of
                 "error" -> f ErrorL

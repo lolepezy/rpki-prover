@@ -106,7 +106,7 @@ fetchPPWithFallback
     funRun runs key = Map.lookup key <$> readTVar runs            
 
     -- Use "run only once" logic for the whole list of PPs
-    fetchOnce parentPath ppAccess =          
+    fetchOnce parentPath ppAccess' =          
         join $ atomically $ do
             pps <- readTVar publicationPoints           
             let ppsKey = ppSeqKey pps 
@@ -119,7 +119,8 @@ fetchPPWithFallback
                     pure $ bracketOnError 
                                 (async $ do 
                                     -- logDebug_ logger [i|ppAccess = #{ppAccess}, ppsKey = #{ppsKey}.|]
-                                    fetchWithFallback parentPath $ NonEmpty.toList $ unPublicationPointAccess ppAccess) 
+                                    evaluate =<< fetchWithFallback parentPath 
+                                                    (NonEmpty.toList $ unPublicationPointAccess ppAccess')) 
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
       where
@@ -282,7 +283,7 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (updateObjectForRrdpRepository appContext worldVersion r)
+                                    (runRrdpFetchWorker appContext worldVersion r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
@@ -358,8 +359,8 @@ setValidationStateOfFetches repositoryProcessing frs = liftIO $ do
     atomically $ do 
         forM_ frs $ \fr -> do 
             let (u, vs) = case fr of
-                    FetchFailure r vs   -> (r, vs)
-                    FetchSuccess repo vs -> (getRpkiURL repo, vs)        
+                    FetchFailure r vs'    -> (r, vs')
+                    FetchSuccess repo vs' -> (getRpkiURL repo, vs')
                 
             modifyTVar' (repositoryProcessing ^. #indivudualFetchResults)
                         $ Map.insert u vs

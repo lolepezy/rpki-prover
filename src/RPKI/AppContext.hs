@@ -2,6 +2,7 @@
 {-# LANGUAGE StrictData         #-}
 
 module RPKI.AppContext where
+    
 import           Control.Concurrent.STM (TVar)
 import           GHC.Generics
 import           RPKI.AppState

@@ -10,17 +10,21 @@ import           Data.Bifunctor
 
 import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
+import qualified Data.ByteString.Lazy.Char8  as LC
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import           Data.Char
+import qualified Data.List                   as List
+import           Data.Foldable (toList)
 import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
+import           Data.Text.Encoding          (decodeUtf8)
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -48,7 +52,7 @@ unhex hexed =
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
 
-hexL :: BSL.ByteString -> BSL.ByteString
+hexL :: LBS.ByteString -> LBS.ByteString
 hexL = HexLazy.encode    
 
 class ConvertibleAsSomethigString s1 s2 where
@@ -77,6 +81,9 @@ normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
 
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
+
+trimmed :: Show a => a -> Text
+trimmed = Text.strip . Text.pack . show
 
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)
@@ -135,3 +142,12 @@ decodeBase64 (EncodedBase64 bs) context =
 encodeBase64 :: DecodedBase64 -> EncodedBase64
 encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64.encodeBase64' bs
     
+textual :: LBS.ByteString -> Text
+textual = decodeUtf8 . LBS.toStrict
+
+fmtLocations :: Locations -> Text
+fmtLocations = mconcat . 
+               List.intersperse "," . 
+               map (Text.pack . show) . 
+               toList . 
+               unLocations

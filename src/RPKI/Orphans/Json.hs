@@ -62,6 +62,7 @@ instance ToJSON VProblem
 instance ToJSON VWarning
 instance ToJSON AppError
 instance ToJSON InitError
+instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON  a => ToJSON (ParseError a)
 instance ToJSON ValidationError
@@ -202,6 +203,7 @@ instance ToJSON X509.RevokedCertificate
 instance ToJSON a => ToJSON (X509.SignedExact a)    
 instance ToJSON a => ToJSON (X509.Signed a) 
     
+instance ToJSON NullParam
 instance ToJSON SignatureALG
 
 instance ToJSON Date

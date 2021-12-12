@@ -14,7 +14,7 @@ import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor                   (first)
-import           Data.Text (Text)
+import           Data.Text                        (Text)
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -27,12 +27,12 @@ import           System.Mem                       (performGC)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
-import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Worker
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
@@ -49,6 +49,56 @@ import           RPKI.Time
 import qualified RPKI.Util                        as U
 
 
+
+runRrdpFetchWorker :: AppContext s 
+            -> WorldVersion
+            -> RrdpRepository             
+            -> ValidatorT IO RrdpRepository
+runRrdpFetchWorker AppContext {..} worldVersion repository = do
+        
+    -- This is for humans to read in `top` or `ps`, actual parameters
+    -- are passed as 'RrdpFetchParams'.
+    let workerId = WorkerId $ "rrdp-fetch:" <> unURI (getURL $ repository ^. #uri)
+
+    let arguments = 
+            [ worderIdS workerId ] <>
+            rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
+
+    vp <- askEnv
+    ((RrdpFetchResult (z, vs), stderr), elapsed) <- 
+                    timedMS $ runWorker 
+                                logger
+                                config
+                                workerId 
+                                (RrdpFetchParams vp repository worldVersion)                        
+                                (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
+                                arguments                        
+    embedState vs
+    case z of 
+        Left e  -> appError e
+        Right r -> do 
+            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr elapsed            
+            pure r
+
+
+-- | 
+--  Update RRDP repository, actually saving all the objects in the DB.
+--
+-- NOTE: It will update the sessionId and serial of the repository 
+-- in the same transaction it stores the data in.
+-- 
+updateObjectForRrdpRepository :: Storage s => 
+                                AppContext s 
+                            -> WorldVersion 
+                            -> RrdpRepository 
+                            -> ValidatorT IO RrdpRepository
+updateObjectForRrdpRepository appContext worldVersion repository =
+    timedMetric (Proxy :: Proxy RrdpMetric) $ 
+        downloadAndUpdateRRDP 
+            appContext 
+            repository 
+            (saveSnapshot appContext worldVersion)  
+            (saveDelta appContext worldVersion)    
 
 -- | 
 --  Update RRDP repository, i.e. do the full cycle
@@ -135,9 +185,9 @@ downloadAndUpdateRRDP
 
     useDeltas sortedDeltas notification = do
         let repoURI = getURL $ repo ^. #uri
-        let message = if minSerial == maxSerial 
-                then [i|#{repoURI}: downloading delta #{minSerial}.|]
-                else [i|#{repoURI}: downloading deltas from #{minSerial} to #{maxSerial}.|]
+        let message = if minDeltaSerial == maxDeltaSerial 
+                then [i|#{repoURI}: downloading delta #{minDeltaSerial}.|]
+                else [i|#{repoURI}: downloading deltas from #{minDeltaSerial} to #{maxDeltaSerial}.|]
         
         logInfoM logger message
 
@@ -180,10 +230,10 @@ downloadAndUpdateRRDP
             pure (rawContent, serial, deltaUri)
 
         serials = map (^. typed @RrdpSerial) sortedDeltas
-        maxSerial = List.maximum serials
-        minSerial = List.minimum serials
+        maxDeltaSerial = List.maximum serials
+        minDeltaSerial = List.minimum serials
 
-        rrdpMeta' = Just (notification ^. typed @SessionId, maxSerial)            
+        rrdpMeta' = Just (notification ^. typed @SessionId, maxDeltaSerial)            
 
 
 data Step
@@ -251,26 +301,6 @@ nextSerial :: RrdpSerial -> RrdpSerial
 nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
 
 
--- | 
---  Update RRDP repository, actually saving all the objects in the DB.
---
--- NOTE: It will update the sessionId and serial of the repository 
--- in the same transaction it stores the data in.
--- 
-updateObjectForRrdpRepository :: Storage s => 
-                                AppContext s 
-                            -> WorldVersion         
-                            -> RrdpRepository 
-                            -> ValidatorT IO RrdpRepository
-updateObjectForRrdpRepository appContext worldVersion repository =
-    timedMetric (Proxy :: Proxy RrdpMetric) $ 
-        downloadAndUpdateRRDP 
-            appContext 
-            repository 
-            (saveSnapshot appContext worldVersion)  
-            (saveDelta appContext worldVersion)    
-
-
 {- 
     Snapshot case, done in parallel by two thread
         - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
@@ -284,10 +314,17 @@ saveSnapshot :: Storage s =>
                 -> BS.ByteString 
                 -> ValidatorT IO ()
 saveSnapshot appContext worldVersion repoUri notification snapshotContent = do              
+
+    -- If we are going for the snapshot we are going to need a lot of CPU
+    -- time, so bump the number of CPUs to the maximum possible values    
+    let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
+    liftIO $ setCpuCount maxCpuAvailable
+    let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
+
     db <- liftIO $ readTVarIO $ appContext ^. #database
     let objectStore     = db ^. #objectStore
     let repositoryStore = db ^. #repositoryStore   
-    (Snapshot _ sessionId serial snapshotItems) <- vHoist $ 
+    (Snapshot _ sessionId serial snapshotItems) <- vHoist $         
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
     let notificationSessionId = notification ^. typed @SessionId
@@ -298,17 +335,17 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-    let savingTx sessionId serial f = 
-            rwAppTx objectStore $ \tx -> 
-                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+    let savingTx serial' f = 
+            rwAppTx objectStore $ \tx ->
+                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
     void $ txFoldPipeline 
                 cpuParallelism
                 (S.mapM (newStorable objectStore) $ S.each snapshotItems)
-                (savingTx sessionId serial)
+                (savingTx serial)
                 (saveStorable objectStore)
                 (mempty :: ())
-    where        
+  where        
 
     newStorable objectStore (SnapshotPublish uri encodedb64) =             
         if supportedExtension $ U.convert uri 
@@ -351,8 +388,8 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
         waitTask a >>= \case     
             HashExists rpkiURL hash ->
                 DB.linkObjectToUrl tx objectStore rpkiURL hash
-            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do                    
-                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
+                logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubVPath (unURI uri) $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
@@ -368,7 +405,7 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
                 logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
 
     logger         = appContext ^. typed @AppLogger           
-    cpuParallelism = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
+    
     bottleneck     = appContext ^. typed @AppBottleneck . #cpuBottleneck    
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
@@ -409,9 +446,9 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     when (currentSerial /= serial) $
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
-    let savingTx sessionId serial f = 
+    let savingTx serial' f = 
             rwAppTx objectStore $ \tx -> 
-                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
+                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
     -- Propagate exceptions from here, anything that can happen here 
     -- (storage failure, file read failure) should stop the validation and 
@@ -419,7 +456,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     txFoldPipeline 
             cpuParallelism
             (S.mapM newStorable $ S.each deltaItems)
-            (savingTx sessionId serial)
+            (savingTx serial)
             (saveStorable objectStore)
             (mempty :: ())
     where        
@@ -473,8 +510,8 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
 
     addObject objectStore tx uri a =
         waitTask a >>= \case
-            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
-                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
+                logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubVPath (unURI uri) $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
@@ -497,8 +534,8 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
 
     replaceObject objectStore tx uri a oldHash = do            
         waitTask a >>= \case
-            UnparsableRpkiURL uri (VWarn (VWarning e)) -> do
-                logErrorM logger [i|Skipped object #{uri}, error #{e} |]
+            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
+                logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubVPath (unURI uri) $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
@@ -554,4 +591,5 @@ data ObjectProcessingResult =
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Task m a) 
                 | Replace URI (Task m a) Hash
+
 

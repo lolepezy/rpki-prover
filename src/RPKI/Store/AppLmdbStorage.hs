@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -9,21 +10,24 @@ module RPKI.Store.AppLmdbStorage where
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
-import           Control.Monad (forM_)
+import           Control.Monad (void)
 import           Control.Monad.IO.Class
 
 import           Control.Lens                     ((^.))
 
 import           Data.String.Interpolate.IsString
+import           Data.Hourglass
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Logging
+import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.MakeLmdb
+import           RPKI.Store.Base.Storable
 import           RPKI.Time
 import           RPKI.Util
 
@@ -62,9 +66,9 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
     
     currentExists <- liftIO $ doesPathExist currentCache    
     if currentExists 
-        then do
+        then do            
             linkTarget   <- liftIO $ readSymbolicLink currentCache
-            targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget            
+            targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget                        
             if targetExists 
                 then do 
                     -- We have what we need, but there could still be other directories 
@@ -101,11 +105,39 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
                 f /= "current" && (cacheDir </> f) /= linkTarget    
 
 
+-- | The same as `setupLmdbCache` but for the worker process.
+-- It does not do any cleanups and just expecets the proper layout to be in place.
+--
+setupWorkerLmdbCache :: AppLogger -> FilePath -> Size -> ValidatorT IO LmdbEnv
+setupWorkerLmdbCache logger cacheDir lmdbSize = do        
+    currentExists <- liftIO $ doesPathExist currentCache    
+    if currentExists 
+        then do    
+            linkTarget   <- liftIO $ readSymbolicLink currentCache
+            targetExists <- liftIO $ doesPathExist $ cacheDir </> linkTarget
+            if targetExists
+                then createLmdb currentCache
+                else do
+                    let message = [i|#{currentCache} doesn't point to an existing directory, broken LMDB.|]
+                    logErrorM logger message
+                    appError $ InternalE $ InternalError message
+        else do
+            let message = [i|#{currentCache} doesn't exist, bailing out.|]
+            logErrorM logger message
+            appError $ InternalE $ InternalError message
+    where        
+        currentCache = cacheDir </> "current"
+
+        createLmdb lmdbDir' =
+            fromTry (InitE . InitError . fmtEx) $ 
+                mkLmdb lmdbDir' lmdbSize maxReadersDefault    
+        
+
 -- | De-fragment LMDB cache.
 -- 
 -- Since we add and delete a lot of data, LMDB files get bigger and bigger over time.
--- It is hard to say why exactly, but the most logical explanation is that it fails
--- to reuse pages in the file and the file gets highly fragmented.
+-- It is hard to say why exactly, but the most logical explanation is that it can't
+-- reuse pages in the file and the file gets highly fragmented.
 --
 -- In order to mitigate the problem, we do the following
 --  * create a new empty environment
@@ -117,7 +149,7 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
 -- and point the `cache/current` symlink to it.
 -- 
 compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
-compactStorageWithTmpDir AppContext {..} = do      
+compactStorageWithTmpDir appContext@AppContext {..} = do      
     lmdbEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     let cacheDir = config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
@@ -147,27 +179,23 @@ compactStorageWithTmpDir AppContext {..} = do
                 ROEnv nn -> pure nn
 
             
-    let copyToNewEnvironmentAndSwap = do                          
+    let copyToNewEnvironmentAndSwap dbStats = do                          
             oldNativeEnv <- setEnvToReadOnly
 
             -- create new native LMDB environment
-            createDirectory newLmdbDirName
-            logDebug_ logger [i|Created #{newLmdbDirName} for storage copy.|]
-
-            newLmdb      <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb) maxReadersDefault
-            newNativeEnv <- atomically $ getNativeEnv newLmdb
-
-            stats <- copyEnv oldNativeEnv newNativeEnv
-            forM_ stats $ \(name, bytes) -> 
-                logDebug_ logger [i|Copied #{bytes} bytes for the map '#{name}'.|]
-            logDebug_ logger [i|Copied all data to #{newLmdbDirName}.|]
+            createDirectory newLmdbDirName            
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+            logDebug_ logger [i|Created #{newLmdbDirName} for storage copy, current one is #{currentLinkTarget}|]
+
+            runCopyWorker appContext dbStats newLmdbDirName                                    
+            logDebug_ logger [i|Copied all data to #{newLmdbDirName}.|]            
 
             -- create a new symlink first and only then atomically rename it into "current"
             createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
+            newLmdb <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb) maxReadersDefault
             newDB <- createDatabase newLmdb
             atomically $ do
                 newNative <- getNativeEnv newLmdb
@@ -182,21 +210,22 @@ compactStorageWithTmpDir AppContext {..} = do
     lmdbFileSize <- fmap sum 
                     $ mapM (getFileSize . (currentCache </>)) =<< listDirectory currentLinkTarget            
     
-    Size dataSize <- fmap DB.totalSpace $ DB.getDbStats =<< readTVarIO database
+    dbStats <- fmap DB.totalStats $ DB.getDbStats =<< readTVarIO database
+    let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = lmdbFileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
     if fileSizeMb > (2 * dataSizeMb)    
         then do 
             logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
-            copyToNewEnvironmentAndSwap `catch` (
+            copyToNewEnvironmentAndSwap dbStats `catch` (
                 \(e :: SomeException) -> do
                     logError_ logger [i|ERROR: #{e}.|]        
                     cleanUpAfterException)            
         else 
             logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
         
-        
+
 generateLmdbDir :: MonadIO m => FilePath -> m FilePath
 generateLmdbDir cacheDir = do 
     Now now <- thisInstant
@@ -214,3 +243,57 @@ cleanDir d = cleanDirFiltered d (const True)
 closeLmdbStorage :: AppContext LmdbStorage -> IO ()
 closeLmdbStorage AppContext {..} =    
     closeLmdb . unEnv . storage =<< readTVarIO database
+
+
+-- This is called from the worker entry point
+-- 
+copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
+copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
+    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    newLmdb    <- mkLmdb targetLmdbPath (config ^. #lmdbSizeMb) maxReadersDefault
+    currentNativeEnv <- atomically $ getNativeEnv currentEnv
+    newNativeEnv     <- atomically $ getNativeEnv newLmdb     
+    void $ copyEnv currentNativeEnv newNativeEnv        
+
+
+-- | The only reason to do LMDB copying as a separate worker process is memory.
+-- Even thought is a perfectly streaming-like activity, without enough GC pressure 
+-- it allocates a large heap, so it's .
+-- 
+-- So instead we run a worker process with limited heap that does the copying.
+-- 
+runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
+runCopyWorker AppContext {..} dbtats targetLmdbPath = do 
+    let workerId = WorkerId "lmdb-compaction"
+    
+    let maxMemoryMb = let 
+            Size maxMemory = max (dbtats ^. #statMaxKVBytes * 20) 128 
+            in maxMemory `div` 1024 `div` 1024
+
+    let arguments = 
+            [ worderIdS workerId ] <>
+            rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
+
+    ((z, _ignoreStderr), elapsed) <- 
+                    timedMS $ 
+                        runValidatorT 
+                            (newValidatorPath "lmdb-compaction-worker") $ 
+                                runWorker 
+                                    logger
+                                    config
+                                    workerId
+                                    (CompactionParams targetLmdbPath)                        
+                                    -- timebox it to 30 minutes, it should be enough even 
+                                    -- for a huge cache on a very slow machine
+                                    (Timebox $ Seconds $ 30 * 60)
+                                    arguments
+    case z of 
+        Left e  -> do 
+            -- Make it more consistent if it makes sense
+            let message = [i|Failed to run compaction worker: #{e}|]
+            logError_ logger message            
+            throwIO $ AppException $ InternalE $ InternalError message
+        Right (CompactionResult _, stderr) ->
+            logDebugM logger $ workerLogMessage (convert $ worderIdS workerId) stderr elapsed
+            
+    

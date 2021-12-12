@@ -1,9 +1,12 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 module RPKI.Logging where
 
+import Codec.Serialise
 import Colog
 
 import Data.Text (Text)
@@ -11,8 +14,10 @@ import Data.Text (Text)
 import Control.Monad (when)
 import Control.Monad.IO.Class
 
+import GHC.Generics (Generic)
+
 import GHC.Stack (callStack)
-import System.IO (BufferMode (..), hSetBuffering, stdout)
+import System.IO (BufferMode (..), Handle, hSetBuffering, stdout, stderr)
 
 
 class Logger logger where
@@ -22,7 +27,8 @@ class Logger logger where
     logDebug_ :: logger -> Text -> IO ()
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
-    deriving (Show, Eq, Ord)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Serialise)
 
 data AppLogger = AppLogger {
         logLevel :: LogLevel,
@@ -42,6 +48,9 @@ instance Logger AppLogger where
     logDebug_ AppLogger {..} s = 
         when (logLevel >= DebugL) $ logWhat D logAction s        
 
+defaultsLogLevel :: LogLevel
+defaultsLogLevel = InfoL
+
 logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
 logWhat sev la textMessage = la <& Msg sev callStack textMessage    
 
@@ -53,12 +62,18 @@ logInfoM logger t  = liftIO $ logInfo_ logger t
 logDebugM logger t = liftIO $ logDebug_ logger t
 
 
-withAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withAppLogger logLevel f = do     
-    hSetBuffering stdout LineBuffering
+withMainAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
+withMainAppLogger logLevel f = withLogger logLevel (stdout, logTextStdout) f  
+
+withWorkerLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
+withWorkerLogger logLevel f = withLogger logLevel (stderr, logTextStderr) f  
+
+withLogger :: LogLevel -> (Handle, LogAction IO Text) -> (AppLogger -> LoggerT Text IO a) -> IO a
+withLogger logLevel (stream, streamLogger) f = do     
+    hSetBuffering stream LineBuffering
     withBackgroundLogger
         defCapacity
-        logTextStdout
+        streamLogger
         (\logg -> usingLoggerT logg $ f $ AppLogger logLevel (fullMessageAction logg))
   where
     fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
@@ -67,4 +82,4 @@ withAppLogger logLevel f = do
     formatRichMessage _ (maybe "" showTime -> time) Msg{..} =
         showSeverity msgSeverity
         <> time            
-        <> msgText        
+        <> msgText           

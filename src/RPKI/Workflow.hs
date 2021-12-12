@@ -14,7 +14,7 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 
-import           Control.Lens                     ((^.), (%~), (&))
+import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)
@@ -23,6 +23,8 @@ import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           System.Exit
+import           System.Directory
+import           System.FilePath                  ((</>))
 
 import           RPKI.AppState
 import           RPKI.AppMonad
@@ -42,16 +44,14 @@ import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
 
-import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
 import           RPKI.Util (ifJust)
 
 
-type AppLmdbEnv = AppContext LmdbStorage
-
 runWorkflow :: (Storage s, MaintainableStorage s) => 
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
+
     -- Use a command queue to avoid fully concurrent operations, i.e. cleanup 
     -- operations and such should not run at the same time with validation 
     -- (not only for consistency reasons, but we also want to avoid locking 
@@ -60,7 +60,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Fill in the current state if it's not too old.
     -- It is useful in case of restarts.        
-    loadStoredAppState appContext
+    void $ loadStoredAppState appContext
 
     -- Run RTR server thread when rtrConfig is present in the AppConfig.  
     -- If not needed it will the an noop.  
@@ -69,8 +69,9 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics
 
-    -- Run threads that periodicallly generate tasks and put them 
-    -- to the queue and one thread that executes the tasks.
+    -- Run threads that periodicallly generate tasks and one thread that 
+    -- executes the tasks. Tasks are put into the queue after having been 
+    -- generated. `taskExecutor` picks them up from the queue and executes.
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion prometheusMetrics, 
@@ -114,13 +115,18 @@ runWorkflow appContext@AppContext {..} tals = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
             database' <- readTVarIO database 
             executeOrDie
-                (processTALs database' tals)
+                (processTALs database' `finally` cleanupAfterValidation)
                 (\(vrps, slurmedVrps) elapsed ->                    
                     logInfoM logger $
                         [i|Validated all TAs, got #{vrpCount vrps} VRPs, |] <> 
                         [i|#{vrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where 
-                processTALs database' tals = do
+                cleanupAfterValidation = do 
+                    let tmpDir = config ^. #tmpDirectory
+                    logDebugM logger [i|Cleaning up temporary directory #{tmpDir}.|]                    
+                    listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
+                    
+                processTALs database' = do
                     TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
                                 validateMutlipleTAs appContext worldVersion tals                        
 

@@ -31,6 +31,8 @@ import qualified Data.List                as List
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
+import           Data.Map.Monoidal.Strict (MonoidalMap)
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
@@ -494,7 +496,7 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps { unVrps :: Map TaName (Set Vrp) }
+newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving Semigroup via GenericSemigroup Vrps
@@ -633,10 +635,10 @@ makeSerial i =
 
 
 vrpCount :: Vrps -> Int 
-vrpCount (Vrps vrps) = sum $ map Set.size $ Map.elems vrps
+vrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
 
 newVrps :: TaName -> Set Vrp -> Vrps
-newVrps taName vrpSet = Vrps $ Map.singleton taName vrpSet
+newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
 
 allVrps :: Vrps -> Set Vrp 
-allVrps (Vrps vrps) = mconcat $ Map.elems vrps          
+allVrps (Vrps vrps) = mconcat $ MonoidalMap.elems vrps          
