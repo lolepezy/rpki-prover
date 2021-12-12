@@ -269,7 +269,7 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (updateObjectForRsyncRepository appContext worldVersion r)
+                                    (runRsyncFetchWorker appContext worldVersion r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
