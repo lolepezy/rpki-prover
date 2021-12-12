@@ -6,7 +6,7 @@
 
 module RPKI.Rsync where
     
-import           Control.Lens                     ((%~), (&), (+=), (^.))
+import           Control.Lens                     ((%~), (&), (^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -18,6 +18,7 @@ import           Control.Monad
 import           Control.Monad.Except
 
 import qualified Data.ByteString                  as BS
+import Data.Maybe (fromMaybe)
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
@@ -37,7 +38,8 @@ import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
-import           RPKI.AppState
+import RPKI.Time ( timedMS )
+import           RPKI.Worker
 
 import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
 import           System.FilePath                  ((</>))
@@ -48,9 +50,6 @@ import           System.Process.Typed
 
 import           System.Mem                       (performGC)
 import Data.Proxy
-import Data.Functor ((<&>))
-import Data.Maybe (fromMaybe)
-
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
@@ -73,6 +72,38 @@ checkRsyncInPath rsyncClientPath = do
                         [i|#{client} --version returned non-zero exit code #{exit}, 
 stdout = [#{U.textual stdout}], 
 stderr = [#{U.textual stderr}]|]
+
+
+runRsyncFetchWorker :: AppContext s 
+                    -> WorldVersion
+                    -> RsyncRepository             
+                    -> ValidatorT IO RsyncRepository
+runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
+        
+    -- This is for humans to read in `top` or `ps`, actual parameters
+    -- are passed as 'RsyncFetchResult'.
+    let workerId = WorkerId $ "rsync-fetch:" <> unURI (getURL rsyncRepo)
+
+    let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+    let arguments = 
+            [ worderIdS workerId ] <>
+            rtsArguments [ rtsN maxCpuAvailable, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
+
+    vp <- askEnv
+    ((RsyncFetchResult (z, vs), stderr), elapsed) <- 
+                    timedMS $ runWorker 
+                                logger
+                                config
+                                workerId 
+                                (RsyncFetchParams vp rsyncRepo worldVersion)                        
+                                (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
+                                arguments                        
+    embedState vs
+    case z of 
+        Left e  -> appError e
+        Right r -> do 
+            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr elapsed            
+            pure r
 
     
 

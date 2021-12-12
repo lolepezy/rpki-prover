@@ -158,6 +158,8 @@ instance WithRpkiURL Repository where
 
 instance WithURL RrdpRepository where
     getURL RrdpRepository { uri = RrdpURL u } = u
+instance WithURL RsyncRepository where
+    getURL RsyncRepository { repoPP = RsyncPublicationPoint {..} } = getURL uri
     
 
 instance Semigroup RrdpRepository where

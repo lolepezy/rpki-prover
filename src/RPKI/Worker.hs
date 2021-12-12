@@ -72,6 +72,11 @@ data WorkerParams = RrdpFetchParams {
                 rrdpRepository :: RrdpRepository,
                 worldVersion :: WorldVersion 
             } | 
+            RsyncFetchParams { 
+                validatorPath   :: ValidatorPath, 
+                rsyncRepository :: RsyncRepository,
+                worldVersion    :: WorldVersion 
+            } | 
             CompactionParams { 
                 targetLmdbEnv :: FilePath 
             }
@@ -94,6 +99,11 @@ data WorkerInput = WorkerInput {
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError RrdpRepository, ValidationState)    
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+
+newtype RsyncFetchResult = RsyncFetchResult 
+                            (Either AppError RsyncRepository, ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
@@ -172,10 +182,8 @@ runWorker logger config workerId params timeout extraCli = do
 -- Entry point for a worker. It is supposed to run withing a worker process 
 -- and do the actual work.
 -- 
-executeWork :: Serialise a => 
-                WorkerInput 
-            -> (WorkerInput -> (a -> IO ()) -> IO ()) -- ^ Actual work to be executed. 
-                                                      -- Second argument is the result handler.
+executeWork :: WorkerInput 
+            -> (WorkerInput -> (forall a . Serialise a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
 executeWork input actualWork = 
     void $ race (actualWork input writeWorkerOutput) (race suicideCheck timeoutWait)
