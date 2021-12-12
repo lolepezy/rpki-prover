@@ -190,7 +190,7 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
                 maxDuration
                 validateFromTAL
                 (do 
-                    logErrorM logger [i|Validation for TA #{taName} did not finish within #{maxDuration}s and was interrupted.|]
+                    logErrorM logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
 
     pure $ case r of 
