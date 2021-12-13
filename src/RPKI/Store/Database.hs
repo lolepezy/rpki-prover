@@ -8,73 +8,45 @@
 
 module RPKI.Store.Database where
 
-import           Codec.Serialise
 import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
 import           Control.Monad.Trans.Maybe
 import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
-import           Data.Int
 import           Data.IORef.Lifted
 
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (fromMaybe, catMaybes)
+import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
+import qualified Data.Hashable            as H
+import           Data.Text.Encoding       (encodeUtf8)
 
 import           GHC.Generics
 
-import           RPKI.AppState
 import           RPKI.Config              (Size)
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
+import           RPKI.SLURM.Types
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Sequence
+import           RPKI.Store.Types
 
 import           RPKI.Parallel
-import           RPKI.Time                (Instant)
 import           RPKI.Util                (increment, ifJust, ifJustM)
 
 import           RPKI.AppMonad
-import           RPKI.Repository
+import           RPKI.AppTypes
 import           RPKI.Store.Repository
-
-
-
-data StorableTA = StorableTA {
-    tal                 :: TAL,
-    taCert              :: CerObject,
-    fetchStatus         :: FetchStatus,
-    initialRepositories :: PublicationPointAccess
-} deriving (Show, Eq, Generic, Serialise)
-
-data ROMeta = ROMeta {
-        insertedBy :: WorldVersion,
-        validatedBy :: Maybe WorldVersion
-    } 
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass (Serialise)
-
-data MftTimingMark = MftTimingMark Instant Instant 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
-
-newtype UrlKey = UrlKey ArtificialKey
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
-newtype ObjectKey = ObjectKey ArtificialKey
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
-newtype ArtificialKey = ArtificialKey Int64
-    deriving (Show, Eq, Ord, Generic, Serialise)
-
 
 -- | RPKI objects store
 
@@ -98,7 +70,7 @@ data RpkiObjectStore s = RpkiObjectStore {
     objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
 
     -- Object URL mapping
-    uriToUriKey    :: SMap "uri-to-uri-key" s RpkiURL UrlKey,
+    uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
     uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
     urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
@@ -133,7 +105,7 @@ instance Storage s => WithStorage s (MetricsStore s) where
 
 -- | VRP store
 newtype VRPStore s = VRPStore {    
-    vrps :: SMap "vrps" s WorldVersion [Vrp]
+    vrps :: SMap "vrps" s WorldVersion Vrps
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -149,6 +121,9 @@ instance Storage s => WithStorage s (VersionStore s) where
     storage (VersionStore s) = storage s
 
 
+newtype SlurmStore s = SlurmStore {
+    slurms :: SMap "slurms" s WorldVersion Slurm
+}
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
@@ -163,8 +138,8 @@ getByHash_ tx store@RpkiObjectStore {..} h = liftIO $ runMaybeT $ do
             
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> RpkiURL -> m [Located RpkiObject]
-getByUri tx store@RpkiObjectStore {..} uri = liftIO $ do 
-    M.get tx uriToUriKey uri >>= \case 
+getByUri tx store@RpkiObjectStore {..} uri = liftIO $
+    M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
         Nothing -> pure []
         Just uriKey ->         
             fmap catMaybes $ 
@@ -215,9 +190,10 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> Hash
                 -> m ()
 linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do    
+    let safeUrl = makeSafeUrl rpkiURL
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
-        z <- M.get tx uriToUriKey rpkiURL 
-        urlKey <- maybe (saveUrl rpkiURL) pure z                
+        z <- M.get tx uriToUriKey safeUrl 
+        urlKey <- maybe (saveUrl safeUrl) pure z                
         
         M.get tx objectKeyToUrlKeys objectKey >>= \case 
             Nothing -> do 
@@ -228,11 +204,11 @@ linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do
                     M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
                     MM.put tx urlKeyToObjectKey urlKey objectKey
   where
-    saveUrl url = do 
+    saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys
         let urlKey = UrlKey $ ArtificialKey k
-        M.put tx uriToUriKey url urlKey
-        M.put tx uriKeyToUri urlKey url            
+        M.put tx uriToUriKey safeUrl urlKey
+        M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
 
 
@@ -331,8 +307,8 @@ getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe 
 getTA tx (TAStore s) name = liftIO $ M.get tx s name
 
 putValidations :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> ValidationsStore s -> WorldVersion -> Validations -> m ()
-putValidations tx ValidationsStore {..} wv validations = liftIO $ M.put tx results wv validations
+            Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
+putValidations tx DB { validationsStore = ValidationsStore s } wv validations = liftIO $ M.put tx s wv validations
 
 validationsForVersion :: (MonadIO m, Storage s) => 
                         Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
@@ -345,16 +321,16 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
                  
 
 getVrps :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m [Vrp]
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
 getVrps tx DB { vrpStore = VRPStore vrpMap } wv = 
-    liftIO $ fromMaybe [] <$> M.get tx vrpMap wv    
+    liftIO $ M.get tx vrpMap wv    
 
 deleteVRPs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap wv
 
 putVrps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> [Vrp] -> WorldVersion -> m ()
+            Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
     liftIO $ M.put tx vrpMap worldVersion vrps    
 
@@ -365,31 +341,43 @@ putVersion tx DB { versionStore = VersionStore s } wv versionState =
 
 allVersions :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> m [(WorldVersion, VersionState)]
-allVersions tx DB { versionStore = VersionStore s } = 
-    liftIO $ M.all tx s
+allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
 
 deleteVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersion tx DB { versionStore = VersionStore s } wv = 
-    liftIO $ M.delete tx s wv
+deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
 
 
 completeWorldVersion :: Storage s => 
                         Tx s 'RW -> DB s -> WorldVersion -> IO ()
 completeWorldVersion tx database worldVersion =    
-    putVersion tx database worldVersion CompletedVersion
+    putVersion tx database worldVersion $ VersionState "stub"
 
 
 putMetrics :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> MetricsStore s -> WorldVersion -> AppMetric -> m ()
-putMetrics tx MetricsStore {..} wv appMetric = 
-    liftIO $ M.put tx metrics wv appMetric
+            Tx s 'RW -> DB s -> WorldVersion -> AppMetric -> m ()
+putMetrics tx DB { metricStore = MetricsStore s } wv appMetric = 
+    liftIO $ M.put tx s wv appMetric
 
 metricsForVersion :: (MonadIO m, Storage s) => 
                     Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe AppMetric)
-metricsForVersion tx MetricsStore {..} wv = 
-    liftIO $ M.get tx metrics wv    
+metricsForVersion tx MetricsStore {..} wv = liftIO $ M.get tx metrics wv    
 
+deleteMetrics :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteMetrics tx DB { metricStore = MetricsStore s } wv = liftIO $ M.delete tx s wv
+
+putSlurm :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
+putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = liftIO $ M.put tx s wv slurm
+
+slurmForVersion :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m (Maybe Slurm)
+slurmForVersion tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.get tx s wv    
+
+deleteSlurms :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
 -- More complicated operations
 
@@ -459,7 +447,7 @@ cleanObjectCache DB {..} tooOld = do
                         rwTx objectStore $ \tx ->
                             forM_ quuElems $ \(urlKey, url) -> do 
                                 M.delete tx (uriKeyToUri objectStore) urlKey
-                                M.delete tx (uriToUriKey objectStore) url
+                                M.delete tx (uriToUriKey objectStore) (makeSafeUrl url)
                                 increment deletedURLs
 
             bracketChanClosable 
@@ -482,28 +470,26 @@ deleteOldVersions :: (MonadIO m, Storage s) =>
                     m Int
 deleteOldVersions database tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do
-
-    versions <- roTx database $ \tx -> allVersions tx database    
-    let toDelete = 
-            case [ version | (version, CompletedVersion) <- versions ] of
-                []       -> 
-                    case versions of 
-                        []  -> []
-                        [_] -> [] -- don't delete the last one
-                        _ -> filter (tooOld . fst) versions            
-
-                finished -> 
-                    -- delete all too old except for the last finished one    
-                    let lastFinished = List.maximum finished 
-                    in filter (( /= lastFinished) . fst) $ filter (tooOld . fst) versions
     
-    rwTx database $ \tx -> 
-        forM_ toDelete $ \(worldVersion, _) -> do
-            deleteValidations tx database worldVersion
-            deleteVRPs tx database worldVersion
-            deleteVersion tx database worldVersion
-    
-    pure $! List.length toDelete
+        let toDelete versions = 
+                case versions of            
+                    []       -> []                
+                    finished -> 
+                        -- delete all too old except for the last finished one    
+                        let lastFinished = List.maximum finished 
+                        in filter ( /= lastFinished) $ filter tooOld versions
+
+        rwTx database $ \tx -> do 
+            versions <- map fst <$> allVersions tx database    
+            let toDel = toDelete versions
+            forM_ toDel $ \worldVersion -> do
+                deleteVersion tx database worldVersion
+                deleteValidations tx database worldVersion
+                deleteVRPs tx database worldVersion            
+                deleteMetrics tx database worldVersion
+                deleteSlurms tx database worldVersion
+        
+            pure $! List.length toDel
 
 
 -- | Find the latest completed world version 
@@ -511,48 +497,18 @@ deleteOldVersions database tooOld =
 getLastCompletedVersion :: (Storage s) => 
                         DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
 getLastCompletedVersion database tx = do 
-        vs <- allVersions tx database
-        pure $! case [ v | (v, CompletedVersion) <- vs ] of         
+        vs <- map fst <$> allVersions tx database
+        pure $! case vs of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
 
 
-data RpkiObjectStats = RpkiObjectStats {
-    objectsStats       :: SStats,
-    mftByAKIStats      :: SStats,    
-    hashToKeyStats     :: SStats,
-    lastValidMftStats  :: SStats,
-    uriToUriKeyStat    :: SStats,
-    uriKeyToUriStat    :: SStats,
-    uriKeyToObjectKeyStat  :: SStats,
-    objectKeyToUrlKeysStat :: SStats,
-    objectInsertedByStats  :: SStats,
-    objectValidatedByStats  :: SStats    
-} deriving stock (Show, Eq, Generic)
-
-data VResultStats = VResultStats {     
-    resultsStats :: SStats    
-} deriving  (Show, Eq, Generic)
-
-data RepositoryStats = RepositoryStats {
-    rrdpStats  :: SStats,
-    rsyncStats :: SStats,
-    lastSStats :: SStats    
-} deriving stock (Show, Eq, Generic)
-
-data DBStats = DBStats {
-    taStats         :: SStats,
-    repositoryStats :: RepositoryStats,
-    rpkiObjectStats :: RpkiObjectStats,    
-    vResultStats    :: VResultStats,    
-    vrpStats        :: SStats,    
-    versionStats    :: SStats,
-    sequenceStats   :: SStats
-} deriving stock (Show, Eq, Generic)
-data TotalDBStats = TotalDBStats {
-    dbStats         :: DBStats,
-    total :: SStats    
-} deriving stock (Show, Eq, Generic)
+getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
+getLatestVRPs db = 
+    roTx db $ \tx ->        
+        runMaybeT $ do 
+            version <- MaybeT $ getLastCompletedVersion db tx
+            MaybeT $ getVrps tx db version
 
 
 getTotalDbStats :: (MonadIO m, Storage s) => 
@@ -573,7 +529,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->
         vResultStats tx <*>
         (let VRPStore sm = vrpStore in M.stats tx sm) <*>
         (let VersionStore sm = versionStore in M.stats tx sm) <*>
-        M.stats tx sequences
+        M.stats tx sequences <*>
+        (let SlurmStore sm = slurmStore in M.stats tx sm)
     where
         rpkiObjectStats tx = do 
             let RpkiObjectStore {..} = objectStore
@@ -635,6 +592,7 @@ data DB s = DB {
     vrpStore         :: VRPStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricsStore s,
+    slurmStore       :: SlurmStore s,
     sequences        :: SequenceMap s
 } deriving stock (Generic)
 
@@ -712,3 +670,25 @@ data TxRollbackException = TxRollbackException AppError ValidationState
 
 instance Exception TxRollbackException
 
+-- Utils of different sorts
+
+-- | URLs can potentially be much larger than 512 bytes that are allowed as LMDB
+-- keys. So we 
+--     - calculate hash 
+--     - truncate the URL so that that truncated version + hash fit into 512 bytes.
+--     - use "truncated URL + hash" as a key
+makeSafeUrl :: RpkiURL -> SafeUrlAsKey
+makeSafeUrl u = 
+    let         
+        maxLmdbKeyBytes = 512
+        URI urlText = getURL u        
+        hashBytes = show $ H.hash urlText
+        -- We only keep the first "512 - hash bytes" of the URL
+        maxTxtUrlBytes = maxLmdbKeyBytes - length hashBytes
+
+        bsUrlFull = encodeUtf8 urlText
+        bsUrlKey = BS.concat [
+                        BS.take maxTxtUrlBytes bsUrlFull,
+                        C8.pack hashBytes
+                   ]
+    in SafeUrlAsKey $ toShortBS bsUrlKey

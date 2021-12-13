@@ -1,10 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE QuasiQuotes        #-}
 
 import Colog hiding (extract)
 
 import           Colog
+
+import           Control.Concurrent.STM
+
+import           Control.Lens ((^.), (&))
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -62,42 +67,54 @@ import           RPKI.Store.Database
 import           RPKI.Store.Base.LMDB hiding (getEnv)
 
 import RPKI.RRDP.Types
+
+import RPKI.Rsync (getFileSize)
+
 import qualified RPKI.Store.MakeLmdb as Lmdb
-import Control.Concurrent.STM
+import RPKI.Store.AppLmdbStorage
 
 
 main :: IO ()
 main = do 
     -- testDeltaLoad
-    testSnapshotLoad
+    -- testSnapshotLoad
+    testLmdbCompact
     pure ()
 
 
 testSnapshotLoad :: IO ()
 testSnapshotLoad = do
-    logger <- createLogger
-    z <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
-    case z of 
-        (Left e, x) -> do 
-            putStrLn $ "Error: " <> show e        
+    withAppLogger DebugL $ \logger -> liftIO $ do     
+        z <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+        case z of 
+            (Left e, x) -> do 
+                putStrLn $ "Error: " <> show e        
 
-        (Right appContext, _) -> do 
-            snapshotContent <- readB "../tmp/test-data/snapshot.xml"
-            logDebug_ logger [i|Starting |]        
-            let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (Serial 673)
-            void $ forever $ do 
-                (_, t) <- timedMS $ runValidatorT (newValidatorPath "snapshot") $ 
-                            saveSnapshot appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
-                logDebug_ logger [i|Saved snapshot in #{t}ms |]  
+            (Right appContext, _) -> do
+                let fileName =  "../tmp/test-data/snapshot.xml"
+                fileSize <- Size . fromIntegral <$> getFileSize fileName
+                snapshotContent <- readB fileName fileSize
+                logDebug_ logger [i|Starting |]        
+                let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (RrdpSerial 673)
+                void $ forever $ do 
+                    (_, t) <- timedMS $ runValidatorT (newValidatorPath "snapshot") $ 
+                                saveSnapshot appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
+                    logDebug_ logger [i|Saved snapshot in #{t}ms |]  
 
 testDeltaLoad :: IO ()
 testDeltaLoad = do
-    logger <- createLogger
-    (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
-    deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
-    deltaContents <- forM deltas $ \d -> LBS.readFile $ "../tmp/test-data/" </> d
-    logDebug_ logger [i|Starting |]    
-    -- void $ runValidatorT (vContext "snapshot") $ mapM (saveDelta appContext) deltaContents    
+    withAppLogger DebugL $ \logger -> liftIO $ do         
+        (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+        deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
+        deltaContents <- forM deltas $ \d -> LBS.readFile $ "../tmp/test-data/" </> d
+        logDebug_ logger [i|Starting |]    
+
+
+testLmdbCompact :: IO ()
+testLmdbCompact = do
+    withAppLogger DebugL $ \logger -> liftIO $ do     
+        (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+        compactStorageWithTmpDir appContext        
 
 
 newtype HexString = HexString BS.ByteString 
@@ -106,8 +123,63 @@ newtype HexString = HexString BS.ByteString
 
 type AppLmdbEnv = AppContext LmdbStorage
 
+
 createAppContext :: AppLogger -> ValidatorT IO AppLmdbEnv
 createAppContext logger = do
+         
+    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
+    let rootDir = home </> ".rpki-rrdp-perf"
+    
+    tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir 
+    rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
+    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
+    cached <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir 
+    
+    lmdbEnv <- setupLmdbCache UseExisting logger cached (Size 32768)
+                                
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
+
+    -- clean up tmp directory if it's not empty
+    cleanDir tmpd        
+
+    -- Set capabilities to the values from the CLI or to all available CPUs,
+    -- (disregard the HT issue for now it needs more testing).
+    liftIO $ setCpuCount 8
+        
+    -- BUT: create 2 times more asyncs/tasks than there're capabilities. In most 
+    -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
+    let cpuParallelism = 2 * 8
+    
+    -- Hardcoded (not sure it makes sense to make it configurable). Allow for 
+    -- that many IO operations (http downloads, LMDB reads, etc.) at once.
+    let ioParallelism = 64     
+
+    appBottlenecks <- liftIO $ AppBottleneck <$> 
+                        newBottleneckIO cpuParallelism <*>
+                        newBottleneckIO ioParallelism            
+             
+    appState <- liftIO newAppState    
+    tvarDatabase <- liftIO $ newTVarIO database    
+
+    let appContext = AppContext {        
+        logger = logger,
+        config = defaultConfig  {
+            talDirectory = rootDir </> "tals",
+            tmpDirectory = tmpd,            
+            cacheDirectory = rootDir </> "cache"            
+        },
+        appState = appState,
+        database = tvarDatabase,
+        appBottlenecks = appBottlenecks
+    }  
+
+    logInfoM logger [i|Created application context: #{config appContext}|]
+    pure appContext   
+
+
+
+createAppContext1 :: AppLogger -> ValidatorT IO AppLmdbEnv
+createAppContext1 logger = do
 
     -- TODO Make it configurable?
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
@@ -142,53 +214,16 @@ createAppContext logger = do
 
     let appContext = AppContext {        
         logger = logger,
-        config = Config {
+        config = defaultConfig  {
             talDirectory = rootDir </> "tals",
             tmpDirectory = tmpd,            
-            cacheDirectory = rootDir </> "cache",
-            parallelism  = Parallelism cpuParallelism ioParallelism,
-            rsyncConf    = RsyncConf rsyncd (Seconds 600),
-            rrdpConf     = RrdpConf { 
-                tmpRoot = tmpd,
-                -- Do not download files bigger than 1Gb, it's fishy
-                maxSize = Size 1024 * 1024 * 1024,
-                rrdpTimeout = Seconds (5 * 60)
-            },
-            validationConfig = ValidationConfig {
-                revalidationInterval           = Seconds (13 * 60),
-                rrdpRepositoryRefreshInterval  = Seconds 120,
-                rsyncRepositoryRefreshInterval = Seconds (11 * 60),
-                dontFetch = False
-            },
-            httpApiConf = HttpApiConfig {
-                port = 9999
-            },
-            rtrConfig = Nothing,
-            cacheCleanupInterval = 120 * 60,
-            cacheLifeTime = Seconds $ 60 * 60 * 2,
-
-            -- TODO Think about it, it should be lifetime or we should store N last versions
-            oldVersionsLifetime = let twoHours = 2 * 60 * 60 in twoHours,
-
-            storageCompactionInterval = Seconds $ 60 * 60 * 12,
-
-            lmdbSize = 2000
+            cacheDirectory = rootDir </> "cache"            
         },
         appState = appState,
         database = tvarDatabase,
         appBottlenecks = appBottlenecks
     }     
     pure appContext
-
-createLogger :: IO AppLogger
-createLogger = do 
-    -- TODO Use colog-concurrent instead of this
-    lock <- newMVar True
-    pure $ AppLogger fullMessageAction lock
-    where
-        fullMessageAction = upgradeMessageAction defaultFieldMap $ 
-            cmapM fmtRichMessageDefault logTextStdout     
-
 
 
 talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
@@ -206,7 +241,7 @@ checkSubDirectory root sub = do
 
 
 
-makeNotification :: SessionId -> Serial -> Notification
+makeNotification :: SessionId -> RrdpSerial -> Notification
 makeNotification sessionId' serial' = Notification {
     version = Version 1,
     sessionId = sessionId',

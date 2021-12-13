@@ -53,37 +53,6 @@ forMShouldSavesState = do
          VWarn (VWarning (UnspecifiedE "z" "z-bla"))])
 
 
-concurrentTasksPreservesState :: QC.Property
-concurrentTasksPreservesState = monadicIO $ do
-  z1 :: (Either AppError (), ValidationState) <- pick arbitrary 
-  z2 :: (Either AppError (), ValidationState) <- pick arbitrary 
-  q <- run $ runValidatorT (newValidatorPath "zzz") $ 
-                concurrentTasks 
-                    (validatorT $ pure z1)
-                    (validatorT $ pure z2)
-  assert $ snd q == snd z1 <> snd z2
-  assert $ fst q == ((,) <$> fst z1 <*> fst z2)
-
-
-inParallelPreservesState :: QC.Property
-inParallelPreservesState = monadicIO $ do    
-    i :: Int <- pick $ choose (1, 100)
-    let Just bottlneckSize = toNatural i
-    b <- run $ newBottleneckIO bottlneckSize
-
-    let zs = take 1000 $ map (Text.pack . show) [1..]  
-    (_, ValidationState { validations = Validations validationMap, .. })     
-            <- run $ runValidatorT (newValidatorPath "zzz") $ do
-                        validatorT $ pure (Right (), mempty)
-                        inParallelVT b zs $ \z -> 
-                            appWarn $ UnspecifiedE z (z <> "-bla") 
-    let x = Map.lookup (newPath "zzz") validationMap
-    let y = Just (Set.fromList $ map (\z -> VWarn $ VWarning $ UnspecifiedE z (z <> "-bla")) zs)    
-    assert $ x == y
-    
-        
-
-
 appMonadSpec :: TestTree
 appMonadSpec = testGroup "AppMonad" [
         QC.testProperty "ValidationState is a semigroup" (isSemigroup @ValidationState),
@@ -92,14 +61,6 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty
             "runValidatorT . validatorT == id"
             runValidatorTAndvalidatorTShouldBeId,
-
-        QC.testProperty
-            "concurrentTasks keeps the state and validity"
-            concurrentTasksPreservesState,
-
-        QC.testProperty
-            "inParallel keeps the state and validity"
-            inParallelPreservesState,
             
         HU.testCase
             "forM saves state"

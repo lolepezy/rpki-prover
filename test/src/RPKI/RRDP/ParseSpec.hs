@@ -61,7 +61,7 @@ prop_generate_and_parse_notification_creates_same_object = monadicIO $ do
   assert $ Right notification == n
 
 snaphostToXml :: Snapshot -> String
-snaphostToXml (Snapshot (Version v) (SessionId sid) (Serial s) publishes) =
+snaphostToXml (Snapshot (Version v) (SessionId sid) (RrdpSerial s) publishes) =
   [i|<snapshot version="#{v}" session_id="#{sid}" serial="#{s}">
          #{concatMap pub publishes}
   </snapshot>|]
@@ -70,7 +70,7 @@ snaphostToXml (Snapshot (Version v) (SessionId sid) (Serial s) publishes) =
       [i|<publish uri="#{u}">#{c}</publish>|]
 
 deltaToXml :: Delta -> String
-deltaToXml (Delta (Version v) (SessionId sess) (Serial s) items) =
+deltaToXml (Delta (Version v) (SessionId sess) (RrdpSerial s) items) =
   [i|<delta version="#{v}" session_id="#{sess}" serial="#{s}">
         #{concatMap item items}
   </delta>|]
@@ -86,7 +86,7 @@ deltaToXml (Delta (Version v) (SessionId sess) (Serial s) items) =
 notificationToXml :: Notification -> String
 notificationToXml Notification { 
       sessionId = SessionId sid,
-      serial = Serial s,
+      serial = RrdpSerial s,
       snapshotInfo = SnapshotInfo (URI su) (Hash sh),
       version = Version v,
       ..
@@ -96,6 +96,6 @@ notificationToXml Notification {
       #{concatMap delta deltas}
   </notification>|]
   where
-    delta (DeltaInfo (URI u) (Hash hash) (Serial ds)) =
+    delta (DeltaInfo (URI u) (Hash hash) (RrdpSerial ds)) =
       [i|<delta uri="#{u}" hash="#{hex $ BSS.fromShort hash}" serial="#{ds}"></delta>|]  
 

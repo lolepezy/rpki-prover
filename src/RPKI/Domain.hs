@@ -9,6 +9,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE DerivingVia #-}
 
 
 module RPKI.Domain where
@@ -27,7 +28,13 @@ import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
+import           Data.Map.Strict          (Map)
+import qualified Data.Map.Strict          as Map
+import qualified Data.Set                 as Set
+import           Data.Map.Monoidal.Strict (MonoidalMap)
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
+import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
 import           GHC.Generics
@@ -67,15 +74,15 @@ newtype Hash = Hash BSS.ShortByteString
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype URI  = URI { unURI :: Text } 
+newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncURL  = RsyncURL URI
+newtype RsyncURL = RsyncURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RrdpURL  = RrdpURL URI
+newtype RrdpURL = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -95,7 +102,7 @@ instance WithURL URI where
 instance Show RpkiURL where
     show (RsyncU u) = show u
     show (RrdpU u) = show u 
-
+  
 instance WithURL RsyncURL where
     getURL (RsyncURL u) = u
 
@@ -319,7 +326,7 @@ data Vrp = Vrp
     deriving anyclass Serialise
 
 data Manifest = Manifest {
-        mftNumber   :: Integer, 
+        mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: Instant, 
         nextTime    :: Instant, 
@@ -334,7 +341,7 @@ data SignCRL = SignCRL {
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
-        crlNumber          :: Integer,
+        crlNumber          :: Serial,
         revokenSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
@@ -489,6 +496,12 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
+newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup Vrps
+    deriving Monoid    via GenericMonoid Vrps
+
 data TA = TA {
         taName        :: TaName, 
         taCertificate :: Maybe ResourceCertificate,
@@ -537,9 +550,6 @@ emptyIpResources = IpResources RS.emptyIpSet
 
 emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
-
-getMftNumber :: MftObject -> Integer
-getMftNumber mft = mftNumber $ getCMSContent $ cmsPayload mft
 
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
 newCrl a h sc = CrlObject {
@@ -605,3 +615,30 @@ sortRrdpFirst = List.sortBy $ \u1 u2 ->
 
 sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
+
+{- 
+https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
+https://datatracker.ietf.org/doc/html/rfc6486#section-4.2.1
+and probably others.
+
+Serials in objects (CRL and MFT numbers, etc.) are limited to 20 octets, i.e. 160 bits.
+-} 
+maxSerial :: Integer
+maxSerial = (2 :: Integer) ^ (160  :: Integer) - (1  :: Integer)
+
+makeSerial :: Integer -> Either String Serial 
+makeSerial i = 
+    case () of
+        _ | i <= 0         -> Left $ "Serial is not positive: " <> show i
+          | i >= maxSerial -> Left $ "Serial is too big: " <> show i
+          | otherwise      -> Right $ Serial i
+
+
+vrpCount :: Vrps -> Int 
+vrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+
+newVrps :: TaName -> Set Vrp -> Vrps
+newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
+
+allVrps :: Vrps -> Set Vrp 
+allVrps (Vrps vrps) = mconcat $ MonoidalMap.elems vrps          

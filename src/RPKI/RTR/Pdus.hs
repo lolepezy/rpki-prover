@@ -9,9 +9,7 @@ import qualified Data.ByteString.Lazy     as BSL
 import qualified Data.Text                as Text
 
 import           Data.Binary
-import           Data.Binary.Get          (getByteString,
-                                           getRemainingLazyByteString,
-                                           runGetOrFail)
+import           Data.Binary.Get          (getByteString, runGetOrFail)
 import           Data.Binary.Put          (runPut, putLazyByteString, putByteString)
 
 import           Data.Int

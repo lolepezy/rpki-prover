@@ -12,15 +12,14 @@ module RPKI.Http.Messages where
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
-
-import Data.Foldable (toList)
-
-import qualified Data.List          as List
+import qualified Data.List                   as List
 
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
+
 import           RPKI.Domain                 as Domain
 import           RPKI.Reporting
+import           RPKI.Util (fmtLocations)
 
 
 toMessage :: AppError -> Text
@@ -30,10 +29,13 @@ toMessage = \case
     RrdpE r  -> toRrdpMessage r
     RsyncE r -> toRsyncMessage r
     TAL_E (TALError t) -> t
-    InitE (InitError t) -> t
+    InitE (InitError t) -> t    
     
     StorageE (StorageError t) -> t
     StorageE (DeserialisationError t) -> t
+
+    SlurmE r    -> toSlurmMessage r
+    InternalE t -> toInternalErrorMessage t
     
     UnspecifiedE context e -> 
         [i|Unspecified error #{context}, details: #{e}.|]
@@ -157,7 +159,8 @@ toValidationMessage = \case
           
       CertWrongPolicyExtension b -> [i|Certificate policy extension is broken: #{b}.|]
 
-      ObjectHasMultipleLocations-> [i|The same object has multiple locations, this is suspicious.|]
+      ObjectHasMultipleLocations locs -> 
+          [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
       NoMFT aki _ -> 
           [i|No manifest found for #{aki}.|]
@@ -207,7 +210,7 @@ toValidationMessage = \case
       CertificateIsExpired {..} ->
           [i|Certificate is expired, its 'not valid after' time #{after} is in the past.|]
 
-      (AKIIsNotEqualsToParentSKI childAKI parentSKI) ->
+      AKIIsNotEqualsToParentSKI childAKI parentSKI ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
 
       ManifestEntryDoesn'tExist hash filename -> 
@@ -228,6 +231,18 @@ toValidationMessage = \case
       CircularReference hash locations ->
           [i|Object with hash #{hash} and location #{fmtLocations locations} creates reference cycle.|]
 
+      CertificatePathTooDeep locations maxDepth ->
+          [i|The CA tree reached maximum depth of #{maxDepth} at #{locations}.|]
+
+      TreeIsTooBig locations maxTreeSize ->          
+          [i|The number of object in CA tree reached maximum of #{maxTreeSize} at #{locations}.|]
+
+      TooManyRepositories locations maxTaRepositories ->          
+          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
+
+      ValidationTimeout maxDuration -> 
+          [i|Validation did not finish within #{maxDuration}s and was interrupted.|]
+
       ManifestLocationMismatch filename locations -> 
           [i|Object has manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]
 
@@ -239,6 +254,9 @@ toValidationMessage = \case
       RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp _ prefix maxLength) -> 
           [i|VRP is malformed, length of the prefix #{prefix} is bigger than #{maxLength}.|]
   where
+    fmtUrlList = mconcat . 
+                 List.intersperse "," . map show  
+
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 
                     map (\(T2 t h) -> t <> Text.pack (":" <> show h))
@@ -248,9 +266,14 @@ toValidationMessage = \case
                     map (\(h, fs) -> Text.pack $ "Hash: " <> show h <> " -> " <> show fs)
 
 
-fmtLocations :: Locations -> Text
-fmtLocations = mconcat . 
-               List.intersperse "," . 
-               map (Text.pack . show) . 
-               toList . 
-               unLocations
+toSlurmMessage :: SlurmError -> Text
+toSlurmMessage = \case 
+    SlurmFileError file t  -> [i|Failed to read SLURM file #{file}: #{t}.|]
+    SlurmParseError file t -> [i|Failed to parse SLURM file #{file}: #{t}.|]
+    SlurmValidationError t -> [i|Invalid SLURM file(s): #{t}.|]
+
+toInternalErrorMessage :: InternalError -> Text
+toInternalErrorMessage = \case 
+    InternalError t     -> t
+    WorkerTimeout t     -> t
+    WorkerOutOfMemory t -> t

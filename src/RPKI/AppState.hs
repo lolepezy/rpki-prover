@@ -5,65 +5,58 @@
 
 module RPKI.AppState where
     
+import           Control.Monad (join)
 import           Control.Concurrent.STM
-
-import           Codec.Serialise
 import           Control.Lens
-
 import           Data.Generics.Product.Typed
-import           Data.Int
 import           GHC.Generics
-
-import           Data.Set
+import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.AppTypes
+import           RPKI.SLURM.SlurmProcessing
+import           RPKI.SLURM.Types
 import           RPKI.Time
 
 
--- It's a sequence of versions that is equal to some monotonic  
--- clock timestamp in nanoseconds.
-newtype WorldVersion = WorldVersion Int64
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
-
-data VersionState = NewVersion | CompletedVersion
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
-
-data WorldState = WorldState WorldVersion VersionState
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
-
 data AppState = AppState {
-    world       :: TVar WorldState,
-    currentVrps :: TVar (Set Vrp)
-} deriving stock (Generic)
+        world         :: TVar (Maybe WorldVersion),
+        validatedVrps :: TVar Vrps,
+        filteredVrps  :: TVar Vrps,
+        readSlurm     :: Maybe (ValidatorT IO Slurm)
+    } deriving stock (Generic)
 
 -- 
 newAppState :: IO AppState
-newAppState = do
-    Now instant <- thisInstant        
+newAppState = do        
     atomically $ AppState <$> 
-                    newTVar (WorldState (instantToVersion instant) NewVersion) <*>
-                    newTVar mempty
+                    newTVar Nothing <*>
+                    newTVar mempty <*>
+                    newTVar mempty <*>
+                    pure Nothing
 
--- 
-updateWorldVerion :: AppState -> IO WorldVersion
-updateWorldVerion AppState {..} = do
-    Now now <- thisInstant    
-    let wolrdVersion = instantToVersion now
-    atomically $ writeTVar world $ WorldState wolrdVersion NewVersion
-    pure wolrdVersion
+setCurrentVersion :: AppState -> WorldVersion -> STM ()
+setCurrentVersion AppState {..} = writeTVar world . Just
 
-completeCurrentVersion :: AppState -> Set Vrp -> STM ()
-completeCurrentVersion AppState {..} vrps = do 
-    modifyTVar' world (& typed @VersionState .~ CompletedVersion)
-    writeTVar currentVrps vrps
+newWorldVersion :: IO WorldVersion
+newWorldVersion = instantToVersion . unNow <$> thisInstant        
 
-getWorldVerionIO :: AppState -> IO WorldVersion
-getWorldVerionIO = atomically . getWorldVerion
+completeVersion :: AppState -> WorldVersion -> Vrps -> Maybe Slurm -> STM Vrps
+completeVersion AppState {..} worldVersion vrps slurm = do 
+    writeTVar world $ Just worldVersion
+    writeTVar validatedVrps vrps
+    let slurmed = maybe vrps (`applySlurm` vrps) slurm
+    writeTVar filteredVrps slurmed
+    pure slurmed
 
-getWorldVerion :: AppState -> STM WorldVersion
-getWorldVerion AppState {..} = (^. typed @WorldVersion) <$> readTVar world    
+getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
+getWorldVerionIO AppState {..} = atomically $ readTVar world
+
+getOrCreateWorldVerion :: AppState -> IO WorldVersion
+getOrCreateWorldVerion AppState {..} = 
+    join $ atomically $ do 
+        readTVar world >>= \case
+            Nothing -> pure $ newWorldVersion
+            Just wv -> pure $ pure wv 
 
 versionToMoment :: WorldVersion -> Instant
 versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
@@ -71,17 +64,16 @@ versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
--- Block on version updates
-waitForNewCompleteVersion :: AppState -> WorldVersion -> STM (WorldVersion, Set Vrp)
-waitForNewCompleteVersion AppState {..} knownWorldVersion = do 
-    readTVar world >>= \case 
-        WorldState w CompletedVersion 
-            | w > knownWorldVersion -> (w,) <$> readTVar currentVrps
-            | otherwise              -> retry
-        _                            -> retry
 
-waitForCompleteVersion :: AppState -> STM WorldVersion
-waitForCompleteVersion AppState {..} =
-    readTVar world >>= \case
-            WorldState w CompletedVersion -> pure w
-            _                             -> retry
+-- Block on version updates
+waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, Vrps)
+waitForNewVersion AppState {..} knownWorldVersion = do     
+    readTVar world >>= \case 
+        Just w         
+            | w > knownWorldVersion -> (w,) <$> readTVar filteredVrps
+            | otherwise             -> retry
+        _                           -> retry
+
+waitForVersion :: AppState -> STM WorldVersion
+waitForVersion AppState {..} =
+    maybe retry pure =<< readTVar world

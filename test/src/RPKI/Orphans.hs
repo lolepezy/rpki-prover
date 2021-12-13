@@ -41,6 +41,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
+import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
@@ -95,6 +96,10 @@ instance Arbitrary Serial where
 instance Arbitrary SessionId where
     arbitrary = SessionId . BSS.toShort . convert <$> 
         listOf1 (elements $ ['a'..'z'] ++ ['0'..'9'])
+
+instance Arbitrary RrdpSerial where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Version where
     arbitrary = genericArbitrary
@@ -155,8 +160,12 @@ instance Arbitrary a => Arbitrary (X509.Signed a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
     
+instance Arbitrary NullParam where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary SignatureALG where    
-    arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
+    arbitrary = SignatureALG HashSHA256 PubKeyALG_RSA <$> arbitrary
 
 instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
     arbitrary = genericArbitrary
@@ -427,6 +436,14 @@ instance Arbitrary InitError where
     shrink = genericShrink
 
 instance Arbitrary NetworkError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+    
+instance Arbitrary InternalError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary SlurmError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

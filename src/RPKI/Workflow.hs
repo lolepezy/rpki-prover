@@ -4,28 +4,33 @@
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Workflow where
 
-import           Control.Concurrent.Async.Lifted
-import           Control.Concurrent.Lifted
+import           Control.Concurrent.Async
+import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
 
-import           Control.Lens                     ((^.), (%~), (&))
+import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Int                         (Int64)
-import qualified Data.Set                         as Set
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           System.Exit
+import           System.Directory
+import           System.FilePath                  ((</>))
 
 import           RPKI.AppState
+import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -39,43 +44,41 @@ import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
 
-import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppStorage
-import           RPKI.Store.Repository (getPublicationPoints)
-import           RPKI.Util (increment, ifJust)
-import Data.IORef
-
-type AppLmdbEnv = AppContext LmdbStorage
+import           RPKI.Util (ifJust)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
+
     -- Use a command queue to avoid fully concurrent operations, i.e. cleanup 
-    -- opearations and such should not run at the same time with validation 
-    -- (not only for consistency reasons, but we want to avoid locking the 
-    -- DB for long time by the cleanup process).
-    globalQueue <- newCQueueIO 10
+    -- operations and such should not run at the same time with validation 
+    -- (not only for consistency reasons, but we also want to avoid locking 
+    -- the DB for long time by a cleanup process).
+    globalQueue <- newCQueueIO 10    
+
+    -- Fill in the current state if it's not too old.
+    -- It is useful in case of restarts.        
+    void $ loadStoredAppState appContext
 
     -- Run RTR server thread when rtrConfig is present in the AppConfig.  
     -- If not needed it will the an noop.  
     rtrServer <- initRtrIfNeeded
 
-    -- Fill in the current state if it's not too old.
-    -- It is useful in case of restarts.        
-    loadStoredAppState appContext
-
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics
 
-    -- Run threads that periodicallly generate tasks and put them 
-    -- to the queue and one thread that executes the tasks.
+    -- Run threads that periodicallly generate tasks and one thread that 
+    -- executes the tasks. Tasks are put into the queue after having been 
+    -- generated. `taskExecutor` picks them up from the queue and executes.
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
             generateNewWorldVersion prometheusMetrics, 
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
             generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageCompactionInterval compact,
+            -- generatePeriodicTask (1 * 1_000_000) storageCompactionInterval compact,
             rtrServer   
         ]
     where
@@ -89,27 +92,18 @@ runWorkflow appContext@AppContext {..} tals = do
         -- periodically update world version and generate command 
         -- to re-validate all TAs
         generateNewWorldVersion prometheusMetrics globalQueue = do            
-            periodically revalidationInterval $ do 
-                oldWorldVersion <- getWorldVerionIO appState
-                newWorldVersion <- updateWorldVerion appState
-                logDebug_ logger [i|Generated new world version, #{oldWorldVersion} ==> #{newWorldVersion}.|]                
-                atomically $ do 
-                    writeCQueue globalQueue (validateAllTAs prometheusMetrics newWorldVersion)                    
-                    pure Repeat
+            periodically revalidationInterval $ do                 
+                newVersion <- newWorldVersion      
+                z <- getWorldVerionIO appState          
+                logDebug_ logger $ case z of
+                    Nothing -> 
+                        [i|Generated first world version #{newVersion}.|]                
+                    Just oldWorldVersion ->
+                        [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]                                
+                atomically $ writeCQueue globalQueue (validateAllTAs prometheusMetrics newVersion)                        
+                pure Repeat
 
             atomically $ closeCQueue globalQueue
-
-        generatePeriodicTask delay interval whatToDo globalQueue = do
-            threadDelay delay
-            periodically interval $ do
-                worldVersion <- getWorldVerionIO appState
-                atomically $ do 
-                    closed <- isClosedCQueue globalQueue
-                    unless closed $ 
-                        writeCQueue globalQueue (whatToDo worldVersion)
-                    pure $ if closed 
-                            then Done
-                            else Repeat
 
         taskExecutor globalQueue = go 
           where
@@ -121,29 +115,54 @@ runWorkflow appContext@AppContext {..} tals = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
             database' <- readTVarIO database 
             executeOrDie
-                (processTALs database' tals)
-                (\vrps elapsed ->                    
-                    logInfoM logger [i|Validated all TAs, got #{length vrps} VRPs, took #{elapsed}ms|])
+                (processTALs database' `finally` cleanupAfterValidation)
+                (\(vrps, slurmedVrps) elapsed ->                    
+                    logInfoM logger $
+                        [i|Validated all TAs, got #{vrpCount vrps} VRPs, |] <> 
+                        [i|#{vrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where 
-                processTALs database' tals = do
-                    results <- validateMutlipleTAs appContext worldVersion tals    
-                    let totalResult@TopDownResult {..} = addTotalValidationMetric $ mconcat results
-
-                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics                    
+                cleanupAfterValidation = do 
+                    let tmpDir = config ^. #tmpDirectory
+                    logDebugM logger [i|Cleaning up temporary directory #{tmpDir}.|]                    
+                    listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
                     
-                    rwTx database' $ \tx -> do                                           
-                        putValidations tx (validationsStore database') worldVersion (topDownValidations ^. typed)
-                        putMetrics tx (metricStore database') worldVersion (topDownValidations ^. typed)
-                        putVrps tx database' (Set.toList vrps) worldVersion
-                        completeWorldVersion tx database' worldVersion
-                        atomically $ completeCurrentVersion appState vrps                            
-                        pure vrps
+                processTALs database' = do
+                    TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
+                                validateMutlipleTAs appContext worldVersion tals                        
 
-        cacheGC worldVersion = do
-            let now = versionToMoment worldVersion
+                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
+
+                    -- Apply SLURM if it is set in the appState
+                    (slurmValidations, maybeSlurm) <- 
+                        case appState ^. #readSlurm of
+                            Nothing       -> pure (mempty, Nothing)
+                            Just readFunc -> do 
+                                logInfoM logger [i|Re-reading and re-validating SLURM files.|]
+                                (z, vs) <- runValidatorT (newValidatorPath "read-slurm") readFunc
+                                case z of 
+                                    Left e -> do 
+                                        logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
+                                        pure (vs, Nothing)
+                                    Right slurm -> 
+                                        pure (vs, Just slurm)
+
+                    -- Save all the results into LMDB
+                    let updatedValidation = slurmValidations <> topDownValidations ^. typed
+                    rwTx database' $ \tx -> do
+                        putValidations tx database' worldVersion (updatedValidation ^. typed)
+                        putMetrics tx database' worldVersion (topDownValidations ^. typed)                        
+                        putVrps tx database' vrps worldVersion
+                        ifJust maybeSlurm $ putSlurm tx database' worldVersion
+                        completeWorldVersion tx database' worldVersion
+                        slurmedVrps <- atomically $ do 
+                            setCurrentVersion appState worldVersion
+                            completeVersion appState worldVersion vrps maybeSlurm
+                        pure (vrps, slurmedVrps)
+
+        cacheGC worldVersion = do            
             database' <- readTVarIO database 
             executeOrDie 
-                (cleanObjectCache database' $ versionIsOld now cacheLifeTime)
+                (cleanObjectCache database' $ versionIsOld (versionToMoment worldVersion) cacheLifeTime)
                 (\CleanUpResult {..} elapsed -> 
                     logInfo_ logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <> 
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms|])
@@ -180,33 +199,53 @@ runWorkflow appContext@AppContext {..} tals = do
                 Nothing -> do 
                     pure $ \_ -> pure ()
                 Just rtrConfig' -> 
-                    pure $ \_ -> runRtrServer appContext rtrConfig' 
+                    pure $ \_ -> runRtrServer appContext rtrConfig'
 
+
+        -- Write an action to the global queue with given interval.
+        generatePeriodicTask delay interval action globalQueue = do
+            threadDelay delay
+            periodically interval $ do
+                worldVersion <- getOrCreateWorldVerion appState
+                atomically $ do 
+                    closed <- isClosedCQueue globalQueue
+                    unless closed $ 
+                        writeCQueue globalQueue (action worldVersion)
+                    pure $ if closed 
+                            then Done
+                            else Repeat
 
 -- | Load the state corresponding to the last completed version.
 -- 
-loadStoredAppState :: Storage s => AppContext s -> IO ()
+loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do     
     Now now' <- thisInstant    
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
     database' <- readTVarIO database 
     roTx database' $ \tx -> 
         getLastCompletedVersion database' tx >>= \case 
-            Nothing          -> pure ()
+            Nothing          -> pure Nothing
 
             Just lastVersion             
-                | versionIsOld now' revalidationInterval lastVersion ->                     
-                    logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used.|]
+                | versionIsOld now' revalidationInterval lastVersion -> do
+                    logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used, will re-run validation.|]
+                    pure Nothing
 
-                | otherwise -> do 
+                | otherwise -> do                     
                     (vrps, elapsed) <- timedMS $ do             
-                        -- TODO It takes 350ms, which is pretty strange, profile it.           
-                        !vrps <- getVrps tx database' lastVersion
+                        -- TODO It takes 350-400ms, which is pretty strange, profile it.           
+                        !vrps  <- getVrps tx database' lastVersion
+                        !slurm <- slurmForVersion tx database' lastVersion
                         --
-                        atomically $ completeCurrentVersion appState (Set.fromList vrps)                        
+                        ifJust vrps $ \vrps' -> void $ 
+                                atomically $ do 
+                                    setCurrentVersion appState lastVersion
+                                    completeVersion appState lastVersion vrps' slurm
                         pure vrps
-                    logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
-                                      [i|current state (#{length vrps} VRPs), took #{elapsed}ms.|]
+                    ifJust vrps $ \v -> 
+                        logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
+                                        [i|current state (#{vrpCount v} VRPs), took #{elapsed}ms.|]
+                    pure $ Just lastVersion             
                 
 
 -- 

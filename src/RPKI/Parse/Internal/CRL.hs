@@ -40,10 +40,12 @@ parseCrl bs = do
     numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
     crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
-    pure $ newCrl         
-        (AKI $ mkKI aki') 
-        (U.sha256s bs) 
-        (signCrlF crlNumber' )        
+    case makeSerial crlNumber' of 
+        Left e       -> Left $ fmtErr e
+        Right crlNum -> pure $ newCrl         
+                            (AKI $ mkKI aki') 
+                            (U.sha256s bs) 
+                            (signCrlF crlNum)        
     where          
         getCrl = onNextContainer Sequence $ do
             (asns, z) <- getNextContainerMaybe Sequence >>= \case 
@@ -64,7 +66,9 @@ parseCrl bs = do
                         (Instant thisUpdate)
                         (Instant <$> nextUpdate)
                         (SignatureAlgorithmIdentifier signatureId) 
-                        signatureVal (toShortBS encoded) crlNumber' revokedSerials
+                        signatureVal (toShortBS encoded) 
+                        crlNumber' 
+                        revokedSerials
             pure (extensions, mkSignCRL)            
         
         getCrlContent = do        
@@ -99,7 +103,10 @@ parseCrl bs = do
                     where
                         getCrlSerial = onNextContainer Sequence $ 
                             replicateM 2 getNext >>= \case 
-                                [IntVal serial, _] -> pure $! Serial serial                            
+                                [IntVal serial, _] -> 
+                                    case makeSerial serial of 
+                                        Left e  -> throwParseError e
+                                        Right s -> pure s
                                 s                  -> throwParseError $ "That's not a serial: " <> show s
                                 
                                 

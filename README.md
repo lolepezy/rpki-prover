@@ -12,24 +12,27 @@ Implemented features are
 - Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
 - Basic UI for reporting metrics and found problems
 - Output of VRPs in CSV and JSON formats
+- Support of SLURM (RFC 8416)
 - Cache cleanup, scheduled revalidation, cache compaction, so it can run unlimited time without draining resources
 - Support for RTR protocol, both version 0 and 1
 - Static binaries for Linux
 - Docker image.
 
 Current and future work
-- SLURM support
 - History of validations in UI
 - Ergonomics for long-running processes (more subtle automatic cleanups, cache DB migration, etc.)
-- CPU and memory optimisations
- 
+- CPU and memory optimisations 
 
 
 # Using rpki-prover
 
-`rpki-prover` is a daemon that runs periodic re-validation of all TA in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the option `--with-rtr` enable RTR server that sends VRP updates to the RTR clients.
+Running `rpki-prover --help` gives some reasonable help on CLI options.
 
-There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Running `rpki-prover --help` gives some help on the CLI options.
+The only dependency needed for `rpki-prover` to run is `rsync` client.
+
+`rpki-prover` is a daemon that runs periodic re-validation of all TAs in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the `--with-rtr` option enables RTR server pushing VRP updates to RTR clients.
+
+There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
 
 There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. The awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
 
@@ -49,11 +52,11 @@ Since `rpki-prover` needs to have some persistent directory to use for TALs, cac
 docker volume create rpki-data
 docker pull lolepezy/rpki-prover:latest
 docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --initialise --agree-with-arin-rpa
-docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
+docker run -p 9999:9999 --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
 ``` 
-The important part here is `target=/rpki-data`, this directory is expected to exist by default. Otherwise it can be adjusted as in
+The important part here is `target=/rpki-data`, this directory is created by default inside of the docker container. Otherwise it can be adjusted as in
 ```
-docker run --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
+docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
 ```
 
 ## Building from sources

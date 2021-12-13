@@ -34,8 +34,9 @@ parseMft bs = do
                         ASN1Time TimeGeneralized nextUpdateTime' _) -> do
                             hashAlg' <- getOID oid2Hash "Wrong hash algorithm OID"
                             entries <- getEntries fileHashAlg
-                            -- TODO translate to UTC
-                            pure $ Manifest (fromInteger manifestNumber) hashAlg' 
+                            -- TODO translate to UTC       
+                            mn <- makeMftNumber manifestNumber        
+                            pure $ Manifest mn hashAlg' 
                                 (Instant thisUpdateTime') (Instant nextUpdateTime') entries
 
                     -- TODO Check version?
@@ -48,10 +49,16 @@ parseMft bs = do
                             hashAlg'        <- getOID oid2Hash "Wrong hash algorithm OID"
                             entries         <- getEntries fileHashAlg
                             -- TODO translate to UTC
-                            pure $ Manifest (fromInteger manifestNumber) hashAlg' 
+                            mn <- makeMftNumber manifestNumber
+                            pure $ Manifest mn hashAlg' 
                                 (Instant thisUpdateTime') (Instant nextUpdateTime') entries
 
                     s -> throwParseError $ "Unexpected ROA content: " ++ show s
+
+        makeMftNumber n = 
+            case makeSerial n of 
+                Left e  -> throwParseError e
+                Right s -> pure s
 
         getEntries _ = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $

@@ -62,7 +62,7 @@ main = do
         (Right appContext, _) -> do             
 
             database' <- readTVarIO (appContext ^. #database)
-            worldVersion <- updateWorldVerion (appContext ^. #appState)
+            worldVersion <- updateWorldVersion (appContext ^. #appState)
             storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
 
             forConcurrently_ sources $ \(repository, _) -> do
@@ -76,7 +76,7 @@ main = do
                 let now = versionToMoment worldVersion
                 let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime
                 (results, elapsed) <- timedMS $
-                    inParallel
+                    inParallelOrdered
                         (appContext ^. #appBottlenecks . #cpuBottleneck 
                          <> appContext ^. #appBottlenecks . #ioBottleneck) 
                     -- forConcurrently

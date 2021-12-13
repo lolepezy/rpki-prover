@@ -39,7 +39,7 @@ dependencies:
 - binary
 - blaze-html
 - bytestring
-- cassava
+- bytestring-mmap
 - cborg
 - containers
 - co-log
@@ -50,17 +50,21 @@ dependencies:
 - deepseq
 - deque
 - directory
+- dns
 - filepath
 - file-embed-lzma
 - generic-lens
 - generic-monoid
+- hashable
 - hexpat
 - hourglass
-- http-types
 - http-client
 - http-conduit
+- http-media
+- http-types
 - hw-ip
 - interpolate
+- iproute
 - lens
 - lmdb-high-level
 - lifted-async
@@ -79,7 +83,6 @@ dependencies:
 - prometheus-metrics-ghc
 - serialise
 - servant
-- servant-cassava
 - servant-server
 - servant-blaze
 - split
@@ -88,6 +91,7 @@ dependencies:
 - strict-tuple
 - string-conversions
 - text
+- these
 - typed-process
 - transformers
 - temporary
@@ -100,8 +104,9 @@ dependencies:
 - tasty-quickcheck    
 - generic-arbitrary
 - quickcheck-instances
-- vector
 - unix
+- unordered-containers
+- vector
 - warp
 - xeno
 
@@ -125,7 +130,8 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
+    - -funbox-strict-fields
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     dependencies:
     - rpki-prover  
 
@@ -138,7 +144,8 @@ executables:
     - -O2
     - -Wall    
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N2 -H500m -qg -T --disable-delayed-os-memory-return"'
+    - -funbox-strict-fields    
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     - -fPIC
     cc-options: -static
     ld-options: -static -pthread 
@@ -181,7 +188,7 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
-    - '"-with-rtsopts=-A24m -AL128m -N -s"'
+    - '"-with-rtsopts=-A24m -AL128m -N2 -qg -T --disable-delayed-os-memory-return"'
     - -Wall
     - -O2
     dependencies:

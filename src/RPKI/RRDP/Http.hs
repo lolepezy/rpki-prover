@@ -63,21 +63,29 @@ import System.IO (Handle, hClose, withFile, IOMode(..))
 import System.IO.Temp (withTempFile)
 import System.Timeout (timeout)
 
+import System.IO.Posix.MMap (unsafeMMapFile)
+
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 
 
 class Blob bs where    
-    readB :: FilePath -> IO bs
+    readB :: FilePath -> Size -> IO bs
     sizeB :: bs -> Size
 
 instance Blob LBS.ByteString where    
-    readB = lazyFsRead
     sizeB = Size . fromIntegral . LBS.length 
+    readB f _ = lazyFsRead f
 
 instance Blob BS.ByteString where    
-    readB = fsRead
     sizeB = Size . fromIntegral . BS.length 
+    readB f _ = mapFile f
+        -- if s < 50_000_000 
+            -- read relatively small files in memory entirely
+            -- and mmap bigger ones.
+            -- then fsRead f
+            -- else 
+                
 
 
 -- | Download HTTP content to a temporary file and return the context as lazy/strict ByteString. 
@@ -105,7 +113,7 @@ downloadToBS config uri@(URI u) = liftIO $ do
                         (\_ _ -> ()) 
                         id)
         hClose fd                    
-        content <- readB name
+        content <- readB name size
         pure (content, size, status)
 
 
@@ -136,7 +144,7 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
             then pure $! hashMishmatch actualHash
             else do
                 hClose fd
-                content <- readB name
+                content <- readB name size
                 pure $ Right (content, size, status)
                 
 
@@ -176,6 +184,9 @@ lazyFsRead = LBS.readFile
 fsRead :: FilePath -> IO BS.ByteString
 fsRead = BS.readFile 
 
+mapFile :: FilePath -> IO BS.ByteString
+mapFile = unsafeMMapFile
+
 data OversizedDownloadStream = OversizedDownloadStream URI Size 
     deriving stock (Show, Eq, Ord, Generic)    
 
@@ -189,9 +200,15 @@ downloadConduit :: (MonadIO m, MonadUnliftIO m) =>
                     -> Handle 
                     -> ConduitT BS.ByteString Void (ResourceT m) t
                     -> m (t, HttpStatus)
-downloadConduit (URI u) fileHandle sink = do 
+downloadConduit (URI u) fileHandle extraSink = do 
     req <- liftIO $ parseRequest $ Text.unpack u    
-    let req' = req { requestHeaders = (hUserAgent, userAgent) : requestHeaders req }
+    let req' = req { 
+            requestHeaders = (hUserAgent, userAgent) : requestHeaders req,
+            -- Since the whole RRDP fetching process is limited in time
+            -- it's fine (and sometimes necessary) to set some ridiculously 
+            -- high timeout here (10 minutes).
+            responseTimeout = responseTimeoutMicro 600_000_000
+        }
     status <- liftIO $ newIORef mempty
     let getSrc r = do         
             liftIO $ writeIORef status $ HttpStatus $ getResponseStatusCode r         
@@ -199,7 +216,7 @@ downloadConduit (URI u) fileHandle sink = do
 
     (z, _) <- runConduitRes 
                     $ httpSource req' getSrc
-                    .| zipSinks sink (sinkHandle fileHandle)    
+                    .| zipSinks extraSink (sinkHandle fileHandle)    
 
     (z,) <$> liftIO (readIORef status)
 

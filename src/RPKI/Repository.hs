@@ -15,7 +15,6 @@ import           Control.Concurrent.Async
 
 import           GHC.Generics
 
-import           Data.Bifunctor
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 import           Data.Ord
@@ -33,6 +32,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           RPKI.Domain
+import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
@@ -67,7 +67,7 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
 
 data RrdpRepository = RrdpRepository {
         uri         :: RrdpURL,
-        rrdpMeta    :: Maybe (SessionId, Serial),
+        rrdpMeta    :: Maybe (SessionId, RrdpSerial),
         status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -158,6 +158,8 @@ instance WithRpkiURL Repository where
 
 instance WithURL RrdpRepository where
     getURL RrdpRepository { uri = RrdpURL u } = u
+instance WithURL RsyncRepository where
+    getURL RsyncRepository { repoPP = RsyncPublicationPoint {..} } = getURL uri
     
 
 instance Semigroup RrdpRepository where
@@ -607,3 +609,11 @@ adjustSucceededUrl u pps =
         Nothing     -> pps
         Just status -> pps & typed %~ succeededFromStatus u status
 
+-- Number of repositories
+repositoryCount :: PublicationPoints -> Int
+repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =     
+    Map.size rrdps + 
+    Map.foldr countRoots 0 rsyncs
+  where
+    countRoots (Root _) c = c + 1
+    countRoots _        c = c

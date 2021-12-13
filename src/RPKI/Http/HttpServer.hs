@@ -13,14 +13,20 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 import           FileEmbedLzma
+
 import           Servant hiding (URI)
+import           Servant.Server.Generic
+
+import qualified Data.ByteString.Builder          as BS
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (fromMaybe, maybeToList)
 import qualified Data.Set                         as Set
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
 
 import           RPKI.AppContext
+import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Metrics
@@ -30,81 +36,109 @@ import           RPKI.Http.Types
 import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Resources.Types
+import           RPKI.Store.Types
+import           RPKI.SLURM.Types
 import           RPKI.Util
 
-staticServer :: Server StaticContent
-staticServer = serveDirectoryEmbedded $(embedRecursiveDir "static")
-
-type FullAPI = API :<|> UI :<|> PrometheusAPI :<|> StaticContent
-
-prometheus :: Server PrometheusAPI
-prometheus = liftIO $ convert <$> textualMetrics
 
 httpApi :: Storage s => AppContext s -> Application
-httpApi appContext = serve 
-                        (Proxy @FullAPI)
-                        (apiServer appContext                                                  
-                        :<|> uiServer appContext
-                        :<|> prometheus
-                        :<|> staticServer)
+httpApi appContext = genericServe HttpApi {
+        api     = apiServer,
+        metrics = convert <$> textualMetrics,        
+        ui      = uiServer,
+        staticContent = serveDirectoryEmbedded $(embedRecursiveDir "static")
+    }
+  where
+    apiServer = genericServer API {
+        vrpsJson = liftIO (getVRPValidated appContext),
+        vrpsCsv = liftIO (getVRPValidatedRaw appContext),
 
-uiServer :: Storage s => AppContext s -> Server UI
--- uiServer appContext = withUI . validaionResultsHtml <$> liftIO (getVResults appContext)
-uiServer appContext = do 
-    worldVersion <- liftIO $ getLastVersion appContext
-    vResults <- liftIO $ getVResults appContext
-    metrics  <- getMetrics appContext
-    pure $ mainPage worldVersion vResults metrics
+        vrpsCsvFiltered  = liftIO (getVRPSlurmedRaw appContext),
+        vrpsJsonFiltered = liftIO (getVRPSlurmed appContext),
 
-apiServer :: Storage s => AppContext s -> Server API
-apiServer appContext = 
-    liftIO (getVRPs appContext)
-    :<|> liftIO (getVRPs appContext)
-    :<|> liftIO (getVResults appContext)
-    :<|> getMetrics appContext
-    :<|> getStats  appContext
-    :<|> getRpkiObject appContext
+        slurm = getSlurm appContext,
+                
+        validationResults = liftIO (getVResults appContext),
+        appMetrics        = getMetrics appContext,                
+        lmdbStats = getStats appContext,
+        objectView = getRpkiObject appContext    
+    }
 
-getVRPs :: Storage s => AppContext s -> IO [VrpDto]
-getVRPs AppContext {..} = do 
-    vrps <- do 
-        vrps <- readTVarIO $ appState ^. #currentVrps
-        if Set.null vrps
-            then do 
-                db@DB {..} <- readTVarIO database 
-                roTx versionStore $ \tx ->
-                    getLastCompletedVersion db tx >>= 
-                        maybe (pure []) (getVrps tx db)
-                        
-            else pure $! Set.toList vrps                    
+    uiServer = do 
+        worldVersion <- liftIO $ getLastVersion appContext
+        vResults <- liftIO $ getVResults appContext
+        metrics  <- getMetrics appContext
+        pure $ mainPage worldVersion vResults metrics    
 
-    pure $! map (\(Vrp a p len) -> VrpDto a p len) vrps                    
+
+getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
+getVRPValidated appContext = getVRPs appContext (readTVar . (^. #validatedVrps))
+
+getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
+getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))         
+
+getVRPValidatedRaw :: Storage s => AppContext s -> IO RawCVS
+getVRPValidatedRaw appContext = 
+    rawCSV <$> getVRPs appContext (readTVar . (^. #validatedVrps))    
+
+getVRPSlurmedRaw :: Storage s => AppContext s -> IO RawCVS
+getVRPSlurmedRaw appContext =
+    rawCSV <$> getVRPs appContext (readTVar . (^. #filteredVrps))
+
+
+getVRPs :: Storage s => AppContext s -> (AppState -> STM Vrps) -> IO [VrpDto] 
+getVRPs AppContext {..} func = do 
+    z <- do 
+        vrps <- atomically (func appState)
+        if vrps == mempty
+            then                  
+                getLatestVRPs =<< readTVarIO database                
+            else 
+                pure $ Just vrps
+    pure $ case z of 
+        Nothing   -> []
+        Just vrps -> [ VrpDto a p len (unTaName ta) | 
+                            (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
+                            Vrp a p len  <- Set.toList vrpSet
+                     ]    
 
 getVResults :: Storage s => AppContext s -> IO [ValidationResult]
 getVResults AppContext {..} = do 
     db@DB {..} <- readTVarIO database 
     roTx versionStore $ \tx -> 
-        let txValidations = runMaybeT $ do
+        fmap (fromMaybe []) $ runMaybeT $ do
                 lastVersion <- MaybeT $ getLastCompletedVersion db tx
                 validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
-                pure $ map toVR $ validationsToList validations
-        in fromMaybe [] <$> txValidations
+                pure $ map toVR $ validationsToList validations        
 
 getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastVersion AppContext {..} = do 
-    db@DB {..} <- readTVarIO database 
-    roTx versionStore $ getLastCompletedVersion db                
+    db <- readTVarIO database 
+    roTx db $ getLastCompletedVersion db                
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m AppMetric
 getMetrics AppContext {..} = do
     db@DB {..} <- liftIO $ readTVarIO database 
-    metrics <- liftIO $ roTx versionStore $ \tx -> do
+    metrics <- liftIO $ roTx db $ \tx -> do
         runMaybeT $ do
                 lastVersion <- MaybeT $ getLastCompletedVersion db tx
                 MaybeT $ metricsForVersion tx metricStore lastVersion                        
     case metrics of 
         Nothing -> throwError err404 { errBody = "Working, please hold still!" }
+        Just m  -> pure m
+
+getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) => 
+            AppContext s -> m Slurm
+getSlurm AppContext {..} = do
+    db <- liftIO $ readTVarIO database 
+    z  <- liftIO $ roTx db $ \tx ->
+        runMaybeT $ do
+                lastVersion <- MaybeT $ getLastCompletedVersion db tx
+                MaybeT $ slurmForVersion tx db lastVersion                        
+    case z of 
+        Nothing -> throwError err404 { errBody = "No SLURM for this version" }
         Just m  -> pure m
     
 toVR :: (Path a, Set.Set VProblem) -> ValidationResult
@@ -146,3 +180,25 @@ getRpkiObject AppContext {..} uri hash =
             throwError $ err400 { errBody = 
                 "Only 'uri' or 'hash' must be provided, not both." }
 
+
+rawCSV :: [VrpDto] -> RawCVS
+rawCSV vrpDtos = 
+    RawCVS $ BS.toLazyByteString $ header <> body
+  where
+    header = str "ASN,IP Prefix,Max Length,Trust Anchor\n"    
+    body = mconcat $ map toBS vrpDtos
+
+    toBS VrpDto {
+            asn = ASN as, 
+            maxLength = PrefixLength ml,
+            ..
+        } = str "AS" <> str (show as) <> ch ',' <> 
+            str (prefixStr prefix) <> ch ',' <> 
+            str (show ml) <> ch ',' <> 
+            str (convert ta) <> ch '\n'
+    
+    prefixStr (Ipv4P (Ipv4Prefix p)) = show p
+    prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+
+    str = BS.stringUtf8
+    ch  = BS.charUtf8    

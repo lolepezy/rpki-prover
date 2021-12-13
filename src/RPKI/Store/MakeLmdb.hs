@@ -12,8 +12,6 @@ import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           Lmdb.Connection
 import           Lmdb.Types hiding (Size)
 
-import           Data.Int                 (Int64)
-
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
 import           RPKI.Store.Database
@@ -67,13 +65,16 @@ createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> createLmdbStore e
 createMetricsStore :: LmdbEnv -> IO (MetricsStore LmdbStorage)
 createMetricsStore e = MetricsStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
+createSlurmStore :: LmdbEnv -> IO (SlurmStore LmdbStorage)
+createSlurmStore e = SlurmStore . SMap (LmdbStorage e) <$> createLmdbStore e    
+
 createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
 createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 
 mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
-mkLmdb fileName size maxReaders = do 
-    nativeEnv <- newNativeLmdb fileName size maxReaders
+mkLmdb fileName maxSizeMb maxReaders = do 
+    nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         createSemaphore maxReaders    
@@ -103,5 +104,6 @@ createDatabase e = do
         createVRPStore e <*>
         createVersionStore e <*>
         createMetricsStore e <*>
+        createSlurmStore e <*>
         pure seqMap
 

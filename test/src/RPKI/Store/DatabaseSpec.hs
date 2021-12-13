@@ -254,12 +254,12 @@ shouldOrderManifests io = do
 
 shouldInsertAndGetAllBackFromValidationResultStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromValidationResultStore io = do  
-    DB {..} <- io
+    db@DB {..} <- io
     vrs :: Validations <- QC.generate arbitrary      
 
-    world <- getWorldVerionIO =<< newAppState
+    world <- getOrCreateWorldVerion =<< newAppState
 
-    rwTx validationsStore $ \tx -> putValidations tx validationsStore world vrs
+    rwTx validationsStore $ \tx -> putValidations tx db world vrs
     vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world
 
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'

@@ -17,13 +17,14 @@ import           Control.Monad.State.Strict
 import           Data.Bifunctor             (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
+import           Data.Hourglass
 import           Data.Proxy
 import           Data.Text                   (Text)
 
-import           RPKI.Reporting
-import           RPKI.Time
 import           System.Timeout
 
+import           RPKI.Reporting
+import           RPKI.Time
 
 
 -- Application monad stack
@@ -186,10 +187,6 @@ inSubMetricPath :: Monad m =>
                 Text -> ValidatorT m r -> ValidatorT m r
 inSubMetricPath text = local (& typed @MetricPath %~ (newPath text <>))
 
-inSubPath :: Monad m => 
-                Text -> ValidatorT m r -> ValidatorT m r
-inSubPath text va = inSubVPath text $ inSubMetricPath text va    
-
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
                 (metric -> metric) -> ValidatorT m ()
@@ -239,10 +236,11 @@ finallyError tryF finallyF =
         throwError e            
 
 
-timeoutVT :: Int -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
-timeoutVT t toDo timedOut = do 
+timeoutVT :: Seconds -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
+timeoutVT s toDo timedOut = do 
+    let Seconds t = s
     vp <- ask 
-    z <- liftIO $ timeout t (runValidatorT vp toDo)
+    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT vp toDo)
     case z of 
         Nothing -> timedOut
         Just q  -> embedValidatorT $ pure q

@@ -1,12 +1,11 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE RecordWildCards     #-}
-
-{-# LANGUAGE StrictData #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DerivingVia        #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.Fetch where
 
@@ -35,10 +34,10 @@ import           Data.Maybe (mapMaybe)
 import GHC.Generics (Generic)
 
 import Time.Types
-import System.Timeout
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -68,7 +67,7 @@ fValidationState (FetchFailure _ vs) = vs
 
 
 
--- Main entry point: fetch reposiutory using the cache of tasks.
+-- Main entry point: fetch repository using the cache of tasks.
 -- It is guaranteed that every fetch happens only once.
 --
 -- Fall-back means that the function will try to fetch all the PPs in the 
@@ -85,12 +84,14 @@ fValidationState (FetchFailure _ vs) = vs
 fetchPPWithFallback :: (MonadIO m, Storage s) => 
                             AppContext s                         
                         -> RepositoryProcessing
+                        -> WorldVersion
                         -> Now 
                         -> PublicationPointAccess  
                         -> ValidatorT m [FetchResult]
 fetchPPWithFallback 
     appContext@AppContext {..}     
     repositoryProcessing
+    worldVersion
     now 
     ppAccess = do 
         parentPath <- askEnv         
@@ -105,7 +106,7 @@ fetchPPWithFallback
     funRun runs key = Map.lookup key <$> readTVar runs            
 
     -- Use "run only once" logic for the whole list of PPs
-    fetchOnce parentPath ppAccess =          
+    fetchOnce parentPath ppAccess' =          
         join $ atomically $ do
             pps <- readTVar publicationPoints           
             let ppsKey = ppSeqKey pps 
@@ -118,7 +119,8 @@ fetchPPWithFallback
                     pure $ bracketOnError 
                                 (async $ do 
                                     -- logDebug_ logger [i|ppAccess = #{ppAccess}, ppsKey = #{ppsKey}.|]
-                                    fetchWithFallback parentPath $ NonEmpty.toList $ unPublicationPointAccess ppAccess) 
+                                    evaluate =<< fetchWithFallback parentPath 
+                                                    (NonEmpty.toList $ unPublicationPointAccess ppAccess')) 
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
       where
@@ -204,7 +206,7 @@ fetchPPWithFallback
     fetchPP parentPath repo rpkiUrl = do         
         let launchFetch = async $ do               
                 let repoPath = validatorSubPath (toText rpkiUrl) parentPath
-                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext repo                
+                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
 
@@ -245,9 +247,13 @@ fetchPPWithFallback
 -- Returned repository has all the metadata updated (in case of RRDP session and serial)
 --
 fetchRepository :: (Storage s) => 
-                    AppContext s -> Repository -> ValidatorT IO Repository
+                    AppContext s 
+                -> WorldVersion
+                -> Repository 
+                -> ValidatorT IO Repository
 fetchRepository 
     appContext@AppContext {..}
+    worldVersion
     repo = do
         logInfoM logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
@@ -263,7 +269,7 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (updateObjectForRsyncRepository appContext r)
+                                    (runRsyncFetchWorker appContext worldVersion r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
@@ -277,7 +283,7 @@ fetchRepository
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (updateObjectForRrdpRepository appContext r)
+                                    (runRrdpFetchWorker appContext worldVersion r)
                 logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
@@ -318,7 +324,7 @@ fetchTACertificate appContext@AppContext {..} tal =
             go uris
 
         fetchTaCert = do                     
-            logInfoM logger [i|Fetching TA certicate from #{getURL u}..|]
+            logInfoM logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
@@ -353,8 +359,8 @@ setValidationStateOfFetches repositoryProcessing frs = liftIO $ do
     atomically $ do 
         forM_ frs $ \fr -> do 
             let (u, vs) = case fr of
-                    FetchFailure r vs   -> (r, vs)
-                    FetchSuccess repo vs -> (getRpkiURL repo, vs)        
+                    FetchFailure r vs'    -> (r, vs')
+                    FetchSuccess repo vs' -> (getRpkiURL repo, vs')
                 
             modifyTVar' (repositoryProcessing ^. #indivudualFetchResults)
                         $ Map.insert u vs

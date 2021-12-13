@@ -24,7 +24,7 @@ import           Data.Tuple.Strict
 
 import           Codec.Serialise
 import qualified Data.List                   as List
-import           Data.List.NonEmpty          (NonEmpty (..), (<|))
+import           Data.List.NonEmpty          (NonEmpty (..))
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
@@ -35,6 +35,7 @@ import           GHC.Generics
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
+import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.Time
 
@@ -52,7 +53,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
                         CertWrongPolicyExtension BS.ByteString |
-                        ObjectHasMultipleLocations |
+                        ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI Locations |
                         NoCRLOnMFT AKI Locations |
                         MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
@@ -76,6 +77,10 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         UnknownUriType URI | 
                         CertificateDoesntHaveSIA | 
                         CircularReference Hash Locations |
+                        CertificatePathTooDeep Locations Int |
+                        TreeIsTooBig Locations Int |
+                        TooManyRepositories Locations Int |
+                        ValidationTimeout Int |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
@@ -100,19 +105,19 @@ data RrdpError = BrokenXml Text |
                 BadURL Text |
                 NoHashInWithdraw |
                 ContentInWithdraw Text Text |
-                LocalSerialBiggerThanRemote Serial Serial |
-                NonConsecutiveDeltaSerials [(Serial, Serial)] |
+                LocalSerialBiggerThanRemote RrdpSerial RrdpSerial |
+                NonConsecutiveDeltaSerials [(RrdpSerial, RrdpSerial)] |
                 CantDownloadFile Text |
                 CantDownloadNotification Text |
                 CantDownloadSnapshot Text |
                 CantDownloadDelta Text |
                 SnapshotHashMismatch { actualHash :: Hash, expectedHash :: Hash } |
                 SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
-                SnapshotSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
+                SnapshotSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
-                DeltaSerialMismatch { actualSerial :: Serial, expectedSerial :: Serial } |
-                DeltaSerialTooHigh { actualSerial :: Serial, expectedSerial :: Serial } |
-                DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: Serial } |
+                DeltaSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
+                DeltaSerialTooHigh { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
+                DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: RrdpSerial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
@@ -138,14 +143,24 @@ data StorageError = StorageError Text |
 newtype TALError = TALError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
 
 newtype InitError = InitError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
 
 newtype NetworkError = NetworkError Text
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+data InternalError = WorkerTimeout Text 
+                   | WorkerOutOfMemory Text 
+                   | InternalError Text 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+data SlurmError = SlurmFileError Text Text |
+                  SlurmParseError Text Text |
+                  SlurmValidationError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -156,8 +171,10 @@ data AppError = ParseE (ParseError Text) |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
-                UnspecifiedE Text Text |
-                NetworkE NetworkError
+                NetworkE NetworkError |
+                SlurmE SlurmError |
+                InternalE InternalError |
+                UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -281,10 +298,7 @@ instance Monoid HttpStatus where
     mempty = HttpStatus 200
 
 instance Semigroup HttpStatus where
-    s1 <> s2 
-        | not (isHttpSuccess s2) = s2
-        | not (isHttpSuccess s1) = s1
-        | isHttpSuccess s1 = s2    
+    s1 <> s2 = if isHttpSuccess s1 then s2 else s1
 
 data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)

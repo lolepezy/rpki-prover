@@ -1,4 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -8,15 +10,14 @@
 
 module RPKI.Store.Base.LMDB where
 
+import Codec.Serialise
+
 import Control.Monad (forM, forever)
 import Control.Concurrent.STM
 import Control.Exception
 
 import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
-
-import Data.Map.Strict (Map, (!?))
-import qualified Data.Map.Strict as Map
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
@@ -25,6 +26,7 @@ import RPKI.Util
 import Data.IORef
 
 import GHC.TypeLits
+import GHC.Generics
 import Data.Proxy as P
 
 import Lmdb.Connection
@@ -34,9 +36,6 @@ import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
 
 import Pipes
-import RPKI.Reporting
-import RPKI.AppMonad
-import RPKI.Parallel
 
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
@@ -202,76 +201,43 @@ getNativeEnv LmdbEnv {..} = do
         ROEnv native -> pure native
         RWEnv native -> pure native
 
-data MapInfo a
-    = Single a
-    | Multi a
-    deriving (Show, Eq, Ord)
+
+data CopyStat = CopyStat { 
+        mapName       :: BS.ByteString, 
+        totalSize     :: Int,
+        maxKVPairSize :: Int
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 
 -- | Copy all databases from the from LMDB environment to the other
 -- This is a low-level operation to be used for de-fragmentation.
 -- `dstN` is supposed to be a completely empty environment.
 --
--- Do it in the pipline fashion: one thread for reading the old Env
--- and one thread for writing (k,v) pairs into the new Env.
--- 
-copyEnv :: Env -> Env -> IO [(BS.ByteString, Int)]
-copyEnv srcN dstN = do 
-
-    mapNames <- withROTransaction srcN $ \srcTx -> do               
-                    srcDb <- openDatabase srcTx Nothing defaultDbSettings    
-                    getMapNames srcTx srcDb
-
-    (bytes, _) <- mapException (AppException . storageError)        
-                    $ bracketChanClosable 
-                            1000
-                            (liftIO . readKVs mapNames)
-                            (liftIO . writeKVs)
-                            (const $ pure ()) 
-    pure bytes
+copyEnv :: Env -> Env -> IO [CopyStat]
+copyEnv srcN dstN = do        
+    withROTransaction srcN $ \srcTx -> do       
+        withTransaction dstN $ \dstTx -> do                              
+            srcDb <- openDatabase srcTx Nothing defaultDbSettings    
+            mapNames <- getMapNames srcTx srcDb         
+            forM mapNames $ \mapName -> do 
+                -- first open it as is
+                srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings           
+                isMulti <- isMultiDatabase srcTx srcMap                            
+                if isMulti
+                    then do 
+                        -- close and reopen as multi map
+                        closeDatabase srcN srcMap
+                        srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
+                        dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) defaultMultiDbSettngs
+                        (copied, max) <- copyMultiMap srcMap' dstMap srcTx dstTx
+                        pure $! CopyStat mapName copied max
+                    else do 
+                        dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
+                        (copied, max) <- copyMap srcMap dstMap srcTx dstTx                        
+                        pure $! CopyStat mapName copied max
     where
-        readKVs mapNames queue = 
-            withROTransaction srcN $ \srcTx ->
-                forM mapNames $ \mapName -> do 
-                    srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings           
-                    isMulti <- isMultiDatabase srcTx srcMap                                   
-                    if isMulti
-                        then do 
-                            closeDatabase srcN srcMap
-                            srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
-                            bytes <- writeMultiMapToQueue mapName srcMap' srcTx queue                            
-                            pure (mapName, bytes)
-                        else do 
-                            bytes <- writeMapToQueue mapName srcMap srcTx queue
-                            pure (mapName, bytes)
-                            
-
-        writeKVs queue = 
-            withTransaction dstN $ \dstTx -> 
-                go dstTx Map.empty 
-          where
-            go dstTx maps = do                              
-                atomically (readCQueue queue) >>= \case 
-                    Nothing -> pure ()
-                    Just (mapInfo, key, value) -> do 
-                        case maps !? mapInfo of 
-                            Nothing -> 
-                                case mapInfo of 
-                                    Single mapName -> do 
-                                        dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
-                                        LMap.insertSuccess' dstTx dstMap key value
-                                        go dstTx $ Map.insert mapInfo (Left dstMap) maps
-                                    Multi mapName -> do 
-                                        dstMap <- openMultiDatabase dstTx (Just $ convert mapName) defaultMultiDbSettngs
-                                        go dstTx $ Map.insert mapInfo (Right dstMap) maps
-                            Just (Left dstMap) -> do                                                                             
-                                LMap.insertSuccess' dstTx dstMap key value
-                                go dstTx maps
-                            Just (Right multiDstMap) -> do                                             
-                                withMultiCursor dstTx multiDstMap $ \dstC -> 
-                                    LMMap.insert dstC key value
-                                go dstTx maps      
-    
         getMapNames tx db =
             withCursor tx db $ \c -> do 
                 maps <- newIORef []
@@ -281,22 +247,33 @@ copyEnv srcN dstN = do
                         lift $ modifyIORef' maps ([name] <>)
                 readIORef maps          
         
-        writeMapToQueue mapName srcMap srcTx queue = do 
-            bytes <- newIORef 0
-            withCursor srcTx srcMap $ \c ->                
-                void $ runEffect $ LMap.firstForward c >-> do
-                    forever $ do
-                        Lmdb.KeyValue key value <- await
-                        lift $ atomically $ writeCQueue queue (Single mapName, key, value)
-                        lift $ modifyIORef' bytes (+ (BS.length key + BS.length value))
-            readIORef bytes
+        copyMap srcMap dstMap srcTx dstTx = 
+            withKVs $ \bytes maxKV -> do                 
+                withCursor srcTx srcMap $ \c ->                
+                    void $ runEffect $ LMap.firstForward c >-> do
+                        forever $ do
+                            Lmdb.KeyValue name value <- await
+                            lift $ LMap.insertSuccess' dstTx dstMap name value
+                            let kvSize = BS.length name + BS.length value
+                            lift $ do 
+                                modifyIORef' bytes ( + kvSize)
+                                modifyIORef' maxKV (max kvSize)
 
-        writeMultiMapToQueue mapName srcMap srcTx queue = do
-            bytes <- newIORef 0            
-            withMultiCursor srcTx srcMap $ \srcC ->                 
-                void $ runEffect $ LMMap.firstForward srcC >-> do
-                    forever $ do
-                        Lmdb.KeyValue key value <- await
-                        lift $ atomically $ writeCQueue queue (Multi mapName, key, value)
-                        lift $ modifyIORef' bytes (+ (BS.length key + BS.length value))
-            readIORef bytes
+        copyMultiMap srcMap dstMap srcTx dstTx =
+            withKVs $ \bytes maxKV -> do 
+                withMultiCursor dstTx dstMap $ \dstC -> 
+                    withMultiCursor srcTx srcMap $ \srcC ->                 
+                        void $ runEffect $ LMMap.firstForward srcC >-> do
+                            forever $ do
+                                Lmdb.KeyValue name value <- await
+                                lift $ LMMap.insert dstC name value
+                                let kvSize = BS.length name + BS.length value
+                                lift $ do 
+                                    modifyIORef' bytes ( + kvSize)
+                                    modifyIORef' maxKV (max kvSize)
+        
+        withKVs processThem = do 
+            bytes <- newIORef 0
+            maxKV <- newIORef 0
+            processThem bytes maxKV
+            (,) <$> readIORef bytes <*> readIORef maxKV
