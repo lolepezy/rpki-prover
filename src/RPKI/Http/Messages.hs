@@ -210,7 +210,7 @@ toValidationMessage = \case
       CertificateIsExpired {..} ->
           [i|Certificate is expired, its 'not valid after' time #{after} is in the past.|]
 
-      (AKIIsNotEqualsToParentSKI childAKI parentSKI) ->
+      AKIIsNotEqualsToParentSKI childAKI parentSKI ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
 
       ManifestEntryDoesn'tExist hash filename -> 
@@ -239,6 +239,9 @@ toValidationMessage = \case
 
       TooManyRepositories locations maxTaRepositories ->          
           [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
+
+      ValidationTimeout maxDuration -> 
+          [i|Validation did not finish within #{maxDuration}s and was interrupted.|]
 
       ManifestLocationMismatch filename locations -> 
           [i|Object has manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]

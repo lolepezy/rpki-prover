@@ -10,7 +10,6 @@ module RPKI.Store.Types where
 
 import           Codec.Serialise
 import           Data.Int
-import qualified Data.Set                 as Set
 import qualified Data.ByteString.Short    as BSS
 
 import           GHC.Generics

@@ -17,6 +17,7 @@ import           Control.Monad.State.Strict
 import           Data.Bifunctor             (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
+import           Data.Hourglass
 import           Data.Proxy
 import           Data.Text                   (Text)
 
@@ -235,10 +236,11 @@ finallyError tryF finallyF =
         throwError e            
 
 
-timeoutVT :: Int -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
-timeoutVT t toDo timedOut = do 
+timeoutVT :: Seconds -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
+timeoutVT s toDo timedOut = do 
+    let Seconds t = s
     vp <- ask 
-    z <- liftIO $ timeout t (runValidatorT vp toDo)
+    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT vp toDo)
     case z of 
         Nothing -> timedOut
         Just q  -> embedValidatorT $ pure q

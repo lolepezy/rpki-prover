@@ -80,6 +80,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         CertificatePathTooDeep Locations Int |
                         TreeIsTooBig Locations Int |
                         TooManyRepositories Locations Int |
+                        ValidationTimeout Int |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
