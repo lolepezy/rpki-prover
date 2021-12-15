@@ -67,6 +67,8 @@ import System.IO.Posix.MMap (unsafeMMapFile)
 
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
+import Data.List (sortOn)
+import Data.Ord
 
 
 class Blob bs where    
@@ -80,13 +82,6 @@ instance Blob LBS.ByteString where
 instance Blob BS.ByteString where    
     sizeB = Size . fromIntegral . BS.length 
     readB f _ = mapFile f
-        -- if s < 50_000_000 
-            -- read relatively small files in memory entirely
-            -- and mmap bigger ones.
-            -- then fsRead f
-            -- else 
-                
-
 
 -- | Download HTTP content to a temporary file and return the context as lazy/strict ByteString. 
 -- Snapshots (and probably some deltas) can be quite big so we don't want to keep them in memory,
@@ -258,6 +253,29 @@ data ResolvedIP = ResolvedV4 IP.IPv4 | ResolvedV6 IP.IPv6
     deriving Show
 
 
+-- Not really a happy eye balls (https://datatracker.ietf.org/doc/html/rfc8305), 
+-- but some approximation of it.
+-- 
+resolveIP :: HostName -> ServiceName -> IO (Either NetworkError ResolvedIP)
+resolveIP hostName serviceName = do     
+    addresses <- getAddrInfo (Just defaultHints { addrSocketType = Stream }) (Just hostName) (Just serviceName)
+
+    -- sort them IPv6 first, AF_INET is smaller than AF_INET6
+    let ipv6first = sortOn (Down . addrFamily) $ 
+                    filter ((\f -> f == AF_INET || f == AF_INET6) . addrFamily) addresses
+    pure $ Left $ NetworkError $ Text.pack $ show ipv6first
+  where
+    tryConnecting AddrInfo {..} = do             
+        z <- try $ do 
+                sock <- socket addrFamily Stream addrProtocol  
+                connect sock addrAddress             
+                    `finally`
+                    close sock
+        pure $ case z of 
+            Left (e :: SomeException) -> Just $ NetworkError $ U.fmt e            
+            Right _                   -> Nothing  
+
+
 -- Pretty ad hoc implemntation of Happy Eeyballs algorithm
 -- https://datatracker.ietf.org/doc/html/rfc8305
 -- 
@@ -270,7 +288,9 @@ happyEyeballsResolve resolver domain port = do
             getAddresses >>= \case 
                 Left e -> pure $ Left e
                 Right addresses -> do 
-                    forM_ addresses $ \a -> atomically $ writeCQueue addressQ a
+                    forM_ addresses $ \a -> do 
+                        putStrLn $ "address = " <> show a
+                        atomically $ writeCQueue addressQ a
                     pure $ Right addresses
 
     z <- withSocketsDo $ 
@@ -334,33 +354,38 @@ happyEyeballsResolve resolver domain port = do
                 atomically (readCQueue q) >>= \case
                     Nothing -> pure Nothing
                     Just a  -> do 
-                        checkConnectivity a >>= \case 
+                        checkConnectivity a port >>= \case 
                             Nothing -> pure $ Just a
                             Just e  -> go
 
-        -- Try to connect a socket to the given port
-        checkConnectivity :: ResolvedIP -> IO (Maybe NetworkError)
-        checkConnectivity ip = do 
-            let (socketAddr, protocol, protocolNumber) = 
-                    case ip of
-                        ResolvedV4 ipv4 -> 
-                            (SockAddrInet port (IP.toHostAddress ipv4), AF_INET, 4)
-                        -- TODO Figuire out proper values for flow info and scope id
-                        ResolvedV6 ipv6 -> 
-                            (SockAddrInet6 port (1 :: FlowInfo) (IP.toHostAddress6 ipv6) (2 :: ScopeID), AF_INET6, 6)
-            
-            sock <- socket protocol Stream protocolNumber
-            z <- try 
-                $ timeout 1000_000 
-                $ connect sock socketAddr             
-                    `finally`
-                    close sock
+-- Try to connect a socket to the given port
+checkConnectivity :: ResolvedIP -> PortNumber -> IO (Maybe NetworkError)
+checkConnectivity ip port = do 
+    let (socketAddr, protocol, protocolNumber) = 
+            case ip of
+                ResolvedV4 ipv4 -> 
+                    (SockAddrInet port (IP.toHostAddress ipv4), AF_INET, 6)
+                -- TODO Figure out proper values for flow info and scope id
+                ResolvedV6 ipv6 -> 
+                    (SockAddrInet6 port (1 :: FlowInfo) (IP.toHostAddress6 ipv6) (2 :: ScopeID), AF_INET6, 6)
+    
+    let hints = defaultHints { 
+                addrSocketType = Stream,
+                addrAddress = socketAddr 
+            }
 
-            pure $ case z of 
-                Left (e :: SomeException) -> Just $ NetworkError $ U.fmt e
-                Right Nothing             -> Just $ NetworkError "Timed out"
-                Right (Just _)            -> Nothing    
-        
+    sock <- socket protocol Stream protocolNumber   
+    z <- try 
+        $ timeout 1_000_000 
+        $ connect sock socketAddr             
+            `finally`
+            close sock
+
+    pure $ case z of 
+        Left (e :: SomeException) -> Just $ NetworkError $ U.fmt e
+        Right Nothing             -> Just $ NetworkError "Timed out"
+        Right (Just _)            -> Nothing    
+
                             
 
 
@@ -441,6 +466,7 @@ happyEyeballsResolve1 resolver domain port = do
 
         checkConnectivity :: ResolvedIP -> IO (Maybe NetworkError)
         checkConnectivity ip = do 
+            putStrLn $ "zzzzzzzz111111"
             let (socketAddr, protocol, protocolNumber) = 
                     case ip of
                         ResolvedV4 ipv4 -> 
@@ -453,9 +479,15 @@ happyEyeballsResolve1 resolver domain port = do
                         addrSocketType = Stream,
                         addrAddress = socketAddr 
                     }           
-            sock <- socket protocol Stream protocolNumber
-            z <- try $ timeout 1000_000 $ connect sock socketAddr            
-            pure $ case z of 
-                Left (e :: SomeException) -> Just $ NetworkError $ U.fmt e
-                Right Nothing             -> Just $ NetworkError "Timed out"
-                Right (Just _)            -> Nothing
+            putStrLn $ "zzzzzzzz"
+            z <- getAddrInfo (Just hints) (Just "147.28.0.47") (Just "443")
+            putStrLn $ "z = " <> show z
+    
+            -- sock <- socket protocol Stream protocolNumber
+            -- z <- try $ timeout 1000_000 $ connect sock socketAddr            
+            -- pure $ case z of 
+            --     Left (e :: SomeException) -> Just $ NetworkError $ U.fmt e
+            --     Right Nothing             -> Just $ NetworkError "Timed out"
+            --     Right (Just _)            -> Nothing
+
+            pure Nothing
