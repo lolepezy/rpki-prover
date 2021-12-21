@@ -14,8 +14,6 @@ import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
-import qualified Data.ByteString.Lazy.Char8  as LC
-import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import           Data.Char
