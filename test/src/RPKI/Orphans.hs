@@ -434,10 +434,6 @@ instance Arbitrary TALError where
 instance Arbitrary InitError where
     arbitrary = genericArbitrary
     shrink = genericShrink
-
-instance Arbitrary NetworkError where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
     
 instance Arbitrary InternalError where
     arbitrary = genericArbitrary

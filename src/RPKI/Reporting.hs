@@ -148,10 +148,6 @@ newtype InitError = InitError Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype NetworkError = NetworkError Text
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-
 data InternalError = WorkerTimeout Text 
                    | WorkerOutOfMemory Text 
                    | InternalError Text 
@@ -171,7 +167,6 @@ data AppError = ParseE (ParseError Text) |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
-                NetworkE NetworkError |
                 SlurmE SlurmError |
                 InternalE InternalError |
                 UnspecifiedE Text Text
