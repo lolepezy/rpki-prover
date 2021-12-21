@@ -13,10 +13,11 @@ module RPKI.Worker where
 import           Codec.Serialise
 
 import           Control.Exception.Lifted
-import           Control.Monad
+import           Control.Monad (void)
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
+import           Control.Concurrent.STM
 
 import           Control.Lens ((^.))
 
@@ -185,24 +186,38 @@ runWorker logger config workerId params timeout extraCli = do
 executeWork :: WorkerInput 
             -> (WorkerInput -> (forall a . Serialise a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
-executeWork input actualWork = 
-    void $ race (actualWork input writeWorkerOutput) (race suicideCheck timeoutWait)
+executeWork input actualWork = do 
+    exitCode <- newTVarIO Nothing
+    void $ forkIO $ void $ race 
+                (do 
+                    actualWork input writeWorkerOutput
+                    atomically $ writeTVar exitCode $ Just ExitSuccess) 
+                (race 
+                    (suicideCheck exitCode) 
+                    (timeoutWait exitCode))
+
+    -- this complication is to guarantee that the main thread exits
+    -- the process as soon as there's exit code defined, regardless
+    -- of how exceptions are handled of not handled inside of `race`.
+    exitWith =<< atomically (maybe retry pure =<< readTVar exitCode)
+    
   where    
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    suicideCheck = 
-        forever $ do
+    suicideCheck exitCode = go 
+      where
+        go = do 
             parentId <- getParentProcessID                    
-            when (parentId /= input ^. #initialParentId) $ 
-                exitWith exitParentDied    
-            threadDelay 500_000                
+            if (parentId /= input ^. #initialParentId)
+                then atomically $ writeTVar exitCode (Just exitParentDied)
+                else threadDelay 500_000 >> go
 
     -- Time bomb. Wait for the certain timeout and then exit.
-    timeoutWait = do
+    timeoutWait exitCode = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
-        exitWith exitTimeout
+        atomically $ writeTVar exitCode (Just exitTimeout)        
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
