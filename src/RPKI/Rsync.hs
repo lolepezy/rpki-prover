@@ -64,14 +64,14 @@ checkRsyncInPath rsyncClientPath = do
                     rsyncClientPath
             appError $ InitE $ InitError message
                     
-        Right (exit, stdout, stderr) -> 
+        Right (exit, stdout', stderr') -> 
             case exit of 
                 ExitSuccess -> pure ()
                 ExitFailure failure -> do 
                     appError $ InitE $ InitError 
                         [i|#{client} --version returned non-zero exit code #{exit}, 
-stdout = [#{U.textual stdout}], 
-stderr = [#{U.textual stderr}]|]
+stdout = [#{U.textual stdout'}], 
+stderr = [#{U.textual stderr'}]|]
 
 
 runRsyncFetchWorker :: AppContext s 
