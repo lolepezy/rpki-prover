@@ -194,7 +194,15 @@ newtype Validations = Validations (Map VPath (Set VProblem))
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
-newtype Path a = Path { unPath :: NonEmpty Text }
+
+data PathSegment = TASegment Text 
+                | ObjectSegment Text 
+                | RepositorySegment Text
+                | TextualSegment Text
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+
+newtype Path a = Path { unPath :: NonEmpty PathSegment }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
@@ -214,10 +222,7 @@ data ValidatorPath = ValidatorPath {
     deriving anyclass Serialise
 
 newPath :: Text -> Path c
-newPath u = Path $ u :| []
-
-subPath :: Text -> Path c -> Path c
-subPath t parent = newPath t <> parent
+newPath u = Path $ TextualSegment u :| []
 
 newValidatorPath :: Text -> ValidatorPath
 newValidatorPath t = ValidatorPath {
@@ -226,10 +231,16 @@ newValidatorPath t = ValidatorPath {
     }
 
 -- | Step down     
-validatorSubPath :: Text -> ValidatorPath -> ValidatorPath
-validatorSubPath t vc = 
+validatorSubRepositoryPath :: Text -> ValidatorPath -> ValidatorPath
+validatorSubRepositoryPath = validatorSubPath' RepositorySegment
+
+validatorSubPath' :: (Text -> PathSegment) -> Text -> ValidatorPath -> ValidatorPath
+validatorSubPath' constructor t vc = 
     vc & typed @VPath      %~ subPath t
        & typed @MetricPath %~ subPath t
+  where    
+    subPath :: Text -> Path a -> Path a
+    subPath seg parent = Path (constructor seg :| []) <> parent
 
 
 mError :: VPath -> AppError -> Validations
@@ -409,3 +420,10 @@ lookupMetric metricPath (MetricMap (MonoidalMap mm)) = Map.lookup metricPath mm
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
+
+segmentToText :: PathSegment -> Text
+segmentToText = \case
+  TASegment txt -> txt
+  ObjectSegment txt -> txt
+  RepositorySegment txt -> txt
+  TextualSegment txt -> txt

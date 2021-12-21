@@ -147,6 +147,7 @@ instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
     
 instance ToJSON RrdpSource
+instance ToJSON PathSegment
 instance ToJSONKey (Path 'Metric)
 instance ToJSON (Path 'Metric)
 instance ToJSON TimeMs where 

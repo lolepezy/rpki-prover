@@ -87,7 +87,7 @@ overallHtml (Just worldVersion) = do
 validationMetricsHtml :: MetricMap ValidationMetric -> Html
 validationMetricsHtml validationMetricMap =
     H.table $ do 
-        let allTaMetricPath = Path (allTAsMetricsName :| [])
+        let allTaMetricPath = newPath allTAsMetricsName
         let rawMap = getMonoidalMap $ unMetricMap validationMetricMap
         let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
                             $ Map.toList rawMap
@@ -291,3 +291,6 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
+
+instance ToMarkup PathSegment where 
+    toMarkup = toMarkup . segmentToText

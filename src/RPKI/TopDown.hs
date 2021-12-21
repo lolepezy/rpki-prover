@@ -103,9 +103,9 @@ newTopDownContext worldVersion taName now certificate repositoryProcessing =
         let verifiedResources = Just $ createVerifiedResources certificate        
         let currentPathDepth = 0        
         startingRepositoryCount <- fmap repositoryCount $ readTVar $ repositoryProcessing ^. #publicationPoints  
-        visitedHashes          <- newTVar mempty
-        validManifests         <- newTVar mempty                
-        interruptedByLimit     <- newTVar CanProceed
+        visitedHashes           <- newTVar mempty
+        validManifests          <- newTVar mempty                
+        interruptedByLimit      <- newTVar CanProceed
         pure $ TopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
@@ -239,18 +239,19 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             | otherwise -> do
                 logInfoM logger [i|Not re-fetching TA certificate #{getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
-    where
-        fetchValidateAndStore taStore (Now moment) = do 
-            (uri', ro) <- fetchTACertificate appContext tal
-            cert       <- vHoist $ validateTACert tal uri' ro            
-            case publicationPointsFromTAL tal cert of
-                Left e      -> appError $ ValidationE e
-                Right ppAccess -> 
-                    rwAppTxEx taStore storageError $ \tx -> do 
-                        putTA tx taStore (StorableTA tal cert (FetchedAt moment) ppAccess)
-                        pure (locatedTaCert uri' cert, ppAccess, Updated)
-             
-        locatedTaCert url cert = Located (toLocations url) cert
+  where   
+
+    fetchValidateAndStore taStore (Now moment) = do 
+        (uri', ro) <- fetchTACertificate appContext tal
+        cert       <- vHoist $ validateTACert tal uri' ro            
+        case publicationPointsFromTAL tal cert of
+            Left e      -> appError $ ValidationE e
+            Right ppAccess -> 
+                rwAppTxEx taStore storageError $ \tx -> do 
+                    putTA tx taStore (StorableTA tal cert (FetchedAt moment) ppAccess)
+                    pure (locatedTaCert uri' cert, ppAccess, Updated)
+            
+    locatedTaCert url cert = Located (toLocations url) cert
 
 
 -- | Do the validation starting from the TA certificate.
@@ -394,7 +395,7 @@ validateCaCertificate
     validateThisCertAndGoDown = do            
         -- Here we do the following
         -- 
-        --  1) get the latest manifest (latest by the validatory period)
+        --  1) get the latest manifest (latest by the validity period)
         --  2) find CRL on it
         --  3) make sure they both are valid
         --  4) go through the manifest children and either 

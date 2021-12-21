@@ -455,6 +455,10 @@ instance Arbitrary MetricPath where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary PathSegment where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary Validations where
     arbitrary = generateMap Validations     
 

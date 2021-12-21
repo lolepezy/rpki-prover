@@ -144,7 +144,7 @@ fetchPPWithFallback
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT.
         updateFetchMetric repoUrl fetchFreshness validations = 
-            let repoPath = validatorSubPath (toText repoUrl) parentPath                   
+            let repoPath = validatorSubRepositoryPath (toText repoUrl) parentPath                   
             in case repoUrl of 
                 RrdpU _  -> 
                     validations 
@@ -205,7 +205,7 @@ fetchPPWithFallback
     -- 
     fetchPP parentPath repo rpkiUrl = do         
         let launchFetch = async $ do               
-                let repoPath = validatorSubPath (toText rpkiUrl) parentPath
+                let repoPath = validatorSubRepositoryPath (toText rpkiUrl) parentPath
                 (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    

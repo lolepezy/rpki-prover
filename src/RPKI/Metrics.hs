@@ -74,16 +74,16 @@ textualMetrics = exportMetricsAsText
 updatePrometheus :: (MonadIO m, MonadMonitor m) => AppMetric -> PrometheusMetrics -> m ()
 updatePrometheus AppMetric {..} PrometheusMetrics {..} = do 
     forM_ (Map.toList $ getMonoidalMap $ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do 
-        let url = NonEmpty.head $ metricPath ^. coerced                
+        let url = segmentToText $ NonEmpty.head $ metricPath ^. coerced                
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
 
     forM_ (Map.toList $ getMonoidalMap $ unMetricMap rrdpMetrics) $ \(metricPath, metric) -> do 
-        let url = NonEmpty.head $ metricPath ^. coerced        
+        let url = segmentToText $ NonEmpty.head $ metricPath ^. coerced        
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
 
     forM_ (Map.toList $ getMonoidalMap $ unMetricMap validationMetrics) $ \(metricPath, metric) -> do 
-        let url = NonEmpty.last $ metricPath ^. coerced        
+        let url = segmentToText $ NonEmpty.last $ metricPath ^. coerced        
         withLabel vrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpNumber
         let totalCount = metric ^. #validCertNumber + 
                          metric ^. #validRoaNumber +

@@ -143,7 +143,7 @@ getSlurm AppContext {..} = do
     
 toVR :: (Path a, Set.Set VProblem) -> ValidationResult
 toVR (Path path, problems) = 
-    ValidationResult (Set.toList problems) (NonEmpty.toList path)    
+    ValidationResult (Set.toList problems) (map segmentToText $ NonEmpty.toList path)    
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             
