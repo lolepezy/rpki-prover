@@ -12,17 +12,12 @@ import Control.Lens ((^.))
 import Control.Monad.Except
 
 import Conduit hiding (connect)
-import Data.Bifunctor
-
-import Data.String.Interpolate.IsString
 
 import Data.Conduit.Internal (zipSinks)
 
 import Data.Generics.Product.Typed
 
-import           Data.List.NonEmpty       (NonEmpty(..))
-import qualified Data.List.NonEmpty       as NonEmpty
-
+import Data.Bifunctor
 import Data.IORef.Lifted
 
 import qualified Data.ByteString as BS
@@ -30,38 +25,31 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
 import           Data.Tuple.Strict
 
-import qualified Data.IP as IP
-import Data.Word
-
 import GHC.Generics (Generic)
 
 import Network.HTTP.Client as HC
 import Network.HTTP.Types.Header
 import Network.HTTP.Simple (getResponseBody, getResponseStatusCode, httpSource)
 
-import Network.Socket
 
 import RPKI.AppContext
 import RPKI.AppMonad
 import RPKI.Config
 import RPKI.Domain
 import RPKI.Parse.Parse
-import RPKI.Parallel
 import RPKI.Reporting
+
 import qualified RPKI.Util as U
 
 import qualified Crypto.Hash.SHA256 as S256
 
 import System.IO (Handle, hClose, withFile, IOMode(..))
 import System.IO.Temp (withTempFile)
-import System.Timeout (timeout)
 
 import System.IO.Posix.MMap (unsafeMMapFile)
 
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
-import Data.List (sortOn)
-import Data.Ord
 
 
 class Blob bs where
@@ -233,4 +221,3 @@ sinkGenSize uri maxAllowedSize initialValue updateValue finalValue = do
                 in if newSize > maxAllowedSize
                     then liftIO $ throwIO $ OversizedDownloadStream uri newSize
                     else loop $! T2 (updateValue ctx chunk) newSize
-                    

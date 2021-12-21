@@ -50,7 +50,6 @@ dependencies:
 - deepseq
 - deque
 - directory
-- dns
 - filepath
 - file-embed-lzma
 - generic-lens
@@ -64,7 +63,6 @@ dependencies:
 - http-types
 - hw-ip
 - interpolate
-- iproute
 - lens
 - lmdb-high-level
 - lifted-async
