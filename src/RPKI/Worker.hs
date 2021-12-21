@@ -209,7 +209,7 @@ executeWork input actualWork = do
       where
         go = do 
             parentId <- getParentProcessID                    
-            if (parentId /= input ^. #initialParentId)
+            if parentId /= input ^. #initialParentId
                 then atomically $ writeTVar exitCode (Just exitParentDied)
                 else threadDelay 500_000 >> go
 

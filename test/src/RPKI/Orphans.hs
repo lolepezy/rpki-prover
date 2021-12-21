@@ -159,13 +159,9 @@ instance Arbitrary a => Arbitrary (X509.SignedExact a) where
 instance Arbitrary a => Arbitrary (X509.Signed a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
-    
-instance Arbitrary NullParam where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
 
 instance Arbitrary SignatureALG where    
-    arbitrary = SignatureALG HashSHA256 PubKeyALG_RSA <$> arbitrary
+    arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
 instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
     arbitrary = genericArbitrary
