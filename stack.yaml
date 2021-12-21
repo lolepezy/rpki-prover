@@ -44,8 +44,8 @@ packages:
 extra-deps: 
   - git: https://github.com/lolepezy/lmdb-high-level.git
     commit: 98630fb39ac34fe209ef03a3d6eb21c9a7a551cb
-  - git: https://github.com/lolepezy/hs-certificate.git  
-    commit: 6102aaee9d971618309eb8365b0029e6f57f86bb    
+  - git: https://github.com/lolepezy/hs-certificate.git          
+    commit: b416b13123eb7bac10a1e5b2c2925fb4d72c2e19    
     subdirs:
       - x509
       - x509-validation
