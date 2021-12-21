@@ -203,7 +203,6 @@ instance ToJSON X509.RevokedCertificate
 instance ToJSON a => ToJSON (X509.SignedExact a)    
 instance ToJSON a => ToJSON (X509.Signed a) 
     
-instance ToJSON NullParam
 instance ToJSON SignatureALG
 
 instance ToJSON Date

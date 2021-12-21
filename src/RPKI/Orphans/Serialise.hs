@@ -46,7 +46,6 @@ instance Serialise X509.RevokedCertificate
 instance Serialise a => Serialise (X509.SignedExact a)    
 instance Serialise a => Serialise (X509.Signed a) 
     
-instance Serialise NullParam 
 instance Serialise SignatureALG
 
 instance Serialise DateTime

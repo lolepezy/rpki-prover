@@ -44,8 +44,8 @@ packages:
 extra-deps: 
   - git: https://github.com/lolepezy/lmdb-high-level.git
     commit: 98630fb39ac34fe209ef03a3d6eb21c9a7a551cb
-  - git: https://github.com/lolepezy/hs-certificate.git  
-    commit: 6102aaee9d971618309eb8365b0029e6f57f86bb    
+  - git: https://github.com/lolepezy/hs-certificate.git          
+    commit: b416b13123eb7bac10a1e5b2c2925fb4d72c2e19    
     subdirs:
       - x509
       - x509-validation
@@ -66,6 +66,14 @@ extra-deps:
     subdirs:
       - warp
       - wai
+
+  - git: https://github.com/lolepezy/hs-connection
+    commit: e8afc5bfeba8139b457fc46285328f1a685cb054    
+
+  - git: https://github.com/lolepezy/http-client/
+    commit: a3b2be08dafc58246b7acd2b0cc1979c63fbfa8a        
+    subdirs:
+      - http-client      
 
   - hw-ip-2.4.2.0
   - prometheus-metrics-ghc-1.0.1.1@sha256:d378a7186a967140fe0e09d325fe5e3bfd7b77a1123934b40f81fdfed2eacbdc,1233
