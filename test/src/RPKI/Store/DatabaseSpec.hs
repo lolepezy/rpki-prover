@@ -398,10 +398,6 @@ shouldPreserveStateInAppTx io = do
                         appWarn $ UnspecifiedE "Error2" "text 2"
                     -- just to have a transaction
                     liftIO $ M.get tx z 0
-                    inSubMetricPath "metric-nested-1" $ do 
-                        timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
-                            appWarn $ UnspecifiedE "Error3" "text 3"
-                            addedObject
 
                 appWarn $ UnspecifiedE "Error4" "text 4"
                 addedObject
@@ -411,7 +407,7 @@ shouldPreserveStateInAppTx io = do
         (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
-        (Just $ mempty { added = 1, deleted = 0 })
+        Nothing
         (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") 
                             (rrdpMetrics topDownMetric))        
 
@@ -419,8 +415,7 @@ shouldPreserveStateInAppTx io = do
         (Map.lookup (newPath "root") validationMap)
         (Just $ Set.fromList [
             VWarn (VWarning (UnspecifiedE "Error0" "text 0")),
-            VWarn (VWarning (UnspecifiedE "Error1" "text 1")),
-            VWarn (VWarning (UnspecifiedE "Error3" "text 3")),
+            VWarn (VWarning (UnspecifiedE "Error1" "text 1")),            
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
