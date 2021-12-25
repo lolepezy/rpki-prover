@@ -71,9 +71,21 @@ import           RPKI.Workflow
 
 main :: IO ()
 main = do    
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord
-        "RPKI prover, relying party software for RPKI"
-    inProcess cliOptions
+    cliOptions@CLIOptions{..} <- unwrapRecord "RPKI prover, relying party software for RPKI"
+    case worker of 
+        Nothing -> mainProcess cliOptions
+        Just _  -> do           
+            input <- readWorkerInput
+            let logLevel' = input ^. typed @Config . #logLevel
+            withWorkerLogger logLevel' $ \logger -> liftIO $ do
+                (z, validations) <- do
+                            runValidatorT (newValidatorPath "worker-create-app-context")
+                                $ readWorkerContext input logger
+                case z of
+                    Left e ->                        
+                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                    Right appContext -> 
+                        executeWorker input appContext
 
 
 mainProcess :: CLIOptions Unwrapped -> IO ()
@@ -99,24 +111,6 @@ mainProcess cliOptions = do
                                 (runHttpApi appContext')
                                 (runValidatorApp appContext')
 
-
-inProcess :: CLIOptions Unwrapped -> IO ()
-inProcess cliOptions@CLIOptions{..} =
-    if isNothing worker
-        then do             
-            mainProcess cliOptions
-        else do         
-            input <- readWorkerInput
-            let logLevel' = input ^. typed @Config . #logLevel
-            withWorkerLogger logLevel' $ \logger -> liftIO $ do
-                (z, validations) <- do
-                            runValidatorT (newValidatorPath "worker-create-app-context")
-                                $ readWorkerContext input logger
-                case z of
-                    Left e ->                        
-                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                    Right appContext -> 
-                        executeWorker input appContext
 
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
