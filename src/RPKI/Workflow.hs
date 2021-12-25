@@ -17,6 +17,8 @@ import           Control.Monad
 import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Typed
 
+import           Data.Foldable (for_)
+
 import           Data.Int                         (Int64)
 
 import           Data.Hourglass
@@ -74,7 +76,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- generated. `taskExecutor` picks them up from the queue and executes.
     mapConcurrently_ (\f -> f globalQueue) [ 
             taskExecutor,
-            generateNewWorldVersion prometheusMetrics, 
+            generateRevalidationTask prometheusMetrics, 
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
             generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageCompactionInterval compact,
@@ -91,25 +93,18 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- periodically update world version and generate command 
         -- to re-validate all TAs
-        generateNewWorldVersion prometheusMetrics globalQueue = do            
-            periodically revalidationInterval $ do                 
-                newVersion <- newWorldVersion      
-                z <- getWorldVerionIO appState          
-                logDebug_ logger $ case z of
-                    Nothing -> 
-                        [i|Generated first world version #{newVersion}.|]                
-                    Just oldWorldVersion ->
-                        [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]                                
-                atomically $ writeCQueue globalQueue (validateAllTAs prometheusMetrics newVersion)                        
-                pure Repeat
-
-            atomically $ closeCQueue globalQueue
+        generateRevalidationTask prometheusMetrics globalQueue = do            
+            periodically revalidationInterval (do                                 
+                    writeQ globalQueue (validateAllTAs prometheusMetrics)                    
+                    pure Repeat)
+                `finally`
+                atomically (closeCQueue globalQueue)
 
         taskExecutor globalQueue = go 
           where
             go = do 
                 z <- atomically (readCQueue globalQueue)
-                ifJust z $ \task -> task >> go
+                for_ z $ \task -> updateWorldVersion >>= task >> go
         
         validateAllTAs prometheusMetrics worldVersion = do
             logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
@@ -205,15 +200,32 @@ runWorkflow appContext@AppContext {..} tals = do
         -- Write an action to the global queue with given interval.
         generatePeriodicTask delay interval action globalQueue = do
             threadDelay delay
-            periodically interval $ do
-                worldVersion <- getOrCreateWorldVerion appState
-                atomically $ do 
-                    closed <- isClosedCQueue globalQueue
-                    unless closed $ 
-                        writeCQueue globalQueue (action worldVersion)
-                    pure $ if closed 
-                            then Done
-                            else Repeat
+            periodically interval $ do                 
+                closed <- atomically $ isClosedCQueue globalQueue
+                unless closed $ writeQ globalQueue action
+                pure $ if closed 
+                        then Done
+                        else Repeat
+
+        updateWorldVersion = do 
+            newVersion <- newWorldVersion      
+            existing <- getWorldVerionIO appState          
+            logDebug_ logger $ case existing of
+                Nothing -> 
+                    [i|Generated first world version #{newVersion}.|]                
+                Just oldWorldVersion ->
+                    [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
+            pure newVersion
+
+
+        writeQ globalQueue z = do 
+            isFull <- atomically $ ifFullCQueue globalQueue
+            when isFull $ logInfoM logger $
+                                [i|Task queue is full. Normally that means that revalidation interval |] <>
+                                [i|is too short for the time validation takes. It is recommended to restart |] <>
+                                [i|with a higher re-validation interval value.|]                                    
+            atomically $ writeCQueue globalQueue z                        
+
 
 -- | Load the state corresponding to the last completed version.
 -- 

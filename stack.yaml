@@ -71,7 +71,7 @@ extra-deps:
     commit: e8afc5bfeba8139b457fc46285328f1a685cb054    
 
   - git: https://github.com/lolepezy/http-client/
-    commit: a3b2be08dafc58246b7acd2b0cc1979c63fbfa8a        
+    commit: 769e4e536217916a1e577ad4b8bc94ab1ded8e50        
     subdirs:
       - http-client      
 

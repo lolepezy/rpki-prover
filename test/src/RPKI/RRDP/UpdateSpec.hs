@@ -68,7 +68,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                   deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
                                 }
         HU.assertEqual "It's a bummer" nextStep (Right $ UseSnapshot 
-            (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) "Local serial is too far behind."),
+            (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+                         "Local serial 13 is too far behind remote serial 15."),
 
     HU.testCase "Should generate error when deltas are not consecutive" $ do
         let sessionId = SessionId "something"
@@ -80,13 +81,14 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 20)) {       
                         deltas = [
-                        makeDelta $ RrdpSerial 20,
-                        makeDelta $ RrdpSerial 18,
-                        makeDelta $ RrdpSerial 13
+                            makeDelta $ RrdpSerial 20,
+                            makeDelta $ RrdpSerial 18,
+                            makeDelta $ RrdpSerial 13
                         ]
                     }
-        HU.assertEqual "It's a bummer" nextStep (Left $ 
-            RrdpE $ NonConsecutiveDeltaSerials [(RrdpSerial 13,RrdpSerial 18),(RrdpSerial 18,RrdpSerial 20)])
+        HU.assertEqual "It's a bummer" nextStep 
+            (Right (UseSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+                "There are non-consecutive delta serials: [(13,18),(18,20)]."))
   ]
     
 

@@ -136,6 +136,9 @@ writeCQueue (ClosableQueue q s) qe =
         QClosed -> pure ()
         QWorks  -> Q.writeTBQueue q qe
 
+ifFullCQueue :: ClosableQueue a -> STM Bool
+ifFullCQueue (ClosableQueue q _) = isFullTBQueue q
+
 -- | Read elements from the queue in chunks and apply the function to 
 -- each chunk
 readQueueChunked :: ClosableQueue a -> Natural -> ([a] -> IO ()) -> IO ()
@@ -150,7 +153,6 @@ closeCQueue (ClosableQueue _ s) = writeTVar s QClosed
 
 isClosedCQueue :: ClosableQueue a -> STM Bool
 isClosedCQueue (ClosableQueue _ s) = (QClosed ==) <$> readTVar s 
-
 
 readChunk :: Natural -> ClosableQueue a -> STM [a]
 readChunk 0 _ = pure []

@@ -236,7 +236,7 @@ downloadAndUpdateRRDP
         rrdpMeta' = Just (notification ^. typed @SessionId, maxDeltaSerial)            
 
 
-data Step
+data NextStep
   = UseSnapshot SnapshotInfo Text
   | UseDeltas
       { sortedDeltas :: [DeltaInfo]
@@ -250,7 +250,7 @@ data Step
 
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
-rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT Step
+rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT NextStep
 
 rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} = 
     pure $ UseSnapshot snapshotInfo "Unknown repository"
@@ -273,7 +273,7 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
 
                 (_, []) | nextSerial repoSerial < deltaSerial (head sortedDeltas) ->
                             -- we are too far behind
-                            pure $ UseSnapshot snapshotInfo "Local serial is too far behind."
+                            pure $ UseSnapshot snapshotInfo [i|Local serial #{repoSerial} is too far behind remote serial #{serial}.|]
 
                         -- too many deltas means huge overhead -- just use snapshot, 
                         -- it's more data but less chances of getting killed by timeout
@@ -283,7 +283,9 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
                         | otherwise ->
                             pure $ UseDeltas chosenDeltas snapshotInfo "Deltas look good."
 
-                (_, nc) -> appError $ RrdpE $ NonConsecutiveDeltaSerials nc
+                (_, nc) -> do 
+                    appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
+                    pure $ UseSnapshot snapshotInfo [i|There are non-consecutive delta serials: #{nc}.|]                        
                 
             where
                 sortedSerials = map deltaSerial sortedDeltas
@@ -565,9 +567,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
                         addedObject
 
             other -> 
-                logDebugM logger [i|Weird thing happened in `replaceObject` #{other}.|]
-                
-                                                                                
+                logDebugM logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
 
     logger           = appContext ^. typed @AppLogger           
     cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism
@@ -591,5 +591,4 @@ data ObjectProcessingResult =
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Task m a) 
                 | Replace URI (Task m a) Hash
-
 
