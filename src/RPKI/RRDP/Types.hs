@@ -12,8 +12,11 @@ import           RPKI.Domain
 -- NOTE: All the data here is strict
 
 newtype RrdpSerial = RrdpSerial Integer
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
+
+instance Show RrdpSerial where
+    show (RrdpSerial s) = show s
 
 data Notification = Notification {
     version      :: Version,

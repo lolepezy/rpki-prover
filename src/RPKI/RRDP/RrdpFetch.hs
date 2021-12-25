@@ -285,7 +285,7 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
 
                 (_, nc) -> do 
                     appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
-                    pure $ UseSnapshot snapshotInfo [i|There are non-consecutive deltas serials: #{nc}.|]                        
+                    pure $ UseSnapshot snapshotInfo [i|There are non-consecutive delta serials: #{nc}.|]                        
                 
             where
                 sortedSerials = map deltaSerial sortedDeltas
