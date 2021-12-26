@@ -222,13 +222,20 @@ data ValidatorPath = ValidatorPath {
     deriving anyclass Serialise
 
 newPath :: Text -> Path c
-newPath u = Path $ TextualSegment u :| []
+newPath = newPath' TextualSegment
+
+newPath' :: (Text -> PathSegment) -> Text -> Path c
+newPath' c u = Path $ c u :| []
+
 
 newValidatorPath :: Text -> ValidatorPath
-newValidatorPath t = ValidatorPath {
-        validationPath = newPath t,
-        metricPath     = newPath t
-    }
+newValidatorPath = newValidatorPath' TextualSegment
+
+newValidatorPath' :: (Text -> PathSegment) ->Text -> ValidatorPath
+newValidatorPath' c t = ValidatorPath {
+        validationPath = newPath' c t,
+        metricPath     = newPath' c t
+    }    
 
 -- | Step down     
 validatorSubRepositoryPath :: Text -> ValidatorPath -> ValidatorPath
@@ -240,7 +247,7 @@ validatorSubPath' constructor t vc =
        & typed @MetricPath %~ subPath t
   where    
     subPath :: Text -> Path a -> Path a
-    subPath seg parent = Path (constructor seg :| []) <> parent
+    subPath seg parent = newPath' constructor seg <> parent
 
 
 mError :: VPath -> AppError -> Validations

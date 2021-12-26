@@ -180,8 +180,16 @@ askEnv :: MonadReader r m => m r
 askEnv = ask
 
 inSubVPath :: Monad m => 
-            Text -> ValidatorT m r -> ValidatorT m r
-inSubVPath t = local (& typed @VPath %~ (newPath t <>))
+              Text -> ValidatorT m r -> ValidatorT m r
+inSubVPath = inSubVPath' TextualSegment
+
+inSubObjectVPath :: Monad m => 
+              Text -> ValidatorT m r -> ValidatorT m r
+inSubObjectVPath = inSubVPath' ObjectSegment
+
+inSubVPath' :: Monad m => 
+                (Text -> PathSegment) -> Text -> ValidatorT m r -> ValidatorT m r
+inSubVPath' c t = local (& typed @VPath %~ (newPath' c t <>))
 
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 

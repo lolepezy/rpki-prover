@@ -120,7 +120,8 @@ runValidatorApp appContext@AppContext {..} = do
     let validationContext = newValidatorPath "validation-root"
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVPath (convert taName) $ parseTALFromFile talFilePath (Text.pack taName)
+            inSubVPath' TASegment (convert taName) $ 
+                parseTALFromFile talFilePath (Text.pack taName)
 
     logInfo_ logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 

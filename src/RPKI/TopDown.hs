@@ -198,21 +198,22 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
         (Right vrps, vs) -> TopDownResult (newVrps taName vrps) vs
   where
     taName = getTaName tal
-    taContext = newValidatorPath $ unTaName taName
+    taContext = newValidatorPath' TASegment $ unTaName taName
 
     validateFromTAL = do 
-        timedMetric (Proxy :: Proxy ValidationMetric) $ do 
-            ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-            -- this will be used as the "now" in all subsequent time and period validations 
-            let now = Now $ versionToMoment worldVersion
-            topDownContext <- newTopDownContext worldVersion 
-                                taName
-                                now  
-                                (taCert ^. #payload)  
-                                repositoryProcessing
-            vrps <- validateFromTACert appContext topDownContext repos taCert
-            setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
-            pure vrps
+        timedMetric (Proxy :: Proxy ValidationMetric) $ 
+            inSubObjectVPath (toText $ getTaCertURL tal) $ do 
+                ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
+                -- this will be used as the "now" in all subsequent time and period validations 
+                let now = Now $ versionToMoment worldVersion
+                topDownContext <- newTopDownContext worldVersion 
+                                    taName
+                                    now  
+                                    (taCert ^. #payload)  
+                                    repositoryProcessing
+                vrps <- validateFromTACert appContext topDownContext repos taCert
+                setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
+                pure vrps
 
 
 data TACertStatus = Existing | Updated
@@ -227,7 +228,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 -> ValidatorT IO (Located CerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
-    let validationConfig = config ^. typed @ValidationConfig
+    let validationConfig = config ^. typed @ValidationConfig    
 
     taStore  <- taStore <$> liftIO (readTVarIO database)
     taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore (getTaName tal)
@@ -485,7 +486,7 @@ validateCaCertificate
             -- Manifest-specific location validation
             validateMftLocation locatedMft certificate
 
-            manifestResult <- inSubVPath (locationsToText $ locatedMft ^. #locations) $ do                
+            manifestResult <- inSubObjectVPath (locationsToText $ locatedMft ^. #locations) $ do                
 
                 -- vPath :: ValidatorPath <- asks (^. typed)
                 -- logDebugM logger [i|Manifest = #{vPath}.|]
@@ -505,7 +506,7 @@ validateCaCertificate
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
                         visitObject appContext topDownContext foundCrl                        
                         validateObjectLocations foundCrl
-                        validCrl <- inSubVPath (locationsToText crlLocations) $ 
+                        validCrl <- inSubObjectVPath (locationsToText crlLocations) $ 
                                         vHoist $ do        
                                             let mftEECert = getEECert $ unCMS $ cmsPayload mft
                                             checkCrlLocation foundCrl mftEECert
@@ -680,7 +681,7 @@ validateCaCertificate
         case ro of
             CerRO childCert -> do 
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
-                        inSubVPath (toText $ pickLocation locations) $ do                                
+                        inSubObjectVPath (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 
                                     Validated validCert <- validateResourceCert 
                                             now childCert (certificate ^. #payload) validCrl
@@ -695,7 +696,7 @@ validateCaCertificate
 
             RoaRO roa -> do 
                     validateObjectLocations child
-                    inSubVPath (locationsToText locations) $ 
+                    inSubObjectVPath (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
                             oneMoreRoa                            
@@ -703,7 +704,7 @@ validateCaCertificate
 
             GbrRO gbr -> do                
                     validateObjectLocations child
-                    inSubVPath (locationsToText locations) $ 
+                    inSubObjectVPath (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                             oneMoreGbr
@@ -757,7 +758,7 @@ validateCaCertificate
     -- | Validate that the object has only one location: if not, 
     -- it's generally is a warning, not really an error.
     validateObjectLocations (getLocations -> locs@(Locations locSet)) =
-        inSubVPath (locationsToText locs) $ 
+        inSubObjectVPath (locationsToText locs) $ 
             when (NESet.size locSet > 1) $ 
                 vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
 
