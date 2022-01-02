@@ -19,7 +19,6 @@ import qualified Data.Text                   as Text
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
-import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict (getMonoidalMap)
@@ -33,7 +32,6 @@ import           RPKI.AppState
 import           RPKI.Metrics
 import           RPKI.Reporting
 import           RPKI.Time
-import           RPKI.Util                   (ifJust)
 
 import RPKI.Http.Types
 import RPKI.Http.Messages
@@ -64,7 +62,7 @@ mainPage worldVersion vResults metrics =
                 H.br >> H.br            
                 H.a ! A.id "validation-metrics" $ "" 
                 H.section $ H.text "Validation metrics"
-                validationMetricsHtml $ validationMetrics metrics
+                validationMetricsHtml metrics
                 H.a ! A.id "rrdp-metrics" $ ""
                 H.section $ H.text "RRDP metrics"
                 rrdpMetricsHtml $ rrdpMetrics metrics 
@@ -86,14 +84,11 @@ overallHtml (Just worldVersion) = do
         space >> H.text "(UTC)"
 
 
-validationMetricsHtml :: MetricMap ValidationMetric -> Html
-validationMetricsHtml validationMetricMap = do 
-    let normalised = normalisedValidationMetric validationMetricMap
-
-    let allTAs = TaName allTAsMetricsName        
-    let repoMetrics = MonoidalMap.toList $ normalised ^. #perRepository
-    let taMetrics = filter (\(ta, _) -> ta /= allTAs)
-                        $ MonoidalMap.toList $ normalised ^. #perTa        
+validationMetricsHtml :: RawMetric -> Html
+validationMetricsHtml (groupedValidationMetric -> grouped) = do 
+    
+    let repoMetrics = MonoidalMap.toList $ grouped ^. #perRepository
+    let taMetrics   = MonoidalMap.toList $ grouped ^. #perTa        
 
     -- this is for per-TA metrics
     H.table $ do         
@@ -103,6 +98,7 @@ validationMetricsHtml validationMetricMap = do
                 toHtml $ length taMetrics
                 H.text " in total)" 
             th $ H.text "Validation time"
+            th $ H.text "Original VRPs"      
             th $ H.text "Unique VRPs"      
             th $ H.text "Objects"
             th $ H.text "ROAs"
@@ -113,11 +109,16 @@ validationMetricsHtml validationMetricMap = do
         
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
-                metricRow index ta (\vm' -> td $ toHtml $ vm' ^. #totalTimeMs) vm      
-            ifJust (allTAs `MonoidalMap.lookup` (normalised ^. #perTa))
-                $ metricRow (MonoidalMap.size (normalised ^. #perTa)) 
-                            ("Total" :: Text) 
-                            (const $ td $ toHtml $ text "-")
+                metricRow index ta 
+                    (\vm' -> td $ toHtml $ vm' ^. #totalTimeMs) 
+                    (\vm' -> td $ toHtml $ show $ vm' ^. #uniqueVrpNumber) 
+                    vm      
+            
+            metricRow (MonoidalMap.size (grouped ^. #perTa) + 1) 
+                        ("Total" :: Text) 
+                        (const $ td $ toHtml $ text "-")
+                        (const $ td $ toHtml $ show $ grouped ^. #total . #uniqueVrpNumber)
+                        (grouped ^. #total)
 
     -- this is for per-repository metrics        
     H.table $ do         
@@ -138,9 +139,11 @@ validationMetricsHtml validationMetricMap = do
             let sortedRepos = List.sortOn fst $ 
                     Prelude.map (\(u', z) -> (unURI $ getURL u', z)) repoMetrics
             forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
-                metricRow index url (const $ pure ()) vm                  
+                metricRow index url 
+                    (const $ pure ()) 
+                    (const $ pure ()) vm                  
   where
-    metricRow index ta validationTime vm = do 
+    metricRow index ta validationTime uniqueVrps vm = do 
         let totalCount = vm ^. #validCertNumber + 
                          vm ^. #validRoaNumber +
                          vm ^. #validMftNumber +
@@ -149,7 +152,8 @@ validationMetricsHtml validationMetricMap = do
         htmlRow index $ do 
             td $ toHtml ta                                    
             void $ validationTime vm
-            td $ toHtml $ show $ vm ^. #vrpNumber
+            td $ toHtml $ show $ vm ^. #vrpCounter
+            void $ uniqueVrps vm 
             td $ toHtml $ show totalCount
             td $ toHtml $ show $ vm ^. #validRoaNumber
             td $ toHtml $ show $ vm ^. #validCertNumber

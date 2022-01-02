@@ -26,6 +26,7 @@ import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Monoid.Generic
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
@@ -53,10 +54,9 @@ import           RPKI.Store.Repository
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx, ifJust, fmtLocations)
+import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
-import           RPKI.Metrics
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -162,7 +162,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         
         rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
-            logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{vrpCount vrps} VRPs, took #{elapsed}ms|]
+            logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
         -- save publication points state    
@@ -765,7 +765,7 @@ validateCaCertificate
     -- the CRL was actually fetched from. 
     -- 
     checkCrlLocation crl eeCert = 
-        ifJust (getCrlDistributionPoint $ cwsX509certificate eeCert) $ \crlDP -> do
+        for_ (getCrlDistributionPoint $ cwsX509certificate eeCert) $ \crlDP -> do
             let crlLocations = getLocations crl
             when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
                 vError $ CRLOnDifferentLocation crlDP crlLocations
@@ -828,26 +828,18 @@ oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
-moreVrps n = updateMetric @ValidationMetric @_ (& #vrpNumber %~ (+n))
+moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
 
--- Sum up all the validation metrics from all TA to create 
--- the "alltrustanchors" validation metric
-addTotalValidationMetric :: (HasType ValidationState s, HasField' "vrps" s Vrps) => s -> s
-addTotalValidationMetric totalValidationResult = 
-    totalValidationResult 
-        & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
-  where    
-    totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 
-                            & #vrpNumber .~ Count 
-                                (fromIntegral $ vrpCount $ totalValidationResult ^. #vrps)
-
-    vmLens = typed @ValidationState . 
-            typed @RawMetric . 
-            #validationMetrics . 
-            #unMetricMap . 
-            #getMonoidalMap    
-    
+-- Number of unique VRPs requires explicit counting of the VRP set sizes, 
+-- so just counting the number of VRPs in ROAs in not enough
+addUniqueVRPCount :: (HasType ValidationState s, HasField' "vrps" s Vrps) => s -> s
+addUniqueVRPCount s = let 
+        vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
+    in s & vrpCountLens . #totalUnique .~ 
+                Count (fromIntegral $ uniqueVrpCount $ s ^. #vrps)
+         & vrpCountLens . #perTaUnique .~
+                MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ s ^. #vrps)    
 
 totalBottleneck :: AppBottleneck -> Bottleneck
 totalBottleneck AppBottleneck {..} = cpuBottleneck <> ioBottleneck

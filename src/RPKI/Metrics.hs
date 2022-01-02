@@ -13,8 +13,7 @@ module RPKI.Metrics where
 
 import           Codec.Serialise
 
-import           Control.Lens                     ((^.), (%~), (&))
-import           Control.Lens.Combinators
+import           Control.Lens
 import           Control.Monad.IO.Class
 import           Control.Monad
 
@@ -23,13 +22,10 @@ import           Data.Generics.Product.Typed
 import qualified Data.ByteString.Lazy             as LBS
 
 import qualified Data.List.NonEmpty               as NonEmpty
-import qualified Data.Set                         as Set
-import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
-import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
 import           GHC.Generics
@@ -42,13 +38,11 @@ import           RPKI.Domain
 import           RPKI.Reporting
 
 
-allTAsMetricsName :: Text
-allTAsMetricsName = "alltrustanchors"
-
 data PrometheusMetrics = PrometheusMetrics {
-        rrdpCode :: Vector Text Gauge,
-        downloadTime :: Vector Text Gauge,
-        vrpNumber :: Vector Text Gauge,
+        rrdpCode        :: Vector Text Gauge,
+        downloadTime    :: Vector Text Gauge,
+        vrpCounter      :: Vector Text Gauge,
+        uniqueVrpNumber :: Vector Text Gauge,
         validObjectNumberPerTa   :: Vector (Text, Text) Gauge,
         validObjectNumberPerRepo :: Vector (Text, Text) Gauge
     }
@@ -58,7 +52,7 @@ data PrometheusMetrics = PrometheusMetrics {
 createPrometheusMetrics :: MonadIO m => m PrometheusMetrics
 createPrometheusMetrics = do
 
-    register ghcMetrics
+    void $ register ghcMetrics
 
     rrdpCode <- register
             $ vector ("url" :: Text)
@@ -66,9 +60,12 @@ createPrometheusMetrics = do
     downloadTime <- register
             $ vector ("url" :: Text)
             $ gauge (Info "download_time" "Time of downloading repository (ms)")
-    vrpNumber <- register
+    vrpCounter <- register
             $ vector ("trustanchor" :: Text)
-            $ gauge (Info "vrp_number" "Number of unique VRPs")
+            $ gauge (Info "vrp_number" "Number of original VRPs")
+    uniqueVrpNumber <- register
+            $ vector ("trustanchor" :: Text)
+            $ gauge (Info "unique_vrp_number" "Number of unique VRPs")
     validObjectNumberPerTa <- register
             $ vector ("trustanchor", "type")
             $ gauge (Info "object_number" "Number of valid objects of different types per TA")
@@ -83,7 +80,7 @@ textualMetrics :: MonadIO m => m LBS.ByteString
 textualMetrics = exportMetricsAsText
 
 updatePrometheus :: (MonadIO m, MonadMonitor m) => RawMetric -> PrometheusMetrics -> m ()
-updatePrometheus RawMetric {..} PrometheusMetrics {..} = do
+updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} = do
     forM_ (Map.toList $ getMonoidalMap $ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do
         let url = segmentToText $ NonEmpty.head $ metricPath ^. coerced
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
@@ -93,7 +90,7 @@ updatePrometheus RawMetric {..} PrometheusMetrics {..} = do
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
 
-    let normalised = normalisedValidationMetric validationMetrics
+    let normalised = groupedValidationMetric rm
     
     forM_ (MonoidalMap.toList $ normalised ^. #perTa) $ \(TaName name, metric) ->
         setObjectMetricsPerUrl validObjectNumberPerTa name metric
@@ -107,7 +104,8 @@ updatePrometheus RawMetric {..} PrometheusMetrics {..} = do
             $ fromIntegral $ unCount count
 
     setObjectMetricsPerUrl prometheusVector url metric = do
-        withLabel vrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpNumber
+        withLabel vrpCounter url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpCounter
+        withLabel uniqueVrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #uniqueVrpNumber
         let totalCount = metric ^. #validCertNumber +
                          metric ^. #validRoaNumber +
                          metric ^. #validMftNumber +
@@ -121,26 +119,37 @@ updatePrometheus RawMetric {..} PrometheusMetrics {..} = do
         setValidObjects prometheusVector url "allobjects" totalCount
 
 
-data NormalisedValidationMetric a = NormalisedValidationMetric {
+data GroupedValidationMetric a = GroupedValidationMetric {
         perTa         :: MonoidalMap TaName a,
-        perRepository :: MonoidalMap RpkiURL a
+        perRepository :: MonoidalMap RpkiURL a,
+        total         :: a
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 
-normalisedValidationMetric :: MetricMap ValidationMetric -> NormalisedValidationMetric ValidationMetric
-normalisedValidationMetric validationMetrics = NormalisedValidationMetric {..}
+groupedValidationMetric :: RawMetric -> GroupedValidationMetric ValidationMetric
+groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}
   where
-    (perTa, perRepository) = 
+    vrpCounts = rm ^. #vrpCounts
+    total = mconcat (MonoidalMap.elems perTa) 
+                & #uniqueVrpNumber .~ vrpCounts ^. #totalUnique
+
+    perTa = MonoidalMap.mapWithKey calculateUniqueVrps perTa'
+
+    calculateUniqueVrps taName vm = 
+        maybe vm (\uniqCount -> vm & #uniqueVrpNumber .~ uniqCount) $
+            MonoidalMap.lookup taName (vrpCounts ^. #perTaUnique)
+
+    (perTa', perRepository) = 
         MonoidalMap.foldrWithKey combineMetrics mempty $ unMetricMap validationMetrics
 
-    combineMetrics metricPath metric (perTa, perRepo) = (newPerTa, newPerRepo)
+    combineMetrics metricPath metric (pTa, perRepo) = (newPerTa, newPerRepo)
       where
         newPerTa =
             case take 1 $ reverse [ TaName uri | TASegment uri <- pathList metricPath ] of
-                []      -> perTa
-                ta' : _ -> MonoidalMap.singleton ta' metric <> perTa
+                []      -> pTa
+                ta' : _ -> MonoidalMap.singleton ta' metric <> pTa
 
         newPerRepo =
             -- take the deepest PP

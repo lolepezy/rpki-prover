@@ -478,8 +478,16 @@ instance Arbitrary RrdpMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
     
+instance Arbitrary VrpCounts where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ValidationMetric where
     arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary TaName where
+    arbitrary = TaName <$> arbitrary
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where

@@ -632,8 +632,12 @@ makeSerial i =
           | otherwise      -> Right $ Serial i
 
 
-vrpCount :: Vrps -> Int 
-vrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+estimateVrpCount :: Vrps -> Int 
+estimateVrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+
+-- Precise but much more expensive
+uniqueVrpCount :: Vrps -> Int 
+uniqueVrpCount = Set.size . allVrps
 
 newVrps :: TaName -> Set Vrp -> Vrps
 newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet

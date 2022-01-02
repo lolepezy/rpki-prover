@@ -362,7 +362,8 @@ data RsyncMetric = RsyncMetric {
     deriving Monoid    via GenericMonoid RsyncMetric
 
 data ValidationMetric = ValidationMetric {
-        vrpNumber       :: Count,        
+        vrpCounter      :: Count,        
+        uniqueVrpNumber :: Count,        
         validCertNumber :: Count,
         validRoaNumber  :: Count,
         validMftNumber  :: Count,
@@ -391,10 +392,20 @@ newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricPath a }
     deriving newtype Monoid    
     deriving newtype Semigroup
 
+data VrpCounts = VrpCounts { 
+        totalUnique :: Count,        
+        perTaUnique :: MonoidalMap TaName Count
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup VrpCounts   
+    deriving Monoid    via GenericMonoid VrpCounts
+
 data RawMetric = RawMetric {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
-        validationMetrics :: MetricMap ValidationMetric
+        validationMetrics :: MetricMap ValidationMetric,
+        vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
