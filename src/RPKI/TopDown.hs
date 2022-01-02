@@ -700,10 +700,10 @@ validateCaCertificate
                     inSubObjectVPath (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources                            
-                            let vrpSet = Set.fromList $ getCMSContent $ cmsPayload roa
+                            let vrpList = getCMSContent $ cmsPayload roa                            
                             oneMoreRoa                            
-                            moreVrps $ Count $ fromIntegral $ Set.size vrpSet
-                            pure vrpSet
+                            moreVrps $ Count $ fromIntegral $ length vrpList
+                            pure $! Set.fromList vrpList
 
             GbrRO gbr -> do                
                     validateObjectLocations child
