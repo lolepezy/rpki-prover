@@ -185,17 +185,15 @@ validateTA :: Storage s =>
             -> IO TopDownResult
 validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do    
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
-    r <- runValidatorT taContext $ 
+    (r, vs) <- runValidatorT taContext $ 
             timeoutVT 
                 maxDuration
                 validateFromTAL
                 (do 
                     logErrorM logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
-
-    pure $ case r of 
-        (Left _,     vs) -> TopDownResult mempty vs
-        (Right vrps, vs) -> TopDownResult (newVrps taName vrps) vs
+    
+    pure $ TopDownResult (either (const mempty) (newVrps taName) r) vs
   where
     taName = getTaName tal
     taContext = newValidatorPath' TASegment $ unTaName taName
@@ -305,10 +303,8 @@ validateCA appContext validatorPath topDownContext certificate =
   where
     validateCARecursively = do             
         (r, validations) <- runValidatorT validatorPath $
-                validateCaCertificate appContext topDownContext certificate
-        pure $ case r of
-            Left _     -> T2 mempty validations
-            Right vrps -> T2 vrps validations         
+                                validateCaCertificate appContext topDownContext certificate        
+        pure $! T2 (fromRight mempty r) validations
     
 
 validateCaCertificate :: Storage s =>

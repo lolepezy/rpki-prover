@@ -42,10 +42,7 @@ mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
-unhex hexed =     
-    case Hex.decode hexed of
-        Left _  -> Nothing
-        Right h -> Just h    
+unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
