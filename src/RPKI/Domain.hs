@@ -28,8 +28,6 @@ import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
-import           Data.Map.Strict          (Map)
-import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap

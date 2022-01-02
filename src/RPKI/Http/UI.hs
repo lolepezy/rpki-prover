@@ -113,9 +113,11 @@ validationMetricsHtml validationMetricMap = do
         
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
-                metricRow index ta (\vm -> td $ toHtml $ vm ^. #totalTimeMs) vm      
+                metricRow index ta (\vm' -> td $ toHtml $ vm' ^. #totalTimeMs) vm      
             ifJust (allTAs `MonoidalMap.lookup` (normalised ^. #perTa))
-                $ metricRow (MonoidalMap.size (normalised ^. #perTa)) ("Total" :: Text) (const $ td $ toHtml $ text "-")
+                $ metricRow (MonoidalMap.size (normalised ^. #perTa)) 
+                            ("Total" :: Text) 
+                            (const $ td $ toHtml $ text "-")
 
     -- this is for per-repository metrics        
     H.table $ do         
@@ -134,7 +136,7 @@ validationMetricsHtml validationMetricMap = do
 
         H.tbody $ do 
             let sortedRepos = List.sortOn fst $ 
-                    Prelude.map (\(u, z) -> (unURI $ getURL u, z)) repoMetrics
+                    Prelude.map (\(u', z) -> (unURI $ getURL u', z)) repoMetrics
             forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
                 metricRow index url (const $ pure ()) vm                  
   where
@@ -146,7 +148,7 @@ validationMetricsHtml validationMetricMap = do
                          vm ^. #validGbrNumber
         htmlRow index $ do 
             td $ toHtml ta                                    
-            validationTime vm
+            void $ validationTime vm
             td $ toHtml $ show $ vm ^. #vrpNumber
             td $ toHtml $ show totalCount
             td $ toHtml $ show $ vm ^. #validRoaNumber
@@ -159,12 +161,12 @@ validationMetricsHtml validationMetricMap = do
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table $ do 
-        let rrdpMap = getMonoidalMap $ unMetricMap rrdpMetricMap        
+        let rrdpMap = unMetricMap rrdpMetricMap        
 
         H.thead $ tr $ do 
             th $ do 
                 H.text "Repository (" 
-                toHtml $ Map.size rrdpMap
+                toHtml $ MonoidalMap.size rrdpMap
                 H.text " in total)" 
             th $ H.text "Fetching"
             th $ H.text "RRDP Update"            
@@ -176,7 +178,7 @@ rrdpMetricsHtml rrdpMetricMap =
             th $ H.text "Total time"                    
 
         H.tbody $ do 
-            forM_ (zip (Map.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
+            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                        
@@ -306,8 +308,9 @@ instance ToMarkup HttpStatus where
     toMarkup (HttpStatus s) = toMarkup $ show s
 
 instance ToMarkup FetchFreshness where 
-    toMarkup UpToDate = toMarkup ("-" :: Text)
-    toMarkup Fetched    = toMarkup ("Attempted" :: Text)
+    toMarkup UpToDate       = toMarkup ("-" :: Text)
+    toMarkup AttemptedFetch = toMarkup ("Attempted" :: Text)
+    toMarkup FailedToFetch  = toMarkup ("Failed" :: Text)
 
 instance ToMarkup RrdpSource where 
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)

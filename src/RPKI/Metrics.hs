@@ -40,7 +40,6 @@ import           Prometheus.Metric.GHC
 import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
 import           RPKI.Reporting
-import RPKI.Reporting (PathKind(Validation))
 
 
 allTAsMetricsName :: Text

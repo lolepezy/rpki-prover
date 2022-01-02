@@ -117,12 +117,14 @@ downloadAndUpdateRRDP
         repo@(RrdpRepository repoUri _ _)      
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
-  do        
-    ((notificationXml, _, _), notificationDownloadTime) <- 
-                            fromTry (RrdpE . CantDownloadNotification . U.fmtEx) 
-                                $ timedMS 
-                                $ downloadToBS (appContext ^. typed) (getURL repoUri)         
-    bumpDownloadTime notificationDownloadTime
+  do                                
+    (notificationXml, _, _) <- 
+            timedMetric' (Proxy :: Proxy RrdpMetric) 
+                (\t -> (& #downloadTimeMs %~ (<> TimeMs t))) $
+                fromTry (RrdpE . CantDownloadNotification . U.fmtEx)                         
+                    $ downloadToBS (appContext ^. typed) (getURL repoUri)         
+
+    -- bumpDownloadTime notificationDownloadTime
     notification         <- hoistHere $ parseNotification notificationXml
     nextStep             <- vHoist $ rrdpNextStep repo notification
 
@@ -156,26 +158,26 @@ downloadAndUpdateRRDP
     hoistHere    = vHoist . fromEither . first RrdpE        
     ioBottleneck = appContext ^. typed @AppBottleneck . #ioBottleneck        
 
-    bumpDownloadTime t = updateMetric @RrdpMetric @_ (& #downloadTimeMs %~ (<> TimeMs t))
-
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubObjectVPath (U.convert uri) $ do
             logInfoM logger [i|#{uri}: downloading snapshot.|]
             
-            ((rawContent, _, httpStatus'), downloadedIn) <- timedMS $ 
-                fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                    downloadHashedBS (appContext ^. typed @Config) uri hash                                    
-                        (\actualHash -> 
-                            Left $ RrdpE $ SnapshotHashMismatch { 
-                                expectedHash = hash,
-                                actualHash = actualHash                                            
-                            })                
+            (rawContent, _, httpStatus') <- 
+                timedMetric' (Proxy :: Proxy RrdpMetric) 
+                    (\t -> (& #downloadTimeMs %~ (<> TimeMs t))) $ do     
+                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
+                        downloadHashedBS (appContext ^. typed @Config) uri hash                                    
+                            (\actualHash -> 
+                                Left $ RrdpE $ SnapshotHashMismatch { 
+                                    expectedHash = hash,
+                                    actualHash = actualHash                                            
+                                })                                
 
-            bumpDownloadTime downloadedIn
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
 
-            (_, savedIn) <- timedMS $ handleSnapshotBS repoUri notification rawContent  
-            updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
+            void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
+                    (\t -> (& #saveTimeMs %~ (<> TimeMs t)))
+                    (handleSnapshotBS repoUri notification rawContent)
 
             pure $ repo { rrdpMeta = rrdpMeta' }
 
@@ -200,17 +202,18 @@ downloadAndUpdateRRDP
         downloadAndSave = do
             -- Do not thrash the same server with too big amount of parallel 
             -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
-            localRepoBottleneck <- liftIO $ newBottleneckIO 8            
-            (_, savedIn) <- timedMS $ foldPipeline
-                                (localRepoBottleneck <> ioBottleneck)
-                                (S.each sortedDeltas)
-                                downloadDelta
-                                (\(rawContent, serial, deltaUri) _ -> 
-                                    inSubVPath deltaUri $ 
-                                        handleDeltaBS repoUri notification serial rawContent)
-                                (mempty :: ())
-            bumpDownloadTime savedIn                
-            updateMetric @RrdpMetric @_ (& #saveTimeMs .~ TimeMs savedIn)          
+            localRepoBottleneck <- liftIO $ newBottleneckIO 8                        
+
+            void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
+                    (\t -> (& #saveTimeMs %~ (<> TimeMs t))) $ 
+                    foldPipeline
+                            (localRepoBottleneck <> ioBottleneck)
+                            (S.each sortedDeltas)
+                            downloadDelta
+                            (\(rawContent, serial, deltaUri) _ -> 
+                                inSubVPath deltaUri $ 
+                                    handleDeltaBS repoUri notification serial rawContent)
+                            (mempty :: ())     
 
             pure $ repo { rrdpMeta = rrdpMeta' }
 

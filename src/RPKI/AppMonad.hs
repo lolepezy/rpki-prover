@@ -18,6 +18,7 @@ import           Data.Bifunctor             (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
 import           Data.Hourglass
+import           Data.Int (Int64)
 import           Data.Proxy
 import           Data.Text                   (Text)
 
@@ -161,13 +162,6 @@ catchAndEraseError f predicate errorHandler = do
             else throwError e
 
 
-pureErrorIfNot :: Bool -> ValidationError -> PureValidatorT ()
-pureErrorIfNot b e = if b then pure () else vPureError e
-
-valid :: Applicative m =>
-        m (Either AppError (), Validations)
-valid = pure (Right (), mempty)
-
 vWarn :: Monad m =>
         ValidationError -> ValidatorT m ()
 vWarn = validatorWarning . VWarning . ValidationE
@@ -212,10 +206,22 @@ timedMetric :: forall m metric r .
                  MetricC metric, 
                  HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
                 Proxy metric -> ValidatorT m r -> ValidatorT m r
-timedMetric _ v = do
-    (r, elapsed) <- timedMS v          
-    updateMetric ((& #totalTimeMs .~ TimeMs elapsed) :: metric -> metric)
-    pure r        
+timedMetric p = timedMetric' p (\elapsed -> (& #totalTimeMs .~ TimeMs elapsed))
+
+timedMetric' :: forall m metric r . 
+                (MonadIO m, 
+                 MetricC metric, 
+                 HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
+                Proxy metric 
+            -> (Int64 -> metric -> metric)                 
+            -> ValidatorT m r 
+            -> ValidatorT m r
+timedMetric' _ f v = do
+    vp <- askEnv
+    ((r, vs), elapsed) <- appLift $ timedMS $ runValidatorT vp v          
+    embedState vs
+    updateMetric (f elapsed)
+    either appError pure r 
 
 
 getMetric :: forall metric m . 
@@ -249,7 +255,5 @@ timeoutVT s toDo timedOut = do
     let Seconds t = s
     vp <- ask 
     z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT vp toDo)
-    case z of 
-        Nothing -> timedOut
-        Just q  -> embedValidatorT $ pure q
+    maybe timedOut (embedValidatorT . pure) z    
 
