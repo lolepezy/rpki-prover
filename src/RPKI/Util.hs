@@ -121,9 +121,6 @@ increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())
 decrement :: (MonadIO m, Num a) => IORef a -> m ()
 decrement counter = liftIO $ atomicModifyIORef' counter $ \c -> (c - 1, ())        
 
-ifJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
-ifJust a f = maybe (pure ()) f a
-
 ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 ifJustM a f = maybe (pure ()) f =<< a
 
