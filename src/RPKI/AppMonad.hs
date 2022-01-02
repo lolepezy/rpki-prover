@@ -14,11 +14,11 @@ import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 
-import           Data.Bifunctor             (Bifunctor (first))
+import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
 import           Data.Hourglass
-import           Data.Int (Int64)
+import           Data.Int                    (Int64)
 import           Data.Proxy
 import           Data.Text                   (Text)
 
