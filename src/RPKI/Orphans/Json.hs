@@ -136,7 +136,7 @@ instance ToJSON VResultStats
 instance ToJSON RepositoryStats
 instance ToJSON DBStats
 instance ToJSON TotalDBStats
-instance ToJSON AppMetric
+instance ToJSON RawMetric
 instance ToJSON a => ToJSON (MetricMap a)
 instance ToJSON ValidationMetric
 instance ToJSON RsyncMetric

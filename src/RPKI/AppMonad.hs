@@ -188,8 +188,12 @@ inSubObjectVPath :: Monad m =>
 inSubObjectVPath = inSubVPath' ObjectSegment
 
 inSubVPath' :: Monad m => 
-                (Text -> PathSegment) -> Text -> ValidatorT m r -> ValidatorT m r
+                (a -> PathSegment) -> a -> ValidatorT m r -> ValidatorT m r
 inSubVPath' c t = local (& typed @VPath %~ (newPath' c t <>))
+
+inSubMetricPath' :: Monad m => 
+                (a -> PathSegment) -> a -> ValidatorT m r -> ValidatorT m r
+inSubMetricPath' c t = local (& typed @MetricPath %~ (newPath' c t <>))
 
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 

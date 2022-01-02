@@ -466,7 +466,7 @@ instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary AppMetric where
+instance Arbitrary RawMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

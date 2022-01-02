@@ -132,8 +132,8 @@ fetchPPWithFallback
 
 
     fetchWithFallback :: ValidatorPath -> [PublicationPoint] -> IO [FetchResult]
-    fetchWithFallback _ [] = pure []
 
+    fetchWithFallback _          []   = pure []
     fetchWithFallback parentPath [pp] = do 
         (repoUrl, fetchFreshness, (r, validations)) <- fetchPPOnce parentPath pp                
         let validations' = updateFetchMetric repoUrl fetchFreshness validations        
@@ -144,17 +144,17 @@ fetchPPWithFallback
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT.
         updateFetchMetric repoUrl fetchFreshness validations = 
-            let repoPath = validatorSubRepositoryPath (toText repoUrl) parentPath                   
+            let repoPath = validatorSubPath' RepositorySegment repoUrl parentPath                   
             in case repoUrl of 
                 RrdpU _  -> 
                     validations 
-                        & typed @AppMetric . #rrdpMetrics 
+                        & typed @RawMetric . #rrdpMetrics 
                         %~ updateMetricInMap 
                             (repoPath ^. typed) 
                             (& #fetchFreshness .~ fetchFreshness)                     
                 RsyncU _ -> 
                     validations 
-                        & typed @AppMetric . #rsyncMetrics 
+                        & typed @RawMetric . #rsyncMetrics 
                         %~ updateMetricInMap 
                             (repoPath ^. typed) 
                             (& #fetchFreshness .~ fetchFreshness)                                                             
@@ -193,7 +193,7 @@ fetchPPWithFallback
 
                         Nothing -> do                                         
                             modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
-                            pure (rpkiUrl, Fetched, fetchPP parentPath repo rpkiUrl)
+                            pure (rpkiUrl, Fetched, fetchPP parentPath repo)
                 else                         
                     pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
 
@@ -203,9 +203,10 @@ fetchPPWithFallback
 
     -- Do fetch the publication point and update the #publicationPoints
     -- 
-    fetchPP parentPath repo rpkiUrl = do         
+    fetchPP parentPath repo = do         
+        let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
-                let repoPath = validatorSubRepositoryPath (toText rpkiUrl) parentPath
+                let repoPath = validatorSubPath' RepositorySegment rpkiUrl parentPath
                 (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
@@ -225,9 +226,9 @@ fetchPPWithFallback
             (stopAndDrop indivudualFetchRuns rpkiUrl) 
             (rememberAndWait indivudualFetchRuns rpkiUrl) 
     
-    stopAndDrop stubs key a = liftIO $ do 
-        cancel a
+    stopAndDrop stubs key a = liftIO $ do         
         atomically $ modifyTVar' stubs $ Map.delete key
+        cancel a
 
     rememberAndWait stubs key a = liftIO $ do 
         atomically $ modifyTVar' stubs $ Map.insert key (Fetching a)
@@ -375,3 +376,10 @@ cancelFetchTasks rp = do
 
     mapM_ cancel [ a | (_, Fetching a) <- Map.toList ifr]
     mapM_ cancel [ a | (_, Fetching a) <- Map.toList ppSeqFr]
+
+
+getPrimaryRepositoryFromPP :: RepositoryProcessing -> PublicationPointAccess -> IO (Maybe RpkiURL)
+getPrimaryRepositoryFromPP repositoryProcessing ppAccess = do
+    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+    let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
+    pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    

@@ -96,7 +96,7 @@ instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricsStore s = MetricsStore {
-    metrics :: SMap "metrics" s WorldVersion AppMetric    
+    metrics :: SMap "metrics" s WorldVersion RawMetric    
 }
 
 instance Storage s => WithStorage s (MetricsStore s) where
@@ -355,12 +355,12 @@ completeWorldVersion tx database worldVersion =
 
 
 putMetrics :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> AppMetric -> m ()
+            Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 putMetrics tx DB { metricStore = MetricsStore s } wv appMetric = 
     liftIO $ M.put tx s wv appMetric
 
 metricsForVersion :: (MonadIO m, Storage s) => 
-                    Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe AppMetric)
+                    Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe RawMetric)
 metricsForVersion tx MetricsStore {..} wv = liftIO $ M.get tx metrics wv    
 
 deleteMetrics :: (MonadIO m, Storage s) => 

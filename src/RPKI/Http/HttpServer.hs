@@ -118,7 +118,7 @@ getLastVersion AppContext {..} = do
     roTx db $ getLastCompletedVersion db                
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
-            AppContext s -> m AppMetric
+            AppContext s -> m RawMetric
 getMetrics AppContext {..} = do
     db@DB {..} <- liftIO $ readTVarIO database 
     metrics <- liftIO $ roTx db $ \tx -> do

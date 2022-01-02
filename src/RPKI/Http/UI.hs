@@ -23,6 +23,7 @@ import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict (getMonoidalMap)
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
@@ -36,9 +37,10 @@ import           RPKI.Util                   (ifJust)
 
 import RPKI.Http.Types
 import RPKI.Http.Messages
+import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> [ValidationResult] -> AppMetric -> Html
+mainPage :: Maybe WorldVersion -> [ValidationResult] -> RawMetric -> Html
 mainPage worldVersion vResults metrics = 
     H.docTypeHtml $ do
         H.head $ do
@@ -85,13 +87,16 @@ overallHtml (Just worldVersion) = do
 
 
 validationMetricsHtml :: MetricMap ValidationMetric -> Html
-validationMetricsHtml validationMetricMap =
-    H.table $ do 
-        let allTaMetricPath = newPath allTAsMetricsName
-        let rawMap = getMonoidalMap $ unMetricMap validationMetricMap
-        let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
-                            $ Map.toList rawMap
+validationMetricsHtml validationMetricMap = do 
+    let normalised = normalisedValidationMetric validationMetricMap
 
+    let allTAs = TaName allTAsMetricsName        
+    let repoMetrics = MonoidalMap.toList $ normalised ^. #perRepository
+    let taMetrics = filter (\(ta, _) -> ta /= allTAs)
+                        $ MonoidalMap.toList $ normalised ^. #perTa        
+
+    -- this is for per-TA metrics
+    H.table $ do         
         H.thead $ tr $ do 
             th $ do 
                 H.text "Trust Anchor ("
@@ -107,14 +112,33 @@ validationMetricsHtml validationMetricMap =
             th $ H.text "GBRs"
         
         H.tbody $ do 
-            forM_ (zip taMetrics [1 :: Int ..]) $ \((path, vm), index) -> do 
-                let ta = NonEmpty.head $ unPath path
-                metricRow index ta True vm      
-            ifJust (allTaMetricPath `Map.lookup` rawMap) 
-                $ metricRow (Map.size rawMap) ("Total" :: Text) False
+            forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
+                metricRow index ta (\vm -> td $ toHtml $ vm ^. #totalTimeMs) vm      
+            ifJust (allTAs `MonoidalMap.lookup` (normalised ^. #perTa))
+                $ metricRow (MonoidalMap.size (normalised ^. #perTa)) ("Total" :: Text) (const $ td $ toHtml $ text "-")
 
+    -- this is for per-repository metrics        
+    H.table $ do         
+        H.thead $ tr $ do 
+            th $ do 
+                H.text "Repository ("
+                toHtml $ length repoMetrics
+                H.text " in total)" 
+            th $ H.text "Original VRPs"      
+            th $ H.text "Objects"
+            th $ H.text "ROAs"
+            th $ H.text "Certificates"
+            th $ H.text "Manifests"
+            th $ H.text "CRLs"
+            th $ H.text "GBRs"                
+
+        H.tbody $ do 
+            let sortedRepos = List.sortOn fst $ 
+                    Prelude.map (\(u, z) -> (unURI $ getURL u, z)) repoMetrics
+            forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
+                metricRow index url (const $ pure ()) vm                  
   where
-    metricRow index ta showValidationTime vm = do 
+    metricRow index ta validationTime vm = do 
         let totalCount = vm ^. #validCertNumber + 
                          vm ^. #validRoaNumber +
                          vm ^. #validMftNumber +
@@ -122,9 +146,7 @@ validationMetricsHtml validationMetricMap =
                          vm ^. #validGbrNumber
         htmlRow index $ do 
             td $ toHtml ta                                    
-            td $ if showValidationTime 
-                    then toHtml $ vm ^. #totalTimeMs
-                    else toHtml $ text "-"
+            validationTime vm
             td $ toHtml $ show $ vm ^. #vrpNumber
             td $ toHtml $ show totalCount
             td $ toHtml $ show $ vm ^. #validRoaNumber
@@ -144,8 +166,8 @@ rrdpMetricsHtml rrdpMetricMap =
                 H.text "Repository (" 
                 toHtml $ Map.size rrdpMap
                 H.text " in total)" 
-            th $ H.text "Recency"
-            th $ H.text "Source"            
+            th $ H.text "Fetching"
+            th $ H.text "RRDP Update"            
             th $ H.text "Added objects"
             th $ H.text "Deleted objects"
             th $ H.text "Last HTTP status"
@@ -178,7 +200,7 @@ rsyncMetricsHtml rsyncMetricMap =
                 H.text "Repository ("
                 toHtml $ Map.size rsyncMap
                 H.text " in total)" 
-            th $ H.text "Fetched"
+            th $ H.text "Fetching"
             th $ H.text "Processed objects"
             th $ H.text "Total time"                    
 
@@ -284,8 +306,8 @@ instance ToMarkup HttpStatus where
     toMarkup (HttpStatus s) = toMarkup $ show s
 
 instance ToMarkup FetchFreshness where 
-    toMarkup UpToDate = toMarkup ("Up-to-date" :: Text)
-    toMarkup Fetched    = toMarkup ("Fetched" :: Text)
+    toMarkup UpToDate = toMarkup ("-" :: Text)
+    toMarkup Fetched    = toMarkup ("Attempted" :: Text)
 
 instance ToMarkup RrdpSource where 
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)

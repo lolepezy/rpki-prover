@@ -211,9 +211,7 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
                                     now  
                                     (taCert ^. #payload)  
                                     repositoryProcessing
-                vrps <- validateFromTACert appContext topDownContext repos taCert
-                setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
-                pure vrps
+                validateFromTACert appContext topDownContext repos taCert                
 
 
 data TACertStatus = Existing | Updated
@@ -369,13 +367,17 @@ validateCaCertificate
                     case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                         Left e         -> vError e
                         Right ppAccess -> do                    
-                            fetches <- fetchPPWithFallback appContext repositoryProcessing worldVersion now ppAccess                                   
-                            if anySuccess fetches                    
-                                then validateThisCertAndGoDown                            
-                                else do                             
-                                    fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
-                                        Never       -> pure mempty
-                                        AtLeastOnce -> validateThisCertAndGoDown
+                            fetches <- fetchPPWithFallback appContext repositoryProcessing worldVersion now ppAccess
+                            rpkiUrls <- liftIO $ getPrimaryRepositoryFromPP repositoryProcessing ppAccess
+                            let z = if anySuccess fetches                    
+                                        then validateThisCertAndGoDown                            
+                                        else do                             
+                                            fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
+                                                Never       -> pure mempty
+                                                AtLeastOnce -> validateThisCertAndGoDown                            
+                            case rpkiUrls of 
+                                Nothing -> z
+                                Just rp -> inSubMetricPath' PPSegment rp z                                
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
@@ -424,8 +426,7 @@ validateCaCertificate
                 -- get into the ValidationResult in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
-                    (\e -> do                         
-                        tryLatestValidCachedManifest Nothing childrenAki certLocations e)
+                    tryLatestValidCachedManifest Nothing childrenAki certLocations
                 
             Just mft -> 
                 tryManifest mft childrenAki certLocations
@@ -445,14 +446,14 @@ validateCaCertificate
             -- cached manifest for this CA               
             -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
             --
-            findCachedLatestValidMft childrenAki >>= \case
+            findLatestCachedValidMft childrenAki >>= \case
                 Nothing             -> throwError e
                 Just latestValidMft ->             
                     let mftLoc = fmtLocations $ getLocations latestValidMft            
                     in case latestMft of 
                         Nothing -> do 
                             appWarn e      
-                            logDebugM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
+                            logWarnM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
                             tryManifest latestValidMft childrenAki certLocations                                
                         Just latestMft'
                             | getHash latestMft' == getHash latestValidMft 
@@ -698,9 +699,11 @@ validateCaCertificate
                     validateObjectLocations child
                     inSubObjectVPath (locationsToText locations) $ 
                         allowRevoked $ do
-                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
+                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources                            
+                            let vrpSet = Set.fromList $ getCMSContent $ cmsPayload roa
                             oneMoreRoa                            
-                            pure $ Set.fromList $ getCMSContent $ cmsPayload roa
+                            moreVrps $ Count $ fromIntegral $ Set.size vrpSet
+                            pure vrpSet
 
             GbrRO gbr -> do                
                     validateObjectLocations child
@@ -734,7 +737,7 @@ validateCaCertificate
         roTx objectStore' $ \tx -> 
             findLatestMftByAKI tx objectStore' childrenAki
 
-    findCachedLatestValidMft childrenAki = liftIO $ do 
+    findLatestCachedValidMft childrenAki = liftIO $ do 
         objectStore' <- (^. #objectStore) <$> readTVarIO database
         roTx objectStore' $ \tx -> 
             getLatestValidMftByAKI tx objectStore' childrenAki
@@ -828,8 +831,8 @@ oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 
-setVrpNumber :: Monad m => Count -> ValidatorT m ()
-setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
+moreVrps :: Monad m => Count -> ValidatorT m ()
+moreVrps n = updateMetric @ValidationMetric @_ (& #vrpNumber %~ (+n))
 
 
 -- Sum up all the validation metrics from all TA to create 
@@ -844,7 +847,7 @@ addTotalValidationMetric totalValidationResult =
                                 (fromIntegral $ vrpCount $ totalValidationResult ^. #vrps)
 
     vmLens = typed @ValidationState . 
-            typed @AppMetric . 
+            typed @RawMetric . 
             #validationMetrics . 
             #unMetricMap . 
             #getMonoidalMap    

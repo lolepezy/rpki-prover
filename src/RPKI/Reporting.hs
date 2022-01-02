@@ -8,6 +8,9 @@
 
 
 module RPKI.Reporting where
+
+import           Codec.Serialise
+    
 import           Control.Exception.Lifted
 import           Control.Lens                (Lens', (%~), (&))
 
@@ -19,12 +22,12 @@ import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Monoid
 
-import           Data.Text                   (Text)
+import          Data.Text                   as Text
 import           Data.Tuple.Strict
 
-import           Codec.Serialise
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
+import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
@@ -197,7 +200,8 @@ instance Semigroup Validations where
 
 data PathSegment = TASegment Text 
                 | ObjectSegment Text 
-                | RepositorySegment Text
+                | PPSegment RpkiURL
+                | RepositorySegment RpkiURL
                 | TextualSegment Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
@@ -224,29 +228,25 @@ data ValidatorPath = ValidatorPath {
 newPath :: Text -> Path c
 newPath = newPath' TextualSegment
 
-newPath' :: (Text -> PathSegment) -> Text -> Path c
+newPath' :: (a -> PathSegment) -> a -> Path c
 newPath' c u = Path $ c u :| []
-
 
 newValidatorPath :: Text -> ValidatorPath
 newValidatorPath = newValidatorPath' TextualSegment
 
-newValidatorPath' :: (Text -> PathSegment) ->Text -> ValidatorPath
+newValidatorPath' :: (a -> PathSegment) -> a -> ValidatorPath
 newValidatorPath' c t = ValidatorPath {
         validationPath = newPath' c t,
         metricPath     = newPath' c t
     }    
 
--- | Step down     
-validatorSubRepositoryPath :: Text -> ValidatorPath -> ValidatorPath
-validatorSubRepositoryPath = validatorSubPath' RepositorySegment
 
-validatorSubPath' :: (Text -> PathSegment) -> Text -> ValidatorPath -> ValidatorPath
+validatorSubPath' :: forall a . (a -> PathSegment) -> a -> ValidatorPath -> ValidatorPath
 validatorSubPath' constructor t vc = 
     vc & typed @VPath      %~ subPath t
        & typed @MetricPath %~ subPath t
   where    
-    subPath :: Text -> Path a -> Path a
+    subPath :: a -> Path t -> Path t
     subPath seg parent = newPath' constructor seg <> parent
 
 
@@ -281,7 +281,7 @@ removeValidation vPath predicate (Validations vs) =
 
 class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
-    metricLens :: Lens' AppMetric (MetricMap metric)
+    metricLens :: Lens' RawMetric (MetricMap metric)
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
@@ -391,19 +391,19 @@ newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricPath a }
     deriving newtype Monoid    
     deriving newtype Semigroup
 
-data AppMetric = AppMetric {
+data RawMetric = RawMetric {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving Semigroup via GenericSemigroup AppMetric   
-    deriving Monoid    via GenericMonoid AppMetric
+    deriving Semigroup via GenericSemigroup RawMetric   
+    deriving Monoid    via GenericMonoid RawMetric
 
 data ValidationState = ValidationState {
         validations   :: Validations,
-        topDownMetric :: AppMetric
+        topDownMetric :: RawMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -430,7 +430,11 @@ isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
 segmentToText :: PathSegment -> Text
 segmentToText = \case
-  TASegment txt -> txt
-  ObjectSegment txt -> txt
-  RepositorySegment txt -> txt
-  TextualSegment txt -> txt
+    TASegment txt         -> txt
+    ObjectSegment txt     -> txt
+    PPSegment txt         -> unURI $ getURL txt
+    RepositorySegment txt -> unURI $ getURL txt
+    TextualSegment txt    -> txt
+
+pathList :: Path a -> [PathSegment]
+pathList = NonEmpty.toList . unPath
