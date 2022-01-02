@@ -103,7 +103,7 @@ validationMetricsHtml validationMetricMap = do
                 toHtml $ length taMetrics
                 H.text " in total)" 
             th $ H.text "Validation time"
-            th $ H.text "VRPs"      
+            th $ H.text "Unique VRPs"      
             th $ H.text "Objects"
             th $ H.text "ROAs"
             th $ H.text "Certificates"
@@ -121,7 +121,7 @@ validationMetricsHtml validationMetricMap = do
     H.table $ do         
         H.thead $ tr $ do 
             th $ do 
-                H.text "Repository ("
+                H.text "Primary repository ("
                 toHtml $ length repoMetrics
                 H.text " in total)" 
             th $ H.text "Original VRPs"      
