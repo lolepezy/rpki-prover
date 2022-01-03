@@ -133,16 +133,15 @@ data GroupedValidationMetric a = GroupedValidationMetric {
 
 groupedValidationMetric :: RawMetric -> GroupedValidationMetric ValidationMetric
 groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}
-  where
-    vrpCounts = rm ^. #vrpCounts
+  where    
     total = mconcat (MonoidalMap.elems perTa) 
-                & #uniqueVrpNumber .~ vrpCounts ^. #totalUnique
+                & #uniqueVrpNumber .~ rm ^. #vrpCounts . #totalUnique
 
     perTa = MonoidalMap.mapWithKey calculateUniqueVrps perTa'
 
     calculateUniqueVrps taName vm = 
         maybe vm (\uniqCount -> vm & #uniqueVrpNumber .~ uniqCount) $
-            MonoidalMap.lookup taName (vrpCounts ^. #perTaUnique)
+            MonoidalMap.lookup taName (rm ^. #vrpCounts . #perTaUnique)
 
     (perTa', perRepository) = 
         MonoidalMap.foldrWithKey combineMetrics mempty $ unMetricMap validationMetrics
