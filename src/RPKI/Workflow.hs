@@ -47,7 +47,6 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.AppStorage
-import Data.Vector (uniq)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -133,7 +132,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             Nothing       -> pure (mempty, Nothing)
                             Just readFunc -> do 
                                 logInfoM logger [i|Re-reading and re-validating SLURM files.|]
-                                (z, vs) <- runValidatorT (newValidatorPath "read-slurm") readFunc
+                                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
                                 case z of 
                                     Left e -> do 
                                         logErrorM logger [i|Failed to read apply SLURM files: #{e}|]

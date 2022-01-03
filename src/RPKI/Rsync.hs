@@ -67,7 +67,7 @@ checkRsyncInPath rsyncClientPath = do
         Right (exit, stdout', stderr') -> 
             case exit of 
                 ExitSuccess -> pure ()
-                ExitFailure failure -> do 
+                ExitFailure _ -> do 
                     appError $ InitE $ InitError 
                         [i|#{client} --version returned non-zero exit code #{exit}, 
 stdout = [#{U.textual stdout'}], 
