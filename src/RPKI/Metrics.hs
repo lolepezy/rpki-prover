@@ -93,9 +93,9 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} = do
     let normalised = groupedValidationMetric rm
     
     forM_ (MonoidalMap.toList $ normalised ^. #perTa) $ \(TaName name, metric) ->
-        setObjectMetricsPerUrl validObjectNumberPerTa name metric
+        setObjectMetricsPerUrl validObjectNumberPerTa name metric True
     forM_ (MonoidalMap.toList $ normalised ^. #perRepository) $ \(rpkiUrl, metric) -> 
-        setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) metric    
+        setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) metric False
 
   where
       
@@ -103,9 +103,12 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} = do
             $ flip setGauge
             $ fromIntegral $ unCount count
 
-    setObjectMetricsPerUrl prometheusVector url metric = do
+    setObjectMetricsPerUrl prometheusVector url metric setUniqueVRPs = do
         withLabel vrpCounter url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpCounter
-        withLabel uniqueVrpNumber url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #uniqueVrpNumber
+
+        when setUniqueVRPs $ withLabel uniqueVrpNumber url $ 
+            flip setGauge $ fromIntegral $ unCount $ metric ^. #uniqueVrpNumber
+            
         let totalCount = metric ^. #validCertNumber +
                          metric ^. #validRoaNumber +
                          metric ^. #validMftNumber +
