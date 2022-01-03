@@ -26,6 +26,7 @@ import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Monoid.Generic
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
@@ -53,10 +54,9 @@ import           RPKI.Store.Repository
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx, ifJust, fmtLocations)
+import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
-import           RPKI.Metrics
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -103,9 +103,9 @@ newTopDownContext worldVersion taName now certificate repositoryProcessing =
         let verifiedResources = Just $ createVerifiedResources certificate        
         let currentPathDepth = 0        
         startingRepositoryCount <- fmap repositoryCount $ readTVar $ repositoryProcessing ^. #publicationPoints  
-        visitedHashes          <- newTVar mempty
-        validManifests         <- newTVar mempty                
-        interruptedByLimit     <- newTVar CanProceed
+        visitedHashes           <- newTVar mempty
+        validManifests          <- newTVar mempty                
+        interruptedByLimit      <- newTVar CanProceed
         pure $ TopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
@@ -162,7 +162,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         
         rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
-            logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{vrpCount vrps} VRPs, took #{elapsed}ms|]
+            logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
         -- save publication points state    
@@ -185,34 +185,31 @@ validateTA :: Storage s =>
             -> IO TopDownResult
 validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do    
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
-    r <- runValidatorT taContext $ 
+    (r, vs) <- runValidatorT taContext $ 
             timeoutVT 
                 maxDuration
                 validateFromTAL
                 (do 
                     logErrorM logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
-
-    pure $ case r of 
-        (Left _,     vs) -> TopDownResult mempty vs
-        (Right vrps, vs) -> TopDownResult (newVrps taName vrps) vs
+    
+    pure $ TopDownResult (either (const mempty) (newVrps taName) r) vs
   where
     taName = getTaName tal
-    taContext = newValidatorPath $ unTaName taName
+    taContext = newValidatorPath' TASegment $ unTaName taName
 
     validateFromTAL = do 
-        timedMetric (Proxy :: Proxy ValidationMetric) $ do 
-            ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-            -- this will be used as the "now" in all subsequent time and period validations 
-            let now = Now $ versionToMoment worldVersion
-            topDownContext <- newTopDownContext worldVersion 
-                                taName
-                                now  
-                                (taCert ^. #payload)  
-                                repositoryProcessing
-            vrps <- validateFromTACert appContext topDownContext repos taCert
-            setVrpNumber $ Count $ fromIntegral $ Set.size vrps                
-            pure vrps
+        timedMetric (Proxy :: Proxy ValidationMetric) $ 
+            inSubObjectVPath (toText $ getTaCertURL tal) $ do 
+                ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
+                -- this will be used as the "now" in all subsequent time and period validations 
+                let now = Now $ versionToMoment worldVersion
+                topDownContext <- newTopDownContext worldVersion 
+                                    taName
+                                    now  
+                                    (taCert ^. #payload)  
+                                    repositoryProcessing
+                validateFromTACert appContext topDownContext repos taCert                
 
 
 data TACertStatus = Existing | Updated
@@ -227,7 +224,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 -> ValidatorT IO (Located CerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
-    let validationConfig = config ^. typed @ValidationConfig
+    let validationConfig = config ^. typed @ValidationConfig    
 
     taStore  <- taStore <$> liftIO (readTVarIO database)
     taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore (getTaName tal)
@@ -239,18 +236,19 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             | otherwise -> do
                 logInfoM logger [i|Not re-fetching TA certificate #{getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
-    where
-        fetchValidateAndStore taStore (Now moment) = do 
-            (uri', ro) <- fetchTACertificate appContext tal
-            cert       <- vHoist $ validateTACert tal uri' ro            
-            case publicationPointsFromTAL tal cert of
-                Left e      -> appError $ ValidationE e
-                Right ppAccess -> 
-                    rwAppTxEx taStore storageError $ \tx -> do 
-                        putTA tx taStore (StorableTA tal cert (FetchedAt moment) ppAccess)
-                        pure (locatedTaCert uri' cert, ppAccess, Updated)
-             
-        locatedTaCert url cert = Located (toLocations url) cert
+  where   
+
+    fetchValidateAndStore taStore (Now moment) = do 
+        (uri', ro) <- fetchTACertificate appContext tal
+        cert       <- vHoist $ validateTACert tal uri' ro            
+        case publicationPointsFromTAL tal cert of
+            Left e      -> appError $ ValidationE e
+            Right ppAccess -> 
+                rwAppTxEx taStore storageError $ \tx -> do 
+                    putTA tx taStore (StorableTA tal cert (FetchedAt moment) ppAccess)
+                    pure (locatedTaCert uri' cert, ppAccess, Updated)
+            
+    locatedTaCert url cert = Located (toLocations url) cert
 
 
 -- | Do the validation starting from the TA certificate.
@@ -305,10 +303,8 @@ validateCA appContext validatorPath topDownContext certificate =
   where
     validateCARecursively = do             
         (r, validations) <- runValidatorT validatorPath $
-                validateCaCertificate appContext topDownContext certificate
-        pure $ case r of
-            Left _     -> T2 mempty validations
-            Right vrps -> T2 vrps validations         
+                                validateCaCertificate appContext topDownContext certificate        
+        pure $! T2 (fromRight mempty r) validations
     
 
 validateCaCertificate :: Storage s =>
@@ -367,13 +363,17 @@ validateCaCertificate
                     case getPublicationPointsFromCertObject (certificate ^. #payload) of            
                         Left e         -> vError e
                         Right ppAccess -> do                    
-                            fetches <- fetchPPWithFallback appContext repositoryProcessing worldVersion now ppAccess                                   
-                            if anySuccess fetches                    
-                                then validateThisCertAndGoDown                            
-                                else do                             
-                                    fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
-                                        Never       -> pure mempty
-                                        AtLeastOnce -> validateThisCertAndGoDown
+                            fetches <- fetchPPWithFallback appContext repositoryProcessing worldVersion now ppAccess
+                            rpkiUrls <- liftIO $ getPrimaryRepositoryFromPP repositoryProcessing ppAccess
+                            let z = if anySuccess fetches                    
+                                        then validateThisCertAndGoDown                            
+                                        else do                             
+                                            fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
+                                                Never       -> pure mempty
+                                                AtLeastOnce -> validateThisCertAndGoDown                            
+                            case rpkiUrls of 
+                                Nothing -> z
+                                Just rp -> inSubMetricPath' PPSegment rp z                                
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
@@ -394,7 +394,7 @@ validateCaCertificate
     validateThisCertAndGoDown = do            
         -- Here we do the following
         -- 
-        --  1) get the latest manifest (latest by the validatory period)
+        --  1) get the latest manifest (latest by the validity period)
         --  2) find CRL on it
         --  3) make sure they both are valid
         --  4) go through the manifest children and either 
@@ -422,8 +422,7 @@ validateCaCertificate
                 -- get into the ValidationResult in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
-                    (\e -> do                         
-                        tryLatestValidCachedManifest Nothing childrenAki certLocations e)
+                    tryLatestValidCachedManifest Nothing childrenAki certLocations
                 
             Just mft -> 
                 tryManifest mft childrenAki certLocations
@@ -443,14 +442,14 @@ validateCaCertificate
             -- cached manifest for this CA               
             -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
             --
-            findCachedLatestValidMft childrenAki >>= \case
+            findLatestCachedValidMft childrenAki >>= \case
                 Nothing             -> throwError e
                 Just latestValidMft ->             
                     let mftLoc = fmtLocations $ getLocations latestValidMft            
                     in case latestMft of 
                         Nothing -> do 
                             appWarn e      
-                            logDebugM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
+                            logWarnM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
                             tryManifest latestValidMft childrenAki certLocations                                
                         Just latestMft'
                             | getHash latestMft' == getHash latestValidMft 
@@ -484,7 +483,7 @@ validateCaCertificate
             -- Manifest-specific location validation
             validateMftLocation locatedMft certificate
 
-            manifestResult <- inSubVPath (locationsToText $ locatedMft ^. #locations) $ do                
+            manifestResult <- inSubObjectVPath (locationsToText $ locatedMft ^. #locations) $ do                
 
                 -- vPath :: ValidatorPath <- asks (^. typed)
                 -- logDebugM logger [i|Manifest = #{vPath}.|]
@@ -504,7 +503,7 @@ validateCaCertificate
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
                         visitObject appContext topDownContext foundCrl                        
                         validateObjectLocations foundCrl
-                        validCrl <- inSubVPath (locationsToText crlLocations) $ 
+                        validCrl <- inSubObjectVPath (locationsToText crlLocations) $ 
                                         vHoist $ do        
                                             let mftEECert = getEECert $ unCMS $ cmsPayload mft
                                             checkCrlLocation foundCrl mftEECert
@@ -679,7 +678,7 @@ validateCaCertificate
         case ro of
             CerRO childCert -> do 
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
-                        inSubVPath (toText $ pickLocation locations) $ do                                
+                        inSubObjectVPath (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 
                                     Validated validCert <- validateResourceCert 
                                             now childCert (certificate ^. #payload) validCrl
@@ -694,15 +693,17 @@ validateCaCertificate
 
             RoaRO roa -> do 
                     validateObjectLocations child
-                    inSubVPath (locationsToText locations) $ 
+                    inSubObjectVPath (locationsToText locations) $ 
                         allowRevoked $ do
-                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
+                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources                            
+                            let vrpList = getCMSContent $ cmsPayload roa                            
                             oneMoreRoa                            
-                            pure $ Set.fromList $ getCMSContent $ cmsPayload roa
+                            moreVrps $ Count $ fromIntegral $ length vrpList
+                            pure $! Set.fromList vrpList
 
             GbrRO gbr -> do                
                     validateObjectLocations child
-                    inSubVPath (locationsToText locations) $ 
+                    inSubObjectVPath (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                             oneMoreGbr
@@ -732,7 +733,7 @@ validateCaCertificate
         roTx objectStore' $ \tx -> 
             findLatestMftByAKI tx objectStore' childrenAki
 
-    findCachedLatestValidMft childrenAki = liftIO $ do 
+    findLatestCachedValidMft childrenAki = liftIO $ do 
         objectStore' <- (^. #objectStore) <$> readTVarIO database
         roTx objectStore' $ \tx -> 
             getLatestValidMftByAKI tx objectStore' childrenAki
@@ -756,7 +757,7 @@ validateCaCertificate
     -- | Validate that the object has only one location: if not, 
     -- it's generally is a warning, not really an error.
     validateObjectLocations (getLocations -> locs@(Locations locSet)) =
-        inSubVPath (locationsToText locs) $ 
+        inSubObjectVPath (locationsToText locs) $ 
             when (NESet.size locSet > 1) $ 
                 vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
 
@@ -764,7 +765,7 @@ validateCaCertificate
     -- the CRL was actually fetched from. 
     -- 
     checkCrlLocation crl eeCert = 
-        ifJust (getCrlDistributionPoint $ cwsX509certificate eeCert) $ \crlDP -> do
+        for_ (getCrlDistributionPoint $ cwsX509certificate eeCert) $ \crlDP -> do
             let crlLocations = getLocations crl
             when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
                 vError $ CRLOnDifferentLocation crlDP crlLocations
@@ -826,27 +827,19 @@ oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 
-setVrpNumber :: Monad m => Count -> ValidatorT m ()
-setVrpNumber n = updateMetric @ValidationMetric @_ (& #vrpNumber .~ n)
+moreVrps :: Monad m => Count -> ValidatorT m ()
+moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
 
--- Sum up all the validation metrics from all TA to create 
--- the "alltrustanchors" validation metric
-addTotalValidationMetric :: (HasType ValidationState s, HasField' "vrps" s Vrps) => s -> s
-addTotalValidationMetric totalValidationResult = 
-    totalValidationResult 
-        & vmLens %~ Map.insert (newPath allTAsMetricsName) totalValidationMetric
-  where    
-    totalValidationMetric = mconcat (Map.elems $ totalValidationResult ^. vmLens) 
-                            & #vrpNumber .~ Count 
-                                (fromIntegral $ vrpCount $ totalValidationResult ^. #vrps)
-
-    vmLens = typed @ValidationState . 
-            typed @AppMetric . 
-            #validationMetrics . 
-            #unMetricMap . 
-            #getMonoidalMap    
-    
+-- Number of unique VRPs requires explicit counting of the VRP set sizes, 
+-- so just counting the number of VRPs in ROAs in not enough
+addUniqueVRPCount :: (HasType ValidationState s, HasField' "vrps" s Vrps) => s -> s
+addUniqueVRPCount s = let 
+        vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
+    in s & vrpCountLens . #totalUnique .~ 
+                Count (fromIntegral $ uniqueVrpCount $ s ^. #vrps)
+         & vrpCountLens . #perTaUnique .~
+                MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ s ^. #vrps)    
 
 totalBottleneck :: AppBottleneck -> Bottleneck
 totalBottleneck AppBottleneck {..} = cpuBottleneck <> ioBottleneck

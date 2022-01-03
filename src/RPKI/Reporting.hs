@@ -8,6 +8,9 @@
 
 
 module RPKI.Reporting where
+
+import           Codec.Serialise
+    
 import           Control.Exception.Lifted
 import           Control.Lens                (Lens', (%~), (&))
 
@@ -19,12 +22,12 @@ import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Monoid
 
-import           Data.Text                   (Text)
+import          Data.Text                   as Text
 import           Data.Tuple.Strict
 
-import           Codec.Serialise
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
+import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
@@ -194,7 +197,16 @@ newtype Validations = Validations (Map VPath (Set VProblem))
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
-newtype Path a = Path { unPath :: NonEmpty Text }
+
+data PathSegment = TASegment Text 
+                | ObjectSegment Text 
+                | PPSegment RpkiURL
+                | RepositorySegment RpkiURL
+                | TextualSegment Text
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise    
+
+newtype Path a = Path { unPath :: NonEmpty PathSegment }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Semigroup
@@ -214,22 +226,28 @@ data ValidatorPath = ValidatorPath {
     deriving anyclass Serialise
 
 newPath :: Text -> Path c
-newPath u = Path $ u :| []
+newPath = newPath' TextualSegment
 
-subPath :: Text -> Path c -> Path c
-subPath t parent = newPath t <> parent
+newPath' :: (a -> PathSegment) -> a -> Path c
+newPath' c u = Path $ c u :| []
 
 newValidatorPath :: Text -> ValidatorPath
-newValidatorPath t = ValidatorPath {
-        validationPath = newPath t,
-        metricPath     = newPath t
-    }
+newValidatorPath = newValidatorPath' TextualSegment
 
--- | Step down     
-validatorSubPath :: Text -> ValidatorPath -> ValidatorPath
-validatorSubPath t vc = 
+newValidatorPath' :: (a -> PathSegment) -> a -> ValidatorPath
+newValidatorPath' c t = ValidatorPath {
+        validationPath = newPath' c t,
+        metricPath     = newPath' c t
+    }    
+
+
+validatorSubPath' :: forall a . (a -> PathSegment) -> a -> ValidatorPath -> ValidatorPath
+validatorSubPath' constructor t vc = 
     vc & typed @VPath      %~ subPath t
        & typed @MetricPath %~ subPath t
+  where    
+    subPath :: a -> Path t -> Path t
+    subPath seg parent = newPath' constructor seg <> parent
 
 
 mError :: VPath -> AppError -> Validations
@@ -263,7 +281,7 @@ removeValidation vPath predicate (Validations vs) =
 
 class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
-    metricLens :: Lens' AppMetric (MetricMap metric)
+    metricLens :: Lens' RawMetric (MetricMap metric)
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
@@ -308,7 +326,7 @@ instance Semigroup RrdpSource where
     _           <> r           = r
 
 
-data FetchFreshness = UpToDate | Fetched
+data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise        
 
@@ -344,7 +362,8 @@ data RsyncMetric = RsyncMetric {
     deriving Monoid    via GenericMonoid RsyncMetric
 
 data ValidationMetric = ValidationMetric {
-        vrpNumber       :: Count,        
+        vrpCounter      :: Count,        
+        uniqueVrpNumber :: Count,        
         validCertNumber :: Count,
         validRoaNumber  :: Count,
         validMftNumber  :: Count,
@@ -373,19 +392,29 @@ newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricPath a }
     deriving newtype Monoid    
     deriving newtype Semigroup
 
-data AppMetric = AppMetric {
-        rsyncMetrics      :: MetricMap RsyncMetric,
-        rrdpMetrics       :: MetricMap RrdpMetric,
-        validationMetrics :: MetricMap ValidationMetric
+data VrpCounts = VrpCounts { 
+        totalUnique :: Count,        
+        perTaUnique :: MonoidalMap TaName Count
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving Semigroup via GenericSemigroup AppMetric   
-    deriving Monoid    via GenericMonoid AppMetric
+    deriving Semigroup via GenericSemigroup VrpCounts   
+    deriving Monoid    via GenericMonoid VrpCounts
+
+data RawMetric = RawMetric {
+        rsyncMetrics      :: MetricMap RsyncMetric,
+        rrdpMetrics       :: MetricMap RrdpMetric,
+        validationMetrics :: MetricMap ValidationMetric,
+        vrpCounts         :: VrpCounts
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving Semigroup via GenericSemigroup RawMetric   
+    deriving Monoid    via GenericMonoid RawMetric
 
 data ValidationState = ValidationState {
         validations   :: Validations,
-        topDownMetric :: AppMetric
+        topDownMetric :: RawMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -409,3 +438,14 @@ lookupMetric metricPath (MetricMap (MonoidalMap mm)) = Map.lookup metricPath mm
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
+
+segmentToText :: PathSegment -> Text
+segmentToText = \case
+    TASegment txt         -> txt
+    ObjectSegment txt     -> txt
+    PPSegment txt         -> unURI $ getURL txt
+    RepositorySegment txt -> unURI $ getURL txt
+    TextualSegment txt    -> txt
+
+pathList :: Path a -> [PathSegment]
+pathList = NonEmpty.toList . unPath

@@ -28,7 +28,7 @@ data API api = API {
         slurm :: api :- "slurm.json" :> Get '[JSON] Slurm,
                 
         validationResults :: api :- "validation-results" :> Get '[JSON] [ValidationResult],
-        appMetrics        :: api :- "app-metrics"        :> Get '[JSON] AppMetric,
+        appMetrics        :: api :- "app-metrics"        :> Get '[JSON] RawMetric,
                 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
 

@@ -47,7 +47,7 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.AppStorage
-import           RPKI.Util (ifJust)
+import Data.Vector (uniq)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -113,8 +113,8 @@ runWorkflow appContext@AppContext {..} tals = do
                 (processTALs database' `finally` cleanupAfterValidation)
                 (\(vrps, slurmedVrps) elapsed ->                    
                     logInfoM logger $
-                        [i|Validated all TAs, got #{vrpCount vrps} VRPs, |] <> 
-                        [i|#{vrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
+                        [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <> 
+                        [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where 
                 cleanupAfterValidation = do 
                     let tmpDir = config ^. #tmpDirectory
@@ -122,7 +122,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
                     
                 processTALs database' = do
-                    TopDownResult {..} <- addTotalValidationMetric . mconcat <$> 
+                    TopDownResult {..} <- addUniqueVRPCount . mconcat <$> 
                                 validateMutlipleTAs appContext worldVersion tals                        
 
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
@@ -147,7 +147,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         putValidations tx database' worldVersion (updatedValidation ^. typed)
                         putMetrics tx database' worldVersion (topDownValidations ^. typed)                        
                         putVrps tx database' vrps worldVersion
-                        ifJust maybeSlurm $ putSlurm tx database' worldVersion
+                        for_ maybeSlurm $ putSlurm tx database' worldVersion
                         completeWorldVersion tx database' worldVersion
                         slurmedVrps <- atomically $ do 
                             setCurrentVersion appState worldVersion
@@ -249,14 +249,14 @@ loadStoredAppState AppContext {..} = do
                         !vrps  <- getVrps tx database' lastVersion
                         !slurm <- slurmForVersion tx database' lastVersion
                         --
-                        ifJust vrps $ \vrps' -> void $ 
+                        for_ vrps $ \vrps' -> void $ 
                                 atomically $ do 
                                     setCurrentVersion appState lastVersion
                                     completeVersion appState lastVersion vrps' slurm
                         pure vrps
-                    ifJust vrps $ \v -> 
+                    for_ vrps $ \v -> 
                         logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <> 
-                                        [i|current state (#{vrpCount v} VRPs), took #{elapsed}ms.|]
+                                        [i|current state (#{estimateVrpCount v} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion             
                 
 

@@ -85,7 +85,7 @@ validateResourceCertExtensions cert =
 validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CerObject
 validateTACert tal u (CerRO taCert) = do
   let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
-  pureErrorIfNot (publicKeyInfo tal == spki) $ SPKIMismatch (publicKeyInfo tal) spki
+  unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
   case getAKI taCert of
     Nothing -> continue
     Just (AKI ki)

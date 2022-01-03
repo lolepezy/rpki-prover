@@ -455,6 +455,10 @@ instance Arbitrary MetricPath where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary PathSegment where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary Validations where
     arbitrary = generateMap Validations     
 
@@ -462,7 +466,7 @@ instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary AppMetric where
+instance Arbitrary RawMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -474,8 +478,16 @@ instance Arbitrary RrdpMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
     
+instance Arbitrary VrpCounts where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ValidationMetric where
     arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary TaName where
+    arbitrary = TaName <$> arbitrary
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where

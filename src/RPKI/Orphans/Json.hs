@@ -136,7 +136,9 @@ instance ToJSON VResultStats
 instance ToJSON RepositoryStats
 instance ToJSON DBStats
 instance ToJSON TotalDBStats
-instance ToJSON AppMetric
+instance ToJSON RawMetric
+instance ToJSON VrpCounts
+instance ToJSON TaName
 instance ToJSON a => ToJSON (MetricMap a)
 instance ToJSON ValidationMetric
 instance ToJSON RsyncMetric
@@ -147,7 +149,9 @@ instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
     
 instance ToJSON RrdpSource
+instance ToJSON PathSegment
 instance ToJSONKey (Path 'Metric)
+instance ToJSONKey TaName
 instance ToJSON (Path 'Metric)
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON $ show s <> "ms"

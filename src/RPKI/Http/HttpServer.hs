@@ -118,7 +118,7 @@ getLastVersion AppContext {..} = do
     roTx db $ getLastCompletedVersion db                
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
-            AppContext s -> m AppMetric
+            AppContext s -> m RawMetric
 getMetrics AppContext {..} = do
     db@DB {..} <- liftIO $ readTVarIO database 
     metrics <- liftIO $ roTx db $ \tx -> do
@@ -143,7 +143,7 @@ getSlurm AppContext {..} = do
     
 toVR :: (Path a, Set.Set VProblem) -> ValidationResult
 toVR (Path path, problems) = 
-    ValidationResult (Set.toList problems) (NonEmpty.toList path)    
+    ValidationResult (Set.toList problems) (map segmentToText $ NonEmpty.toList path)    
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             

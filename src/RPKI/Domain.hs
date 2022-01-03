@@ -28,8 +28,6 @@ import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
-import           Data.Map.Strict          (Map)
-import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
@@ -634,8 +632,12 @@ makeSerial i =
           | otherwise      -> Right $ Serial i
 
 
-vrpCount :: Vrps -> Int 
-vrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+estimateVrpCount :: Vrps -> Int 
+estimateVrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+
+-- Precise but much more expensive
+uniqueVrpCount :: Vrps -> Int 
+uniqueVrpCount = Set.size . allVrps
 
 newVrps :: TaName -> Set Vrp -> Vrps
 newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet

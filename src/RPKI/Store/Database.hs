@@ -15,6 +15,7 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.IORef.Lifted
+import           Data.Foldable            (for_)
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
@@ -42,7 +43,7 @@ import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
 import           RPKI.Parallel
-import           RPKI.Util                (increment, ifJust, ifJustM)
+import           RPKI.Util                (increment, ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -96,7 +97,7 @@ instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricsStore s = MetricsStore {
-    metrics :: SMap "metrics" s WorldVersion AppMetric    
+    metrics :: SMap "metrics" s WorldVersion RawMetric    
 }
 
 instance Storage s => WithStorage s (MetricsStore s) where
@@ -177,7 +178,7 @@ putObject tx RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
         M.put tx hashToKey h objectKey
         M.put tx objects objectKey storable                           
         M.put tx objectInsertedBy objectKey wv
-        ifJust (getAKI object) $ \aki' ->
+        for_ (getAKI object) $ \aki' ->
             case object of
                 MftRO mft -> MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
                 _         -> pure ()
@@ -230,7 +231,7 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $
                 forM_ urlKeys $ \urlKey ->
                     MM.delete tx urlKeyToObjectKey urlKey objectKey                
             
-                ifJust (getAKI ro) $ \aki' -> do 
+                for_ (getAKI ro) $ \aki' -> do 
                     M.delete tx lastValidMft aki'
                     case ro of
                         MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
@@ -283,7 +284,7 @@ markLatestValidMft :: (MonadIO m, Storage s) =>
                     Tx s 'RW -> RpkiObjectStore s -> AKI -> Hash -> m ()
 markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do 
     k <- M.get tx hashToKey hash
-    ifJust k $ M.put tx lastValidMft aki
+    for_ k $ M.put tx lastValidMft aki
 
 
 getLatestValidMftByAKI :: (MonadIO m, Storage s) => 
@@ -355,12 +356,12 @@ completeWorldVersion tx database worldVersion =
 
 
 putMetrics :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> AppMetric -> m ()
+            Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 putMetrics tx DB { metricStore = MetricsStore s } wv appMetric = 
     liftIO $ M.put tx s wv appMetric
 
 metricsForVersion :: (MonadIO m, Storage s) => 
-                    Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe AppMetric)
+                    Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe RawMetric)
 metricsForVersion tx MetricsStore {..} wv = liftIO $ M.get tx metrics wv    
 
 deleteMetrics :: (MonadIO m, Storage s) => 
@@ -405,7 +406,7 @@ cleanObjectCache DB {..} tooOld = do
                     z <- M.get tx (objectValidatedBy objectStore) key >>= \case 
                             Just validatedBy -> pure $ Just validatedBy
                             Nothing          -> M.get tx (objectInsertedBy objectStore) key                                                                        
-                    ifJust z $ \cutoffVersion -> 
+                    for_ z $ \cutoffVersion -> 
                         if tooOld cutoffVersion
                             then increment deleted >> atomically (writeCQueue queue hash)
                             else increment kept

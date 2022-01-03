@@ -71,9 +71,21 @@ import           RPKI.Workflow
 
 main :: IO ()
 main = do    
-    cliOptions :: CLIOptions Unwrapped <- unwrapRecord
-        "RPKI prover, relying party software for RPKI"
-    inProcess cliOptions
+    cliOptions@CLIOptions{..} <- unwrapRecord "RPKI prover, relying party software for RPKI"
+    case worker of 
+        Nothing -> mainProcess cliOptions
+        Just _  -> do           
+            input <- readWorkerInput
+            let logLevel' = input ^. typed @Config . #logLevel
+            withWorkerLogger logLevel' $ \logger -> liftIO $ do
+                (z, validations) <- do
+                            runValidatorT (newValidatorPath "worker-create-app-context")
+                                $ readWorkerContext input logger
+                case z of
+                    Left e ->                        
+                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                    Right appContext -> 
+                        executeWorker input appContext
 
 
 mainProcess :: CLIOptions Unwrapped -> IO ()
@@ -100,24 +112,6 @@ mainProcess cliOptions = do
                                 (runValidatorApp appContext')
 
 
-inProcess :: CLIOptions Unwrapped -> IO ()
-inProcess cliOptions@CLIOptions{..} =
-    if isNothing worker
-        then do             
-            mainProcess cliOptions
-        else do         
-            input <- readWorkerInput
-            let logLevel' = input ^. typed @Config . #logLevel
-            withWorkerLogger logLevel' $ \logger -> liftIO $ do
-                (z, validations) <- do
-                            runValidatorT (newValidatorPath "worker-create-app-context")
-                                $ readWorkerContext input logger
-                case z of
-                    Left e ->                        
-                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                    Right appContext -> 
-                        executeWorker input appContext
-
 runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
@@ -126,7 +120,8 @@ runValidatorApp appContext@AppContext {..} = do
     let validationContext = newValidatorPath "validation-root"
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVPath (convert taName) $ parseTALFromFile talFilePath (Text.pack taName)
+            inSubVPath' TASegment (convert taName) $ 
+                parseTALFromFile talFilePath (Text.pack taName)
 
     logInfo_ logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 

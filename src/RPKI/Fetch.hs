@@ -118,7 +118,6 @@ fetchPPWithFallback
                     modifyTVar' ppSeqFetchRuns $ Map.insert ppsKey Stub
                     pure $ bracketOnError 
                                 (async $ do 
-                                    -- logDebug_ logger [i|ppAccess = #{ppAccess}, ppsKey = #{ppsKey}.|]
                                     evaluate =<< fetchWithFallback parentPath 
                                                     (NonEmpty.toList $ unPublicationPointAccess ppAccess')) 
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
@@ -132,32 +131,37 @@ fetchPPWithFallback
 
 
     fetchWithFallback :: ValidatorPath -> [PublicationPoint] -> IO [FetchResult]
-    fetchWithFallback _ [] = pure []
 
+    fetchWithFallback _          []   = pure []
     fetchWithFallback parentPath [pp] = do 
-        (repoUrl, fetchFreshness, (r, validations)) <- fetchPPOnce parentPath pp                
-        let validations' = updateFetchMetric repoUrl fetchFreshness validations        
+        ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentPath pp                
+        let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed     
         pure $ case r of
-            Left _     -> [FetchFailure repoUrl validations']
+            Left _     -> [FetchFailure repoUrl validations']
             Right repo -> [FetchSuccess repo validations']        
       where
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT.
-        updateFetchMetric repoUrl fetchFreshness validations = 
-            let repoPath = validatorSubPath (toText repoUrl) parentPath                   
+        updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
+                realFreshness = either (const FailedToFetch) (const fetchFreshness) r
+                repoPath = validatorSubPath' RepositorySegment repoUrl parentPath     
+                rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoPath ^. typed) f
+                rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoPath ^. typed) f
+                -- this is also a hack to make sure time is updated if the fetch has failed 
+                -- and we probably don't have time at all if the worker timed out                                       
+                updateTime t = if t == mempty then TimeMs elapsed else t
             in case repoUrl of 
-                RrdpU _  -> 
-                    validations 
-                        & typed @AppMetric . #rrdpMetrics 
-                        %~ updateMetricInMap 
-                            (repoPath ^. typed) 
-                            (& #fetchFreshness .~ fetchFreshness)                     
-                RsyncU _ -> 
-                    validations 
-                        & typed @AppMetric . #rsyncMetrics 
-                        %~ updateMetricInMap 
-                            (repoPath ^. typed) 
-                            (& #fetchFreshness .~ fetchFreshness)                                                             
+                RrdpU _ -> let 
+                        updatedFreshness = rrdpMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                    in case r of 
+                        Left _  -> rrdpMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Right _ -> updatedFreshness
+                RsyncU _ -> let 
+                        updatedFreshness = rsyncMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                    in case r of 
+                        Left _  -> rsyncMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Right _ -> updatedFreshness   
+
                     
 
     fetchWithFallback parentPath (pp : pps') = do 
@@ -189,11 +193,11 @@ fetchPPWithFallback
                 then 
                     funRun indivudualFetchRuns rpkiUrl >>= \case                    
                         Just Stub         -> retry
-                        Just (Fetching a) -> pure (rpkiUrl, Fetched, wait a)
+                        Just (Fetching a) -> pure (rpkiUrl, AttemptedFetch, wait a)
 
                         Nothing -> do                                         
                             modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
-                            pure (rpkiUrl, Fetched, fetchPP parentPath repo rpkiUrl)
+                            pure (rpkiUrl, AttemptedFetch, fetchPP parentPath repo)
                 else                         
                     pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
 
@@ -203,9 +207,10 @@ fetchPPWithFallback
 
     -- Do fetch the publication point and update the #publicationPoints
     -- 
-    fetchPP parentPath repo rpkiUrl = do         
+    fetchPP parentPath repo = do         
+        let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
-                let repoPath = validatorSubPath (toText rpkiUrl) parentPath
+                let repoPath = validatorSubPath' RepositorySegment rpkiUrl parentPath
                 (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
@@ -225,9 +230,9 @@ fetchPPWithFallback
             (stopAndDrop indivudualFetchRuns rpkiUrl) 
             (rememberAndWait indivudualFetchRuns rpkiUrl) 
     
-    stopAndDrop stubs key a = liftIO $ do 
-        cancel a
+    stopAndDrop stubs key a = liftIO $ do         
         atomically $ modifyTVar' stubs $ Map.delete key
+        cancel a
 
     rememberAndWait stubs key a = liftIO $ do 
         atomically $ modifyTVar' stubs $ Map.insert key (Fetching a)
@@ -237,14 +242,14 @@ fetchPPWithFallback
         pps <- readTVar $ repositoryProcessing ^. #publicationPoints
         let asIfMerged = mergePP pp pps
         let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
-        pure (
-            needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now,
-            repo)                                    
+        let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now
+        pure (needsFetching', repo)
 
 
-
--- Fetch one individual repository
--- Returned repository has all the metadata updated (in case of RRDP session and serial)
+-- Fetch one individual repository. 
+-- 
+-- Returned repository has all the metadata updated (in case of RRDP session and serial).
+-- The metadata is also updated in the database.
 --
 fetchRepository :: (Storage s) => 
                     AppContext s 
@@ -296,7 +301,7 @@ anySuccess :: [FetchResult] -> Bool
 anySuccess r = not $ null $ [ () | FetchSuccess{} <- r ]
 
 
-fetchEverSucceeded :: MonadIO m=> 
+fetchEverSucceeded :: MonadIO m => 
                     RepositoryProcessing
                 -> PublicationPointAccess 
                 -> m FetchEverSucceeded 
@@ -375,3 +380,10 @@ cancelFetchTasks rp = do
 
     mapM_ cancel [ a | (_, Fetching a) <- Map.toList ifr]
     mapM_ cancel [ a | (_, Fetching a) <- Map.toList ppSeqFr]
+
+
+getPrimaryRepositoryFromPP :: RepositoryProcessing -> PublicationPointAccess -> IO (Maybe RpkiURL)
+getPrimaryRepositoryFromPP repositoryProcessing ppAccess = do
+    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+    let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
+    pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    

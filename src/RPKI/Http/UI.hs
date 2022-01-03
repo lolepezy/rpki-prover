@@ -1,10 +1,11 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE QuasiQuotes           #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE TypeOperators         #-}
 
@@ -16,13 +17,15 @@ import           Control.Lens                ((^.))
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
+import qualified Data.String.Interpolate.IsString as T
+
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
-import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict (getMonoidalMap)
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
@@ -32,13 +35,13 @@ import           RPKI.AppState
 import           RPKI.Metrics
 import           RPKI.Reporting
 import           RPKI.Time
-import           RPKI.Util                   (ifJust)
 
 import RPKI.Http.Types
 import RPKI.Http.Messages
+import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> [ValidationResult] -> AppMetric -> Html
+mainPage :: Maybe WorldVersion -> [ValidationResult] -> RawMetric -> Html
 mainPage worldVersion vResults metrics = 
     H.docTypeHtml $ do
         H.head $ do
@@ -62,7 +65,7 @@ mainPage worldVersion vResults metrics =
                 H.br >> H.br            
                 H.a ! A.id "validation-metrics" $ "" 
                 H.section $ H.text "Validation metrics"
-                validationMetricsHtml $ validationMetrics metrics
+                validationMetricsHtml metrics
                 H.a ! A.id "rrdp-metrics" $ ""
                 H.section $ H.text "RRDP metrics"
                 rrdpMetricsHtml $ rrdpMetrics metrics 
@@ -84,21 +87,22 @@ overallHtml (Just worldVersion) = do
         space >> H.text "(UTC)"
 
 
-validationMetricsHtml :: MetricMap ValidationMetric -> Html
-validationMetricsHtml validationMetricMap =
-    H.table $ do 
-        let allTaMetricPath = Path (allTAsMetricsName :| [])
-        let rawMap = getMonoidalMap $ unMetricMap validationMetricMap
-        let taMetrics = filter (\(ta, _) -> ta /= allTaMetricPath)
-                            $ Map.toList rawMap
+validationMetricsHtml :: RawMetric -> Html
+validationMetricsHtml (groupedValidationMetric -> grouped) = do 
+    
+    let repoMetrics = MonoidalMap.toList $ grouped ^. #perRepository
+    let taMetrics   = MonoidalMap.toList $ grouped ^. #perTa        
 
+    -- this is for per-TA metrics
+    H.table $ do         
         H.thead $ tr $ do 
             th $ do 
                 H.text "Trust Anchor ("
                 toHtml $ length taMetrics
-                H.text " in total)" 
+                H.text " in total)"
             th $ H.text "Validation time"
-            th $ H.text "VRPs"      
+            th $ H.text "Original VRPs"      
+            th $ H.text "Unique VRPs"      
             th $ H.text "Objects"
             th $ H.text "ROAs"
             th $ H.text "Certificates"
@@ -107,14 +111,43 @@ validationMetricsHtml validationMetricMap =
             th $ H.text "GBRs"
         
         H.tbody $ do 
-            forM_ (zip taMetrics [1 :: Int ..]) $ \((path, vm), index) -> do 
-                let ta = NonEmpty.head $ unPath path
-                metricRow index ta True vm      
-            ifJust (allTaMetricPath `Map.lookup` rawMap) 
-                $ metricRow (Map.size rawMap) ("Total" :: Text) False
+            forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
+                metricRow index ta 
+                    (\vm' -> td $ toHtml $ vm' ^. #totalTimeMs) 
+                    (\vm' -> td $ toHtml $ show $ vm' ^. #uniqueVrpNumber) 
+                    vm      
+            
+            metricRow (MonoidalMap.size (grouped ^. #perTa) + 1) 
+                        ("Total" :: Text) 
+                        (const $ td $ toHtml $ text "-")
+                        (const $ td $ toHtml $ show $ grouped ^. #total . #uniqueVrpNumber)
+                        (grouped ^. #total)
 
+    -- this is for per-repository metrics        
+    H.table $ do         
+        H.thead $ tr $ do 
+            th $ H.div ! A.class_ "tooltip" $ do 
+                H.text "Primary repository ("
+                toHtml $ length repoMetrics
+                H.text " in total)" 
+                H.span ! A.class_ "tooltiptext" $ primaryRepoTooltip
+            th $ H.text "Original VRPs"      
+            th $ H.text "Objects"
+            th $ H.text "ROAs"
+            th $ H.text "Certificates"
+            th $ H.text "Manifests"
+            th $ H.text "CRLs"
+            th $ H.text "GBRs"                
+
+        H.tbody $ do 
+            let sortedRepos = List.sortOn fst $ 
+                    Prelude.map (\(u', z) -> (unURI $ getURL u', z)) repoMetrics
+            forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
+                metricRow index url 
+                    (const $ pure ()) 
+                    (const $ pure ()) vm                  
   where
-    metricRow index ta showValidationTime vm = do 
+    metricRow index ta validationTime uniqueVrps vm = do 
         let totalCount = vm ^. #validCertNumber + 
                          vm ^. #validRoaNumber +
                          vm ^. #validMftNumber +
@@ -122,10 +155,9 @@ validationMetricsHtml validationMetricMap =
                          vm ^. #validGbrNumber
         htmlRow index $ do 
             td $ toHtml ta                                    
-            td $ if showValidationTime 
-                    then toHtml $ vm ^. #totalTimeMs
-                    else toHtml $ text "-"
-            td $ toHtml $ show $ vm ^. #vrpNumber
+            void $ validationTime vm
+            td $ toHtml $ show $ vm ^. #vrpCounter
+            void $ uniqueVrps vm 
             td $ toHtml $ show totalCount
             td $ toHtml $ show $ vm ^. #validRoaNumber
             td $ toHtml $ show $ vm ^. #validCertNumber
@@ -133,19 +165,22 @@ validationMetricsHtml validationMetricMap =
             td $ toHtml $ show $ vm ^. #validCrlNumber
             td $ toHtml $ show $ vm ^. #validGbrNumber
 
-
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table $ do 
-        let rrdpMap = getMonoidalMap $ unMetricMap rrdpMetricMap        
+        let rrdpMap = unMetricMap rrdpMetricMap                
 
-        H.thead $ tr $ do 
+        H.thead $ tr $ do                         
             th $ do 
                 H.text "Repository (" 
-                toHtml $ Map.size rrdpMap
-                H.text " in total)" 
-            th $ H.text "Recency"
-            th $ H.text "Source"            
+                toHtml $ MonoidalMap.size rrdpMap
+                H.text " in total)"                                 
+            th $ H.div ! A.class_ "tooltip" $ do
+                H.text "Fetching"
+                H.span ! A.class_ "tooltiptext" $ rrdpFetchTooltip            
+            th $ H.div ! A.class_ "tooltip" $ do 
+                H.text "RRDP Update"            
+                H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip
             th $ H.text "Added objects"
             th $ H.text "Deleted objects"
             th $ H.text "Last HTTP status"
@@ -154,7 +189,7 @@ rrdpMetricsHtml rrdpMetricMap =
             th $ H.text "Total time"                    
 
         H.tbody $ do 
-            forM_ (zip (Map.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
+            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
                 let repository = NonEmpty.head $ unPath path
                 htmlRow index $ do 
                     td $ toHtml repository                        
@@ -178,7 +213,9 @@ rsyncMetricsHtml rsyncMetricMap =
                 H.text "Repository ("
                 toHtml $ Map.size rsyncMap
                 H.text " in total)" 
-            th $ H.text "Fetched"
+            th $ H.div ! A.class_ "tooltip" $ do
+                H.text "Fetching"
+                H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
             th $ H.text "Processed objects"
             th $ H.text "Total time"                    
 
@@ -196,8 +233,10 @@ validaionDetailsHtml :: [ValidationResult] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
-            th $ H.span $ H.text "Problem"
-            th $ H.span $ H.text "URL/Path"
+            th $ H.span $ H.text "Issue"            
+            th $ H.div ! A.class_ "tooltip" $ do
+                H.text "URL/Path"
+                H.span ! A.class_ "tooltiptext" $ validationPathTootip               
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
                 tr $ td ! colspan "2" $                                         
@@ -242,7 +281,42 @@ validaionDetailsHtml result =
             countP z ValidationResult {..} = List.foldl' countEW z problems
             countEW (e, w) (VErr _)  = (e + 1, w)
             countEW (e, w) (VWarn _) = (e, w + 1)
-                
+
+
+primaryRepoTooltip :: Html
+primaryRepoTooltip = 
+    H.text $ "For metrics puposes objects are associated with a repository they are downloaded from. " <> 
+            "Fallback from RRDP to rsync does not change this association, so a valid object is attributed " <> 
+            "to the RRDP repository even if it was downloaded from the rsync one becasue of the fall-back."
+
+fetchTooltip :: Text -> Text -> Html
+fetchTooltip repoType setting = do                
+    H.div ! A.style "text-align: left;" $ do 
+        space >> space >> H.text "Used values" >> H.br
+        H.ul $ do 
+            H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
+            H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
+
+rrdpFetchTooltip :: Html
+rrdpFetchTooltip = fetchTooltip "RRDP" "rrdp-refresh-interval"
+rsyncFetchTooltip = fetchTooltip "rsync" "rsync-refresh-interval"
+
+rrdpUpdateTooltip :: Html
+rrdpUpdateTooltip = do
+    H.div ! A.style "text-align: left;" $ do 
+        space >> space >> H.text "Used values" >> H.br
+        H.ul $ do 
+            H.li $ H.text "'Snapshot' - snapshot was used for RRDP update"
+            H.li $ H.text "'Deltas' - deltas were used for RRDP update"
+            H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
+
+validationPathTootip :: Html
+validationPathTootip = do   
+    space >> space
+    H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
+    H.text "'Path' here shows the full sequence of objects from the TA to the object in question."
+    space >> space
+        
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
@@ -284,10 +358,14 @@ instance ToMarkup HttpStatus where
     toMarkup (HttpStatus s) = toMarkup $ show s
 
 instance ToMarkup FetchFreshness where 
-    toMarkup UpToDate = toMarkup ("Up-to-date" :: Text)
-    toMarkup Fetched    = toMarkup ("Fetched" :: Text)
+    toMarkup UpToDate       = toMarkup ("Up-to-date" :: Text)
+    toMarkup AttemptedFetch = toMarkup ("Succeeded" :: Text)
+    toMarkup FailedToFetch  = toMarkup ("Failed" :: Text)
 
 instance ToMarkup RrdpSource where 
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
+
+instance ToMarkup PathSegment where 
+    toMarkup = toMarkup . segmentToText

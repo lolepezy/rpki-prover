@@ -45,7 +45,7 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.Parallel
 import           RPKI.Time
-import           RPKI.Util                        (convert, hexL, ifJust)
+import           RPKI.Util                        (convert, hexL)
 
 import           RPKI.AppState
 import           RPKI.Store.Base.Storage
@@ -114,7 +114,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         vrps <- readTVarIO (appState ^. #filteredVrps)
-        let maxStoredDiffs = vrpCount vrps
+        let maxStoredDiffs = estimateVrpCount vrps
                 
         logDebug_ logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -188,7 +188,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         (rtrState', vrps, outboxQueue) <- 
             atomically $ (,,) <$> 
                     readTVar rtrState <*>
-                    (readTVar $ filteredVrps appState) <*>
+                    readTVar (filteredVrps appState) <*>
                     newCQueue 10
 
         let firstPduLazy = BSL.fromStrict firstPdu
@@ -196,12 +196,12 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         let (errorPdu, message, versionedPdu) = 
                 analyzePdu peer firstPduLazy $ bytesToVersionedPdu firstPduLazy        
 
-        ifJust errorPdu $ \errorPdu' -> 
+        for_ errorPdu $ \errorPdu' -> 
             sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
 
-        ifJust message $ logError_ logger
+        for_ message $ logError_ logger
 
-        ifJust versionedPdu $ \versionedPdu' -> do
+        for_ versionedPdu $ \versionedPdu' -> do
             case processFirstPdu rtrState' vrps versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduToBytes errorPdu' V0
@@ -210,7 +210,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
 
                 Right (responsePdus, session, warning) -> do
-                    ifJust warning $ logWarn_ logger
+                    for_ warning $ logWarn_ logger
                     atomically $ writeCQueue outboxQueue responsePdus
 
                     withAsync (sendToClient session outboxQueue) $ \sender -> do
@@ -302,7 +302,7 @@ responseAction logger peer session rtrState vrps pduBytes =
                     in Left ([errorPdu], ioAction)                                     
                 Right (pdus, warning) -> let
                     ioAction = do 
-                        ifJust warning $ logWarn_ logger
+                        for_ warning $ logWarn_ logger
                         logDebug_ logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}.. PDUs.|]                            
                     in Right (pdus, ioAction)                                     
 
