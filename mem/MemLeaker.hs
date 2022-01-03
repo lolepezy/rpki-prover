@@ -54,7 +54,7 @@ import Control.Concurrent.Async
 main :: IO ()
 main = do     
     logger <- createLogger
-    z <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+    z <- runValidatorT (newScopes "configuration") $ createAppContext logger    
     case z of 
         (Left e, _) -> do 
             putStrLn $ "Error: " <> show e        
@@ -66,7 +66,7 @@ main = do
             storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
 
             forConcurrently_ sources $ \(repository, _) -> do
-                    runValidatorT (newValidatorPath "download-rrdp") 
+                    runValidatorT (newScopes "download-rrdp") 
                         $ updateObjectForRrdpRepository appContext repository    
                 
 

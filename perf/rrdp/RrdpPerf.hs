@@ -85,7 +85,7 @@ main = do
 testSnapshotLoad :: IO ()
 testSnapshotLoad = do
     withAppLogger DebugL $ \logger -> liftIO $ do     
-        z <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+        z <- runValidatorT (newScopes "configuration") $ createAppContext logger    
         case z of 
             (Left e, x) -> do 
                 putStrLn $ "Error: " <> show e        
@@ -97,14 +97,14 @@ testSnapshotLoad = do
                 logDebug_ logger [i|Starting |]        
                 let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (RrdpSerial 673)
                 void $ forever $ do 
-                    (_, t) <- timedMS $ runValidatorT (newValidatorPath "snapshot") $ 
+                    (_, t) <- timedMS $ runValidatorT (newScopes "snapshot") $ 
                                 saveSnapshot appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
                     logDebug_ logger [i|Saved snapshot in #{t}ms |]  
 
 testDeltaLoad :: IO ()
 testDeltaLoad = do
     withAppLogger DebugL $ \logger -> liftIO $ do         
-        (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+        (Right appContext, _) <- runValidatorT (newScopes "configuration") $ createAppContext logger    
         deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
         deltaContents <- forM deltas $ \d -> LBS.readFile $ "../tmp/test-data/" </> d
         logDebug_ logger [i|Starting |]    
@@ -113,7 +113,7 @@ testDeltaLoad = do
 testLmdbCompact :: IO ()
 testLmdbCompact = do
     withAppLogger DebugL $ \logger -> liftIO $ do     
-        (Right appContext, _) <- runValidatorT (newValidatorPath "configuration") $ createAppContext logger    
+        (Right appContext, _) <- runValidatorT (newScopes "configuration") $ createAppContext logger    
         compactStorageWithTmpDir appContext        
 
 

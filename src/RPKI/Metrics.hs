@@ -81,12 +81,12 @@ textualMetrics = exportMetricsAsText
 
 updatePrometheus :: (MonadIO m, MonadMonitor m) => RawMetric -> PrometheusMetrics -> m ()
 updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} = do
-    forM_ (Map.toList $ getMonoidalMap $ unMetricMap rsyncMetrics) $ \(metricPath, metric) -> do
-        let url = segmentToText $ NonEmpty.head $ metricPath ^. coerced
+    forM_ (MonoidalMap.toList $ unMetricMap rsyncMetrics) $ \(metricScope, metric) -> do
+        let url = segmentToText $ NonEmpty.head $ metricScope ^. coerced
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
 
-    forM_ (Map.toList $ getMonoidalMap $ unMetricMap rrdpMetrics) $ \(metricPath, metric) -> do
-        let url = segmentToText $ NonEmpty.head $ metricPath ^. coerced
+    forM_ (MonoidalMap.toList $ unMetricMap rrdpMetrics) $ \(metricScope, metric) -> do
+        let url = segmentToText $ NonEmpty.head $ metricScope ^. coerced
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
 
@@ -146,15 +146,15 @@ groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}
     (perTa', perRepository) = 
         MonoidalMap.foldrWithKey combineMetrics mempty $ unMetricMap validationMetrics
 
-    combineMetrics metricPath metric (pTa, perRepo) = (newPerTa, newPerRepo)
+    combineMetrics metricScope metric (pTa, perRepo) = (newPerTa, newPerRepo)
       where
         newPerTa =
-            case take 1 $ reverse [ TaName uri | TASegment uri <- pathList metricPath ] of
+            case take 1 $ reverse [ TaName uri | TAFocus uri <- pathList metricScope ] of
                 []      -> pTa
                 ta' : _ -> MonoidalMap.singleton ta' metric <> pTa
 
         newPerRepo =
             -- take the deepest PP
-            case take 1 [ pp | PPSegment pp <- pathList metricPath ] of
+            case take 1 [ pp | PPFocus pp <- pathList metricScope ] of
                 []      -> perRepo
                 uri : _ -> MonoidalMap.singleton uri metric <> perRepo        

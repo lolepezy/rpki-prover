@@ -196,11 +196,11 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
     pure $ TopDownResult (either (const mempty) (newVrps taName) r) vs
   where
     taName = getTaName tal
-    taContext = newValidatorPath' TASegment $ unTaName taName
+    taContext = newScopes' TAFocus $ unTaName taName
 
     validateFromTAL = do 
         timedMetric (Proxy :: Proxy ValidationMetric) $ 
-            inSubObjectVPath (toText $ getTaCertURL tal) $ do 
+            inSubObjectVScope (toText $ getTaCertURL tal) $ do 
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations 
                 let now = Now $ versionToMoment worldVersion
@@ -292,17 +292,17 @@ validateFromTACert
 -- 
 validateCA :: Storage s =>
             AppContext s 
-            -> ValidatorPath 
+            -> Scopes 
             -> TopDownContext s 
             -> Located CerObject 
             -> IO (T2 (Set Vrp) ValidationState)
-validateCA appContext validatorPath topDownContext certificate =
+validateCA appContext scopes topDownContext certificate =
     validateCARecursively 
         `finally`  
         markValidatedObjects appContext topDownContext       
   where
     validateCARecursively = do             
-        (r, validations) <- runValidatorT validatorPath $
+        (r, validations) <- runValidatorT scopes $
                                 validateCaCertificate appContext topDownContext certificate        
         pure $! T2 (fromRight mempty r) validations
     
@@ -373,7 +373,7 @@ validateCaCertificate
                                                 AtLeastOnce -> validateThisCertAndGoDown                            
                             case rpkiUrls of 
                                 Nothing -> z
-                                Just rp -> inSubMetricPath' PPSegment rp z                                
+                                Just rp -> inSubMetricScope' PPFocus rp z                                
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
@@ -419,7 +419,7 @@ validateCaCertificate
         findLatestMft childrenAki >>= \case                        
             Nothing -> 
                 -- Use awkward vError + catchError to force the error to 
-                -- get into the ValidationResult in the state.
+                -- get into the ValidationDto in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     tryLatestValidCachedManifest Nothing childrenAki certLocations
@@ -483,9 +483,9 @@ validateCaCertificate
             -- Manifest-specific location validation
             validateMftLocation locatedMft certificate
 
-            manifestResult <- inSubObjectVPath (locationsToText $ locatedMft ^. #locations) $ do                
+            manifestResult <- inSubObjectVScope (locationsToText $ locatedMft ^. #locations) $ do                
 
-                -- vPath :: ValidatorPath <- asks (^. typed)
+                -- vPath :: Scopes <- asks (^. typed)
                 -- logDebugM logger [i|Manifest = #{vPath}.|]
 
                 T2 _ crlHash <- 
@@ -503,7 +503,7 @@ validateCaCertificate
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
                         visitObject appContext topDownContext foundCrl                        
                         validateObjectLocations foundCrl
-                        validCrl <- inSubObjectVPath (locationsToText crlLocations) $ 
+                        validCrl <- inSubObjectVScope (locationsToText crlLocations) $ 
                                         vHoist $ do        
                                             let mftEECert = getEECert $ unCMS $ cmsPayload mft
                                             checkCrlLocation foundCrl mftEECert
@@ -678,7 +678,7 @@ validateCaCertificate
         case ro of
             CerRO childCert -> do 
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
-                        inSubObjectVPath (toText $ pickLocation locations) $ do                                
+                        inSubObjectVScope (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 
                                     Validated validCert <- validateResourceCert 
                                             now childCert (certificate ^. #payload) validCrl
@@ -693,7 +693,7 @@ validateCaCertificate
 
             RoaRO roa -> do 
                     validateObjectLocations child
-                    inSubObjectVPath (locationsToText locations) $ 
+                    inSubObjectVScope (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources                            
                             let vrpList = getCMSContent $ cmsPayload roa                            
@@ -703,7 +703,7 @@ validateCaCertificate
 
             GbrRO gbr -> do                
                     validateObjectLocations child
-                    inSubObjectVPath (locationsToText locations) $ 
+                    inSubObjectVScope (locationsToText locations) $ 
                         allowRevoked $ do
                             void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                             oneMoreGbr
@@ -757,7 +757,7 @@ validateCaCertificate
     -- | Validate that the object has only one location: if not, 
     -- it's generally is a warning, not really an error.
     validateObjectLocations (getLocations -> locs@(Locations locSet)) =
-        inSubObjectVPath (locationsToText locs) $ 
+        inSubObjectVScope (locationsToText locs) $ 
             when (NESet.size locSet > 1) $ 
                 vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
 

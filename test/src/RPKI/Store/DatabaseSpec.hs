@@ -352,15 +352,15 @@ shouldRollbackAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    void $ runValidatorT (newValidatorPath "bla") $ rwAppTx storage' $ \tx -> do
+    void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
         appError $ UnspecifiedE "Test" "Test problem"
 
-    void $ runValidatorT (newValidatorPath "bla") $ rwAppTx storage' $ \tx ->
+    void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx ->
         liftIO $ M.put tx z 2 "bb"        
 
     let throwFromTx =
-            void $ runValidatorT (newValidatorPath "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
+            void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
                     M.put tx z 3 "cc"        
                     throwIO RatioZeroDenominator
 
@@ -369,7 +369,7 @@ shouldRollbackAppTx io = do
             (fromException (toException e)) 
             (Just RatioZeroDenominator)
 
-    void $ runValidatorT (newValidatorPath "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
+    void $ runValidatorT (newScopes "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
          v1 <- M.get tx z 1  
          HU.assertEqual "Must not be there" v1 Nothing
          v2 <- M.get tx z 2  
@@ -388,13 +388,13 @@ shouldPreserveStateInAppTx io = do
     let addedObject = updateMetric @RrdpMetric @_ (& #added %~ (+1))    
 
     (_, ValidationState { validations = Validations validationMap, .. }) 
-        <- runValidatorT (newValidatorPath "root") $ 
+        <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
                 rwAppTx storage' $ \tx -> do                             
                     addedObject        
                     appWarn $ UnspecifiedE "Error1" "text 1"
-                    inSubVPath "nested-1" $ 
+                    inSubVScope "nested-1" $ 
                         appWarn $ UnspecifiedE "Error2" "text 2"
                     -- just to have a transaction
                     liftIO $ M.get tx z 0
@@ -404,22 +404,22 @@ shouldPreserveStateInAppTx io = do
 
     HU.assertEqual "Root metric should count 2 objects" 
         (Just $ mempty { added = 2, deleted = 0 })
-        (stripTime <$> lookupMetric (newPath "root") (rrdpMetrics topDownMetric))        
+        (stripTime <$> lookupMetric (newScope "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
         Nothing
-        (stripTime <$> lookupMetric (newPath "metric-nested-1" <> newPath "root") 
+        (stripTime <$> lookupMetric (subScope "metric-nested-1" (newScope "root"))
                             (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
-        (Map.lookup (newPath "root") validationMap)
+        (Map.lookup (newScope "root") validationMap)
         (Just $ Set.fromList [
             VWarn (VWarning (UnspecifiedE "Error0" "text 0")),
             VWarn (VWarning (UnspecifiedE "Error1" "text 1")),            
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
-        (Map.lookup (newPath "nested-1" <> newPath "root") validationMap)
+        (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 

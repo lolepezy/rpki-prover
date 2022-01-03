@@ -14,6 +14,7 @@ module RPKI.Http.UI where
 import           Control.Monad
 import           Control.Lens                ((^.))
 
+import           Data.Foldable               (for_)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
@@ -41,8 +42,8 @@ import RPKI.Http.Messages
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> [ValidationResult] -> RawMetric -> Html
-mainPage worldVersion vResults metrics = 
+mainPage :: Maybe WorldVersion -> Maybe ValidationsDto -> RawMetric -> Html
+mainPage worldVersion validations metrics =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -55,7 +56,8 @@ mainPage worldVersion vResults metrics =
                 H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
-    
+
+        for_ validations $ \vs -> do 
             H.div ! A.class_ "main" $ do            
                 H.a ! A.id "overall" $ "" 
                 H.br
@@ -74,7 +76,7 @@ mainPage worldVersion vResults metrics =
                 rsyncMetricsHtml $ rsyncMetrics metrics        
                 H.a ! A.id "validation-details" $ ""
                 H.section $ H.text "Validation details"
-                validaionDetailsHtml vResults
+                validaionDetailsHtml $ vs ^. #validations
 
 
 overallHtml :: Maybe WorldVersion -> Html
@@ -189,8 +191,8 @@ rrdpMetricsHtml rrdpMetricMap =
             th $ H.text "Total time"                    
 
         H.tbody $ do 
-            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
-                let repository = NonEmpty.head $ unPath path
+            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
+                let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     td $ toHtml repository                        
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
@@ -220,8 +222,8 @@ rsyncMetricsHtml rsyncMetricMap =
             th $ H.text "Total time"                    
 
         H.tbody $
-            forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
-                let repository = NonEmpty.head $ unPath path
+            forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
+                let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     td $ toHtml repository                                                        
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
@@ -229,13 +231,13 @@ rsyncMetricsHtml rsyncMetricMap =
                     td $ toHtml $ rm ^. #totalTimeMs            
 
 
-validaionDetailsHtml :: [ValidationResult] -> Html
+validaionDetailsHtml :: [ValidationDto] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
             th $ H.span $ H.text "Issue"            
             th $ H.div ! A.class_ "tooltip" $ do
-                H.text "URL/Path"
+                H.text "URL/Scope"
                 H.span ! A.class_ "tooltiptext" $ validationPathTootip               
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
@@ -253,9 +255,9 @@ validaionDetailsHtml result =
                 forM_ (zip vrs [1 :: Int ..]) vrHtml
 
   where      
-    vrHtml (ValidationResult{..}, index) = do 
-        let objectUrl = Prelude.head context         
-        forM_ problems $ \pr -> do                    
+    vrHtml (ValidationDto{..}, index) = do 
+        let objectUrl = Prelude.head path         
+        forM_ issues $ \pr -> do                    
             htmlRow index $ do 
                 let (marker, problem) = 
                         case pr of 
@@ -272,13 +274,13 @@ validaionDetailsHtml result =
                     H.div ! class_ "flex full-link" ! A.style "display: none;" $ do
                         H.div ! class_ "pointer-up" $ arrowUp >> space
                         H.div ! class_ "full-path" $ do
-                            forM_ context $ \pathUrl -> do            
+                            forM_ path $ \pathUrl -> do            
                                 H.div ! A.class_ "path-elem" $ objectLink pathUrl
 
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
         where
-            countP z ValidationResult {..} = List.foldl' countEW z problems
+            countP z ValidationDto {..} = List.foldl' countEW z issues
             countEW (e, w) (VErr _)  = (e + 1, w)
             countEW (e, w) (VWarn _) = (e, w + 1)
 
@@ -297,8 +299,8 @@ fetchTooltip repoType setting = do
             H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
             H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
 
-rrdpFetchTooltip :: Html
-rrdpFetchTooltip = fetchTooltip "RRDP" "rrdp-refresh-interval"
+rrdpFetchTooltip, rsyncFetchTooltip :: Html
+rrdpFetchTooltip  = fetchTooltip "RRDP" "rrdp-refresh-interval"
 rsyncFetchTooltip = fetchTooltip "rsync" "rsync-refresh-interval"
 
 rrdpUpdateTooltip :: Html
@@ -314,16 +316,16 @@ validationPathTootip :: Html
 validationPathTootip = do   
     space >> space
     H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
-    H.text "'Path' here shows the full sequence of objects from the TA to the object in question."
+    H.text "'Scope' here shows the full sequence of objects from the TA to the object in question."
     space >> space
         
 
-groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
+groupByTa :: [ValidationDto] -> Map Text [ValidationDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
     $ [ (ta, [vr]) 
-            | vr@ValidationResult {..} <- vrs, 
-              ta <- lastOne context ]    
+            | vr@ValidationDto {..} <- vrs, 
+              ta <- lastOne path ]    
   where
     lastOne [] = []
     lastOne xs = [last xs]
@@ -367,5 +369,5 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
 
-instance ToMarkup PathSegment where 
+instance ToMarkup Focus where 
     toMarkup = toMarkup . segmentToText

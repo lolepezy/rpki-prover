@@ -130,7 +130,7 @@ fetchPPWithFallback
             $ unPublicationPointAccess ppAccess
 
 
-    fetchWithFallback :: ValidatorPath -> [PublicationPoint] -> IO [FetchResult]
+    fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]
 
     fetchWithFallback _          []   = pure []
     fetchWithFallback parentPath [pp] = do 
@@ -144,7 +144,7 @@ fetchPPWithFallback
         -- without ValidatorT/PureValidatorT.
         updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
                 realFreshness = either (const FailedToFetch) (const fetchFreshness) r
-                repoPath = validatorSubPath' RepositorySegment repoUrl parentPath     
+                repoPath = validatorSubScope' RepositoryFocus repoUrl parentPath     
                 rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoPath ^. typed) f
                 rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoPath ^. typed) f
                 -- this is also a hack to make sure time is updated if the fetch has failed 
@@ -210,7 +210,7 @@ fetchPPWithFallback
     fetchPP parentPath repo = do         
         let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
-                let repoPath = validatorSubPath' RepositorySegment rpkiUrl parentPath
+                let repoPath = validatorSubScope' RepositoryFocus rpkiUrl parentPath
                 (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    

@@ -49,7 +49,7 @@ completeVersion AppState {..} worldVersion vrps slurm = do
     pure slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
-getWorldVerionIO AppState {..} = atomically $ readTVar world
+getWorldVerionIO AppState {..} = readTVarIO world
 
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 

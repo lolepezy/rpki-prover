@@ -37,6 +37,7 @@ import           Data.X509                   as X509
 
 import HaskellWorks.Data.Network.Ip.Ip as Ips
 
+import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
@@ -58,13 +59,14 @@ instance ToJSON IpPrefix where
     toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
     toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
 
-instance ToJSON VProblem
+instance ToJSON WorldVersion
+instance ToJSON VIssue
 instance ToJSON VWarning
 instance ToJSON AppError
 instance ToJSON InitError
 instance ToJSON InternalError
 instance ToJSON SlurmError
-instance ToJSON  a => ToJSON (ParseError a)
+instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON ValidationError
 instance ToJSON Locations
 instance ToJSON StorageError
@@ -149,10 +151,10 @@ instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
     
 instance ToJSON RrdpSource
-instance ToJSON PathSegment
-instance ToJSONKey (Path 'Metric)
+instance ToJSON Focus
+instance ToJSONKey (Scope 'Metric)
 instance ToJSONKey TaName
-instance ToJSON (Path 'Metric)
+instance ToJSON (Scope 'Metric)
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON $ show s <> "ms"
 

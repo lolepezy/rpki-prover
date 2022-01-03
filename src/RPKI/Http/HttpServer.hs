@@ -20,7 +20,7 @@ import           Servant.Server.Generic
 import qualified Data.ByteString.Builder          as BS
 
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Maybe                       (fromMaybe, maybeToList)
+import           Data.Maybe                       (maybeToList)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
@@ -59,7 +59,7 @@ httpApi appContext = genericServe HttpApi {
 
         slurm = getSlurm appContext,
                 
-        validationResults = liftIO (getVResults appContext),
+        validationResults = getValidationsDto appContext,
         appMetrics        = getMetrics appContext,                
         lmdbStats = getStats appContext,
         objectView = getRpkiObject appContext    
@@ -67,7 +67,7 @@ httpApi appContext = genericServe HttpApi {
 
     uiServer = do 
         worldVersion <- liftIO $ getLastVersion appContext
-        vResults <- liftIO $ getVResults appContext
+        vResults <- liftIO $ getValidations appContext
         metrics  <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics    
 
@@ -100,22 +100,33 @@ getVRPs AppContext {..} func = do
         Nothing   -> []
         Just vrps -> [ VrpDto a p len (unTaName ta) | 
                             (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                            Vrp a p len  <- Set.toList vrpSet
-                     ]    
+                            Vrp a p len  <- Set.toList vrpSet ]       
 
-getVResults :: Storage s => AppContext s -> IO [ValidationResult]
-getVResults AppContext {..} = do 
+
+getValidations :: Storage s => AppContext s -> IO (Maybe ValidationsDto)
+getValidations AppContext {..} = do 
     db@DB {..} <- readTVarIO database 
     roTx versionStore $ \tx -> 
-        fmap (fromMaybe []) $ runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion db tx
-                validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
-                pure $ map toVR $ validationsToList validations        
+        runMaybeT $ do
+            lastVersion <- MaybeT $ getLastCompletedVersion db tx
+            validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
+            let validationDtos = map toVR $ validationsToList validations
+            pure $ ValidationsDto {
+                    version   = lastVersion,
+                    timestamp = versionToMoment lastVersion,
+                    validations = validationDtos
+                }
+
+getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) => 
+                    AppContext s -> m ValidationsDto
+getValidationsDto appContext = do
+    vs <- liftIO $ getValidations appContext         
+    maybe notFoundException pure vs    
 
 getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastVersion AppContext {..} = do 
     db <- readTVarIO database 
-    roTx db $ getLastCompletedVersion db                
+    roTx db $ getLastCompletedVersion db              
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m RawMetric
@@ -125,9 +136,11 @@ getMetrics AppContext {..} = do
         runMaybeT $ do
                 lastVersion <- MaybeT $ getLastCompletedVersion db tx
                 MaybeT $ metricsForVersion tx metricStore lastVersion                        
-    case metrics of 
-        Nothing -> throwError err404 { errBody = "Working, please hold still!" }
-        Just m  -> pure m
+    maybe notFoundException pure metrics
+
+
+notFoundException :: MonadError ServerError m => m a
+notFoundException = throwError err404 { errBody = "Working, please hold still!" }
 
 getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m Slurm
@@ -141,9 +154,13 @@ getSlurm AppContext {..} = do
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }
         Just m  -> pure m
     
-toVR :: (Path a, Set.Set VProblem) -> ValidationResult
-toVR (Path path, problems) = 
-    ValidationResult (Set.toList problems) (map segmentToText $ NonEmpty.toList path)    
+toVR :: (Scope a, Set.Set VIssue) -> ValidationDto
+toVR (Scope scope, issues) = ValidationDto {
+        issues = Set.toList issues,
+        path   = map segmentToText $ NonEmpty.toList scope,
+        url    = segmentToText $ NonEmpty.head scope
+    }
+    
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             

@@ -79,7 +79,7 @@ main = do
             let logLevel' = input ^. typed @Config . #logLevel
             withWorkerLogger logLevel' $ \logger -> liftIO $ do
                 (z, validations) <- do
-                            runValidatorT (newValidatorPath "worker-create-app-context")
+                            runValidatorT (newScopes "worker-create-app-context")
                                 $ readWorkerContext input logger
                 case z of
                     Left e ->                        
@@ -100,7 +100,7 @@ mainProcess cliOptions = do
                 else do                                                                                
                     -- run the validator
                     (appContext, validations) <- do
-                                runValidatorT (newValidatorPath "initialise") $ do 
+                                runValidatorT (newScopes "initialise") $ do 
                                     checkPreconditions cliOptions
                                     createAppContext cliOptions logger logLevel
                     case appContext of
@@ -117,10 +117,10 @@ runValidatorApp appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- newWorldVersion
     talNames <- listTALFiles $ talDirectory config
-    let validationContext = newValidatorPath "validation-root"
+    let validationContext = newScopes "validation-root"
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVPath' TASegment (convert taName) $ 
+            inSubVScope' TAFocus (convert taName) $ 
                 parseTALFromFile talFilePath (Text.pack taName)
 
     logInfo_ logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
@@ -245,7 +245,7 @@ initialiseFS cliOptions logger = do
     if cliOptions ^. #agreeWithArinRpa
         then do
             (r, _) <- runValidatorT
-                (newValidatorPath "initialise")
+                (newScopes "initialise")
                 $ do
                     logInfoM logger [i|Initialising FS layout...|]
 
@@ -371,11 +371,11 @@ executeWorker input appContext =
     executeWork input $ \_ resultHandler ->   
         case input ^. #params of
             RrdpFetchParams {..} -> do
-                z <- runValidatorT validatorPath $ 
+                z <- runValidatorT scopes $ 
                             updateObjectForRrdpRepository appContext worldVersion rrdpRepository                            
                 resultHandler $ RrdpFetchResult z
             RsyncFetchParams {..} -> do
-                z <- runValidatorT validatorPath $ 
+                z <- runValidatorT scopes $ 
                             updateObjectForRsyncRepository appContext worldVersion rsyncRepository                            
                 resultHandler $ RsyncFetchResult z
             CompactionParams {..} -> do 
@@ -462,7 +462,7 @@ data CLIOptions wrapped = CLIOptions {
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
-        ("Path to rsync client. By default rsync client is expected to be in the $PATH."),
+        ("Scope to rsync client. By default rsync client is expected to be in the $PATH."),
 
     httpApiPort :: wrapped ::: Maybe Word16 <?>
         "Port to listen to for http API (default is 9999)",

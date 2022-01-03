@@ -277,7 +277,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
     ((z, _ignoreStderr), elapsed) <- 
                     timedMS $ 
                         runValidatorT 
-                            (newValidatorPath "lmdb-compaction-worker") $ 
+                            (newScopes "lmdb-compaction-worker") $ 
                                 runWorker 
                                     logger
                                     config
