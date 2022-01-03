@@ -134,30 +134,34 @@ fetchPPWithFallback
 
     fetchWithFallback _          []   = pure []
     fetchWithFallback parentPath [pp] = do 
-        (repoUrl, fetchFreshness, (r, validations)) <- fetchPPOnce parentPath pp                
-        let validations' = updateFetchMetric repoUrl fetchFreshness validations r      
+        ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentPath pp                
+        let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed     
         pure $ case r of
             Left _     -> [FetchFailure repoUrl validations']
             Right repo -> [FetchSuccess repo validations']        
       where
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT.
-        updateFetchMetric repoUrl fetchFreshness validations r = let
+        updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
                 realFreshness = either (const FailedToFetch) (const fetchFreshness) r
-                repoPath = validatorSubPath' RepositorySegment repoUrl parentPath                   
+                repoPath = validatorSubPath' RepositorySegment repoUrl parentPath     
+                rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoPath ^. typed) f
+                rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoPath ^. typed) f
+                -- this is also a hack to make sure time is updated if the fetch has failed 
+                -- and we probably don't have time at all if the worker timed out                                       
+                updateTime t = if t == mempty then TimeMs elapsed else t
             in case repoUrl of 
-                RrdpU _  -> 
-                    validations 
-                        & typed @RawMetric . #rrdpMetrics 
-                        %~ updateMetricInMap 
-                            (repoPath ^. typed) 
-                            (& #fetchFreshness .~ realFreshness)                     
-                RsyncU _ -> 
-                    validations 
-                        & typed @RawMetric . #rsyncMetrics 
-                        %~ updateMetricInMap 
-                            (repoPath ^. typed) 
-                            (& #fetchFreshness .~ realFreshness)
+                RrdpU _ -> let 
+                        updatedFreshness = rrdpMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                    in case r of 
+                        Left _  -> rrdpMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Right _ -> updatedFreshness
+                RsyncU _ -> let 
+                        updatedFreshness = rsyncMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                    in case r of 
+                        Left _  -> rsyncMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Right _ -> updatedFreshness   
+
                     
 
     fetchWithFallback parentPath (pp : pps') = do 
