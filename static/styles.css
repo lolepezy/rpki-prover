@@ -134,7 +134,7 @@ td, th {
   .tooltip .tooltiptext {
     visibility: hidden;
     width: 600px;
-    background-color: rgb(131, 131, 131);
+    background-color: rgb(128, 135, 135);
     color: #fff;
     text-align: center;
     border-radius: 6px;
