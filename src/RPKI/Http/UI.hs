@@ -230,8 +230,10 @@ validaionDetailsHtml :: [ValidationResult] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
-            th $ H.span $ H.text "Problem"
-            th $ H.span $ H.text "URL/Path"
+            th $ H.span $ H.text "Problem"            
+            th $ H.div ! A.class_ "tooltip" $ do
+                H.text "URL/Path"
+                H.span ! A.class_ "tooltiptext" $ validationPathTootip               
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
                 tr $ td ! colspan "2" $                                         
@@ -303,6 +305,11 @@ rrdpUpdateTooltip = do
             H.li $ H.text "'Deltas' - deltas were used for RRDP update"
             H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
 
+validationPathTootip :: Html
+validationPathTootip = do        
+    H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
+    H.text "'Path' here shows the full sequence of objects from the TA to the object in question."
+        
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
