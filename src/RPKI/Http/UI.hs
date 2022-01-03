@@ -96,7 +96,7 @@ validationMetricsHtml (groupedValidationMetric -> grouped) = do
             th $ do 
                 H.text "Trust Anchor ("
                 toHtml $ length taMetrics
-                H.text " in total)" 
+                H.text " in total)"
             th $ H.text "Validation time"
             th $ H.text "Original VRPs"      
             th $ H.text "Unique VRPs"      
@@ -123,10 +123,11 @@ validationMetricsHtml (groupedValidationMetric -> grouped) = do
     -- this is for per-repository metrics        
     H.table $ do         
         H.thead $ tr $ do 
-            th $ do 
+            th $ H.div ! A.class_ "tooltip" $ do 
                 H.text "Primary repository ("
                 toHtml $ length repoMetrics
                 H.text " in total)" 
+                H.span ! A.class_ "tooltiptext" $ primaryRepoTooltip
             th $ H.text "Original VRPs"      
             th $ H.text "Objects"
             th $ H.text "ROAs"
@@ -161,19 +162,22 @@ validationMetricsHtml (groupedValidationMetric -> grouped) = do
             td $ toHtml $ show $ vm ^. #validCrlNumber
             td $ toHtml $ show $ vm ^. #validGbrNumber
 
-
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table $ do 
-        let rrdpMap = unMetricMap rrdpMetricMap        
+        let rrdpMap = unMetricMap rrdpMetricMap                
 
-        H.thead $ tr $ do 
+        H.thead $ tr $ do                         
             th $ do 
                 H.text "Repository (" 
                 toHtml $ MonoidalMap.size rrdpMap
-                H.text " in total)" 
-            th $ H.text "Fetching"
-            th $ H.text "RRDP Update"            
+                H.text " in total)"                                 
+            th $ H.div ! A.class_ "tooltip" $ do
+                H.text "Fetching"
+                H.span ! A.class_ "tooltiptext" $ fetchTooltip            
+            th $ H.div ! A.class_ "tooltip" $ do 
+                H.text "RRDP Update"            
+                H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip
             th $ H.text "Added objects"
             th $ H.text "Deleted objects"
             th $ H.text "Last HTTP status"
@@ -206,7 +210,9 @@ rsyncMetricsHtml rsyncMetricMap =
                 H.text "Repository ("
                 toHtml $ Map.size rsyncMap
                 H.text " in total)" 
-            th $ H.text "Fetching"
+            th $ H.div ! A.class_ "tooltip" $ do
+                H.text "Fetching"
+                H.span ! A.class_ "tooltiptext" $ fetchTooltip            
             th $ H.text "Processed objects"
             th $ H.text "Total time"                    
 
@@ -270,7 +276,33 @@ validaionDetailsHtml result =
             countP z ValidationResult {..} = List.foldl' countEW z problems
             countEW (e, w) (VErr _)  = (e + 1, w)
             countEW (e, w) (VWarn _) = (e, w + 1)
-                
+
+
+primaryRepoTooltip :: Html
+primaryRepoTooltip = 
+    H.text $ "Objects are associated with a repository they are downloaded from. " <> 
+            "Fallback from RRDP to rsync does not change this association, " <> 
+            "so a valid object is attributed to the RRDP repository even " <> 
+            "if it was downloaded from the rsync one becasue of the fall-back."
+
+fetchTooltip :: Html
+fetchTooltip = do                
+    H.div ! A.style "text-align: left;" $ do 
+        space >> space >> H.text "Values here mean" >> H.br
+        H.ul $ do 
+            H.li $ H.text "'Up-to-date' - no fetch is needed, RRDP repository was " <> 
+                            "updated less than 'rrdp-interval' seconds ago."
+            H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
+
+rrdpUpdateTooltip :: Html
+rrdpUpdateTooltip = do
+    H.div ! A.style "text-align: left;" $ do 
+        space >> space >> H.text "Values here mean" >> H.br
+        H.ul $ do 
+            H.li $ H.text "'Snapshot' - snapshot was used for RRDP update"
+            H.li $ H.text "'Deltas' - deltas were used for RRDP update"
+            H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
+
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
 groupByTa vrs = 
@@ -312,8 +344,8 @@ instance ToMarkup HttpStatus where
     toMarkup (HttpStatus s) = toMarkup $ show s
 
 instance ToMarkup FetchFreshness where 
-    toMarkup UpToDate       = toMarkup ("-" :: Text)
-    toMarkup AttemptedFetch = toMarkup ("Attempted" :: Text)
+    toMarkup UpToDate       = toMarkup ("Up-to-date" :: Text)
+    toMarkup AttemptedFetch = toMarkup ("Succeeded" :: Text)
     toMarkup FailedToFetch  = toMarkup ("Failed" :: Text)
 
 instance ToMarkup RrdpSource where 
