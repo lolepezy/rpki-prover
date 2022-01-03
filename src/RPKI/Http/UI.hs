@@ -1,10 +1,11 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE QuasiQuotes           #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE TypeOperators         #-}
 
@@ -15,6 +16,8 @@ import           Control.Lens                ((^.))
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
+
+import qualified Data.String.Interpolate.IsString as T
 
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
@@ -174,7 +177,7 @@ rrdpMetricsHtml rrdpMetricMap =
                 H.text " in total)"                                 
             th $ H.div ! A.class_ "tooltip" $ do
                 H.text "Fetching"
-                H.span ! A.class_ "tooltiptext" $ fetchTooltip            
+                H.span ! A.class_ "tooltiptext" $ rrdpFetchTooltip            
             th $ H.div ! A.class_ "tooltip" $ do 
                 H.text "RRDP Update"            
                 H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip
@@ -212,7 +215,7 @@ rsyncMetricsHtml rsyncMetricMap =
                 H.text " in total)" 
             th $ H.div ! A.class_ "tooltip" $ do
                 H.text "Fetching"
-                H.span ! A.class_ "tooltiptext" $ fetchTooltip            
+                H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
             th $ H.text "Processed objects"
             th $ H.text "Total time"                    
 
@@ -287,28 +290,33 @@ primaryRepoTooltip =
             "so a valid object is attributed to the RRDP repository even " <> 
             "if it was downloaded from the rsync one becasue of the fall-back."
 
-fetchTooltip :: Html
-fetchTooltip = do                
+fetchTooltip :: Text -> Text -> Html
+fetchTooltip repoType setting = do                
     H.div ! A.style "text-align: left;" $ do 
-        space >> space >> H.text "Values here mean" >> H.br
+        space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
-            H.li $ H.text "'Up-to-date' - no fetch is needed, RRDP repository was " <> 
-                            "updated less than 'rrdp-interval' seconds ago."
+            H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was updated less than '#{setting}' seconds ago.|]
             H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
+
+rrdpFetchTooltip :: Html
+rrdpFetchTooltip = fetchTooltip "RRDP" "rrdp-timeout"
+rsyncFetchTooltip = fetchTooltip "rsync" "rsync-timeout"
 
 rrdpUpdateTooltip :: Html
 rrdpUpdateTooltip = do
     H.div ! A.style "text-align: left;" $ do 
-        space >> space >> H.text "Values here mean" >> H.br
+        space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
             H.li $ H.text "'Snapshot' - snapshot was used for RRDP update"
             H.li $ H.text "'Deltas' - deltas were used for RRDP update"
             H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
 
 validationPathTootip :: Html
-validationPathTootip = do        
+validationPathTootip = do   
+    space >> space
     H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
     H.text "'Path' here shows the full sequence of objects from the TA to the object in question."
+    space >> space
         
 
 groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
