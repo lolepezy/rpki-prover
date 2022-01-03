@@ -47,6 +47,7 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.AppStorage
+import Data.Vector (uniq)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -112,7 +113,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (processTALs database' `finally` cleanupAfterValidation)
                 (\(vrps, slurmedVrps) elapsed ->                    
                     logInfoM logger $
-                        [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs, |] <> 
+                        [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <> 
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where 
                 cleanupAfterValidation = do 

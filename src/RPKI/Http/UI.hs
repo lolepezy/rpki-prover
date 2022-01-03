@@ -233,7 +233,7 @@ validaionDetailsHtml :: [ValidationResult] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
-            th $ H.span $ H.text "Problem"            
+            th $ H.span $ H.text "Issue"            
             th $ H.div ! A.class_ "tooltip" $ do
                 H.text "URL/Path"
                 H.span ! A.class_ "tooltiptext" $ validationPathTootip               
@@ -285,22 +285,21 @@ validaionDetailsHtml result =
 
 primaryRepoTooltip :: Html
 primaryRepoTooltip = 
-    H.text $ "Objects are associated with a repository they are downloaded from. " <> 
-            "Fallback from RRDP to rsync does not change this association, " <> 
-            "so a valid object is attributed to the RRDP repository even " <> 
-            "if it was downloaded from the rsync one becasue of the fall-back."
+    H.text $ "For metrics puposes objects are associated with a repository they are downloaded from. " <> 
+            "Fallback from RRDP to rsync does not change this association, so a valid object is attributed " <> 
+            "to the RRDP repository even if it was downloaded from the rsync one becasue of the fall-back."
 
 fetchTooltip :: Text -> Text -> Html
 fetchTooltip repoType setting = do                
     H.div ! A.style "text-align: left;" $ do 
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
-            H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was updated less than '#{setting}' seconds ago.|]
+            H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
             H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
 
 rrdpFetchTooltip :: Html
-rrdpFetchTooltip = fetchTooltip "RRDP" "rrdp-timeout"
-rsyncFetchTooltip = fetchTooltip "rsync" "rsync-timeout"
+rrdpFetchTooltip = fetchTooltip "RRDP" "rrdp-refresh-interval"
+rsyncFetchTooltip = fetchTooltip "rsync" "rsync-refresh-interval"
 
 rrdpUpdateTooltip :: Html
 rrdpUpdateTooltip = do
