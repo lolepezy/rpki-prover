@@ -192,7 +192,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
         -- will spend some time waiting for the file IO to finish.
         (2 * cpuParallelism)
         traverseFS
-        (saveObjects worldVersion)
+        saveObjects
         (cancelTask . snd)        
   where    
     threads = cpuBottleneck appBottlenecks
@@ -238,7 +238,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                                     -- a slow CPU-intensive transaction (verify that it's the case)
                                     Right ro -> T2 uri (Right $! SObject $ toStorableObject ro)
     
-    saveObjects worldVersion queue = do            
+    saveObjects queue = do            
         mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
             DB.rwAppTx objectStore go
         where
@@ -250,7 +250,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                     process tx uri r
                     go tx
 
-        process tx rpkiURL@(RsyncURL uri) = \case
+        process tx (RsyncURL uri) = \case
             Left (e :: SomeException) -> 
                 throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
             
