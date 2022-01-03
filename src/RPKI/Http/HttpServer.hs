@@ -132,10 +132,10 @@ getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m RawMetric
 getMetrics AppContext {..} = do
     db@DB {..} <- liftIO $ readTVarIO database 
-    metrics <- liftIO $ roTx db $ \tx -> do
+    metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion db tx
-                MaybeT $ metricsForVersion tx metricStore lastVersion                        
+            lastVersion <- MaybeT $ getLastCompletedVersion db tx
+            MaybeT $ metricsForVersion tx metricStore lastVersion
     maybe notFoundException pure metrics
 
 
