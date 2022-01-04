@@ -42,7 +42,7 @@ import RPKI.Http.Messages
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> Maybe ValidationsDto -> RawMetric -> Html
+mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto ValidationDto) -> RawMetric -> Html
 mainPage worldVersion validations metrics =     
     H.docTypeHtml $ do
         H.head $ do
@@ -289,7 +289,7 @@ primaryRepoTooltip :: Html
 primaryRepoTooltip = 
     H.text $ "For metrics puposes objects are associated with a repository they are downloaded from. " <> 
             "Fallback from RRDP to rsync does not change this association, so a valid object is attributed " <> 
-            "to the RRDP repository even if it was downloaded from the rsync one becasue of the fall-back."
+            "to the RRDP repository even if it was downloaded from the rsync one because of the fall-back."
 
 fetchTooltip :: Text -> Text -> Html
 fetchTooltip repoType setting = do                

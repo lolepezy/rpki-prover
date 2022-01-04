@@ -3,11 +3,12 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE RecordWildCards      #-}
 
 module RPKI.Http.Types where
 
-import           Data.Bifunctor (bimap)
+import           Control.Lens hiding ((.=))
 
 import qualified Data.ByteString.Lazy as LBS
 
@@ -17,7 +18,6 @@ import qualified Data.Text                   as Text
 import           Data.Text.Encoding          (encodeUtf8)
 
 import           Data.Aeson as Json
-import           Data.Aeson.Types
 
 import           GHC.Generics                (Generic)
 import qualified Data.Vector as V
@@ -38,10 +38,10 @@ import           RPKI.Time
 import           RPKI.Util (mkHash)
 
 
-data ValidationsDto = ValidationsDto {
+data ValidationsDto a = ValidationsDto {
         version     :: WorldVersion,
         timestamp   :: Instant,
-        validations :: [ValidationDto]
+        validations :: [a]
     } deriving stock (Generic)
 
 data ValidationDto = ValidationDto {
@@ -49,6 +49,9 @@ data ValidationDto = ValidationDto {
         path    :: [Text],
         url     :: Text
     } deriving stock (Generic)
+
+newtype MinimalValidationDto = MinimalValidationDto ValidationDto
+    deriving stock (Generic)    
 
 data MetricsDto = MetricsDto {
         issues  :: [VIssue],
@@ -71,7 +74,7 @@ parseHash hashText = bimap
     (Text.pack . ("Broken hex: " <>) . show)
     mkHash
     $ Hex.decode $ encodeUtf8 hashText
-        
+            
 data ManualCVS = ManualCVS
 
 newtype RawCVS = RawCVS { unRawCSV :: LBS.ByteString }
@@ -85,20 +88,26 @@ instance MimeRender ManualCVS RawCVS where
 instance ToJSON RObject
 instance ToJSON VrpDto     
 
-instance ToJSON ValidationsDto
+instance ToJSON a =>  ToJSON (ValidationsDto a)
 
 instance ToJSON ValidationDto where
     toJSON ValidationDto {..} = object [         
             "url"       .= url,
             "full-path" .= path,
-            "issues"    .= Array (V.fromList vIssues)
-        ]
-      where        
-        vIssues = flip map issues $ \case
-            VErr e             -> issueObj "error" e
-            VWarn (VWarning e) -> issueObj "warning" e            
-        issueObj t e = object [ 
-                "type" .= (t :: Text), 
-                "message" .= toMessage e 
-            ]
-        
+            "issues"    .= Array (V.fromList $ issuesJson issues)
+        ]      
+
+instance ToJSON MinimalValidationDto where
+    toJSON (MinimalValidationDto ValidationDto {..}) = object [         
+            "url"       .= url,
+            "issues"    .= Array (V.fromList $ issuesJson issues)
+        ]      
+
+issuesJson :: [VIssue] -> [Value]
+issuesJson issues = flip map issues $ \case
+    VErr e             -> object [ "error"   .= toMessage e ]
+    VWarn (VWarning e) -> object [ "warning" .= toMessage e ]
+
+
+toMinimalValidations :: ValidationsDto ValidationDto -> ValidationsDto MinimalValidationDto
+toMinimalValidations = ( & #validations %~ map MinimalValidationDto )

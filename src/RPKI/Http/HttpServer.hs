@@ -12,6 +12,7 @@ import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
+
 import           FileEmbedLzma
 
 import           Servant hiding (URI)
@@ -59,7 +60,8 @@ httpApi appContext = genericServe HttpApi {
 
         slurm = getSlurm appContext,
                 
-        validationResults = getValidationsDto appContext,
+        validationResults        = getValidationsDto appContext,
+        validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
         appMetrics        = getMetrics appContext,                
         lmdbStats = getStats appContext,
         objectView = getRpkiObject appContext    
@@ -103,7 +105,7 @@ getVRPs AppContext {..} func = do
                             Vrp a p len  <- Set.toList vrpSet ]       
 
 
-getValidations :: Storage s => AppContext s -> IO (Maybe ValidationsDto)
+getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto ValidationDto))
 getValidations AppContext {..} = do 
     db@DB {..} <- readTVarIO database 
     roTx versionStore $ \tx -> 
@@ -118,7 +120,7 @@ getValidations AppContext {..} = do
                 }
 
 getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) => 
-                    AppContext s -> m ValidationsDto
+                    AppContext s -> m (ValidationsDto ValidationDto)
 getValidationsDto appContext = do
     vs <- liftIO $ getValidations appContext         
     maybe notFoundException pure vs    
