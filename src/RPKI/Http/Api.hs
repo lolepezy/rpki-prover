@@ -12,7 +12,6 @@ import           Servant.API.Generic
 import           Servant.HTML.Blaze (HTML)
 import           Text.Blaze.Html5 (Html)
 
-import           RPKI.Reporting
 import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types

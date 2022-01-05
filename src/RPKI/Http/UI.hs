@@ -261,12 +261,12 @@ validaionDetailsHtml result =
             htmlRow index $ do 
                 let (marker, problem) = 
                         case pr of 
-                            VErr err           -> ("red-dot",  err)                                        
-                            VWarn (VWarning w) -> ("yellow-dot", w)
+                            ErrorDto err -> ("red-dot",  err)                                        
+                            WarningDto w -> ("yellow-dot", w)
                 td $ H.span $ do 
                     H.span ! A.class_ marker $ ""
                     space >> space
-                    mapM_ (\z -> H.text z >> H.br) $ Text.lines $ toMessage problem
+                    mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td $ do
                     H.div ! class_ "flex short-link" $ do
                         H.div ! class_ "pointer-right" $ arrowRight >> space
@@ -281,8 +281,8 @@ validaionDetailsHtml result =
         List.foldl' countP (0 :: Int, 0 :: Int)
         where
             countP z ValidationDto {..} = List.foldl' countEW z issues
-            countEW (e, w) (VErr _)  = (e + 1, w)
-            countEW (e, w) (VWarn _) = (e, w + 1)
+            countEW (e, w) (ErrorDto _)   = (e + 1, w)
+            countEW (e, w) (WarningDto _) = (e, w + 1)
 
 
 primaryRepoTooltip :: Html

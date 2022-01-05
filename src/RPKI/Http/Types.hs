@@ -11,25 +11,20 @@ module RPKI.Http.Types where
 
 import           Control.Lens hiding ((.=))
 
-import qualified Data.ByteString.Lazy as LBS
-
+import qualified Data.ByteString.Lazy        as LBS
+import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
-
 import           Data.Text.Encoding          (encodeUtf8)
 
 import           Data.Aeson.Types
 
 import           GHC.Generics                (Generic)
 import qualified Data.Vector                 as V
-
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
-
-
-import qualified Data.ByteString.Base16      as Hex
 
 import           Servant.API
 import           Network.HTTP.Media ((//))
@@ -39,7 +34,6 @@ import           RPKI.Domain
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
 import           RPKI.Reporting
-import           RPKI.Http.Messages
 
 import           RPKI.Resources.Types
 import           RPKI.Time
@@ -50,34 +44,41 @@ data ValidationsDto a = ValidationsDto {
         version     :: WorldVersion,
         timestamp   :: Instant,
         validations :: [a]
-    } deriving stock (Generic)
+    } 
+    deriving stock (Eq, Show, Generic)
+
+data IssueDto = ErrorDto Text | WarningDto Text
+    deriving stock (Eq, Show, Generic)
 
 data ValidationDto = ValidationDto {
-        issues  :: [VIssue],
+        issues  :: [IssueDto],
         path    :: [Text],
         url     :: Text
-    } deriving stock (Generic)
+    } 
+    deriving stock (Eq, Show, Generic)
 
 newtype MinimalDto = MinimalDto ValidationDto
-    deriving stock (Generic)    
+    deriving stock (Eq, Show, Generic)
 
 data VrpDto = VrpDto {
         asn       :: ASN,
         prefix    :: IpPrefix,
         maxLength :: PrefixLength,
         ta        :: Text
-    } deriving stock (Eq, Show, Generic)
+    } 
+    deriving stock (Eq, Show, Generic)
 
 newtype RObject = RObject (Located RpkiObject)
     deriving stock (Eq, Show, Generic)
 
 data MetricsDto = MetricsDto {
         groupedValidations :: GroupedValidationMetric ValidationMetric,      
-        rsync      :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
-        rrdp       :: MonoidalMap (DtoScope 'Metric) RrdpMetric
+        rsync              :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
+        rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric
     } 
     deriving stock (Eq, Show, Generic)
             
+
 data ManualCVS = ManualCVS
 
 newtype RawCVS = RawCVS { unRawCSV :: LBS.ByteString }
@@ -106,10 +107,10 @@ instance ToJSON MinimalDto where
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
-issuesJson :: [VIssue] -> [Value]
+issuesJson :: [IssueDto] -> [Value]
 issuesJson issues = flip map issues $ \case
-    VErr e             -> object [ "error"   .= toMessage e ]
-    VWarn (VWarning e) -> object [ "warning" .= toMessage e ]
+    ErrorDto e   -> object [ "error"   .= e ]
+    WarningDto w -> object [ "warning" .= w ]
 
 
 newtype DtoScope (s :: ScopeKind) = DtoScope (Scope s)

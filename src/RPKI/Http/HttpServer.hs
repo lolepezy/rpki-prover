@@ -30,6 +30,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Http.Messages
 import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Http.Api
@@ -71,7 +72,7 @@ httpApi appContext = genericServe HttpApi {
         worldVersion <- liftIO $ getLastVersion appContext
         vResults     <- liftIO $ getValidations appContext
         metrics <- getMetrics appContext
-        pure $ mainPage worldVersion vResults metrics
+        pure $ mainPage worldVersion vResults metrics    
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
@@ -159,10 +160,14 @@ getSlurm AppContext {..} = do
     
 toVR :: (Scope a, Set.Set VIssue) -> ValidationDto
 toVR (Scope scope, issues) = ValidationDto {
-        issues = Set.toList issues,
+        issues = map toDto $ Set.toList issues,
         path   = map focusToText $ NonEmpty.toList scope,
         url    = focusToText $ NonEmpty.head scope
     }
+  where
+    toDto = \case
+        VErr e               -> ErrorDto $ toMessage e
+        (VWarn (VWarning w)) -> WarningDto $ toMessage w
     
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
