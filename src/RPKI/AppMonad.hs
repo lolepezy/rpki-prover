@@ -44,8 +44,8 @@ fromEither :: Either AppError r -> PureValidatorT r
 fromEither z =
     case z of 
         Left e -> do 
-            validationPath <- asks (^. typed)
-            modify' $ typed %~ (mError validationPath e <>)
+            validationScope <- asks (^. typed)
+            modify' $ typed %~ (mError validationScope e <>)
             lift $ ExceptT $ pure z
         Right _ -> 
             lift $ ExceptT $ pure z
@@ -135,16 +135,16 @@ appError = vHoist . pureError
 
 pureWarning :: VWarning -> PureValidatorT ()
 pureWarning warning = do 
-    validationPath <- asks (^. typed)
-    modify' (typed %~ (mWarning validationPath warning <>))
+    validationScope <- asks (^. typed)
+    modify' (typed %~ (mWarning validationScope warning <>))
 
 vPureError :: ValidationError -> PureValidatorT r
 vPureError e = pureError $ ValidationE e    
 
 pureError :: AppError -> PureValidatorT r
 pureError e = do
-    validationPath <- asks (^. typed)
-    modify' $ typed %~ (mError validationPath e <>)
+    validationScope <- asks (^. typed)
+    modify' $ typed %~ (mError validationScope e <>)
     throwError e
 
 catchAndEraseError :: Monad m => 
@@ -156,8 +156,8 @@ catchAndEraseError f predicate errorHandler = do
     catchError f $ \e -> 
         if predicate e 
             then do 
-                validationPath <- asks (^. typed)
-                modify' $ typed %~ removeValidation validationPath predicate
+                validationScope <- asks (^. typed)
+                modify' $ typed %~ removeValidation validationScope predicate
                 errorHandler 
             else throwError e
 

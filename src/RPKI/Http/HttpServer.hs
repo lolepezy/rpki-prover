@@ -30,7 +30,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Metrics
+import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Http.Types
@@ -62,16 +62,16 @@ httpApi appContext = genericServe HttpApi {
                 
         validationResults        = getValidationsDto appContext,
         validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
-        appMetrics        = getMetrics appContext,                
+        metrics = snd <$> getMetrics appContext,                
         lmdbStats = getStats appContext,
         objectView = getRpkiObject appContext    
     }
 
     uiServer = do 
         worldVersion <- liftIO $ getLastVersion appContext
-        vResults <- liftIO $ getValidations appContext
-        metrics  <- getMetrics appContext
-        pure $ mainPage worldVersion vResults metrics    
+        vResults     <- liftIO $ getValidations appContext
+        metrics <- getMetrics appContext
+        pure $ mainPage worldVersion vResults metrics
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
@@ -131,13 +131,14 @@ getLastVersion AppContext {..} = do
     roTx db $ getLastCompletedVersion db              
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
-            AppContext s -> m RawMetric
+            AppContext s -> m (RawMetric, MetricsDto)
 getMetrics AppContext {..} = do
     db@DB {..} <- liftIO $ readTVarIO database 
     metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
             lastVersion <- MaybeT $ getLastCompletedVersion db tx
-            MaybeT $ metricsForVersion tx metricStore lastVersion
+            rawMetrics  <- MaybeT $ metricsForVersion tx metricStore lastVersion
+            pure (rawMetrics, toMetricsDto rawMetrics)
     maybe notFoundException pure metrics
 
 
@@ -159,8 +160,8 @@ getSlurm AppContext {..} = do
 toVR :: (Scope a, Set.Set VIssue) -> ValidationDto
 toVR (Scope scope, issues) = ValidationDto {
         issues = Set.toList issues,
-        path   = map segmentToText $ NonEmpty.toList scope,
-        url    = segmentToText $ NonEmpty.head scope
+        path   = map focusToText $ NonEmpty.toList scope,
+        url    = focusToText $ NonEmpty.head scope
     }
     
 

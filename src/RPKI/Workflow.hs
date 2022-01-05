@@ -40,7 +40,7 @@ import           RPKI.Store.Database
 import           RPKI.TopDown
 
 import           RPKI.AppContext
-import           RPKI.Metrics
+import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL

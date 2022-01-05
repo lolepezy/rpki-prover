@@ -33,7 +33,7 @@ import Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes
 import           RPKI.AppState
-import           RPKI.Metrics
+import           RPKI.Metrics.Metrics
 import           RPKI.Reporting
 import           RPKI.Time
 
@@ -42,8 +42,8 @@ import RPKI.Http.Messages
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto ValidationDto) -> RawMetric -> Html
-mainPage worldVersion validations metrics =     
+mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto ValidationDto) -> (RawMetric, MetricsDto) -> Html
+mainPage worldVersion validations (rawMetric, metricsDto) =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -67,13 +67,13 @@ mainPage worldVersion validations metrics =
                 H.br >> H.br            
                 H.a ! A.id "validation-metrics" $ "" 
                 H.section $ H.text "Validation metrics"
-                validationMetricsHtml metrics
+                validationMetricsHtml $ metricsDto ^. #groupedValidations
                 H.a ! A.id "rrdp-metrics" $ ""
                 H.section $ H.text "RRDP metrics"
-                rrdpMetricsHtml $ rrdpMetrics metrics 
+                rrdpMetricsHtml $ rrdpMetrics rawMetric 
                 H.a ! A.id "rsync-metrics" $ ""
                 H.section $ H.text "Rsync metrics"
-                rsyncMetricsHtml $ rsyncMetrics metrics        
+                rsyncMetricsHtml $ rsyncMetrics rawMetric        
                 H.a ! A.id "validation-details" $ ""
                 H.section $ H.text "Validation details"
                 validaionDetailsHtml $ vs ^. #validations
@@ -89,11 +89,11 @@ overallHtml (Just worldVersion) = do
         space >> H.text "(UTC)"
 
 
-validationMetricsHtml :: RawMetric -> Html
-validationMetricsHtml (groupedValidationMetric -> grouped) = do 
+validationMetricsHtml :: GroupedValidationMetric ValidationMetric -> Html
+validationMetricsHtml grouped = do 
     
-    let repoMetrics = MonoidalMap.toList $ grouped ^. #perRepository
-    let taMetrics   = MonoidalMap.toList $ grouped ^. #perTa        
+    let repoMetrics = MonoidalMap.toList $ grouped ^. #byRepository
+    let taMetrics   = MonoidalMap.toList $ grouped ^. #byTa        
 
     -- this is for per-TA metrics
     H.table $ do         
@@ -119,7 +119,7 @@ validationMetricsHtml (groupedValidationMetric -> grouped) = do
                     (\vm' -> td $ toHtml $ show $ vm' ^. #uniqueVrpNumber) 
                     vm      
             
-            metricRow (MonoidalMap.size (grouped ^. #perTa) + 1) 
+            metricRow (MonoidalMap.size (grouped ^. #byTa) + 1) 
                         ("Total" :: Text) 
                         (const $ td $ toHtml $ text "-")
                         (const $ td $ toHtml $ show $ grouped ^. #total . #uniqueVrpNumber)
@@ -370,4 +370,4 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
 
 instance ToMarkup Focus where 
-    toMarkup = toMarkup . segmentToText
+    toMarkup = toMarkup . focusToText

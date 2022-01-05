@@ -17,6 +17,7 @@ import           Data.Text.Encoding          (decodeUtf8)
 
 import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
+import           Data.Aeson.Types            (toJSONKeyText)
 import           Data.Tuple.Strict
 
 import           Data.String.Interpolate.IsString
@@ -43,6 +44,7 @@ import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 
 import           RPKI.Reporting
+import           RPKI.Metrics.Metrics
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable
@@ -140,12 +142,16 @@ instance ToJSON DBStats
 instance ToJSON TotalDBStats
 instance ToJSON RawMetric
 instance ToJSON VrpCounts
-instance ToJSON TaName
+
+instance ToJSON TaName where 
+    toJSON (TaName t) = toJSON t
+
 instance ToJSON a => ToJSON (MetricMap a)
 instance ToJSON ValidationMetric
+instance ToJSON a => ToJSON (GroupedValidationMetric a)
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
-instance ToJSON PathKind
+instance ToJSON ScopeKind
 instance ToJSON FetchFreshness
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
@@ -153,10 +159,13 @@ instance ToJSON HttpStatus where
 instance ToJSON RrdpSource
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
-instance ToJSONKey TaName
+instance ToJSONKey TaName where
+    toJSONKey = toJSONKeyText unTaName
+
+instance ToJSONKey RpkiURL
 instance ToJSON (Scope 'Metric)
 instance ToJSON TimeMs where 
-    toJSON (TimeMs s) = toJSON $ show s <> "ms"
+    toJSON (TimeMs s) = toJSON s
 
 instance ToJSON Count where
     toJSON (Count s) = toJSON s

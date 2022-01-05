@@ -206,11 +206,11 @@ data Focus = TAFocus Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
-newtype Scope a = Scope (NonEmpty Focus)
+newtype Scope t = Scope (NonEmpty Focus)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data PathKind = Validation | Metric
+data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
@@ -218,7 +218,7 @@ type VScope      = Scope 'Validation
 type MetricScope = Scope 'Metric
     
 data Scopes = Scopes {
-        validationPath :: VScope,
+        validationScope :: VScope,
         metricScope     :: MetricScope
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -235,8 +235,8 @@ newScopes = newScopes' TextFocus
 
 newScopes' :: (a -> Focus) -> a -> Scopes
 newScopes' c t = Scopes {
-        validationPath = newScope' c t,
-        metricScope    = newScope' c t
+        validationScope = newScope' c t,
+        metricScope     = newScope' c t
     }    
 
 subScope :: Text -> Scope t -> Scope t
@@ -433,7 +433,7 @@ validationsToList :: Validations -> [(VScope, Set VIssue)]
 validationsToList (Validations vMap) = Map.toList vMap 
 
 updateMetricInMap :: Monoid a => 
-                MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
+                    MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
 updateMetricInMap metricScope f (MetricMap (MonoidalMap mm)) = 
     MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) metricScope mm
 
@@ -444,8 +444,8 @@ lookupMetric metricScope (MetricMap (MonoidalMap mm)) = Map.lookup metricScope m
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
-segmentToText :: Focus -> Text
-segmentToText = \case
+focusToText :: Focus -> Text
+focusToText = \case
     TAFocus txt         -> txt
     ObjectFocus txt     -> txt
     PPFocus txt         -> unURI $ getURL txt

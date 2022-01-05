@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Http.Types where
 
@@ -17,10 +18,16 @@ import qualified Data.Text                   as Text
 
 import           Data.Text.Encoding          (encodeUtf8)
 
-import           Data.Aeson as Json
+import           Data.Aeson.Types
 
 import           GHC.Generics                (Generic)
-import qualified Data.Vector as V
+import qualified Data.Vector                 as V
+
+import qualified Data.List.NonEmpty          as NonEmpty
+
+import           Data.Map.Monoidal.Strict (MonoidalMap)
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
+
 
 import qualified Data.ByteString.Base16      as Hex
 
@@ -29,6 +36,7 @@ import           Network.HTTP.Media ((//))
 
 import           RPKI.AppTypes
 import           RPKI.Domain
+import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
 import           RPKI.Reporting
 import           RPKI.Http.Messages
@@ -50,14 +58,8 @@ data ValidationDto = ValidationDto {
         url     :: Text
     } deriving stock (Generic)
 
-newtype MinimalValidationDto = MinimalValidationDto ValidationDto
+newtype MinimalDto = MinimalDto ValidationDto
     deriving stock (Generic)    
-
-data MetricsDto = MetricsDto {
-        issues  :: [VIssue],
-        path    :: [Text],
-        url     :: Text
-    } deriving stock (Generic)
 
 data VrpDto = VrpDto {
         asn       :: ASN,
@@ -69,11 +71,12 @@ data VrpDto = VrpDto {
 newtype RObject = RObject (Located RpkiObject)
     deriving stock (Eq, Show, Generic)
 
-parseHash :: Text -> Either Text Hash
-parseHash hashText = bimap 
-    (Text.pack . ("Broken hex: " <>) . show)
-    mkHash
-    $ Hex.decode $ encodeUtf8 hashText
+data MetricsDto = MetricsDto {
+        groupedValidations :: GroupedValidationMetric ValidationMetric,      
+        rsync      :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
+        rrdp       :: MonoidalMap (DtoScope 'Metric) RrdpMetric
+    } 
+    deriving stock (Eq, Show, Generic)
             
 data ManualCVS = ManualCVS
 
@@ -97,8 +100,8 @@ instance ToJSON ValidationDto where
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
-instance ToJSON MinimalValidationDto where
-    toJSON (MinimalValidationDto ValidationDto {..}) = object [         
+instance ToJSON MinimalDto where
+    toJSON (MinimalDto ValidationDto {..}) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
@@ -109,5 +112,30 @@ issuesJson issues = flip map issues $ \case
     VWarn (VWarning e) -> object [ "warning" .= toMessage e ]
 
 
-toMinimalValidations :: ValidationsDto ValidationDto -> ValidationsDto MinimalValidationDto
-toMinimalValidations = ( & #validations %~ map MinimalValidationDto )
+newtype DtoScope (s :: ScopeKind) = DtoScope (Scope s)
+    deriving stock (Show, Eq, Ord, Generic)
+
+instance ToJSON MetricsDto
+
+instance ToJSONKey (DtoScope s) where 
+    toJSONKey = toJSONKeyText $ \(DtoScope (Scope s)) -> focusToText $ NonEmpty.head s    
+
+instance ToJSON (DtoScope s) where
+    toJSON (DtoScope (Scope s)) = Array $ V.fromList $ map toJSON $ NonEmpty.toList s
+
+
+toMinimalValidations :: ValidationsDto ValidationDto -> ValidationsDto MinimalDto
+toMinimalValidations = (& #validations %~ map MinimalDto)
+
+toMetricsDto :: RawMetric -> MetricsDto
+toMetricsDto rawMetrics = MetricsDto {
+        groupedValidations = groupedValidationMetric rawMetrics,
+        rsync   = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rsyncMetrics,
+        rrdp    = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics
+    }
+
+parseHash :: Text -> Either Text Hash
+parseHash hashText = bimap 
+    (Text.pack . ("Broken hex: " <>) . show)
+    mkHash
+    $ Hex.decode $ encodeUtf8 hashText

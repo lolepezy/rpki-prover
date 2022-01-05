@@ -27,10 +27,10 @@ data API api = API {
 
         slurm :: api :- "slurm.json" :> Get '[JSON] Slurm,
                 
-        validationResultsMinimal :: api :- "validations" :> Get '[JSON] (ValidationsDto MinimalValidationDto),
+        validationResultsMinimal :: api :- "validations" :> Get '[JSON] (ValidationsDto MinimalDto),
         validationResults        :: api :- "validations-full"  :> Get '[JSON] (ValidationsDto ValidationDto),
-        
-        appMetrics        :: api :- "app-metrics"        :> Get '[JSON] RawMetric,
+
+        metrics :: api :- "metrics"        :> Get '[JSON] MetricsDto,
                 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
 
