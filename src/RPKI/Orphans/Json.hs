@@ -162,7 +162,9 @@ instance ToJSONKey (Scope 'Metric)
 instance ToJSONKey TaName where
     toJSONKey = toJSONKeyText unTaName
 
-instance ToJSONKey RpkiURL
+instance ToJSONKey RpkiURL where
+    toJSONKey = toJSONKeyText $ unURI . getURL
+    
 instance ToJSON (Scope 'Metric)
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON s
