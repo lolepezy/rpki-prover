@@ -94,8 +94,8 @@ fetchPPWithFallback
     worldVersion
     now 
     ppAccess = do 
-        parentPath <- askEnv         
-        frs <- liftIO $ fetchOnce parentPath ppAccess        
+        parentScope <- askEnv         
+        frs <- liftIO $ fetchOnce parentScope ppAccess        
         setValidationStateOfFetches repositoryProcessing frs            
   where
 
@@ -106,7 +106,7 @@ fetchPPWithFallback
     funRun runs key = Map.lookup key <$> readTVar runs            
 
     -- Use "run only once" logic for the whole list of PPs
-    fetchOnce parentPath ppAccess' =          
+    fetchOnce parentScope ppAccess' =          
         join $ atomically $ do
             pps <- readTVar publicationPoints           
             let ppsKey = ppSeqKey pps 
@@ -118,7 +118,7 @@ fetchPPWithFallback
                     modifyTVar' ppSeqFetchRuns $ Map.insert ppsKey Stub
                     pure $ bracketOnError 
                                 (async $ do 
-                                    evaluate =<< fetchWithFallback parentPath 
+                                    evaluate =<< fetchWithFallback parentScope 
                                                     (NonEmpty.toList $ unPublicationPointAccess ppAccess')) 
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
@@ -133,8 +133,8 @@ fetchPPWithFallback
     fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]
 
     fetchWithFallback _          []   = pure []
-    fetchWithFallback parentPath [pp] = do 
-        ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentPath pp                
+    fetchWithFallback parentScope [pp] = do 
+        ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentScope pp                
         let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed     
         pure $ case r of
             Left _     -> [FetchFailure repoUrl validations']
@@ -144,9 +144,9 @@ fetchPPWithFallback
         -- without ValidatorT/PureValidatorT.
         updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
                 realFreshness = either (const FailedToFetch) (const fetchFreshness) r
-                repoPath = validatorSubScope' RepositoryFocus repoUrl parentPath     
-                rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoPath ^. typed) f
-                rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoPath ^. typed) f
+                repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
+                rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoScope ^. typed) f
+                rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoScope ^. typed) f
                 -- this is also a hack to make sure time is updated if the fetch has failed 
                 -- and we probably don't have time at all if the worker timed out                                       
                 updateTime t = if t == mempty then TimeMs elapsed else t
@@ -164,8 +164,8 @@ fetchPPWithFallback
 
                     
 
-    fetchWithFallback parentPath (pp : pps') = do 
-        fetch <- fetchWithFallback parentPath [pp]
+    fetchWithFallback parentScope (pp : pps') = do 
+        fetch <- fetchWithFallback parentScope [pp]
         case fetch of            
             [FetchSuccess {}] -> pure fetch
 
@@ -177,7 +177,7 @@ fetchPPWithFallback
                     then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL nextOne}.|]
                     else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne}) is up-to-date.|]                
 
-                nextFetch <- fetchWithFallback parentPath pps'
+                nextFetch <- fetchWithFallback parentScope pps'
                 pure $ fetch <> nextFetch
             
             _shouldNeverHappen -> pure []                    
@@ -185,7 +185,7 @@ fetchPPWithFallback
 
     -- Use the same "run only once" logic for every repository that needs a fetch
     --     
-    fetchPPOnce parentPath pp = do 
+    fetchPPOnce parentScope pp = do 
         (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
             (repoNeedAFetch, repo) <- needsAFetch pp
             let rpkiUrl = getRpkiURL repo
@@ -197,7 +197,7 @@ fetchPPWithFallback
 
                         Nothing -> do                                         
                             modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
-                            pure (rpkiUrl, AttemptedFetch, fetchPP parentPath repo)
+                            pure (rpkiUrl, AttemptedFetch, fetchPP parentScope repo)
                 else                         
                     pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
 
@@ -207,11 +207,11 @@ fetchPPWithFallback
 
     -- Do fetch the publication point and update the #publicationPoints
     -- 
-    fetchPP parentPath repo = do         
+    fetchPP parentScope repo = do         
         let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
-                let repoPath = validatorSubScope' RepositoryFocus rpkiUrl parentPath
-                (r, validations) <- runValidatorT repoPath $ fetchRepository appContext worldVersion repo                
+                let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
+                (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                
                 atomically $ do 
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
 

@@ -272,8 +272,8 @@ findError (Validations m) =
     listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
 
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
-removeValidation vPath predicate (Validations vs) =
-    Validations $ Map.adjust removeFromSet vPath vs    
+removeValidation vScope predicate (Validations vs) =
+    Validations $ Map.adjust removeFromSet vScope vs    
     where 
         removeFromSet = Set.filter $ \case 
             VErr e             -> not $ predicate e
@@ -452,5 +452,5 @@ focusToText = \case
     RepositoryFocus txt -> unURI $ getURL txt
     TextFocus txt    -> txt
 
-pathList :: Scope a -> [Focus]
-pathList (Scope s) = NonEmpty.toList s
+scopeList :: Scope a -> [Focus]
+scopeList (Scope s) = NonEmpty.toList s

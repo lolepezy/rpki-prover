@@ -483,11 +483,7 @@ validateCaCertificate
             -- Manifest-specific location validation
             validateMftLocation locatedMft certificate
 
-            manifestResult <- inSubObjectVScope (locationsToText $ locatedMft ^. #locations) $ do                
-
-                -- vPath :: Scopes <- asks (^. typed)
-                -- logDebugM logger [i|Manifest = #{vPath}.|]
-
+            manifestResult <- inSubObjectVScope (locationsToText $ locatedMft ^. #locations) $ do
                 T2 _ crlHash <- 
                     case findCrlOnMft mft of 
                         []    -> vError $ NoCRLOnMFT childrenAki certLocations
