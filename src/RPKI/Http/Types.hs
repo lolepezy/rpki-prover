@@ -50,14 +50,14 @@ data ValidationsDto a = ValidationsDto {
 data IssueDto = ErrorDto Text | WarningDto Text
     deriving stock (Eq, Show, Generic)
 
-data ValidationDto = ValidationDto {
+data FullVDto = FullVDto {
         issues  :: [IssueDto],
         path    :: [Text],
         url     :: Text
     } 
     deriving stock (Eq, Show, Generic)
 
-newtype MinimalDto = MinimalDto ValidationDto
+newtype MinimalVDto = MinimalVDto FullVDto
     deriving stock (Eq, Show, Generic)
 
 data VrpDto = VrpDto {
@@ -94,15 +94,15 @@ instance ToJSON VrpDto
 
 instance ToJSON a =>  ToJSON (ValidationsDto a)
 
-instance ToJSON ValidationDto where
-    toJSON ValidationDto {..} = object [         
+instance ToJSON FullVDto where
+    toJSON FullVDto {..} = object [         
             "url"       .= url,
             "full-path" .= path,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
-instance ToJSON MinimalDto where
-    toJSON (MinimalDto ValidationDto {..}) = object [         
+instance ToJSON MinimalVDto where
+    toJSON (MinimalVDto FullVDto {..}) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
@@ -125,8 +125,8 @@ instance ToJSON (DtoScope s) where
     toJSON (DtoScope (Scope s)) = Array $ V.fromList $ map toJSON $ NonEmpty.toList s
 
 
-toMinimalValidations :: ValidationsDto ValidationDto -> ValidationsDto MinimalDto
-toMinimalValidations = (& #validations %~ map MinimalDto)
+toMinimalValidations :: ValidationsDto FullVDto -> ValidationsDto MinimalVDto
+toMinimalValidations = (& #validations %~ map MinimalVDto)
 
 toMetricsDto :: RawMetric -> MetricsDto
 toMetricsDto rawMetrics = MetricsDto {

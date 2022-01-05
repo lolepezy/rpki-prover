@@ -419,7 +419,7 @@ validateCaCertificate
         findLatestMft childrenAki >>= \case                        
             Nothing -> 
                 -- Use awkward vError + catchError to force the error to 
-                -- get into the ValidationDto in the state.
+                -- get into the Validations in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     tryLatestValidCachedManifest Nothing childrenAki certLocations

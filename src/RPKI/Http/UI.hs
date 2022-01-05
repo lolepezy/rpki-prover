@@ -42,7 +42,7 @@ import RPKI.Http.Messages
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto ValidationDto) -> (RawMetric, MetricsDto) -> Html
+mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto FullVDto) -> (RawMetric, MetricsDto) -> Html
 mainPage worldVersion validations (rawMetric, metricsDto) =     
     H.docTypeHtml $ do
         H.head $ do
@@ -231,7 +231,7 @@ rsyncMetricsHtml rsyncMetricMap =
                     td $ toHtml $ rm ^. #totalTimeMs            
 
 
-validaionDetailsHtml :: [ValidationDto] -> Html
+validaionDetailsHtml :: [FullVDto] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
@@ -255,7 +255,7 @@ validaionDetailsHtml result =
                 forM_ (zip vrs [1 :: Int ..]) vrHtml
 
   where      
-    vrHtml (ValidationDto{..}, index) = do 
+    vrHtml (FullVDto{..}, index) = do 
         let objectUrl = Prelude.head path         
         forM_ issues $ \pr -> do                    
             htmlRow index $ do 
@@ -280,7 +280,7 @@ validaionDetailsHtml result =
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
         where
-            countP z ValidationDto {..} = List.foldl' countEW z issues
+            countP z FullVDto {..} = List.foldl' countEW z issues
             countEW (e, w) (ErrorDto _)   = (e + 1, w)
             countEW (e, w) (WarningDto _) = (e, w + 1)
 
@@ -320,11 +320,11 @@ validationPathTootip = do
     space >> space
         
 
-groupByTa :: [ValidationDto] -> Map Text [ValidationDto]
+groupByTa :: [FullVDto] -> Map Text [FullVDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
     $ [ (ta, [vr]) 
-            | vr@ValidationDto {..} <- vrs, 
+            | vr@FullVDto {..} <- vrs, 
               ta <- lastOne path ]    
   where
     lastOne [] = []

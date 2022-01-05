@@ -61,7 +61,7 @@ httpApi appContext = genericServe HttpApi {
 
         slurm = getSlurm appContext,
                 
-        validationResults        = getValidationsDto appContext,
+        fullValidationResults    = getValidationsDto appContext,
         validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
         metrics = snd <$> getMetrics appContext,                
         lmdbStats = getStats appContext,
@@ -106,7 +106,7 @@ getVRPs AppContext {..} func = do
                             Vrp a p len  <- Set.toList vrpSet ]       
 
 
-getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto ValidationDto))
+getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do 
     db@DB {..} <- readTVarIO database 
     roTx versionStore $ \tx -> 
@@ -121,7 +121,7 @@ getValidations AppContext {..} = do
                 }
 
 getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) => 
-                    AppContext s -> m (ValidationsDto ValidationDto)
+                    AppContext s -> m (ValidationsDto FullVDto)
 getValidationsDto appContext = do
     vs <- liftIO $ getValidations appContext         
     maybe notFoundException pure vs    
@@ -158,8 +158,8 @@ getSlurm AppContext {..} = do
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }
         Just m  -> pure m
     
-toVR :: (Scope a, Set.Set VIssue) -> ValidationDto
-toVR (Scope scope, issues) = ValidationDto {
+toVR :: (Scope a, Set.Set VIssue) -> FullVDto
+toVR (Scope scope, issues) = FullVDto {
         issues = map toDto $ Set.toList issues,
         path   = map focusToText $ NonEmpty.toList scope,
         url    = focusToText $ NonEmpty.head scope
