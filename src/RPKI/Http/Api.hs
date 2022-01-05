@@ -12,7 +12,6 @@ import           Servant.API.Generic
 import           Servant.HTML.Blaze (HTML)
 import           Text.Blaze.Html5 (Html)
 
-import           RPKI.Reporting
 import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
@@ -27,8 +26,10 @@ data API api = API {
 
         slurm :: api :- "slurm.json" :> Get '[JSON] Slurm,
                 
-        validationResults :: api :- "validation-results" :> Get '[JSON] [ValidationResult],
-        appMetrics        :: api :- "app-metrics"        :> Get '[JSON] RawMetric,
+        validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),
+        fullValidationResults    :: api :- "validations-full" :> Get '[JSON] (ValidationsDto FullVDto),
+
+        metrics :: api :- "metrics"        :> Get '[JSON] MetricsDto,
                 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
 

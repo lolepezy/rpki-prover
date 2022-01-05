@@ -180,7 +180,7 @@ newtype VWarning = VWarning AppError
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data VProblem = VErr AppError | VWarn VWarning
+data VIssue = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -189,7 +189,7 @@ newtype AppException = AppException AppError
 
 instance Exception AppException
 
-newtype Validations = Validations (Map VPath (Set VProblem))
+newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Monoid
@@ -198,65 +198,70 @@ instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
 
-data PathSegment = TASegment Text 
-                | ObjectSegment Text 
-                | PPSegment RpkiURL
-                | RepositorySegment RpkiURL
-                | TextualSegment Text
+data Focus = TAFocus Text 
+            | ObjectFocus Text 
+            | PPFocus RpkiURL
+            | RepositoryFocus RpkiURL
+            | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
-newtype Path a = Path { unPath :: NonEmpty PathSegment }
+newtype Scope t = Scope (NonEmpty Focus)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-    deriving newtype Semigroup
 
-data PathKind = Validation | Metric
+data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
 
-type VPath      = Path 'Validation    
-type MetricPath = Path 'Metric
+type VScope      = Scope 'Validation    
+type MetricScope = Scope 'Metric
     
-data ValidatorPath = ValidatorPath {
-        validationPath :: VPath,
-        metricPath     :: MetricPath
+data Scopes = Scopes {
+        validationScope :: VScope,
+        metricScope     :: MetricScope
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newPath :: Text -> Path c
-newPath = newPath' TextualSegment
+newScope :: Text -> Scope c
+newScope = newScope' TextFocus
 
-newPath' :: (a -> PathSegment) -> a -> Path c
-newPath' c u = Path $ c u :| []
+newScope' :: (a -> Focus) -> a -> Scope c
+newScope' c u = Scope $ c u :| []
 
-newValidatorPath :: Text -> ValidatorPath
-newValidatorPath = newValidatorPath' TextualSegment
+newScopes :: Text -> Scopes
+newScopes = newScopes' TextFocus
 
-newValidatorPath' :: (a -> PathSegment) -> a -> ValidatorPath
-newValidatorPath' c t = ValidatorPath {
-        validationPath = newPath' c t,
-        metricPath     = newPath' c t
+newScopes' :: (a -> Focus) -> a -> Scopes
+newScopes' c t = Scopes {
+        validationScope = newScope' c t,
+        metricScope     = newScope' c t
     }    
 
+subScope :: Text -> Scope t -> Scope t
+subScope = subScope' TextFocus        
 
-validatorSubPath' :: forall a . (a -> PathSegment) -> a -> ValidatorPath -> ValidatorPath
-validatorSubPath' constructor t vc = 
-    vc & typed @VPath      %~ subPath t
-       & typed @MetricPath %~ subPath t
-  where    
-    subPath :: a -> Path t -> Path t
-    subPath seg parent = newPath' constructor seg <> parent
+subScope' :: (a -> Focus) -> a -> Scope t -> Scope t
+subScope' constructor a ps@(Scope parentScope) = let
+        focus = constructor a
+    in case NonEmpty.filter (== focus) parentScope of 
+        [] -> Scope $ NonEmpty.cons focus parentScope 
+        _  -> ps     
 
+validatorSubScope' :: forall a . (a -> Focus) -> a -> Scopes -> Scopes
+validatorSubScope' constructor t vc = 
+    vc & typed @VScope      %~ subScope' constructor t
+       & typed @MetricScope %~ subScope' constructor t  
+   
 
-mError :: VPath -> AppError -> Validations
+mError :: VScope -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
 
-mWarning :: VPath -> VWarning -> Validations
+mWarning :: VScope -> VWarning -> Validations
 mWarning vc w = mProblem vc (VWarn w)
 
-mProblem :: VPath -> VProblem -> Validations
+mProblem :: VScope -> VIssue -> Validations
 mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
 
 emptyValidations :: Validations -> Bool 
@@ -266,9 +271,9 @@ findError :: Validations -> Maybe AppError
 findError (Validations m) = 
     listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
 
-removeValidation :: VPath -> (AppError -> Bool) -> Validations -> Validations
-removeValidation vPath predicate (Validations vs) =
-    Validations $ Map.adjust removeFromSet vPath vs    
+removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
+removeValidation vScope predicate (Validations vs) =
+    Validations $ Map.adjust removeFromSet vScope vs    
     where 
         removeFromSet = Set.filter $ \case 
             VErr e             -> not $ predicate e
@@ -386,7 +391,7 @@ instance MetricC ValidationMetric where
     metricLens = #validationMetrics
 
 
-newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricPath a }
+newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise    
     deriving newtype Monoid    
@@ -424,28 +429,28 @@ data ValidationState = ValidationState {
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty
 
-validationsToList :: Validations -> [(VPath, Set VProblem)]
+validationsToList :: Validations -> [(VScope, Set VIssue)]
 validationsToList (Validations vMap) = Map.toList vMap 
 
 updateMetricInMap :: Monoid a => 
-                MetricPath -> (a -> a) -> MetricMap a -> MetricMap a
-updateMetricInMap metricPath f (MetricMap (MonoidalMap mm)) = 
-    MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) metricPath mm
+                    MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
+updateMetricInMap metricScope f (MetricMap (MonoidalMap mm)) = 
+    MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) metricScope mm
 
-lookupMetric :: MetricPath -> MetricMap a -> Maybe a
-lookupMetric metricPath (MetricMap (MonoidalMap mm)) = Map.lookup metricPath mm
+lookupMetric :: MetricScope -> MetricMap a -> Maybe a
+lookupMetric metricScope (MetricMap (MonoidalMap mm)) = Map.lookup metricScope mm
 
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
-segmentToText :: PathSegment -> Text
-segmentToText = \case
-    TASegment txt         -> txt
-    ObjectSegment txt     -> txt
-    PPSegment txt         -> unURI $ getURL txt
-    RepositorySegment txt -> unURI $ getURL txt
-    TextualSegment txt    -> txt
+focusToText :: Focus -> Text
+focusToText = \case
+    TAFocus txt         -> txt
+    ObjectFocus txt     -> txt
+    PPFocus txt         -> unURI $ getURL txt
+    RepositoryFocus txt -> unURI $ getURL txt
+    TextFocus txt    -> txt
 
-pathList :: Path a -> [PathSegment]
-pathList = NonEmpty.toList . unPath
+scopeList :: Scope a -> [Focus]
+scopeList (Scope s) = NonEmpty.toList s

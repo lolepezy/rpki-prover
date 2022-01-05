@@ -32,7 +32,7 @@ isSemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 runValidatorTAndvalidatorTShouldBeId :: QC.Property
 runValidatorTAndvalidatorTShouldBeId = monadicIO $ do
   z :: (Either AppError (), ValidationState) <- pick arbitrary 
-  q <- runValidatorT (newValidatorPath "zzz") $ validatorT $ pure z
+  q <- runValidatorT (newScopes "zzz") $ validatorT $ pure z
   assert $ q == z
 
 forMShouldSavesState :: HU.Assertion
@@ -40,13 +40,13 @@ forMShouldSavesState = do
   v <- QC.generate arbitrary  
      
   (_, ValidationState { validations = Validations validationMap, .. }) 
-    <- runValidatorT (newValidatorPath "zzz") $ do 
+    <- runValidatorT (newScopes "zzz") $ do 
         validatorT $ pure (Right (), v)
         forM ["x", "y", "z"] $ \x ->
             appWarn $ UnspecifiedE x (x <> "-bla") 
   
   HU.assertEqual "Not the same Validations" 
-    (Map.lookup (newPath "zzz") validationMap)
+    (Map.lookup (newScope "zzz") validationMap)
      (Just $ Set.fromList [
          VWarn (VWarning (UnspecifiedE "x" "x-bla")),
          VWarn (VWarning (UnspecifiedE "y" "y-bla")),

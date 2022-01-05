@@ -32,10 +32,10 @@ import           RPKI.Time
 type ValidatorT m r = ValidatorTCurried m r
 
 type ValidatorTCurried m = 
-        ReaderT ValidatorPath (ExceptT AppError (StateT ValidationState m))
+        ReaderT Scopes (ExceptT AppError (StateT ValidationState m))
 
 type PureValidatorT r = 
-        ReaderT ValidatorPath (ExceptT AppError (State ValidationState)) r
+        ReaderT Scopes (ExceptT AppError (State ValidationState)) r
 
 vHoist :: Monad m => PureValidatorT r -> ValidatorT m r
 vHoist = hoist $ hoist $ hoist generalize
@@ -44,8 +44,8 @@ fromEither :: Either AppError r -> PureValidatorT r
 fromEither z =
     case z of 
         Left e -> do 
-            validationPath <- asks (^. typed)
-            modify' $ typed %~ (mError validationPath e <>)
+            validationScope <- asks (^. typed)
+            modify' $ typed %~ (mError validationScope e <>)
             lift $ ExceptT $ pure z
         Right _ -> 
             lift $ ExceptT $ pure z
@@ -113,16 +113,16 @@ fromTryEither mapErr t = do
 toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
 toEither env f = runExceptT $ runReaderT f env
 
-runPureValidator :: ValidatorPath -> PureValidatorT r -> (Either AppError r, ValidationState)
+runPureValidator :: Scopes -> PureValidatorT r -> (Either AppError r, ValidationState)
 runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 
-runValidatorT :: ValidatorPath -> ValidatorT m r -> m (Either AppError r, ValidationState)
+runValidatorT :: Scopes -> ValidatorT m r -> m (Either AppError r, ValidationState)
 runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
 -- | Shorthand version for cases when we need to actually 
 -- run IO or something similar like that
 voidRun :: Functor m => Text -> ValidatorT m r -> m ()
-voidRun t = void <$> runValidatorT (newValidatorPath t)
+voidRun t = void <$> runValidatorT (newScopes t)
 
 validatorWarning :: Monad m => VWarning -> ValidatorT m ()
 validatorWarning = vHoist . pureWarning
@@ -135,16 +135,16 @@ appError = vHoist . pureError
 
 pureWarning :: VWarning -> PureValidatorT ()
 pureWarning warning = do 
-    validationPath <- asks (^. typed)
-    modify' (typed %~ (mWarning validationPath warning <>))
+    validationScope <- asks (^. typed)
+    modify' (typed %~ (mWarning validationScope warning <>))
 
 vPureError :: ValidationError -> PureValidatorT r
 vPureError e = pureError $ ValidationE e    
 
 pureError :: AppError -> PureValidatorT r
 pureError e = do
-    validationPath <- asks (^. typed)
-    modify' $ typed %~ (mError validationPath e <>)
+    validationScope <- asks (^. typed)
+    modify' $ typed %~ (mError validationScope e <>)
     throwError e
 
 catchAndEraseError :: Monad m => 
@@ -156,8 +156,8 @@ catchAndEraseError f predicate errorHandler = do
     catchError f $ \e -> 
         if predicate e 
             then do 
-                validationPath <- asks (^. typed)
-                modify' $ typed %~ removeValidation validationPath predicate
+                validationScope <- asks (^. typed)
+                modify' $ typed %~ removeValidation validationScope predicate
                 errorHandler 
             else throwError e
 
@@ -173,21 +173,21 @@ appWarn = validatorWarning . VWarning
 askEnv :: MonadReader r m => m r
 askEnv = ask
 
-inSubVPath :: Monad m => 
+inSubVScope :: Monad m => 
               Text -> ValidatorT m r -> ValidatorT m r
-inSubVPath = inSubVPath' TextualSegment
+inSubVScope = inSubVScope' TextFocus
 
-inSubObjectVPath :: Monad m => 
-              Text -> ValidatorT m r -> ValidatorT m r
-inSubObjectVPath = inSubVPath' ObjectSegment
+inSubObjectVScope :: Monad m => 
+                    Text -> ValidatorT m r -> ValidatorT m r
+inSubObjectVScope = inSubVScope' ObjectFocus
 
-inSubVPath' :: Monad m => 
-                (a -> PathSegment) -> a -> ValidatorT m r -> ValidatorT m r
-inSubVPath' c t = local (& typed @VPath %~ (newPath' c t <>))
+inSubVScope' :: Monad m => 
+                (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+inSubVScope' c t = local (& typed @VScope %~ subScope' c t)
 
-inSubMetricPath' :: Monad m => 
-                (a -> PathSegment) -> a -> ValidatorT m r -> ValidatorT m r
-inSubMetricPath' c t = local (& typed @MetricPath %~ (newPath' c t <>))
+inSubMetricScope' :: Monad m => 
+                (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+inSubMetricScope' c t = local (& typed @MetricScope %~ subScope' c t)
 
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
@@ -232,9 +232,9 @@ getMetric = vHoist getPureMetric
 getPureMetric :: forall metric . MetricC metric => 
                  PureValidatorT (Maybe metric)
 getPureMetric = do 
-    metricPath <- asks (^. typed)
-    metricMap  <- gets (^. typed . metricLens)
-    pure $ lookupMetric metricPath metricMap
+    metricScope <- asks (^. typed)
+    metricMap   <- gets (^. typed . metricLens)
+    pure $ lookupMetric metricScope metricMap
             
 
 finallyError :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a

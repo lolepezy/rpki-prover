@@ -17,6 +17,7 @@ import           Data.Text.Encoding          (decodeUtf8)
 
 import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
+import           Data.Aeson.Types            (toJSONKeyText)
 import           Data.Tuple.Strict
 
 import           Data.String.Interpolate.IsString
@@ -37,11 +38,13 @@ import           Data.X509                   as X509
 
 import HaskellWorks.Data.Network.Ip.Ip as Ips
 
+import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 
 import           RPKI.Reporting
+import           RPKI.Metrics.Metrics
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable
@@ -58,13 +61,14 @@ instance ToJSON IpPrefix where
     toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
     toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
 
-instance ToJSON VProblem
+instance ToJSON WorldVersion
+instance ToJSON VIssue
 instance ToJSON VWarning
 instance ToJSON AppError
 instance ToJSON InitError
 instance ToJSON InternalError
 instance ToJSON SlurmError
-instance ToJSON  a => ToJSON (ParseError a)
+instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON ValidationError
 instance ToJSON Locations
 instance ToJSON StorageError
@@ -138,23 +142,32 @@ instance ToJSON DBStats
 instance ToJSON TotalDBStats
 instance ToJSON RawMetric
 instance ToJSON VrpCounts
-instance ToJSON TaName
+
+instance ToJSON TaName where 
+    toJSON (TaName t) = toJSON t
+
 instance ToJSON a => ToJSON (MetricMap a)
 instance ToJSON ValidationMetric
+instance ToJSON a => ToJSON (GroupedValidationMetric a)
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
-instance ToJSON PathKind
+instance ToJSON ScopeKind
 instance ToJSON FetchFreshness
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
     
 instance ToJSON RrdpSource
-instance ToJSON PathSegment
-instance ToJSONKey (Path 'Metric)
-instance ToJSONKey TaName
-instance ToJSON (Path 'Metric)
+instance ToJSON Focus
+instance ToJSONKey (Scope 'Metric)
+instance ToJSONKey TaName where
+    toJSONKey = toJSONKeyText unTaName
+
+instance ToJSONKey RpkiURL where
+    toJSONKey = toJSONKeyText $ unURI . getURL
+    
+instance ToJSON (Scope 'Metric)
 instance ToJSON TimeMs where 
-    toJSON (TimeMs s) = toJSON $ show s <> "ms"
+    toJSON (TimeMs s) = toJSON s
 
 instance ToJSON Count where
     toJSON (Count s) = toJSON s

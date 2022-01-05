@@ -12,6 +12,7 @@ import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
+
 import           FileEmbedLzma
 
 import           Servant hiding (URI)
@@ -20,7 +21,7 @@ import           Servant.Server.Generic
 import qualified Data.ByteString.Builder          as BS
 
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Maybe                       (fromMaybe, maybeToList)
+import           Data.Maybe                       (maybeToList)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
@@ -29,7 +30,8 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Metrics
+import           RPKI.Http.Messages
+import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Http.Types
@@ -59,16 +61,17 @@ httpApi appContext = genericServe HttpApi {
 
         slurm = getSlurm appContext,
                 
-        validationResults = liftIO (getVResults appContext),
-        appMetrics        = getMetrics appContext,                
+        fullValidationResults    = getValidationsDto appContext,
+        validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
+        metrics = snd <$> getMetrics appContext,                
         lmdbStats = getStats appContext,
         objectView = getRpkiObject appContext    
     }
 
     uiServer = do 
         worldVersion <- liftIO $ getLastVersion appContext
-        vResults <- liftIO $ getVResults appContext
-        metrics  <- getMetrics appContext
+        vResults     <- liftIO $ getValidations appContext
+        metrics <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics    
 
 
@@ -100,34 +103,48 @@ getVRPs AppContext {..} func = do
         Nothing   -> []
         Just vrps -> [ VrpDto a p len (unTaName ta) | 
                             (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                            Vrp a p len  <- Set.toList vrpSet
-                     ]    
+                            Vrp a p len  <- Set.toList vrpSet ]       
 
-getVResults :: Storage s => AppContext s -> IO [ValidationResult]
-getVResults AppContext {..} = do 
+
+getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
+getValidations AppContext {..} = do 
     db@DB {..} <- readTVarIO database 
     roTx versionStore $ \tx -> 
-        fmap (fromMaybe []) $ runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion db tx
-                validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
-                pure $ map toVR $ validationsToList validations        
+        runMaybeT $ do
+            lastVersion <- MaybeT $ getLastCompletedVersion db tx
+            validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
+            let validationDtos = map toVR $ validationsToList validations
+            pure $ ValidationsDto {
+                    version   = lastVersion,
+                    timestamp = versionToMoment lastVersion,
+                    validations = validationDtos
+                }
+
+getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) => 
+                    AppContext s -> m (ValidationsDto FullVDto)
+getValidationsDto appContext = do
+    vs <- liftIO $ getValidations appContext         
+    maybe notFoundException pure vs    
 
 getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastVersion AppContext {..} = do 
     db <- readTVarIO database 
-    roTx db $ getLastCompletedVersion db                
+    roTx db $ getLastCompletedVersion db              
         
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
-            AppContext s -> m RawMetric
+            AppContext s -> m (RawMetric, MetricsDto)
 getMetrics AppContext {..} = do
     db@DB {..} <- liftIO $ readTVarIO database 
-    metrics <- liftIO $ roTx db $ \tx -> do
+    metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion db tx
-                MaybeT $ metricsForVersion tx metricStore lastVersion                        
-    case metrics of 
-        Nothing -> throwError err404 { errBody = "Working, please hold still!" }
-        Just m  -> pure m
+            lastVersion <- MaybeT $ getLastCompletedVersion db tx
+            rawMetrics  <- MaybeT $ metricsForVersion tx metricStore lastVersion
+            pure (rawMetrics, toMetricsDto rawMetrics)
+    maybe notFoundException pure metrics
+
+
+notFoundException :: MonadError ServerError m => m a
+notFoundException = throwError err404 { errBody = "Working, please hold still!" }
 
 getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m Slurm
@@ -141,9 +158,17 @@ getSlurm AppContext {..} = do
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }
         Just m  -> pure m
     
-toVR :: (Path a, Set.Set VProblem) -> ValidationResult
-toVR (Path path, problems) = 
-    ValidationResult (Set.toList problems) (map segmentToText $ NonEmpty.toList path)    
+toVR :: (Scope a, Set.Set VIssue) -> FullVDto
+toVR (Scope scope, issues) = FullVDto {
+        issues = map toDto $ Set.toList issues,
+        path   = map focusToText $ NonEmpty.toList scope,
+        url    = focusToText $ NonEmpty.head scope
+    }
+  where
+    toDto = \case
+        VErr e               -> ErrorDto $ toMessage e
+        (VWarn (VWarning w)) -> WarningDto $ toMessage w
+    
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             

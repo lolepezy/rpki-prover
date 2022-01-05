@@ -170,8 +170,8 @@ instance ToJSON PrefixFilter where
 
 oneOrBothToJSON :: (ToJSON a, ToJSON b) => 
                   These a b -> Text -> Text -> [Pair]
-oneOrBothToJSON these t1 t2 =     
-    case these of 
+oneOrBothToJSON these' t1 t2 =     
+    case these' of 
         This a    -> [ t1 .= toJSON a ]
         That b    -> [ t2 .= toJSON b ]
         These a b -> [ t1 .= toJSON a, t2 .= toJSON b ]

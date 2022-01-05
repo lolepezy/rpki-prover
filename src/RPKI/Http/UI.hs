@@ -14,6 +14,7 @@ module RPKI.Http.UI where
 import           Control.Monad
 import           Control.Lens                ((^.))
 
+import           Data.Foldable               (for_)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
@@ -32,17 +33,16 @@ import Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes
 import           RPKI.AppState
-import           RPKI.Metrics
+import           RPKI.Metrics.Metrics
 import           RPKI.Reporting
 import           RPKI.Time
 
 import RPKI.Http.Types
-import RPKI.Http.Messages
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> [ValidationResult] -> RawMetric -> Html
-mainPage worldVersion vResults metrics = 
+mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto FullVDto) -> (RawMetric, MetricsDto) -> Html
+mainPage worldVersion validations (rawMetric, metricsDto) =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -55,7 +55,8 @@ mainPage worldVersion vResults metrics =
                 H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
-    
+
+        for_ validations $ \vs -> do 
             H.div ! A.class_ "main" $ do            
                 H.a ! A.id "overall" $ "" 
                 H.br
@@ -65,16 +66,16 @@ mainPage worldVersion vResults metrics =
                 H.br >> H.br            
                 H.a ! A.id "validation-metrics" $ "" 
                 H.section $ H.text "Validation metrics"
-                validationMetricsHtml metrics
+                validationMetricsHtml $ metricsDto ^. #groupedValidations
                 H.a ! A.id "rrdp-metrics" $ ""
                 H.section $ H.text "RRDP metrics"
-                rrdpMetricsHtml $ rrdpMetrics metrics 
+                rrdpMetricsHtml $ rrdpMetrics rawMetric 
                 H.a ! A.id "rsync-metrics" $ ""
                 H.section $ H.text "Rsync metrics"
-                rsyncMetricsHtml $ rsyncMetrics metrics        
+                rsyncMetricsHtml $ rsyncMetrics rawMetric        
                 H.a ! A.id "validation-details" $ ""
                 H.section $ H.text "Validation details"
-                validaionDetailsHtml vResults
+                validaionDetailsHtml $ vs ^. #validations
 
 
 overallHtml :: Maybe WorldVersion -> Html
@@ -87,11 +88,11 @@ overallHtml (Just worldVersion) = do
         space >> H.text "(UTC)"
 
 
-validationMetricsHtml :: RawMetric -> Html
-validationMetricsHtml (groupedValidationMetric -> grouped) = do 
+validationMetricsHtml :: GroupedValidationMetric ValidationMetric -> Html
+validationMetricsHtml grouped = do 
     
-    let repoMetrics = MonoidalMap.toList $ grouped ^. #perRepository
-    let taMetrics   = MonoidalMap.toList $ grouped ^. #perTa        
+    let repoMetrics = MonoidalMap.toList $ grouped ^. #byRepository
+    let taMetrics   = MonoidalMap.toList $ grouped ^. #byTa        
 
     -- this is for per-TA metrics
     H.table $ do         
@@ -117,7 +118,7 @@ validationMetricsHtml (groupedValidationMetric -> grouped) = do
                     (\vm' -> td $ toHtml $ show $ vm' ^. #uniqueVrpNumber) 
                     vm      
             
-            metricRow (MonoidalMap.size (grouped ^. #perTa) + 1) 
+            metricRow (MonoidalMap.size (grouped ^. #byTa) + 1) 
                         ("Total" :: Text) 
                         (const $ td $ toHtml $ text "-")
                         (const $ td $ toHtml $ show $ grouped ^. #total . #uniqueVrpNumber)
@@ -189,8 +190,8 @@ rrdpMetricsHtml rrdpMetricMap =
             th $ H.text "Total time"                    
 
         H.tbody $ do 
-            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
-                let repository = NonEmpty.head $ unPath path
+            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
+                let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     td $ toHtml repository                        
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
@@ -220,8 +221,8 @@ rsyncMetricsHtml rsyncMetricMap =
             th $ H.text "Total time"                    
 
         H.tbody $
-            forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((path, rm), index) -> do 
-                let repository = NonEmpty.head $ unPath path
+            forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
+                let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     td $ toHtml repository                                                        
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
@@ -229,13 +230,13 @@ rsyncMetricsHtml rsyncMetricMap =
                     td $ toHtml $ rm ^. #totalTimeMs            
 
 
-validaionDetailsHtml :: [ValidationResult] -> Html
+validaionDetailsHtml :: [FullVDto] -> Html
 validaionDetailsHtml result = 
     H.table $ do 
         H.thead $ tr $ do 
             th $ H.span $ H.text "Issue"            
             th $ H.div ! A.class_ "tooltip" $ do
-                H.text "URL/Path"
+                H.text "URL/Scope"
                 H.span ! A.class_ "tooltiptext" $ validationPathTootip               
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
             H.tbody ! A.class_ "labels" $ do 
@@ -253,18 +254,18 @@ validaionDetailsHtml result =
                 forM_ (zip vrs [1 :: Int ..]) vrHtml
 
   where      
-    vrHtml (ValidationResult{..}, index) = do 
-        let objectUrl = Prelude.head context         
-        forM_ problems $ \pr -> do                    
+    vrHtml (FullVDto{..}, index) = do 
+        let objectUrl = Prelude.head path         
+        forM_ issues $ \pr -> do                    
             htmlRow index $ do 
                 let (marker, problem) = 
                         case pr of 
-                            VErr err           -> ("red-dot",  err)                                        
-                            VWarn (VWarning w) -> ("yellow-dot", w)
+                            ErrorDto err -> ("red-dot",  err)                                        
+                            WarningDto w -> ("yellow-dot", w)
                 td $ H.span $ do 
                     H.span ! A.class_ marker $ ""
                     space >> space
-                    mapM_ (\z -> H.text z >> H.br) $ Text.lines $ toMessage problem
+                    mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td $ do
                     H.div ! class_ "flex short-link" $ do
                         H.div ! class_ "pointer-right" $ arrowRight >> space
@@ -272,22 +273,22 @@ validaionDetailsHtml result =
                     H.div ! class_ "flex full-link" ! A.style "display: none;" $ do
                         H.div ! class_ "pointer-up" $ arrowUp >> space
                         H.div ! class_ "full-path" $ do
-                            forM_ context $ \pathUrl -> do            
+                            forM_ path $ \pathUrl -> do            
                                 H.div ! A.class_ "path-elem" $ objectLink pathUrl
 
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
         where
-            countP z ValidationResult {..} = List.foldl' countEW z problems
-            countEW (e, w) (VErr _)  = (e + 1, w)
-            countEW (e, w) (VWarn _) = (e, w + 1)
+            countP z FullVDto {..} = List.foldl' countEW z issues
+            countEW (e, w) (ErrorDto _)   = (e + 1, w)
+            countEW (e, w) (WarningDto _) = (e, w + 1)
 
 
 primaryRepoTooltip :: Html
 primaryRepoTooltip = 
     H.text $ "For metrics puposes objects are associated with a repository they are downloaded from. " <> 
             "Fallback from RRDP to rsync does not change this association, so a valid object is attributed " <> 
-            "to the RRDP repository even if it was downloaded from the rsync one becasue of the fall-back."
+            "to the RRDP repository even if it was downloaded from the rsync one because of the fall-back."
 
 fetchTooltip :: Text -> Text -> Html
 fetchTooltip repoType setting = do                
@@ -297,8 +298,8 @@ fetchTooltip repoType setting = do
             H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
             H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
 
-rrdpFetchTooltip :: Html
-rrdpFetchTooltip = fetchTooltip "RRDP" "rrdp-refresh-interval"
+rrdpFetchTooltip, rsyncFetchTooltip :: Html
+rrdpFetchTooltip  = fetchTooltip "RRDP" "rrdp-refresh-interval"
 rsyncFetchTooltip = fetchTooltip "rsync" "rsync-refresh-interval"
 
 rrdpUpdateTooltip :: Html
@@ -314,16 +315,16 @@ validationPathTootip :: Html
 validationPathTootip = do   
     space >> space
     H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
-    H.text "'Path' here shows the full sequence of objects from the TA to the object in question."
+    H.text "'Scope' here shows the full sequence of objects from the TA to the object in question."
     space >> space
         
 
-groupByTa :: [ValidationResult] -> Map Text [ValidationResult]
+groupByTa :: [FullVDto] -> Map Text [FullVDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
     $ [ (ta, [vr]) 
-            | vr@ValidationResult {..} <- vrs, 
-              ta <- lastOne context ]    
+            | vr@FullVDto {..} <- vrs, 
+              ta <- lastOne path ]    
   where
     lastOne [] = []
     lastOne xs = [last xs]
@@ -367,5 +368,5 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
 
-instance ToMarkup PathSegment where 
-    toMarkup = toMarkup . segmentToText
+instance ToMarkup Focus where 
+    toMarkup = toMarkup . focusToText

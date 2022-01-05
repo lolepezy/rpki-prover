@@ -443,19 +443,19 @@ instance Arbitrary AppError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary VProblem where
+instance Arbitrary VIssue where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary VPath where
+instance Arbitrary VScope where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary MetricPath where
+instance Arbitrary MetricScope where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary PathSegment where
+instance Arbitrary Focus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

@@ -23,7 +23,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (SessionId "whatever", RrdpSerial 50))
                         Pending
-        let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
+        let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
                 (Right $ UseSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
@@ -36,7 +36,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
                         Pending
-        let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
+        let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
         HU.assertEqual "It's a bummer" nextStep (Right $ NothingToDo "Up-to-date."),
 
@@ -49,7 +49,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                         (Just (sessionId, serial))
                         Pending
-        let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
+        let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
                                     deltas = [delta]
                                 }
@@ -63,7 +63,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                     (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
                     Pending
-        let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
+        let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 15)) {       
                                   deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
                                 }
@@ -78,7 +78,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                     (RrdpURL $ URI "http://rrdp.ripe.net/notification.xml")
                     (Just (sessionId, serial))
                     Pending
-        let (nextStep, _) = runPureValidator (newValidatorPath "test") $ 
+        let (nextStep, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 20)) {       
                         deltas = [
                             makeDelta $ RrdpSerial 20,

@@ -69,12 +69,12 @@ instance Show WorkerId where
     show (WorkerId w) = show w
 
 data WorkerParams = RrdpFetchParams { 
-                validatorPath :: ValidatorPath, 
+                scopes         :: Scopes, 
                 rrdpRepository :: RrdpRepository,
-                worldVersion :: WorldVersion 
+                worldVersion   :: WorldVersion 
             } | 
             RsyncFetchParams { 
-                validatorPath   :: ValidatorPath, 
+                scopes          :: Scopes, 
                 rsyncRepository :: RsyncRepository,
                 worldVersion    :: WorldVersion 
             } | 
