@@ -434,11 +434,11 @@ validationsToList (Validations vMap) = Map.toList vMap
 
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
-updateMetricInMap metricScope f (MetricMap (MonoidalMap mm)) = 
-    MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) metricScope mm
+updateMetricInMap ms f (MetricMap (MonoidalMap mm)) = 
+    MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) ms mm
 
 lookupMetric :: MetricScope -> MetricMap a -> Maybe a
-lookupMetric metricScope (MetricMap (MonoidalMap mm)) = Map.lookup metricScope mm
+lookupMetric ms (MetricMap (MonoidalMap mm)) = Map.lookup ms mm
 
 
 isHttpSuccess :: HttpStatus -> Bool
@@ -450,7 +450,7 @@ focusToText = \case
     ObjectFocus txt     -> txt
     PPFocus txt         -> unURI $ getURL txt
     RepositoryFocus txt -> unURI $ getURL txt
-    TextFocus txt    -> txt
+    TextFocus txt       -> txt
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s

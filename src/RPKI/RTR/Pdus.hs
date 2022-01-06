@@ -197,13 +197,13 @@ parseVersionedPdu protocolVersion pduType =
             len  :: Int32 <- get
             assertLength len 20
             flags <- get
-            PrefixLength prefixLen <- get
+            PrefixLength pLen <- get
             maxLen :: PrefixLength <- get
             zero1 :: Word8         <- get
             unless (zero1 == 0) $ fail "Field must be zero for IPv4PrefixPdu"
             w32 :: Word32 <- get            
             asn :: ASN    <- get            
-            pure $ IPv4PrefixPdu flags (mkIpv4Block w32 prefixLen) asn maxLen
+            pure $ IPv4PrefixPdu flags (mkIpv4Block w32 pLen) asn maxLen
 
         PduCode 6 -> do 
             zero :: Word16 <- get 
@@ -211,13 +211,13 @@ parseVersionedPdu protocolVersion pduType =
             len  :: Int32 <- get
             assertLength len 32
             flags <- get
-            PrefixLength prefixLen <- get
+            PrefixLength pLen <- get
             maxLen :: PrefixLength <- get
             zero1 :: Word8     <- get
             unless (zero1 == 0) $ fail "Field must be zero for IPv6PrefixPdu"
-            words <- (,,,) <$> get <*> get <*> get <*> get
+            words' <- (,,,) <$> get <*> get <*> get <*> get
             asn :: ASN <- get            
-            pure $ IPv6PrefixPdu flags (mkIpv6Block words prefixLen) asn maxLen
+            pure $ IPv6PrefixPdu flags (mkIpv6Block words' pLen) asn maxLen
             
 
         PduCode 7 -> do

@@ -90,7 +90,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
             rtsArguments [ rtsN maxCpuAvailable, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
 
     vp <- askEnv
-    ((RsyncFetchResult (z, vs), stderr), elapsed) <- 
+    ((RsyncFetchResult (z, vs), stderr'), elapsed) <- 
                     timedMS $ runWorker 
                                 logger
                                 config
@@ -102,7 +102,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
     case z of 
         Left e  -> appError e
         Right r -> do 
-            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr elapsed            
+            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr' elapsed            
             pure r
 
     
@@ -203,7 +203,6 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
             traverseDirectory queue rootPath
 
     traverseDirectory queue currentPath = do
-        objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database
         names <- liftIO $ getDirectoryContents currentPath
         let properNames = filter (`notElem` [".", ".."]) names
         forM_ properNames $ \name -> do

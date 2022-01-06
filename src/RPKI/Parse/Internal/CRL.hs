@@ -97,9 +97,8 @@ parseCrl bs = do
 
                 -- TODO This is heavy and eats a lot o heap for long revocation lists
                 getRevokedSerials = 
-                    onNextContainerMaybe Sequence (getMany getCrlSerial) >>= \case
-                        Nothing -> pure Set.empty
-                        Just rc -> pure $! Set.fromList rc
+                    maybe Set.empty Set.fromList <$> 
+                        onNextContainerMaybe Sequence (getMany getCrlSerial)
                     where
                         getCrlSerial = onNextContainer Sequence $ 
                             replicateM 2 getNext >>= \case 

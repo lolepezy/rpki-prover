@@ -14,10 +14,7 @@ import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Repository
 import           RPKI.Store.Base.Map      (SMap (..))
-import           RPKI.Store.Base.MultiMap (SMultiMap (..))
-
 import qualified RPKI.Store.Base.Map      as M
-import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storage
 
 
@@ -38,7 +35,7 @@ putRepositories tx RepositoryStore {..}
                     rsyncs = RsyncMap rsyncs',
                     rrdps = RrdpMap rrdps', 
                     lastSucceded = EverSucceededMap lastSucceded'} 
-                taName' = liftIO $ do    
+                _ = liftIO $ do    
     forM_ (Map.toList rsyncs') $ \(u, p) ->
             M.put tx rsyncS u p    
     forM_ (Map.toList rrdps') $ \(u, p) -> 
@@ -101,7 +98,7 @@ getPublicationPoints tx RepositoryStore {..} = liftIO $ do
 
 savePublicationPoints :: (MonadIO m, Storage s) => 
                         Tx s 'RW -> RepositoryStore s -> PublicationPoints -> m ()
-savePublicationPoints tx store@RepositoryStore {..} newPPs = do 
+savePublicationPoints tx store@RepositoryStore {} newPPs = do 
     ppsInDb <- getPublicationPoints tx store
     let changes = changeSet ppsInDb newPPs
     applyChangeSet tx store changes 

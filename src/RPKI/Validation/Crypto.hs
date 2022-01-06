@@ -11,14 +11,14 @@ import           RPKI.Domain
 -- | Validate the signature of an certificate-holding object
 validateCertSignature :: (WithResourceCertificate c, WithResourceCertificate parent) => 
                         c -> parent -> SignatureVerification                
-validateCertSignature certificate parentCert = 
+validateCertSignature cert parentCert = 
     verifySignature algorithm pubKey (toNormalBS signedData) (toNormalBS signature1)
     where
         CertificateWithSignature {
             cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
             cwsSignature = SignatureValue signature1,
             cwsEncoded = signedData
-        } = getCertWithSignature certificate
+        } = getCertWithSignature cert
         pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
 
 

@@ -83,6 +83,7 @@ instance WithTx LmdbStorage where
 
     readWriteTx lmdb f = withTransaction1 (getEnv lmdb) (f . LmdbTx)        
 
+withTransaction1 :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
 withTransaction1 LmdbEnv {..} f = do        
         nEnv <- atomically $ do 
             readTVar nativeEnv >>= \case         
@@ -152,14 +153,14 @@ foldGeneric tx db f a0 withCurs makeProducer =
 
 createLmdbStore :: forall name . KnownSymbol name => 
                     LmdbEnv -> IO (LmdbStore name)
-createLmdbStore env@LmdbEnv {..} = do
+createLmdbStore env@LmdbEnv {} = do
     let name' = symbolVal (P.Proxy @name)
     db <- withTransaction1 env $ \tx -> openDatabase tx (Just name') defaultDbSettings     
     pure $ LmdbStore db env    
 
 createLmdbMultiStore :: forall name . KnownSymbol name =>  
                         LmdbEnv -> IO (LmdbMultiStore name)
-createLmdbMultiStore env@LmdbEnv {..} = do
+createLmdbMultiStore env@LmdbEnv {} = do
     let name' = symbolVal (P.Proxy @name)
     db <- withTransaction1 env $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
     pure $ LmdbMultiStore db env    
@@ -184,14 +185,14 @@ createSemaphore n = Semaphore n <$> newTVarIO 0
 
 withSemaphore :: Semaphore -> IO a -> IO a
 withSemaphore (Semaphore maxCounter current) f = 
-    bracket incr decrement (const f)
+    bracket incr decrement' (const f)
     where 
         incr = atomically $ do 
             c <- readTVar current
             if c >= maxCounter 
                 then retry
                 else writeTVar current (c + 1)
-        decrement _ = atomically $ modifyTVar' current $ \c -> c - 1
+        decrement' _ = atomically $ modifyTVar' current $ \c -> c - 1
 
 
 getNativeEnv :: LmdbEnv -> STM Env 
@@ -231,12 +232,12 @@ copyEnv srcN dstN = do
                         closeDatabase srcN srcMap
                         srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
                         dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) defaultMultiDbSettngs
-                        (copied, max) <- copyMultiMap srcMap' dstMap srcTx dstTx
-                        pure $! CopyStat mapName copied max
+                        (copied, biggest) <- copyMultiMap srcMap' dstMap srcTx dstTx
+                        pure $! CopyStat mapName copied biggest
                     else do 
                         dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
-                        (copied, max) <- copyMap srcMap dstMap srcTx dstTx                        
-                        pure $! CopyStat mapName copied max
+                        (copied, biggest) <- copyMap srcMap dstMap srcTx dstTx                        
+                        pure $! CopyStat mapName copied biggest
     where
         getMapNames tx db =
             withCursor tx db $ \c -> do 
@@ -253,7 +254,7 @@ copyEnv srcN dstN = do
                     void $ runEffect $ LMap.firstForward c >-> do
                         forever $ do
                             Lmdb.KeyValue name value <- await
-                            lift $ LMap.insertSuccess' dstTx dstMap name value
+                            void $ lift $ LMap.insertSuccess' dstTx dstMap name value
                             let kvSize = BS.length name + BS.length value
                             lift $ do 
                                 modifyIORef' bytes ( + kvSize)
@@ -275,5 +276,5 @@ copyEnv srcN dstN = do
         withKVs processThem = do 
             bytes <- newIORef 0
             maxKV <- newIORef 0
-            processThem bytes maxKV
+            void $ processThem bytes maxKV
             (,) <$> readIORef bytes <*> readIORef maxKV

@@ -36,8 +36,6 @@ import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
-
-import           Data.Semigroup
 import           RPKI.TAL
 import           RPKI.Util
 
@@ -370,7 +368,7 @@ mergeRrdp r@RrdpRepository { .. }
 
 
 succeededFromStatus :: RpkiURL -> FetchStatus -> EverSucceededMap -> EverSucceededMap
-succeededFromStatus u (FetchedAt t) lastSucceded = 
+succeededFromStatus u (FetchedAt _) lastSucceded = 
     lastSucceded <> EverSucceededMap (Map.singleton u AtLeastOnce)
 succeededFromStatus _ _ lastSucceded = lastSucceded
 
@@ -425,7 +423,7 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
 
             pure $ PublicationPointAccess $ publicationPoint :| prefetchReposToUse 
 
-        RFC_TAL {..} -> do 
+        RFC_TAL {} -> do 
             (_, pp) <- publicationPointsFromCert cert            
             pure $ PublicationPointAccess $ pp :| []
   where        
@@ -532,7 +530,7 @@ updateStatuses
                     (uri, Root newStatus) : rsyncs', 
                     status2Success (RsyncU uri) newStatus lastS)
 
-        status2Success u (FetchedAt t) lastS = (u, AtLeastOnce) : lastS
+        status2Success u (FetchedAt _) lastS = (u, AtLeastOnce) : lastS
         status2Success _ _             lastS = lastS
 
 

@@ -3,7 +3,6 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE StrictData          #-}
 
-
 module RPKI.RTR.Types where
 
 import qualified Data.ByteString.Lazy     as BSL

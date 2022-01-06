@@ -118,6 +118,6 @@ parseVCard bs = do
           case fieldValues of 
               []  -> Left $ "Not found field '" <> fieldName <> "'"
               [f] -> Right f
-              fs  -> Left $ "Multiple fields '" <> fieldName <> "'"
+              _   -> Left $ "Multiple fields '" <> fieldName <> "'"
 
 

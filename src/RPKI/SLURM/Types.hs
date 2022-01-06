@@ -176,5 +176,6 @@ oneOrBothToJSON these' t1 t2 =
         That b    -> [ t2 .= toJSON b ]
         These a b -> [ t1 .= toJSON a, t2 .= toJSON b ]
 
+jsonComment :: (KeyValue a1, ToJSON a2) => Maybe a2 -> [a1]
 jsonComment Nothing = []
 jsonComment (Just c) = [ "comment" .= toJSON c ]

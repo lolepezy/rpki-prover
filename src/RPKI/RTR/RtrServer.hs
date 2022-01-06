@@ -125,14 +125,14 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
         forever $ do
             --  wait for a new complete world version
-            (rtrState', previousVersion, newVersion, newVrps) 
+            (rtrState', previousVersion, newVersion, newVrps') 
                 <- atomically $ 
                     readTVar rtrState >>= \case 
                         Nothing        -> retry
                         Just rtrState' -> do
                             let knownVersion = rtrState' ^. #lastKnownWorldVersion
-                            (newVersion, newVrps) <- waitForNewVersion appState knownVersion
-                            pure (rtrState', knownVersion, newVersion, newVrps)
+                            (newVersion, newVrps_) <- waitForNewVersion appState knownVersion
+                            pure (rtrState', knownVersion, newVersion, newVrps_)
                 
             database' <- readTVarIO database
 
@@ -143,7 +143,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                         slurm <- slurmForVersion tx database' previousVersion
                                         pure $ allVrps $ maybe vrps1 (`applySlurm` vrps1) slurm
 
-            let newVrpsFlattened = allVrps newVrps
+            let newVrpsFlattened = allVrps newVrps'
             let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
@@ -297,9 +297,9 @@ responseAction logger peer session rtrState vrps pduBytes =
                     pduBytesLazy
                     session
             in case r of 
-                Left (errorPdu, message) -> let
-                    ioAction = logDebug_ logger [i|Parsed PDU: #{pdu}, error = #{message}, responding with #{errorPdu}.|]
-                    in Left ([errorPdu], ioAction)                                     
+                Left (errorPdu', message') -> let
+                    ioAction = logDebug_ logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
+                    in Left ([errorPdu'], ioAction)                                     
                 Right (pdus, warning) -> let
                     ioAction = do 
                         for_ warning $ logWarn_ logger
@@ -392,7 +392,7 @@ respondToPdu
             Nothing -> let
                 text :: Text = "VRP set is empty, the RTR cache is not ready yet."
                 in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
-            Just rtrState@RtrState {..} ->             
+            Just rtrState'@RtrState {..} ->             
                 case pdu of 
                     SerialQueryPdu sessionId clientSerial -> 
                         withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
@@ -402,7 +402,7 @@ respondToPdu
                                         <> [EndOfDataPdu sessionId currentSerial defIntervals]
                                     in Right (pdus, Nothing)
                                 else 
-                                    case diffsFromSerial rtrState clientSerial of
+                                    case diffsFromSerial rtrState' clientSerial of
                                         Nothing -> 
                                             -- we don't have the data, you are too far behind
                                             Right (

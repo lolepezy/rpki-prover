@@ -7,7 +7,6 @@ module RPKI.AppState where
     
 import           Control.Monad (join)
 import           Control.Concurrent.STM
-import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics
 import           RPKI.AppMonad

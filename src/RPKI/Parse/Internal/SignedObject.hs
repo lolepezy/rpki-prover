@@ -12,13 +12,11 @@ import Data.ASN1.Parse
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
-import Data.List.NonEmpty (NonEmpty ((:|)))
-
 import RPKI.Domain
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.Cert
 
-import qualified RPKI.Util as U
+import RPKI.Util (sha256s)
 
 {- 
   https://tools.ietf.org/html/rfc6488#section-2
@@ -95,9 +93,9 @@ parseSignedObject contentBinaryParse =
                   let certWithSig = CertificateWithSignature 
                         eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
                   case toResourceCert certWithSig of
-                    Left e                    -> throwParseError $ "EE certificate is broken " <> show e
-                    Right (_,   _,  Nothing)  -> throwParseError "EE certificate doesn't have an AKI"
-                    Right (rc, ski, Just aki) -> pure $ newEECert aki ski rc
+                    Left e                      -> throwParseError $ "EE certificate is broken " <> show e
+                    Right (_,   _,  Nothing)    -> throwParseError "EE certificate doesn't have an AKI"
+                    Right (rc, ski', Just aki') -> pure $ newEECert aki' ski' rc
                   where 
                     encodedCert = encodeASN1' DER $ 
                       [Start Sequence] <> asns <> [End Sequence]                                
@@ -149,7 +147,7 @@ parseSignedObject contentBinaryParse =
 
 
 getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult Hash
-getMetaFromSigned _ bs = pure $ U.sha256s bs
+getMetaFromSigned _ bs = pure $ sha256s bs
 
 
 parseSignedContent :: ParseASN1 a -> ContentType -> BS.ByteString -> ParseASN1 (EncapsulatedContentInfo a)

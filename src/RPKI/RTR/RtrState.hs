@@ -22,7 +22,6 @@ import           RPKI.AppTypes
 import           RPKI.Time      (nanosPerSecond)
 
 
-
 data Diff a = Diff { 
         added   :: Set a, 
         deleted :: Set a
