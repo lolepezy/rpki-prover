@@ -32,7 +32,11 @@ The only dependency needed for `rpki-prover` to run is `rsync` client.
 
 `rpki-prover` is a daemon that runs periodic re-validation of all TAs in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the `--with-rtr` option enables RTR server pushing VRP updates to RTR clients.
 
-There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters).
+There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Typical command line could look like this
+
+```
+/opt/bin/rpki-prover-linux.exe --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 8080 --log-level debug
+```
 
 There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. The awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
 
