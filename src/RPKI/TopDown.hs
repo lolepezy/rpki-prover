@@ -261,22 +261,20 @@ validateFromTACert :: Storage s =>
                     Located CerObject ->                     
                     ValidatorT IO (Set Vrp)
 validateFromTACert 
-    appContext
+    appContext@AppContext {..}
     topDownContext@TopDownContext { .. } 
-    initialRepos@(PublicationPointAccess taPublicationPoints) 
+    initialRepos
     taCert 
   = do      
-    
-    unless (appContext ^. typed @Config . typed @ValidationConfig . #dontFetch) $ do
-        -- Merge the main repositories in first, all these PPs will be stored 
-        -- in `#publicationPoints` with the status 'Pending'
+    for_ (filterPPAccess config initialRepos) $ \filteredRepos -> do        
         liftIO $ atomically $ modifyTVar' 
                     (repositoryProcessing ^. #publicationPoints)
-                    (\pubPoints -> foldr mergePP pubPoints taPublicationPoints) 
+                    (\pubPoints -> foldr mergePP pubPoints $ unPublicationPointAccess filteredRepos) 
         
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion now initialRepos    
+        void $ fetchPPWithFallback appContext repositoryProcessing 
+                    worldVersion now filteredRepos
         
     -- Do the tree descend, gather validation results and VRPs            
     vp <- askEnv
@@ -355,25 +353,27 @@ validateCaCertificate
             )
                 
     let actuallyValidate = 
-            if validationConfig ^. #dontFetch 
-                -- Don't do anything with the pending repositories
-                -- Just expect all the objects to be already cached        
-                then validateThisCertAndGoDown 
-                else 
-                    case getPublicationPointsFromCertObject (certificate ^. #payload) of            
-                        Left e         -> vError e
-                        Right ppAccess -> do                    
-                            fetches <- fetchPPWithFallback appContext repositoryProcessing worldVersion now ppAccess
-                            rpkiUrls <- liftIO $ getPrimaryRepositoryFromPP repositoryProcessing ppAccess
-                            let z = if anySuccess fetches                    
+            case getPublicationPointsFromCertObject (certificate ^. #payload) of            
+                Left e         -> vError e
+                Right ppAccess ->   
+                    case filterPPAccess config ppAccess of 
+                        Nothing -> 
+                            -- Both rrdp and rsync (and whatever else in the future?) are
+                            -- disabled, don't fetch at all.
+                            validateThisCertAndGoDown
+                        Just filteredPPAccess -> do 
+                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion now filteredPPAccess
+                            primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
+                            let goFurther = 
+                                    if anySuccess fetches                    
                                         then validateThisCertAndGoDown                            
                                         else do                             
-                                            fetchEverSucceeded repositoryProcessing ppAccess >>= \case                        
+                                            fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case                        
                                                 Never       -> pure mempty
                                                 AtLeastOnce -> validateThisCertAndGoDown                            
-                            case rpkiUrls of 
-                                Nothing -> z
-                                Just rp -> inSubMetricScope' PPFocus rp z                                
+                            case primaryUrl of 
+                                Nothing -> goFurther
+                                Just rp -> inSubMetricScope' PPFocus rp goFurther
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it

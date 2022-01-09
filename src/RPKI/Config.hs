@@ -56,7 +56,8 @@ data Config = Config {
 data RsyncConf = RsyncConf {
         rsyncClientPath :: Maybe FilePath,
         rsyncRoot    :: FilePath,
-        rsyncTimeout :: Seconds
+        rsyncTimeout :: Seconds,
+        enabled     :: Bool
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -71,7 +72,8 @@ newtype Size = Size Int64
 data RrdpConf = RrdpConf {
         tmpRoot     :: FilePath,
         maxSize     :: Size,
-        rrdpTimeout :: Seconds
+        rrdpTimeout :: Seconds,
+        enabled     :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
@@ -87,10 +89,6 @@ data ValidationConfig = ValidationConfig {
 
         -- Maximum time for top-down validation for one TA
         topDownTimeout                 :: Seconds,
-
-        -- Used mainly for testing and doesn't really make sense
-        -- in a production environment    
-        dontFetch                      :: Bool,
         
         manifestProcessing             :: ManifestProcessing,
 
@@ -156,19 +154,20 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = "",
-        rsyncTimeout = 7 * 60
+        rsyncTimeout = 7 * 60,
+        enabled = True
     },
     rrdpConf = RrdpConf {
         tmpRoot = "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * 60
+        rrdpTimeout = 7 * 60,
+        enabled = True
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = Seconds $ 13 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         topDownTimeout                 = Seconds $ 60 * 60,    
-        dontFetch                      = False,
         manifestProcessing             = RFC6486,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,

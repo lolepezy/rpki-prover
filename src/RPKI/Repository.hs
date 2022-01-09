@@ -22,6 +22,7 @@ import           Data.Ord
 import           Data.X509                   (Certificate)
 
 import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
+import qualified Data.List.NonEmpty          as NonEmpty
 
 import qualified Data.List                   as List
 import           Data.Map.Strict             (Map)
@@ -38,6 +39,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Util
+import RPKI.Config
 
 
 data FetchEverSucceeded = Never | AtLeastOnce
@@ -615,3 +617,16 @@ repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) =
   where
     countRoots (Root _) c = c + 1
     countRoots _        c = c
+
+
+filterPPAccess :: Config -> PublicationPointAccess -> Maybe PublicationPointAccess    
+filterPPAccess Config {..} ppAccess = 
+    fmap PublicationPointAccess $ nonEmpty $ 
+            NonEmpty.filter filter_ $ 
+            unPublicationPointAccess ppAccess
+  where
+    filter_ pp = 
+        case (pp, rrdpConf ^. #enabled, rsyncConf ^. #enabled) of
+            (RrdpPP _,  True, _   ) -> True
+            (RsyncPP _, _,    True) -> True
+            _                       -> False

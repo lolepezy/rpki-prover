@@ -216,13 +216,14 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #parallelism .~ parallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
                 & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
+                & #rsyncConf . #enabled .~ not noRsync
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
+                & #rrdpConf . #enabled .~ not noRrdp
                 & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
                 & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-                & #validationConfig . #dontFetch .~ dontFetch
                 & #validationConfig . #manifestProcessing .~
                         (if strictManifestValidation then RFC6486_Strict else RFC6486)
                 & maybeSet (#httpApiConf . #port) httpApiPort
@@ -230,7 +231,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
-                & #logLevel .~ derivedLogLevel
+                & #logLevel .~ derivedLogLevel                
     }
 
     logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
@@ -484,14 +485,14 @@ data CLIOptions wrapped = CLIOptions {
     logLevel :: wrapped ::: Maybe String <?>
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
 
-    dontFetch :: wrapped ::: Bool <?>
-        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false).",
-
     strictManifestValidation :: wrapped ::: Bool <?>
         "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/ item 6.4) for manifest handling (default is false).",
 
     localExceptions :: wrapped ::: [String] <?>
-        "Files with local exceptions in the SLURM format (RFC 8416)."
+        "Files with local exceptions in the SLURM format (RFC 8416).",
+
+    noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
+    noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)"
 
 } deriving (Generic)
 
