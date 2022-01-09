@@ -224,8 +224,13 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-                & #validationConfig . #manifestProcessing .~
-                        (if strictManifestValidation then RFC6486_Strict else RFC6486)
+                & #validationConfig . #manifestProcessing .~                
+                        (if strictManifestValidation then RFC6486_Strict else RFC6486)                
+                & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositoryCount
+                & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
+                & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
+                & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
+                & maybeSet (#validationConfig . #minObjectSize) minObjectSize
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -490,6 +495,23 @@ data CLIOptions wrapped = CLIOptions {
 
     localExceptions :: wrapped ::: [String] <?>
         "Files with local exceptions in the SLURM format (RFC 8416).",
+
+    maxTaRepositoryCount :: wrapped ::: Maybe Int <?>
+        "Maximal number of new repositories that TA validation run can add (default is 1000).",
+
+    maxCertificatePathDepth :: wrapped ::: Maybe Int <?>
+        "Maximal depth of the certificate path from the TA certificate to the RPKI tree (default is 32).",
+
+    maxTotalTreeSize :: wrapped ::: Maybe Int <?>
+        ("Maximal total size of the object tree for one TA including all currently supported types of " +++ 
+         "objects (default is 5000000)."),
+
+    maxObjectSize :: wrapped ::: Maybe Integer <?>
+        ("Maximal size of an object of any type (certificate, CRL, MFT, GRB, ROA, ASPA) " +++ 
+         "in bytes (default is 32mb, i.e. 33554432 bytes)."),
+
+    minObjectSize :: wrapped ::: Maybe Integer <?>
+        "Minimal size of an object of any type in bytes (default is 300).",
 
     noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
     noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)"
