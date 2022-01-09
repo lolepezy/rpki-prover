@@ -226,6 +226,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
                 & #validationConfig . #manifestProcessing .~                
                         (if strictManifestValidation then RFC6486_Strict else RFC6486)                
+                & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
                 & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositoryCount
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
                 & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
@@ -512,6 +513,9 @@ data CLIOptions wrapped = CLIOptions {
 
     minObjectSize :: wrapped ::: Maybe Integer <?>
         "Minimal size of an object of any type in bytes (default is 300).",
+
+    topDownTimeout :: wrapped ::: Maybe Int64 <?>
+        "Timebox for one TA validation in seconds (default is 1 hours, i.e. 3600 seconds).",
 
     noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
     noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)"

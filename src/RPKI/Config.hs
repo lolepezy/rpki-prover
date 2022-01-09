@@ -173,7 +173,7 @@ defaultConfig = Config {
         maxTotalTreeSize               = 5_000_000,
         maxObjectSize                  = 32 * 1024 * 1024,
         -- every object contains at least 256 bytes of RSA key, 
-        -- couple of dates and a few extenions
+        -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 3000
     },
