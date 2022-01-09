@@ -96,12 +96,12 @@ newtype ValidationsStore s = ValidationsStore {
 instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
-newtype MetricsStore s = MetricsStore {
+newtype MetricStore s = MetricStore {
     metrics :: SMap "metrics" s WorldVersion RawMetric    
 }
 
-instance Storage s => WithStorage s (MetricsStore s) where
-    storage (MetricsStore s) = storage s
+instance Storage s => WithStorage s (MetricStore s) where
+    storage (MetricStore s) = storage s
 
 
 -- | VRP store
@@ -357,16 +357,16 @@ completeWorldVersion tx database worldVersion =
 
 putMetrics :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
-putMetrics tx DB { metricStore = MetricsStore s } wv appMetric = 
+putMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
     liftIO $ M.put tx s wv appMetric
 
 metricsForVersion :: (MonadIO m, Storage s) => 
-                    Tx s mode -> MetricsStore s -> WorldVersion -> m (Maybe RawMetric)
-metricsForVersion tx MetricsStore {..} wv = liftIO $ M.get tx metrics wv    
+                    Tx s mode -> MetricStore s -> WorldVersion -> m (Maybe RawMetric)
+metricsForVersion tx MetricStore {..} wv = liftIO $ M.get tx metrics wv    
 
 deleteMetrics :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteMetrics tx DB { metricStore = MetricsStore s } wv = liftIO $ M.delete tx s wv
+deleteMetrics tx DB { metricStore = MetricStore s } wv = liftIO $ M.delete tx s wv
 
 putSlurm :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
@@ -522,43 +522,44 @@ getTotalDbStats db = do
 -- Compute database stats
 getDbStats :: (MonadIO m, Storage s) => 
               DB s -> m DBStats
-getDbStats db@DB {..} = liftIO $ roTx db $ \tx ->    
-    DBStats <$>
-        (let TAStore sm = taStore in M.stats tx sm) <*>
-        repositoryStats tx <*>
-        rpkiObjectStats tx <*>
-        vResultStats tx <*>
-        (let VRPStore sm = vrpStore in M.stats tx sm) <*>
-        (let VersionStore sm = versionStore in M.stats tx sm) <*>
-        M.stats tx sequences <*>
-        (let SlurmStore sm = slurmStore in M.stats tx sm)
-    where
-        rpkiObjectStats tx = do 
-            let RpkiObjectStore {..} = objectStore
-            objectsStats  <- M.stats tx objects
-            mftByAKIStats <- MM.stats tx mftByAKI                                    
-            hashToKeyStats  <- M.stats tx hashToKey
-            lastValidMftStats <- M.stats tx lastValidMft
+getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do 
+    taStats         <- let TAStore sm = taStore in M.stats tx sm
+    repositoryStats <- repositoryStats' tx
+    rpkiObjectStats <- rpkiObjectStats' tx
+    vResultStats    <- vResultStats' tx
+    vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
+    metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
+    versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
+    sequenceStats   <- M.stats tx sequences
+    slurmStats      <- let SlurmStore sm = slurmStore in M.stats tx sm
+    pure DBStats {..}
+  where
+    rpkiObjectStats' tx = do 
+        let RpkiObjectStore {..} = objectStore
+        objectsStats  <- M.stats tx objects
+        mftByAKIStats <- MM.stats tx mftByAKI                                    
+        hashToKeyStats  <- M.stats tx hashToKey
+        lastValidMftStats <- M.stats tx lastValidMft
 
-            uriToUriKeyStat <- M.stats tx uriToUriKey
-            uriKeyToUriStat <- M.stats tx uriKeyToUri
-            uriKeyToObjectKeyStat <- MM.stats tx urlKeyToObjectKey
-            objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
+        uriToUriKeyStat <- M.stats tx uriToUriKey
+        uriKeyToUriStat <- M.stats tx uriKeyToUri
+        uriKeyToObjectKeyStat <- MM.stats tx urlKeyToObjectKey
+        objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
 
-            objectInsertedByStats <- M.stats tx objectInsertedBy
-            objectValidatedByStats <- M.stats tx objectValidatedBy            
-            pure RpkiObjectStats {..}
+        objectInsertedByStats <- M.stats tx objectInsertedBy
+        objectValidatedByStats <- M.stats tx objectValidatedBy            
+        pure RpkiObjectStats {..}
 
-        repositoryStats tx = 
-            let RepositoryStore {..} = repositoryStore
-            in RepositoryStats <$>
-                M.stats tx rrdpS <*>
-                M.stats tx rsyncS <*>
-                M.stats tx lastS
+    repositoryStats' tx = 
+        let RepositoryStore {..} = repositoryStore
+        in RepositoryStats <$>
+            M.stats tx rrdpS <*>
+            M.stats tx rsyncS <*>
+            M.stats tx lastS
 
-        vResultStats tx = 
-            let ValidationsStore results = validationsStore
-            in VResultStats <$> M.stats tx results
+    vResultStats' tx = 
+        let ValidationsStore results = validationsStore
+        in VResultStats <$> M.stats tx results
    
                        
 -- | Return total amount of bytes taken by the data in the DB
@@ -592,7 +593,7 @@ data DB s = DB {
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     versionStore     :: VersionStore s,
-    metricStore      :: MetricsStore s,
+    metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
     sequences        :: SequenceMap s
 } deriving stock (Generic)

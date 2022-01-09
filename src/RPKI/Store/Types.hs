@@ -86,6 +86,7 @@ data DBStats = DBStats {
     rpkiObjectStats :: RpkiObjectStats,    
     vResultStats    :: VResultStats,    
     vrpStats        :: SStats,        
+    metricsStats    :: SStats,    
     versionStats    :: SStats,    
     sequenceStats   :: SStats,
     slurmStats      :: SStats

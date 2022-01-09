@@ -62,8 +62,8 @@ createTAStore e = TAStore . SMap (LmdbStorage e) <$> createLmdbStore e
 createVersionStore :: LmdbEnv -> IO (VersionStore LmdbStorage)
 createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
-createMetricsStore :: LmdbEnv -> IO (MetricsStore LmdbStorage)
-createMetricsStore e = MetricsStore . SMap (LmdbStorage e) <$> createLmdbStore e    
+createMetricsStore :: LmdbEnv -> IO (MetricStore LmdbStorage)
+createMetricsStore e = MetricStore . SMap (LmdbStorage e) <$> createLmdbStore e    
 
 createSlurmStore :: LmdbEnv -> IO (SlurmStore LmdbStorage)
 createSlurmStore e = SlurmStore . SMap (LmdbStorage e) <$> createLmdbStore e    
