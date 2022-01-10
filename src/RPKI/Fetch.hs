@@ -382,8 +382,8 @@ cancelFetchTasks rp = do
     mapM_ cancel [ a | (_, Fetching a) <- Map.toList ppSeqFr]
 
 
-getPrimaryRepositoryFromPP :: RepositoryProcessing -> PublicationPointAccess -> IO (Maybe RpkiURL)
-getPrimaryRepositoryFromPP repositoryProcessing ppAccess = do
+getPrimaryRepositoryFromPP :: MonadIO m => RepositoryProcessing -> PublicationPointAccess -> m (Maybe RpkiURL)
+getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
     pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
     let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
     pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    

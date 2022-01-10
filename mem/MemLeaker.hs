@@ -71,7 +71,6 @@ main = do
                 
 
             -- Don't update data
-            let appContext' = appContext & typed @Config . typed @ValidationConfig . #dontFetch .~ True
             replicateM_ 30 $ do                
                 let now = versionToMoment worldVersion
                 let cacheLifeTime = appContext ^. typed @Config ^. #cacheLifeTime

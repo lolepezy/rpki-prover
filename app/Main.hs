@@ -216,21 +216,28 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #parallelism .~ parallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
                 & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
+                & #rsyncConf . #enabled .~ not noRsync
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
+                & #rrdpConf . #enabled .~ not noRrdp
                 & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
                 & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-                & #validationConfig . #dontFetch .~ dontFetch
-                & #validationConfig . #manifestProcessing .~
-                        (if strictManifestValidation then RFC6486_Strict else RFC6486)
+                & #validationConfig . #manifestProcessing .~                
+                        (if strictManifestValidation then RFC6486_Strict else RFC6486)                
+                & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
+                & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
+                & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
+                & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
+                & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
+                & maybeSet (#validationConfig . #minObjectSize) minObjectSize
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
-                & #logLevel .~ derivedLogLevel
+                & #logLevel .~ derivedLogLevel                
     }
 
     logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
@@ -484,14 +491,34 @@ data CLIOptions wrapped = CLIOptions {
     logLevel :: wrapped ::: Maybe String <?>
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
 
-    dontFetch :: wrapped ::: Bool <?>
-        "Don't fetch repositories, expect all the objects to be cached (mostly used for testing, default is false).",
-
     strictManifestValidation :: wrapped ::: Bool <?>
         "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/ item 6.4) for manifest handling (default is false).",
 
     localExceptions :: wrapped ::: [String] <?>
-        "Files with local exceptions in the SLURM format (RFC 8416)."
+        "Files with local exceptions in the SLURM format (RFC 8416).",
+
+    maxTaRepositories :: wrapped ::: Maybe Int <?>
+        "Maximal number of new repositories that TA validation run can add (default is 1000).",
+
+    maxCertificatePathDepth :: wrapped ::: Maybe Int <?>
+        "Maximal depth of the certificate path from the TA certificate to the RPKI tree (default is 32).",
+
+    maxTotalTreeSize :: wrapped ::: Maybe Int <?>
+        ("Maximal total size of the object tree for one TA including all currently supported types of " +++ 
+         "objects (default is 5000000)."),
+
+    maxObjectSize :: wrapped ::: Maybe Integer <?>
+        ("Maximal size of an object of any type (certificate, CRL, MFT, GRB, ROA, ASPA) " +++ 
+         "in bytes (default is 32mb, i.e. 33554432 bytes)."),
+
+    minObjectSize :: wrapped ::: Maybe Integer <?>
+        "Minimal size of an object of any type in bytes (default is 300).",
+
+    topDownTimeout :: wrapped ::: Maybe Int64 <?>
+        "Timebox for one TA validation in seconds (default is 1 hours, i.e. 3600 seconds).",
+
+    noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
+    noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)"
 
 } deriving (Generic)
 
