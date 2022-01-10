@@ -27,9 +27,8 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (fromMaybe, isJust)
+import           Data.Maybe                  (fromMaybe)
 import           Data.Monoid.Generic
-import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           RPKI.Domain
@@ -216,36 +215,6 @@ rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
 rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
 
-toRepository :: PublicationPoint -> Repository
-toRepository (RrdpPP r) = RrdpR r
-toRepository (RsyncPP r) = RsyncR $ RsyncRepository r Pending
-  
-fetchStatus :: Repository -> FetchStatus 
-fetchStatus (RsyncR RsyncRepository {..}) = status
-fetchStatus (RrdpR RrdpRepository {..})   = status
-
-toRepoStatusPairs :: PublicationPoints -> [(Repository, FetchStatus)]
-toRepoStatusPairs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap) _) = 
-    rrdpList <> rsyncList
-  where 
-    rrdpList = map (\r -> (RrdpR r, r ^. typed)) (Map.elems rrdps)
-    rsyncList = [ (RsyncR (RsyncRepository (RsyncPublicationPoint u) status), status) | 
-                    (u, Root status) <- Map.toList rsyncMap ]
-
-
-hasURI :: RpkiURL -> PublicationPoints -> Bool
-hasURI u (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncMap) _) = 
-    case u of
-        RrdpU  rrdpUrl  -> isJust $ Map.lookup rrdpUrl rrdps
-        RsyncU rsyncUrl -> isJust $ Map.lookup rsyncUrl rsyncMap    
-
-
-allURIs :: PublicationPoints -> Set RpkiURL
-allURIs (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) = 
-    Map.foldMapWithKey (\u _ -> Set.singleton $ RrdpU u) rrdps <> 
-    Map.foldMapWithKey (\u _ -> Set.singleton $ RsyncU u) rsyncs
-
-
 findPublicationPointStatus :: RpkiURL -> PublicationPoints -> Maybe FetchStatus
 findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =     
     case u of
@@ -257,31 +226,8 @@ findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =
         go u' =
             Map.lookup u' m >>= \case            
                 ParentURI parentUri -> go parentUri
-                Root status         -> pure (u, status)
+                Root status         -> pure (u, status)              
 
-
-repositoryHierarchy :: PublicationPoints -> 
-                    (Map PublicationPoint Repository, 
-                     Map Repository (Set PublicationPoint))
-repositoryHierarchy (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) = 
-    (direct, inverse)    
-  where
-    direct = rrdp <> rsync    
-    inverse = Map.foldrWithKey 
-        (\pp root m -> m <> Map.singleton root (Set.singleton pp)) 
-        Map.empty 
-        direct
-
-    rrdp = Map.fromList $ map (\r -> (RrdpPP r, RrdpR r)) $ Map.elems rrdps        
-    rsync = Map.fromList [ 
-                (RsyncPP (RsyncPublicationPoint u), RsyncR root) | 
-                    (u, Just root) <- map (\u -> (u, findRoot u)) $ Map.keys rsyncs 
-            ]
-    findRoot u = 
-        Map.lookup u rsyncs >>= \case             
-            Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
-            ParentURI parentUri  -> findRoot parentUri        
-                
 
 repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
 repositoryFromPP (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) _) rpkiUrl = 
@@ -385,25 +331,11 @@ succeededFromStatus _ _ lastSucceded = lastSucceded
 --       rsync://host/foo/baz/bop
 --
 fromRsyncPPs :: [RsyncPublicationPoint] -> PublicationPoints
-fromRsyncPPs = List.foldr mergeRsyncPP emptyPublicationPoints
-
-emptyPublicationPoints :: PublicationPoints
-emptyPublicationPoints = PublicationPoints mempty mempty mempty
+fromRsyncPPs = List.foldr mergeRsyncPP mempty
 
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
 mergePP (RrdpPP r) = mergeRrdp r
 mergePP (RsyncPP r) = mergeRsyncPP r    
-
-mergeRepo :: Repository -> PublicationPoints -> PublicationPoints
-mergeRepo (RrdpR r) = mergeRrdp r
-mergeRepo (RsyncR r) = mergeRsyncRepo r    
-
-mergeRepos :: Foldable t => t Repository -> PublicationPoints -> PublicationPoints
-mergeRepos repos pps = foldr mergeRepo pps repos
-
-mergePPs :: Foldable t => t Repository -> PublicationPoints -> PublicationPoints
-mergePPs repos pps = foldr mergeRepo pps repos
-
 
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
@@ -535,34 +467,6 @@ updateStatuses
         status2Success u (FetchedAt _) lastS = (u, AtLeastOnce) : lastS
         status2Success _ _             lastS = lastS
 
-
--- Limit PublicationPoints only to the set of URIs in the set that comes the first argument.
--- For rsync, also add all the parent URLs.
-shrinkTo :: PublicationPoints -> Set RpkiURL -> PublicationPoints
-shrinkTo (PublicationPoints (RrdpMap rrdps) (RsyncMap rsyncs) (EverSucceededMap lastSucceded)) uris = 
-    PublicationPoints (RrdpMap rrdps') (RsyncMap rsyncs') (EverSucceededMap lastSucceded')
-    where
-        rrdps'        = Map.filterWithKey (\u _ -> u `Set.member` rrdpURLs) rrdps
-        rsyncs'       = Map.foldrWithKey addWithParents Map.empty rsyncs
-        lastSucceded' = Map.filterWithKey (\u _ -> u `Set.member` uris) lastSucceded
-
-        (rrdpURLs, rsyncURLs) = bimap Set.fromList Set.fromList 
-                                    $ Set.foldr partitionURLs ([], []) uris
-        partitionURLs (RrdpU r) (rr, rs)  = (r : rr, rs)
-        partitionURLs (RsyncU r) (rr, rs) = (rr, r : rs)
-
-        addWithParents u parent m 
-            | u `Set.member` rsyncURLs = go u parent
-            | otherwise                = m 
-            where 
-                go u' r@(Root _)       = Map.insert u' r m
-                go u' p@(ParentURI pu) = Map.insert u' p m <> Map.fromList (gatherPathToRoot pu)
-
-                gatherPathToRoot u' = 
-                    case Map.lookup u' rsyncs of 
-                        Nothing             -> []
-                        Just (ParentURI pu) -> (u', ParentURI pu) : gatherPathToRoot pu
-                        Just r@(Root _)     -> [(u', r)]
 
 
 -- | Fix lastSucceeded map based on statuses. 
