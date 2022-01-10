@@ -227,7 +227,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #validationConfig . #manifestProcessing .~                
                         (if strictManifestValidation then RFC6486_Strict else RFC6486)                
                 & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
-                & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositoryCount
+                & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
                 & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
                 & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
@@ -497,7 +497,7 @@ data CLIOptions wrapped = CLIOptions {
     localExceptions :: wrapped ::: [String] <?>
         "Files with local exceptions in the SLURM format (RFC 8416).",
 
-    maxTaRepositoryCount :: wrapped ::: Maybe Int <?>
+    maxTaRepositories :: wrapped ::: Maybe Int <?>
         "Maximal number of new repositories that TA validation run can add (default is 1000).",
 
     maxCertificatePathDepth :: wrapped ::: Maybe Int <?>
