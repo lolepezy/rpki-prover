@@ -13,7 +13,7 @@ import           Control.Lens
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
-import           GHC.Generics
+import qualified Data.ByteString.Short    as BSS
 
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
@@ -31,14 +31,16 @@ import           Data.Maybe                  (fromMaybe)
 import           Data.Monoid.Generic
 import qualified Data.Set                    as Set
 
+import           GHC.Generics
+
 import           RPKI.Domain
+import           RPKI.Config
 import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Util
-import RPKI.Config
 
 
 data FetchEverSucceeded = Never | AtLeastOnce
@@ -221,7 +223,7 @@ findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncMap _) =
         RrdpU  rrdpUrl  -> (^. typed) <$> Map.lookup rrdpUrl rrdps
         RsyncU rsyncUrl -> snd <$> findRsyncStatus rsyncMap rsyncUrl           
   where        
-    findRsyncStatus (RsyncMap m) rsyncUrl = go rsyncUrl
+    findRsyncStatus (RsyncMap m) = go
       where
         go u' =
             Map.lookup u' m >>= \case            
@@ -534,3 +536,101 @@ filterPPAccess Config {..} ppAccess =
             (RrdpPP _,  True, _   ) -> True
             (RsyncPP _, _,    True) -> True
             _                       -> False
+
+data Downloadable = NotDownloadable | WorthTrying
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype RsyncHost = RsyncHost BSS.ShortByteString
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype RsyncPathChunk = RsyncPathChunk BSS.ShortByteString
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype Monoid    
+    deriving newtype Semigroup
+
+newtype RsyncRepos = RsyncRepos (Map RsyncHost RsyncTree)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+data RsyncTree = Leaf FetchStatus
+               | SubTree { 
+                   rsyncChildren :: Map RsyncPathChunk RsyncTree,
+                   downloadable :: Downloadable
+               } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+ 
+chunks :: RpkiURL -> [RsyncPathChunk]
+chunks _ = []
+
+
+newTree :: RsyncRepos
+newTree = RsyncRepos Map.empty
+
+toTree :: (RsyncHost, [RsyncPathChunk]) -> FetchStatus -> RsyncRepos -> RsyncRepos 
+toTree (host, path) fs (RsyncRepos byHost) = 
+    RsyncRepos $ Map.alter (Just . maybe (buildTree path fs) (mergePPToTree path fs)) host byHost    
+
+mergePPToTree :: [RsyncPathChunk] -> FetchStatus -> RsyncTree -> RsyncTree
+
+mergePPToTree [] fs (Leaf fs') = Leaf $ fs' <> fs 
+mergePPToTree [] fs SubTree {} = Leaf fs 
+
+-- Strange case when we by some reason decide to merge
+-- a deeper nested PP while there's a dowloaded  one some
+-- higher level.
+mergePPToTree _ _ (Leaf fs') = Leaf fs'
+
+mergePPToTree (u : us) fs subTree@SubTree { rsyncChildren = ch } = 
+    case Map.lookup u ch of
+        Nothing -> 
+            SubTree {
+                rsyncChildren = Map.insert u (buildTree us fs) ch,
+                downloadable  = WorthTrying
+            }
+        Just child -> subTree { 
+                rsyncChildren = Map.insert u (mergePPToTree us fs child) ch 
+            }
+
+buildTree :: [RsyncPathChunk] -> FetchStatus -> RsyncTree
+buildTree [] fs      = Leaf fs
+buildTree (u: us) fs = SubTree {
+        rsyncChildren = Map.singleton u $ buildTree us fs,
+        downloadable  = WorthTrying
+    }
+
+fetchStatusInTree :: (RsyncHost, [RsyncPathChunk]) -> RsyncRepos -> FetchStatus
+fetchStatusInTree (host, path) (RsyncRepos t) = 
+    fromMaybe Pending $ fetchStatus' path =<< Map.lookup host t
+  where
+    fetchStatus' _ (Leaf fs)   = Just fs
+    fetchStatus' [] SubTree {} = Nothing
+    fetchStatus' (u: us) SubTree {..} = 
+        Map.lookup u rsyncChildren >>= fetchStatus' us 
+
+{- 
+
+import qualified Data.ByteString.Short    as BSS
+:set -XOverloadedStrings 
+
+let h1 = RsyncHost "ca.rg.net"
+let h2 = RsyncHost "ripe.net"
+
+let p1 = RsyncPathChunk "repo"
+let p2 = RsyncPathChunk "aa"
+let p3 = RsyncPathChunk "bb"
+let p4 = RsyncPathChunk "ccc"
+
+let t = newTree
+
+let t1 = toTree (h1, [p1]) Pending t 
+let t2 = toTree (h1, [p1, p2]) Pending t1 
+
+
+
+
+-}

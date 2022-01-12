@@ -318,7 +318,7 @@ getFileSize path = withFile path ReadMode hFileSize
 -- TODO Make it more effectient and simpler, introduce NormalisedURI and NormalisedPath 
 -- and don't check it here.
 pathToUri :: RsyncURL -> FilePath -> FilePath -> RsyncURL
-pathToUri (RsyncURL (URI rsyncBaseUri)) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
+pathToUri (unURI . getURL -> rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
     let 
         rsyncRoot' = if "/" `Text.isSuffixOf` rsyncRoot 
             then rsyncRoot

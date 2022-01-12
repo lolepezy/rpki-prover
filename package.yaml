@@ -69,6 +69,7 @@ dependencies:
 - lifted-base
 - memory
 - mmorph
+- modern-uri
 - monad-control
 - monoidal-containers
 - mtl
