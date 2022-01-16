@@ -571,8 +571,8 @@ chunks _ = []
 newTree :: RsyncRepos
 newTree = RsyncRepos Map.empty
 
-toTree :: (RsyncHost, [RsyncPathChunk]) -> FetchStatus -> RsyncRepos -> RsyncRepos 
-toTree (host, path) fs (RsyncRepos byHost) = 
+toTree :: RsyncHost -> [RsyncPathChunk] -> FetchStatus -> RsyncRepos -> RsyncRepos 
+toTree host path fs (RsyncRepos byHost) = 
     RsyncRepos $ Map.alter (Just . maybe (buildTree path fs) (mergePPToTree path fs)) host byHost    
 
 mergePPToTree :: [RsyncPathChunk] -> FetchStatus -> RsyncTree -> RsyncTree
@@ -603,8 +603,8 @@ buildTree (u: us) fs = SubTree {
         downloadable  = WorthTrying
     }
 
-fetchStatusInTree :: (RsyncHost, [RsyncPathChunk]) -> RsyncRepos -> FetchStatus
-fetchStatusInTree (host, path) (RsyncRepos t) = 
+fetchStatusInTree :: RsyncHost -> [RsyncPathChunk] -> RsyncRepos -> FetchStatus
+fetchStatusInTree host path (RsyncRepos t) = 
     fromMaybe Pending $ fetchStatus' path =<< Map.lookup host t
   where
     fetchStatus' _ (Leaf fs)   = Just fs
@@ -629,8 +629,6 @@ let t = newTree
 
 let t1 = toTree (h1, [p1]) Pending t 
 let t2 = toTree (h1, [p1, p2]) Pending t1 
-
-
 
 
 -}
