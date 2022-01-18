@@ -175,13 +175,13 @@ instance Arbitrary a => Arbitrary (NonEmpty a) where
     shrink = genericShrink
 
 instance Arbitrary AKI where
-    arbitrary = AKI . mkKI . BS.pack <$> replicateM 20 arbitrary
+    arbitrary = AKI <$> arbitrary
 
 instance Arbitrary SKI where
-    arbitrary = SKI . mkKI . BS.pack <$> replicateM 20 arbitrary
+    arbitrary = SKI <$> arbitrary
 
 instance Arbitrary KI where
-    arbitrary = KI <$> arbitrary  
+    arbitrary = mkKI . BS.pack <$> replicateM 20 arbitrary  
 
 instance Arbitrary Instant where
     arbitrary = genericArbitrary
