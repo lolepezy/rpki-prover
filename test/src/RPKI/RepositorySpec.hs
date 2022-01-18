@@ -4,7 +4,11 @@
 
 module RPKI.RepositorySpec where
 
-import qualified Data.ByteString.Short    as BSS
+import Control.Monad (replicateM)
+
+import Data.ByteString.Short (toShort)
+import Data.Maybe (maybeToList, catMaybes)
+import Data.List (sort, isPrefixOf, sortOn)
 
 import           GHC.Generics
 
@@ -17,11 +21,8 @@ import           Test.QuickCheck.Gen
 
 import           RPKI.Domain
 import           RPKI.Repository
-import           RPKI.Util 
+import           RPKI.Util
 import           RPKI.Orphans
-import Data.Maybe (maybeToList, catMaybes)
-import Control.Monad (replicateM)
-import Data.List (sort)
 
 
 repositoryGroup :: TestTree
@@ -39,6 +40,10 @@ repositoryGroup = testGroup "PublicationPoints" [
             prop_rsync_tree_commutative,
 
         QC.testProperty
+            "RsyncTree gets properly updated"
+            prop_rsync_tree_update,
+
+        QC.testProperty
             "Make sure RsyncMap is a semigroup (for a list of URLs)"
             prop_rsync_map_is_a_semigroup,
 
@@ -46,7 +51,7 @@ repositoryGroup = testGroup "PublicationPoints" [
         QC.testProperty "PublicationPoints is a semigroup" $ isASemigroup @PublicationPoints,
         QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
         QC.testProperty "RsyncMap is a semigroup" $ isASemigroup @RsyncMap,
-        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap            
+        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap
     ]
 
 isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
@@ -68,73 +73,77 @@ repositoriesURIs = map (RsyncPublicationPoint . RsyncURL . URI . ("rsync://host1
         "b/a/d",
         "b/a/e",
         "b/z",
-        "different_root"      
+        "different_root"
     ]
 
 
 prop_creates_same_hierarchy_regardless_of_shuffle_map :: QC.Property
-prop_creates_same_hierarchy_regardless_of_shuffle_map = 
-    QC.forAll (QC.shuffle repositoriesURIs) $ \rs ->         
+prop_creates_same_hierarchy_regardless_of_shuffle_map =
+    QC.forAll (QC.shuffle repositoriesURIs) $ \rs ->
         fromRsyncPPs rs == initialMap
     where
-        initialMap = fromRsyncPPs repositoriesURIs 
+        initialMap = fromRsyncPPs repositoriesURIs
 
 prop_rsync_map_is_a_semigroup :: QC.Property
-prop_rsync_map_is_a_semigroup = 
-    QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->         
-        QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->         
-            QC.forAll (QC.sublistOf repositoriesURIs) $ \rs3 ->         
-                let 
+prop_rsync_map_is_a_semigroup =
+    QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->
+        QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->
+            QC.forAll (QC.sublistOf repositoriesURIs) $ \rs3 ->
+                let
                     rm1 = fromRsyncPPs rs1
                     rm2 = fromRsyncPPs rs2
                     rm3 = fromRsyncPPs rs3
-                in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3    
+                in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3
 
 prop_rsync_map_is_commutative :: QC.Property
-prop_rsync_map_is_commutative = 
-    QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->         
-        QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->                     
-            let 
+prop_rsync_map_is_commutative =
+    QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->
+        QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->
+            let
                 rm1 = fromRsyncPPs rs1
-                rm2 = fromRsyncPPs rs2                    
+                rm2 = fromRsyncPPs rs2
             in rm1 <> rm2 == rm2 <> rm1
 
 prop_rsync_tree_commutative :: QC.Property
-prop_rsync_tree_commutative = 
-    QC.forAll (replicateM 200 generateRsyncPath) $ \urls -> 
+prop_rsync_tree_commutative =
+    QC.forAll (replicateM 200 generateRsyncUrl) $ \urls ->
         convertToRepos (sort urls) Pending == convertToRepos urls Pending
 
 prop_rsync_tree_update :: QC.Property
-prop_rsync_tree_update = 
+prop_rsync_tree_update =
     QC.forAll arbitrary $ \(newStatus :: FetchStatus) ->
-        QC.forAll (replicateM 200 generateRsyncPath) $ \urls -> 
-            QC.forAll (QC.sublistOf urls) $ \toUpdate ->         
-                let 
-                    tree = convertToRepos urls
+        QC.forAll (replicateM 100 generateRsyncUrl) $ \urls ->
+            QC.forAll (QC.sublistOf urls) $ \toUpdate -> let
+                tree = convertToRepos urls Pending
+                -- this messy stuff basically means "try to find the shortest URLs to update"
+                -- and "don't update a longer one if a shorter one exists".
+                allShorter = map (\(h, p) -> filter (\(h', p') -> h == h' && p /= p' && p' `isPrefixOf` p) urls) toUpdate
+                sameOrShorter =
+                    zipWith (\original shorterOnes -> 
+                        (case take 1 $ sortOn (length . snd) shorterOnes of
+                                []   -> original
+                                s :_ -> s)) 
+                        toUpdate allShorter
+                updatedTree = foldr (\(host, path) t -> toTree host path newStatus t) tree sameOrShorter
+                sameOrLonger = filter (\(h, p) -> any (\(h', p') -> h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
+                in all (\(host, path) -> fetchStatusInTree host path updatedTree == newStatus) sameOrLonger
 
-                in True
-    
 
-convertToRepos :: [[BSS.ShortByteString]] -> FetchStatus -> RsyncRepos
-convertToRepos urls status = foldr mergeToTree newTree urls 
-  where          
-    mergeToTree (toHostPath -> (host, path)) tree = 
-        toTree host path status tree
+convertToRepos :: [(RsyncHost, [RsyncPathChunk])] -> FetchStatus -> RsyncRepos
+convertToRepos urls status = foldr mergeToTree newTree urls
+  where
+    mergeToTree (host, path) tree = toTree host path status tree
 
 
-toHostPath :: [BSS.ShortByteString] -> (RsyncHost, [RsyncPathChunk])
-toHostPath [] = error "toHostPath: should never happen"
-toHostPath (host : path) = (RsyncHost host, map RsyncPathChunk path)
-
-generateRsyncPath :: Gen [BSS.ShortByteString]
-generateRsyncPath = do 
+generateRsyncUrl :: Gen (RsyncHost, [RsyncPathChunk])
+generateRsyncUrl = do
     let hosts  = [ "rrdp.ripe.net", "ca.rg.net", "rpki-repository.nic.ad.jp", "repo-rpki.idnic.net" ]
     let level1 = Nothing : map Just [ "repo", "repository", "0", "A91A73810000", "member_repository" ]
     let levelChunks = map (replicate 5) ['a'..'z']
     let level2 = replicate 5 Nothing  <> map Just levelChunks
-    let level3 = replicate 10 Nothing <> map Just levelChunks    
-    h <- elements hosts    
-    l1 <- elements level1
-    l2 <- elements level2
-    l3 <- elements level3
-    pure $ map (BSS.toShort . convert) $ h : catMaybes [l1, l2, l3]    
+    let level3 = replicate 10 Nothing <> map Just levelChunks
+    host <- elements hosts
+    pathLevels <- catMaybes <$> mapM elements [level1, level2, level3]
+    let rsyncHost = RsyncHost $ toShort host
+    let path = map (RsyncPathChunk . toShort . convert) pathLevels
+    pure (rsyncHost, path)  
