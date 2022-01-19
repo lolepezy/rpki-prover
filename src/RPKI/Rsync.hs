@@ -42,14 +42,15 @@ import RPKI.Time ( timedMS )
 import           RPKI.Worker
 
 import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
-import           System.FilePath                  ((</>))
 
 import           System.Exit
 import           System.IO
+import           System.FilePath
 import           System.Process.Typed
 
 import           System.Mem                       (performGC)
 import Data.Proxy
+import Data.List (stripPrefix)
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
@@ -212,6 +213,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                 False -> 
                     when (supportedExtension path) $ do         
                         let uri = pathToUri repositoryUrl rootPath path
+                        logDebugM logger [i|rsync: repositoryUrl = #{repositoryUrl}, rootPath = #{rootPath}, path = #{path}, uri = #{uri}|]
                         task <- readAndParseObject path (RsyncU uri) `strictTask` threads                                                                      
                         liftIO $ atomically $ writeCQueue queue (uri, task)
       where                                
@@ -249,9 +251,9 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                     process tx uri r
                     go tx
 
-        process tx (RsyncURL uri) = \case
+        process tx rsyncURL = \case
             Left (e :: SomeException) -> 
-                throwIO $ AppException $ UnspecifiedE (unURI uri) (U.fmtEx e)
+                throwIO $ AppException $ UnspecifiedE (unURI $ getURL rsyncURL) (U.fmtEx e)
             
             Right (T2 rpkiURL (Left hash)) -> do
                 DB.linkObjectToUrl tx objectStore rpkiURL hash
@@ -272,23 +274,21 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
 rsyncProcess :: ValidationConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
-rsyncProcess vc (RsyncURL (URI uri)) destination rsyncMode = 
+rsyncProcess vc rsyncURL destination rsyncMode = 
     proc "rsync" $ 
         [ "--timeout=300",  "--update",  "--times" ] <> 
         [ "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
         [ "--min-size=" <> show (vc ^. #minObjectSize) ] <> 
         extraOptions <> 
-        [ Text.unpack uri, destination ]
+        [ Text.unpack (unURI $ getURL rsyncURL), destination ]
     where 
         extraOptions = case rsyncMode of 
             RsyncOneFile   -> []
             RsyncDirectory -> [ "--recursive", "--delete", "--copy-links" ]        
 
 rsyncDestination :: FilePath -> RsyncURL -> FilePath
-rsyncDestination root u = let
-    RsyncURL (URI urlText) = u
-    in 
-        root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" urlText)
+rsyncDestination root rsyncURL = 
+    root </> Text.unpack (U.normalizeUri $ Text.replace "rsync://" "" (unURI $ getURL rsyncURL))
     
 
 fileContent :: FilePath -> IO BS.ByteString 
@@ -317,17 +317,26 @@ getFileSize path = withFile path ReadMode hFileSize
 -- | Slightly heuristical 
 -- TODO Make it more effectient and simpler, introduce NormalisedURI and NormalisedPath 
 -- and don't check it here.
-pathToUri :: RsyncURL -> FilePath -> FilePath -> RsyncURL
-pathToUri (unURI . getURL -> rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
-    let 
-        rsyncRoot' = if "/" `Text.isSuffixOf` rsyncRoot 
-            then rsyncRoot
-            else rsyncRoot <> "/"
+-- pathToUri1 :: RsyncURL -> FilePath -> FilePath -> RsyncURL
+-- pathToUri1 (unURI . getURL -> rsyncBaseUri) (Text.pack -> rsyncRoot) (Text.pack -> filePath) = 
+--     let 
+--         rsyncRoot' = if "/" `Text.isSuffixOf` rsyncRoot 
+--             then rsyncRoot
+--             else rsyncRoot <> "/"
 
-        rsyncBaseUri' = if "/" `Text.isSuffixOf` rsyncBaseUri 
-            then rsyncBaseUri
-            else rsyncBaseUri <> "/"
-        in 
-            RsyncURL $ URI $ Text.replace rsyncRoot' rsyncBaseUri' filePath    
+--         rsyncBaseUri' = if "/" `Text.isSuffixOf` rsyncBaseUri 
+--             then rsyncBaseUri
+--             else rsyncBaseUri <> "/"
+--         in 
+--             RsyncURL $ URI $ Text.replace rsyncRoot' rsyncBaseUri' filePath    
+
+pathToUri :: RsyncURL -> FilePath -> FilePath -> RsyncURL
+pathToUri url@(RsyncURL host rootPath) rsyncRoot filePath = 
+    let 
+        rootPathChunks = splitDirectories rsyncRoot
+        filePathChunks = splitDirectories filePath
+        in case stripPrefix rootPathChunks filePathChunks of
+            Nothing   -> url
+            Just diff -> RsyncURL host (rootPath <> map (RsyncPathChunk . U.convert) diff)
 
     

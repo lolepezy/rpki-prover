@@ -78,6 +78,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         UnknownUriType URI | 
+                        BrokenUri URI Text | 
                         CertificateDoesntHaveSIA | 
                         CircularReference Hash Locations |
                         CertificatePathTooDeep Locations Int |

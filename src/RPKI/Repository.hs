@@ -13,8 +13,6 @@ import           Control.Lens
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
-import qualified Data.ByteString.Short    as BSS
-
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
 import           Data.Ord
@@ -377,7 +375,10 @@ publicationPointsFromCert cert =
             | isRrdpURI rrdpNotifyUri -> let rr = RrdpURL rrdpNotifyUri in Right (RrdpU rr, rrdpPP rr)
             | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
         (Nothing, Just repositoryUri) 
-            | isRsyncURI repositoryUri -> let rr = RsyncURL repositoryUri in Right (RsyncU rr, rsyncPP rr)
+            | isRsyncURI repositoryUri -> 
+                    case parseRsyncURL (unURI repositoryUri) of 
+                        Left e   -> Left $ BrokenUri repositoryUri e
+                        Right rr -> Right (RsyncU rr, rsyncPP rr)
             | otherwise                -> Left $ UnknownUriType repositoryUri
         (Nothing, Nothing)             -> Left CertificateDoesntHaveSIA 
 
@@ -400,8 +401,11 @@ getPublicationPointsFromCert cert = do
 
     rsync <- case getRepositoryUri cert of 
                 Just repositoryUri
-                    | isRsyncURI repositoryUri -> Right [rsyncPP $ RsyncURL repositoryUri]
-                    | otherwise                -> Left $ UnknownUriType repositoryUri
+                    | isRsyncURI repositoryUri -> 
+                        case parseRsyncURL (unURI repositoryUri) of 
+                            Left e   -> Left $ BrokenUri repositoryUri e
+                            Right rr -> Right [rsyncPP rr]                        
+                    | otherwise -> Left $ UnknownUriType repositoryUri
                 Nothing -> Right []
 
     case nonEmpty (rrdp <> rsync) of 
@@ -541,15 +545,15 @@ data Downloadable = NotDownloadable | WorthTrying
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncHost = RsyncHost BSS.ShortByteString
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+-- newtype RsyncHost = RsyncHost BSS.ShortByteString
+--     deriving stock (Show, Eq, Ord, Generic)
+--     deriving anyclass Serialise
 
-newtype RsyncPathChunk = RsyncPathChunk BSS.ShortByteString
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-    deriving newtype Monoid    
-    deriving newtype Semigroup
+-- newtype RsyncPathChunk = RsyncPathChunk BSS.ShortByteString
+--     deriving stock (Show, Eq, Ord, Generic)
+--     deriving anyclass Serialise
+--     deriving newtype Monoid    
+--     deriving newtype Semigroup
 
 newtype RsyncRepos = RsyncRepos (Map RsyncHost RsyncTree)
     deriving stock (Show, Eq, Ord, Generic)

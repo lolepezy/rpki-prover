@@ -5,6 +5,7 @@
 module RPKI.Util where
 
 import           Control.Exception
+import           Control.Lens
 import           Numeric.Natural
 import           Data.Bifunctor
 
@@ -30,6 +31,8 @@ import           RPKI.Reporting
 import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
 
+import qualified Text.URI as MURI
+import           Text.URI.Lens
 
 
 sha256 :: LBS.ByteString -> Hash
@@ -60,7 +63,7 @@ instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAs
     convert (URI u) = convert u
 
 instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RsyncURL s where
-    convert (RsyncURL u) = convert u
+    convert = convert . getURL
 
 instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RrdpURL s where
     convert (RrdpURL u) = convert u
@@ -110,10 +113,22 @@ isParentOf p c = pt `Text.isPrefixOf` ct
 parseRpkiURL :: Text -> Either Text RpkiURL
 parseRpkiURL t
     | isRrdpURI u  = Right $ RrdpU $ RrdpURL u
-    | isRsyncURI u = Right $ RsyncU $ RsyncURL u
-    | otherwise    = Left $ "Suspicious URL: " <> t
+    | isRsyncURI u = RsyncU <$> parseRsyncURL t            
+    | otherwise = Left $ "Unknown URL type: " <> t
     where
         u = URI t
+
+parseRsyncURL :: Text -> Either Text RsyncURL
+parseRsyncURL t = 
+    case MURI.mkURI t of 
+        Nothing -> Left $ "Unparseable rsync URL: " <> t 
+        Just mu -> 
+            case mu ^. uriAuthority of 
+                Left _  -> Left "" 
+                Right a -> let                                         
+                    host = RsyncHost $ a ^. authHost . unRText
+                    path = map (RsyncPathChunk . (^. unRText)) $ mu ^. uriPath
+                    in Right $ RsyncURL host path
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
