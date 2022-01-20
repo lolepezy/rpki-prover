@@ -54,6 +54,7 @@ import           RPKI.Store.Repository
 import qualified RPKI.Store.MakeLmdb as Lmdb
 
 import           RPKI.Time
+import           RPKI.Util
 
 import           RPKI.RepositorySpec
 
@@ -454,7 +455,7 @@ releaseLmdb ((dir, e), _) = do
 readObjectFromFile :: FilePath -> IO (RpkiURL, ParseResult RpkiObject)
 readObjectFromFile path = do 
     bs <- BS.readFile path
-    let url = RsyncU $ RsyncURL $ URI $ Text.pack path
+    let url = let Right u = parseRpkiURL ("rsync://host/" <> Text.pack path) in u
     pure (url, readObject url bs)
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject

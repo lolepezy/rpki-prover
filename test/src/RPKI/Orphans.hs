@@ -79,7 +79,23 @@ instance Arbitrary RrdpURL where
     shrink = genericShrink
 
 instance Arbitrary RsyncURL where
-    arbitrary = RsyncURL <$> urlByProtocol "rsync"
+    arbitrary = do
+        ext  <- elements [ ".cer", ".mft", ".roa", ".crl" ]
+        host <- listOf1 $ elements $ ['a'..'z'] <> ['.']
+        name <- listOf1 $ elements ['a'..'z']        
+        name1 <- listOf1 $ elements ['a'..'z']        
+        name2 <- listOf1 $ elements ['a'..'z']                
+        pure $ RsyncURL 
+                (RsyncHost $ convert host) 
+                (Prelude.map (RsyncPathChunk . convert) [name1, name2, name <> ext])
+    shrink = genericShrink
+
+instance Arbitrary RsyncHost where
+    arbitrary = fmap (RsyncHost . convert) $ listOf1 $ elements $ ['a'..'z']
+    shrink = genericShrink
+
+instance Arbitrary RsyncPathChunk where
+    arbitrary = fmap (RsyncPathChunk . convert) $ listOf1 $ elements $ ['a'..'z']
     shrink = genericShrink
 
 instance Arbitrary RpkiURL where
