@@ -75,7 +75,7 @@ instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAs
 normalizeUri :: Text.Text -> Text.Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
   where
-    isOkForAFile c = isAlpha c || isDigit c || c == '.'
+    isOkForAFile c = isAlpha c || isDigit c || c `elem` ("-._" :: String)
 
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)

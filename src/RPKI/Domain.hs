@@ -76,11 +76,11 @@ newtype URI = URI { unURI :: Text }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncHost = RsyncHost Text
+newtype RsyncHost = RsyncHost { unRsyncHost :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncPathChunk = RsyncPathChunk Text
+newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype Monoid    
