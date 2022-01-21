@@ -545,16 +545,6 @@ data Downloadable = NotDownloadable | WorthTrying
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
--- newtype RsyncHost = RsyncHost BSS.ShortByteString
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass Serialise
-
--- newtype RsyncPathChunk = RsyncPathChunk BSS.ShortByteString
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass Serialise
---     deriving newtype Monoid    
---     deriving newtype Semigroup
-
 newtype RsyncRepos = RsyncRepos (Map RsyncHost RsyncTree)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -566,11 +556,6 @@ data RsyncTree = Leaf FetchStatus
                } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
-
- 
-chunks :: RpkiURL -> [RsyncPathChunk]
-chunks _ = []
-
 
 newTree :: RsyncRepos
 newTree = RsyncRepos Map.empty
@@ -615,24 +600,4 @@ fetchStatusInTree (RsyncURL host path) (RsyncRepos t) =
     fetchStatus' [] SubTree {} = Nothing
     fetchStatus' (u: us) SubTree {..} = 
         Map.lookup u rsyncChildren >>= fetchStatus' us 
-
-{- 
-
-import qualified Data.ByteString.Short    as BSS
-:set -XOverloadedStrings 
-
-let h1 = RsyncHost "ca.rg.net"
-let h2 = RsyncHost "ripe.net"
-
-let p1 = RsyncPathChunk "repo"
-let p2 = RsyncPathChunk "aa"
-let p3 = RsyncPathChunk "bb"
-let p4 = RsyncPathChunk "ccc"
-
-let t = newTree
-
-let t1 = toTree (h1, [p1]) Pending t 
-let t2 = toTree (h1, [p1, p2]) Pending t1 
-
-
--}
+        
