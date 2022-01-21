@@ -7,7 +7,6 @@ module RPKI.Util where
 import           Control.Exception
 import           Control.Lens
 import           Numeric.Natural
-import           Data.Bifunctor
 
 import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
@@ -124,7 +123,7 @@ parseRsyncURL t =
         Nothing -> Left $ "Unparseable rsync URL: " <> t 
         Just mu -> 
             case mu ^. uriAuthority of 
-                Left _  -> Left "" 
+                Left _  -> Left "No URL authority, i.e. host" 
                 Right a -> let                                         
                     host = RsyncHost $ a ^. authHost . unRText
                     path = map (RsyncPathChunk . (^. unRText)) $ mu ^. uriPath
