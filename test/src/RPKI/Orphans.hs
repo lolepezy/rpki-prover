@@ -388,19 +388,11 @@ instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncMap where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary EverSucceededMap where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary FetchEverSucceeded  where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary RsyncParent where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

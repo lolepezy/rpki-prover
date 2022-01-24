@@ -100,22 +100,10 @@ data RsyncRepository = RsyncRepository {
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
-        -- rsyncs :: RsyncMap,
         rsyncs :: RsyncRepos,
         lastSucceded :: EverSucceededMap
     } 
     deriving stock (Show, Eq, Ord, Generic)   
-    -- deriving Semigroup via GenericSemigroup PublicationPoints   
-    -- deriving Monoid    via GenericMonoid PublicationPoints
-
-data RsyncParent = ParentURI RsyncURL | Root FetchStatus
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-
-newtype RsyncMap = RsyncMap { unRsyncMap :: Map RsyncURL RsyncParent }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
-    deriving newtype (Monoid)
 
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -126,7 +114,6 @@ newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
     deriving newtype (Monoid)
-
 
 data FetchResult = 
     FetchSuccess Repository ValidationState | 
@@ -180,9 +167,6 @@ instance Ord FetchStatus where
 instance Semigroup FetchStatus where
     (<>) = max
 
-instance Semigroup RsyncMap where
-    (<>) = mergeRsyncs
-
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
 
@@ -206,22 +190,10 @@ newRepositoryProcessing = RepositoryProcessing <$>
 newRepositoryProcessingIO :: IO RepositoryProcessing
 newRepositoryProcessingIO = atomically newRepositoryProcessing
 
-rsyncR :: RsyncURL -> Repository
-rrdpR  :: RrdpURL  -> Repository
-rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) Pending
-rrdpR u = RrdpR $ RrdpRepository u Nothing Pending
-
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
 rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
-
-
-findPublicationPointStatus :: RpkiURL -> PublicationPoints -> Maybe FetchStatus
-findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncRepos _) =     
-    case u of
-        RrdpU  rrdpUrl  -> (^. typed) <$> Map.lookup rrdpUrl rrdps
-        RsyncU rsyncUrl -> fetchStatusInTree' rsyncUrl rsyncRepos  
 
 
 repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
@@ -230,77 +202,12 @@ repositoryFromPP (PublicationPoints (RrdpMap rrdps) rsyncs _) rpkiUrl =
         RrdpU u  -> RrdpR <$> Map.lookup u rrdps
         RsyncU u -> RsyncR <$> findRoot u    
   where    
-    findRoot u = (\(u, status) -> RsyncRepository (RsyncPublicationPoint u) status) 
+    findRoot u = (\(u', status) -> RsyncRepository (RsyncPublicationPoint u') status) 
                     <$> fetchStatusInTree1 u rsyncs
-        
-    --     Map.lookup u rsyncs >>= \case             
-    --         Root status          -> Just $ RsyncRepository (RsyncPublicationPoint u) status
-    --         ParentURI parentUri  -> findRoot parentUri  
-
-
--- | Merge two rsync repository maps
--- It's a commutative and associative operation
-mergeRsyncs :: RsyncMap -> RsyncMap -> RsyncMap
-mergeRsyncs (RsyncMap m1) (RsyncMap m2) = 
-    RsyncMap $ Map.foldrWithKey' mergeEach m1 m2
-  where
-    mergeEach u parentOrStatus m = 
-        case Map.splitLookup u m of        
-            (_, Just (ParentURI _), _) -> m
-            (_, Just r@(Root status), _) -> 
-                case parentOrStatus of
-                    Root status1 -> 
-                        Map.insert u (Root (status <> status1)) m
-                    ParentURI _  -> 
-                        -- really weird case, we don't know what to do here,
-                        -- but practically just overwrite the PP with a repository
-                        Map.insert u r m
-
-            (potentialParents, _, potentialChildren) -> 
-                replaceTheirParents $ Map.insert u parentUriOrStatus m
-              where 
-                parentUriOrStatus = go potentialParents                            
-                  where
-                    go low = 
-                        case Map.maxViewWithKey low of 
-                            Nothing                               -> parentOrStatus
-                            Just ((longestParentUri, _), evenLower)
-                                | longestParentUri `isParentOf` u -> ParentURI longestParentUri
-                                | otherwise                       -> go evenLower
-
-                replaceTheirParents = go potentialChildren
-                  where
-                    go up resultMap = 
-                        case Map.minViewWithKey up of 
-                            Nothing -> resultMap
-                            Just ((possiblyChild, something), moreChildren)
-                                | u `isParentOf` possiblyChild -> 
-                                    case something of
-                                        ParentURI itsParentUri 
-                                            | itsParentUri `isParentOf` u -> 
-                                                go moreChildren $ Map.insert possiblyChild (ParentURI u) resultMap
-                                            | otherwise                   -> go moreChildren resultMap
-                                        Root _                            -> 
-                                                go moreChildren $ Map.insert possiblyChild (ParentURI u) resultMap
-                                | otherwise                               -> resultMap            
-
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    -- pps & typed %~ (RsyncMap (Map.singleton u (Root Pending)) <>)
     pps & typed %~ toTree u Pending
-
-mergeRsyncRepo :: RsyncRepository -> PublicationPoints -> PublicationPoints
-mergeRsyncRepo 
-    (RsyncRepository (RsyncPublicationPoint u) status) 
-    pps = pps 
-        & typed %~ toTree u status 
-        & typed %~ succeededFromStatus (RsyncU u) status
-
-    -- PublicationPoints rrdps rsyncs' lastSucceded'  
-    -- rsyncs'       = rsyncs <> RsyncMap (Map.singleton u (Root status)) 
-    -- lastSucceded' = succeededFromStatus (RsyncU u) status lastSucceded
-    
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository { .. } 
@@ -320,18 +227,6 @@ succeededFromStatus u (FetchedAt _) lastSucceded =
     lastSucceded <> EverSucceededMap (Map.singleton u AtLeastOnce)
 succeededFromStatus _ _ lastSucceded = lastSucceded
 
-
--- | Merge rsync publication points into the hierarchy based on their URIs
--- e.g.
---   rsync://host/foo/
---     rsync://host/foo/bar/
---       rsync://host/foo/bar/quux
---     rsync://host/foo/baz/
---       rsync://host/foo/baz/nup
---       rsync://host/foo/baz/bop
---
-fromRsyncPPs :: [RsyncPublicationPoint] -> PublicationPoints
-fromRsyncPPs = List.foldr mergeRsyncPP newPPs
 
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
 mergePP (RrdpPP r) = mergeRrdp r
@@ -473,52 +368,22 @@ updateStatuses
 
         status2Success u (FetchedAt _) lastS = (u, AtLeastOnce) : lastS
         status2Success _ _             lastS = lastS
-
-
-
--- | Fix lastSucceeded map based on statuses. 
--- 
--- We need to have this because 
--- 
--- * PublicationPoints is a semigroup for convenience of using <> and mconcat for 
--- multiple things (maps, statuses, etc.);
--- 
--- * lastSucceeded is semantically dependent on statuses (stored in RrrdpMap and RsyncMap);
--- 
--- * It's impossible to adjust lastSucceeded based on RrrdpMap and RsyncMap while keeping
--- semigroup property.
---
--- That's why adjusting lastSucceeded must happen as a separate step without all the semigroup laws.
---
--- There must be a more elegant way of doing it, but this works for now.
--- 
-adjustLastSucceeded :: PublicationPoints -> PublicationPoints
-adjustLastSucceeded 
-    (PublicationPoints (RrdpMap rrdps) rsyncs lastSucceded) = 
-    PublicationPoints (RrdpMap rrdps) rsyncs lastSucceded'
-    where        
-        lastSucceded' = lastSucceded <> rrdpSucceded <> rsyncSucceded
-
-        rrdpSucceded = Map.foldrWithKey 
-            (\_ RrdpRepository {..} ls -> succeededFromStatus (RrdpU uri) status ls) 
-            mempty rrdps
-
-        rsyncSucceded = foldr 
-            (\(u, status) ls -> succeededFromStatus (RsyncU u) status ls) 
-            mempty
-            [ (u, status) | (u, status) <- rsyncStatuses rsyncs ]        
-
+    
 
 everSucceeded :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
 everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u = 
     fromMaybe Never $ Map.lookup u m
-
 
 adjustSucceededUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
 adjustSucceededUrl u pps =     
     case findPublicationPointStatus u pps of 
         Nothing     -> pps
         Just status -> pps & typed %~ succeededFromStatus u status
+    where        
+        findPublicationPointStatus u (PublicationPoints (RrdpMap rrdps) rsyncRepos _) =     
+            case u of
+                RrdpU  rrdpUrl  -> (^. typed) <$> Map.lookup rrdpUrl rrdps
+                RsyncU rsyncUrl -> fetchStatusInTree' rsyncUrl rsyncRepos  
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int

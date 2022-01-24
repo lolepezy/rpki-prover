@@ -27,14 +27,6 @@ import           RPKI.Orphans
 
 repositoryGroup :: TestTree
 repositoryGroup = testGroup "PublicationPoints" [
-        -- QC.testProperty
-        --     "Generates the same hierarchy regardless of the order"
-        --     prop_creates_same_hierarchy_regardless_of_shuffle_map,
-
-        -- QC.testProperty
-        --     "Make sure RsyncMap is a commutative"
-        --     prop_rsync_map_is_commutative,
-
         QC.testProperty
             "RsyncTree is commutative"
             prop_rsync_tree_commutative,
@@ -42,15 +34,9 @@ repositoryGroup = testGroup "PublicationPoints" [
         QC.testProperty
             "RsyncTree gets properly updated"
             prop_rsync_tree_update,
-
-        -- QC.testProperty
-        --     "Make sure RsyncMap is a semigroup (for a list of URLs)"
-        --     prop_rsync_map_is_a_semigroup,
-
+    
         QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
-        -- QC.testProperty "PublicationPoints is a semigroup" $ isASemigroup @PublicationPoints,
         QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
-        QC.testProperty "RsyncMap is a semigroup" $ isASemigroup @RsyncMap,
         QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap
     ]
 
@@ -78,34 +64,6 @@ repositoriesURIs = map (RsyncPublicationPoint . toURL) [
   where
     toURL path = let Right u = parseRsyncURL ("rsync://host1.com/" <> path) in u
 
-
--- prop_creates_same_hierarchy_regardless_of_shuffle_map :: QC.Property
--- prop_creates_same_hierarchy_regardless_of_shuffle_map =
---     QC.forAll (QC.shuffle repositoriesURIs) $ \rs ->
---         fromRsyncPPs rs == initialMap
---     where
---         initialMap = fromRsyncPPs repositoriesURIs
-
--- prop_rsync_map_is_a_semigroup :: QC.Property
--- prop_rsync_map_is_a_semigroup =
---     QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->
---         QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->
---             QC.forAll (QC.sublistOf repositoriesURIs) $ \rs3 ->
---                 let
---                     rm1 = fromRsyncPPs rs1
---                     rm2 = fromRsyncPPs rs2
---                     rm3 = fromRsyncPPs rs3
---                 in rm1 <> (rm2 <> rm3) == (rm1 <> rm2) <> rm3
-
--- prop_rsync_map_is_commutative :: QC.Property
--- prop_rsync_map_is_commutative =
---     QC.forAll (QC.sublistOf repositoriesURIs) $ \rs1 ->
---         QC.forAll (QC.sublistOf repositoriesURIs) $ \rs2 ->
---             let
---                 rm1 = fromRsyncPPs rs1
---                 rm2 = fromRsyncPPs rs2
---             in rm1 <> rm2 == rm2 <> rm1
-
 prop_rsync_tree_commutative :: QC.Property
 prop_rsync_tree_commutative =
     QC.forAll (replicateM 200 generateRsyncUrl) $ \urls ->
@@ -128,7 +86,7 @@ prop_rsync_tree_update =
                                 []   -> original
                                 s :_ -> s)) 
                         toUpdate allShorter
-                updatedTree = foldr (\url t -> toTree url newStatus t) tree sameOrShorter
+                updatedTree = foldr (`toTree` newStatus) tree sameOrShorter
                 sameOrLonger = filter (\(RsyncURL h p) -> 
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
@@ -137,7 +95,7 @@ prop_rsync_tree_update =
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncRepos
 convertToRepos urls status = 
-    foldr (\url tree -> toTree url status tree) newTree urls  
+    foldr (`toTree` status) newTree urls  
 
 
 generateRsyncUrl :: Gen RsyncURL
