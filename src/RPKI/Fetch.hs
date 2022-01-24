@@ -55,9 +55,6 @@ data RepositoryContext = RepositoryContext {
         takenCareOf        :: Set RpkiURL
     } 
     deriving stock (Generic)  
-    -- deriving Semigroup via GenericSemigroup RepositoryContext   
-    -- deriving Monoid    via GenericMonoid RepositoryContext
-
 
 fValidationState :: FetchResult -> ValidationState 
 fValidationState (FetchSuccess _ vs) = vs
@@ -105,9 +102,8 @@ fetchPPWithFallback
 
     -- Use "run only once" logic for the whole list of PPs
     fetchOnce parentScope ppAccess' =          
-        join $ atomically $ do
-            pps <- readTVar publicationPoints           
-            let ppsKey = ppSeqKey pps 
+        join $ atomically $ do      
+            ppsKey <- ppSeqKey 
             funRun ppSeqFetchRuns ppsKey >>= \case            
                 Just Stub         -> retry
                 Just (Fetching a) -> pure $ wait a
@@ -120,12 +116,19 @@ fetchPPWithFallback
                                                     (NonEmpty.toList $ unPublicationPointAccess ppAccess')) 
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
-      where
-        -- this is dubious, but works
-        ppSeqKey pps = take 1 
-            $ mapMaybe (\pp -> getRpkiURL <$> repositoryFromPP (mergePP pp pps) (getRpkiURL pp)) 
-            $ NonEmpty.toList 
-            $ unPublicationPointAccess ppAccess
+      where          
+        ppSeqKey = sequence 
+                $ take 1 
+                $ map (downloadableUrl . getRpkiURL) 
+                $ NonEmpty.toList 
+                $ unPublicationPointAccess ppAccess
+          where
+            downloadableUrl u = 
+                case u of
+                    RrdpU _ -> pure u
+                    RsyncU rsyncUrl -> do  
+                        pps <- readTVar publicationPoints
+                        pure $ maybe u (RsyncU . fst) $ statusInRsyncTree rsyncUrl (pps ^. typed)            
 
 
     fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]

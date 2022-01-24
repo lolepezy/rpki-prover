@@ -474,5 +474,3 @@ rsyncStatuses (RsyncTree hostMap) =
     statuses (RsyncURL host path) SubTree {..} = 
         mconcat [ statuses (RsyncURL host (path <> [p])) t 
                 | (p, t) <- Map.toList rsyncChildren ]        
-        
-    
