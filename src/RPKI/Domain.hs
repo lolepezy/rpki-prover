@@ -160,9 +160,6 @@ newtype Locations = Locations { unLocations :: NESet RpkiURL }
 instance Show URI where
     show (URI u) = show u
 
--- instance Show RsyncURL where
---     show = show . getURL
-
 instance Show RrdpURL where
     show (RrdpURL u) = show u
 
