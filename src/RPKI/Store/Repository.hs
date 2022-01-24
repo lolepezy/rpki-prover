@@ -20,7 +20,7 @@ import           RPKI.Store.Base.Storage
 
 data RepositoryStore s = RepositoryStore {
     rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-    rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncTree,
+    rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNode,
     lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded 
 }
 
@@ -32,7 +32,7 @@ putRepositories :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> RepositoryStore s -> PublicationPoints -> TaName -> m ()
 putRepositories tx RepositoryStore {..} 
                 PublicationPoints { 
-                    rsyncs = RsyncRepos rsyncs',
+                    rsyncs = RsyncTree rsyncs',
                     rrdps = RrdpMap rrdps', 
                     lastSucceded = EverSucceededMap lastSucceded'} 
                 _ = liftIO $ do    
@@ -93,12 +93,12 @@ getPublicationPoints tx RepositoryStore {..} = liftIO $ do
     lasts <- M.all tx lastS
     pure $ PublicationPoints 
             (RrdpMap $ Map.fromList rrdps) 
-            (RsyncRepos $ Map.fromList rsyns)
+            (RsyncTree $ Map.fromList rsyns)
             (EverSucceededMap $ Map.fromList lasts)
 
 savePublicationPoints :: (MonadIO m, Storage s) => 
                         Tx s 'RW -> RepositoryStore s -> PublicationPoints -> m ()
-savePublicationPoints tx store@RepositoryStore {} newPPs = do 
+savePublicationPoints tx store@RepositoryStore {} newPPs' = do 
     ppsInDb <- getPublicationPoints tx store
-    let changes = changeSet ppsInDb newPPs
+    let changes = changeSet ppsInDb newPPs'
     applyChangeSet tx store changes 

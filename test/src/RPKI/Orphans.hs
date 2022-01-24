@@ -396,11 +396,11 @@ instance Arbitrary FetchEverSucceeded  where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncRepos where
+instance Arbitrary RsyncTree where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncTree where
+instance Arbitrary RsyncNode where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
