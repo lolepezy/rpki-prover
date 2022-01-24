@@ -404,6 +404,18 @@ instance Arbitrary RsyncParent where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RsyncRepos where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RsyncTree where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Downloadable where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary PublicationPoints where
     arbitrary = genericArbitrary
     shrink = genericShrink

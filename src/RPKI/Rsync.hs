@@ -119,7 +119,6 @@ rsyncRpkiObject :: AppContext s ->
 rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile rsyncRoot uri
-    logDebugM logger [i|rsyncRpkiObject: destination = #{destination}|]
     let validationConfig = config ^. typed @Config . typed @ValidationConfig
     let rsync = rsyncProcess validationConfig uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
@@ -154,7 +153,6 @@ updateObjectForRsyncRepository
         let validationConfig = config ^. typed @Config . typed @ValidationConfig
         objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
-        logDebugM logger [i|updateObjectForRsyncRepository: destination = #{destination}|] 
         let rsync = rsyncProcess validationConfig uri destination RsyncDirectory
             
         logDebugM logger [i|Runnning #{U.trimmed rsync}|]

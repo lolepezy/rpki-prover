@@ -15,8 +15,6 @@ import           Control.Concurrent.STM
 import           Control.Lens
 import           Data.Generics.Product.Typed
 
-import           Data.Monoid.Generic
-
 import           Control.Exception
 
 import           Control.Monad
@@ -57,8 +55,8 @@ data RepositoryContext = RepositoryContext {
         takenCareOf        :: Set RpkiURL
     } 
     deriving stock (Generic)  
-    deriving Semigroup via GenericSemigroup RepositoryContext   
-    deriving Monoid    via GenericMonoid RepositoryContext
+    -- deriving Semigroup via GenericSemigroup RepositoryContext   
+    -- deriving Monoid    via GenericMonoid RepositoryContext
 
 
 fValidationState :: FetchResult -> ValidationState 
@@ -211,8 +209,8 @@ fetchPPWithFallback
         let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
-                (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                
-                atomically $ do 
+                (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                                
+                atomically $ do
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
 
                     let (newRepo, newStatus) = case r of                             

@@ -48,7 +48,7 @@ repositoryGroup = testGroup "PublicationPoints" [
         --     prop_rsync_map_is_a_semigroup,
 
         QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
-        QC.testProperty "PublicationPoints is a semigroup" $ isASemigroup @PublicationPoints,
+        -- QC.testProperty "PublicationPoints is a semigroup" $ isASemigroup @PublicationPoints,
         QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
         QC.testProperty "RsyncMap is a semigroup" $ isASemigroup @RsyncMap,
         QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap
@@ -138,7 +138,7 @@ prop_rsync_tree_update =
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncRepos
 convertToRepos urls status = 
     foldr (\url tree -> toTree url status tree) newTree urls  
-    
+
 
 generateRsyncUrl :: Gen RsyncURL
 generateRsyncUrl = do
