@@ -120,6 +120,7 @@ data FetchResult =
 
 data FetchTask a = Stub 
                 | Fetching (Async a)                 
+    deriving stock (Eq, Ord, Generic)                    
 
 
 data RepositoryProcessing = RepositoryProcessing {
@@ -194,14 +195,19 @@ rsyncPP = RsyncPP . RsyncPublicationPoint
 rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
 
 
+rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
+rrdpRepository (PublicationPoints (RrdpMap rrdps) _ _) u = Map.lookup u rrdps        
+
+rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
+rsyncRepository (PublicationPoints _ rsyncs _) u = 
+    (\(u', status) -> RsyncRepository (RsyncPublicationPoint u') status) 
+                    <$> statusInRsyncTree u rsyncs    
+
 repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
-repositoryFromPP (PublicationPoints (RrdpMap rrdps) rsyncs _) rpkiUrl = 
+repositoryFromPP pps rpkiUrl = 
     case rpkiUrl of
-        RrdpU u  -> RrdpR <$> Map.lookup u rrdps
-        RsyncU u -> RsyncR <$> findRoot u    
-  where    
-    findRoot u = (\(u', status) -> RsyncRepository (RsyncPublicationPoint u') status) 
-                    <$> statusInRsyncTree u rsyncs
+        RrdpU u  -> RrdpR <$> rrdpRepository pps u
+        RsyncU u -> RsyncR <$> rsyncRepository pps u      
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
@@ -311,7 +317,7 @@ data Change a = Put a | Remove a
 
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
-    [Change (RsyncHost, RsyncNode)]
+    [Change (RsyncHost, RsyncNode FetchStatus Downloadable)]
     [Change (RpkiURL, FetchEverSucceeded)]
 
 
@@ -409,14 +415,16 @@ data Downloadable = NotDownloadable | WorthTrying
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNode)
+type RsyncNodeNormal = RsyncNode FetchStatus Downloadable
+
+newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNodeNormal)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-data RsyncNode = Leaf FetchStatus
+data RsyncNode a b = Leaf a
                | SubTree { 
-                   rsyncChildren :: Map RsyncPathChunk RsyncNode,
-                   downloadable  :: Downloadable
+                   rsyncChildren :: Map RsyncPathChunk (RsyncNode a b),
+                   nodePayload :: b
                } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
@@ -428,7 +436,7 @@ toRsyncTree :: RsyncURL -> FetchStatus -> RsyncTree -> RsyncTree
 toRsyncTree (RsyncURL host path) fs (RsyncTree byHost) = 
     RsyncTree $ Map.alter (Just . maybe (buildRsyncTree path fs) (pathToRsyncTree path fs)) host byHost    
 
-pathToRsyncTree :: [RsyncPathChunk] -> FetchStatus -> RsyncNode -> RsyncNode
+pathToRsyncTree :: [RsyncPathChunk] -> FetchStatus -> RsyncNodeNormal -> RsyncNodeNormal
 
 pathToRsyncTree [] fs (Leaf fs') = Leaf $ fs' <> fs 
 pathToRsyncTree [] fs SubTree {} = Leaf fs 
@@ -443,17 +451,17 @@ pathToRsyncTree (u : us) fs subTree@SubTree { rsyncChildren = ch } =
         Nothing -> 
             SubTree {
                 rsyncChildren = Map.insert u (buildRsyncTree us fs) ch,
-                downloadable  = WorthTrying
+                nodePayload  = WorthTrying
             }
         Just child -> subTree { 
                 rsyncChildren = Map.insert u (pathToRsyncTree us fs child) ch 
             }
 
-buildRsyncTree :: [RsyncPathChunk] -> FetchStatus -> RsyncNode
+buildRsyncTree :: [RsyncPathChunk] -> FetchStatus -> RsyncNodeNormal
 buildRsyncTree [] fs      = Leaf fs
 buildRsyncTree (u: us) fs = SubTree {
         rsyncChildren = Map.singleton u $ buildRsyncTree us fs,
-        downloadable  = WorthTrying
+        nodePayload  = WorthTrying
     }
 
 statusInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, FetchStatus)

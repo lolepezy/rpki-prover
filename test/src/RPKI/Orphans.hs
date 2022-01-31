@@ -400,7 +400,7 @@ instance Arbitrary RsyncTree where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncNode where
+instance Arbitrary RsyncNodeNormal where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

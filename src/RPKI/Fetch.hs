@@ -23,11 +23,9 @@ import           Control.Monad.Except
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
-
-import qualified Data.Map.Strict                  as Map
-
-import           Data.Set                         (Set)
-import           Data.Maybe (mapMaybe)
+import           Data.Map.Strict             (Map)
+import qualified Data.Map.Strict             as Map
+import           Data.Set                    (Set)
 
 import GHC.Generics (Generic)
 
@@ -119,11 +117,11 @@ fetchPPWithFallback
       where          
         ppSeqKey = sequence 
                 $ take 1 
-                $ map (downloadableUrl . getRpkiURL) 
+                $ map (urlToDownload . getRpkiURL) 
                 $ NonEmpty.toList 
                 $ unPublicationPointAccess ppAccess
           where
-            downloadableUrl u = 
+            urlToDownload u = 
                 case u of
                     RrdpU _ -> pure u
                     RsyncU rsyncUrl -> do  
@@ -162,8 +160,6 @@ fetchPPWithFallback
                     in case r of 
                         Left _  -> rsyncMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
                         Right _ -> updatedFreshness   
-
-                    
 
     fetchWithFallback parentScope (pp : pps') = do 
         fetch <- fetchWithFallback parentScope [pp]
@@ -388,3 +384,178 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
     pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
     let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
     pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
+
+
+
+
+-- fetchPPWithFallback1 :: (MonadIO m, Storage s) => 
+--                             AppContext s                         
+--                         -> RepositoryProcessing1
+--                         -> WorldVersion
+--                         -> Now 
+--                         -> PublicationPointAccess  
+--                         -> ValidatorT m [FetchResult]
+-- fetchPPWithFallback1 
+--     appContext@AppContext {..}     
+--     RepositoryProcessing1 {..}
+--     worldVersion
+--     now 
+--     ppAccess = do 
+--         parentScope <- askEnv         
+--         -- frs <- liftIO $ fetchOnce parentScope ppAccess        
+--         -- setValidationStateOfFetches repositoryProcessing frs     
+--         pure []
+--   where
+
+--     -- callSeq = do 
+--     --     let pps = NonEmpty.toList $ unPublicationPointAccess ppAccess
+
+--     --     -- STM action to 
+--     --     --  * check if fetching is necessary
+--     --     --  * return actual downloadable URL
+--     --     --  * insert Stub         
+
+--     --     -- actual fetch in IO
+
+--     --     -- STM action to
+--     --     -- * update pps
+--     --     -- * remove stub
+--     --     -- * 
+
+--     --     pure ()
+--     --     where 
+--     --         go [] = pure ()
+--     --         go (pp : pps') = do 
+
+--     --             pure ()
+
+--     toAction (RsyncU rsyncUrl) = pure ()
+--     toAction (RrdpU rrdpUrl) = pure ()
+
+--     mapLocked rrdpUrl fetchFetchMap action = do 
+--         z <- readTVar fetchFetchMap
+--         case Map.lookup rrdpUrl z of 
+--             Just Stub         -> retry
+--             Just (Fetching a) -> pure $ wait a
+--             Nothing -> do                                         
+--                     modifyTVar' fetchFetchMap $ Map.insert rrdpUrl Stub
+--                     pure action
+
+--     -- treeLocked rrdpUrl rsyncFetchTree action = do 
+--     --     z <- readTVar rsyncFetchTree
+
+--     --     case Map.lookup rrdpUrl z of 
+--     --         Just Stub         -> retry
+--     --         Just (Fetching a) -> pure $ wait a
+--     --         Nothing -> do                                         
+--     --                 modifyTVar' fetchFetchMap $ Map.insert rrdpUrl Stub
+--     --                 pure $ action rrdpUrl            
+
+--     toSteps :: RepositoryProcessing1 -> Scope -> [RpkiURL] -> [Step]
+--     toSteps RepositoryProcessing1 {..} parentScope [] = []
+--     toSteps (u : us) = 
+--         case u of
+--             RrdpU rrdpUrl -> Step {
+--                     fetchLocked = 
+--                         mapLocked rrdpUrl fetchFetchMap $ do 
+--                             pps <- readTVar publicationPoints
+--                             rrdpRepository pps rrdpUrl
+                            
+--                 }
+
+--     fetchPP parentScope repo = do         
+--         let rpkiUrl = getRpkiURL repo
+--         let launchFetch = async $ do               
+--                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
+--                 (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                                
+--                 atomically $ do
+--                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
+
+--                     let (newRepo, newStatus) = case r of                             
+--                             Left _      -> (repo, FailedAt $ unNow now)
+--                             Right repo' -> (repo', FetchedAt $ unNow now)
+
+--                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
+--                             adjustSucceededUrl rpkiUrl 
+--                                     $ updateStatuses (pps ^. typed @PublicationPoints) 
+--                                         [(newRepo, newStatus)]                
+--                 pure (r, validations)
+
+--         bracketOnError 
+--             launchFetch 
+--             (stopAndDrop indivudualFetchRuns rpkiUrl) 
+--             (rememberAndWait indivudualFetchRuns rpkiUrl) 
+    
+--     stopAndDrop stubs key a = liftIO $ do         
+--         atomically $ modifyTVar' stubs $ Map.delete key
+--         cancel a
+
+--     rememberAndWait stubs key a = liftIO $ do 
+--         atomically $ modifyTVar' stubs $ Map.insert key (Fetching a)
+--         wait a
+
+--     needsAFetch pp = do 
+--         pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+--         let asIfMerged = mergePP pp pps
+--         let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
+--         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now
+--         pure (needsFetching', repo)
+
+
+data Step = Step { 
+    fetchLocked :: STM (IO Fetched), 
+    fallbackTo :: STM Step
+}
+
+
+
+type Fetched = (Either AppError Repository, ValidationState)
+type FTask = FetchTask Fetched
+
+data CommonRoot = Unavailable | Working FTask
+    deriving stock (Eq, Ord, Generic)    
+
+newtype RsyncFetches = RsyncFetches (Map RsyncHost (RsyncNode FTask CommonRoot))
+    deriving stock (Eq, Ord, Generic)    
+
+    
+data RepositoryProcessing1 = RepositoryProcessing1 {
+        fetchFetchMap     :: TVar (Map RrdpURL FTask),
+        rsyncFetchTree    :: TVar RsyncFetches,
+        fetchResults      :: TVar (Map RpkiURL ValidationState),
+        publicationPoints :: TVar PublicationPoints        
+    }
+    deriving stock (Eq, Generic)
+
+
+
+-- findInRsyncTree :: RsyncURL 
+--                    -> Map RsyncHost (RsyncNode a b) 
+--                    -> Maybe (RsyncURL, Either a (RsyncURL, b))
+-- findInRsyncTree (RsyncURL host path) hosts = 
+--     go path [] =<< Map.lookup host hosts
+--   where    
+--     -- TODO Make this 2 configurable
+--     maxChildrenBeforeAdvisingCommonRoot = 2
+
+--     go [] _  SubTree {} = Nothing
+
+--     go _ realPath (Leaf a) = 
+--         Just (RsyncURL host realPath, Left a)
+    
+--     go (u: [lastChunk]) realPath SubTree {..} = 
+--         case Map.lookup u rsyncChildren of 
+--             Nothing -> Nothing 
+--             Just z@SubTree { rsyncChildren = ch }                
+--                 | not (Map.member lastChunk ch) && 
+--                   Map.size ch > maxChildrenBeforeAdvisingCommonRoot 
+--                   -> 
+--                     let commonRoot = RsyncURL host realPath
+--                     in Just (commonRoot, Right (commonRoot, payload))
+--                 | otherwise -> 
+--                     go [lastChunk] (realPath <> [u]) z
+--             Just z -> 
+--                 go [lastChunk] (realPath <> [u]) z
+
+--     go (u: us) realPath SubTree {..} = 
+--         Map.lookup u rsyncChildren >>= go us (realPath <> [u])

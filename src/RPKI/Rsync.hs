@@ -18,7 +18,10 @@ import           Control.Monad
 import           Control.Monad.Except
 
 import qualified Data.ByteString                  as BS
-import Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe)
+import           Data.Proxy
+import           Data.List (stripPrefix)
+import           Data.Foldable (for_)
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
@@ -51,8 +54,6 @@ import           System.FilePath
 import           System.Process.Typed
 
 import           System.Mem                       (performGC)
-import Data.Proxy
-import Data.List (stripPrefix)
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
@@ -240,14 +241,13 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
     saveObjects queue = do            
         mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
             DB.rwAppTx objectStore go
-        where
-        go tx = 
-            liftIO (atomically (readCQueue queue)) >>= \case 
-                Nothing       -> pure ()
-                Just (uri, a) -> do 
-                    r <- try $ waitTask a
-                    process tx uri r
-                    go tx
+      where
+        go tx = do 
+            z <- liftIO $ atomically $ readCQueue queue
+            for_ z $ \(uri, a) -> do 
+                        r <- try $ waitTask a
+                        process tx uri r
+                        go tx            
 
         process tx rsyncURL = \case
             Left (e :: SomeException) -> 
