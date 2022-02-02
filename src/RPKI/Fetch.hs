@@ -405,16 +405,7 @@ fetchPPWithFallback1
         -- frs <- liftIO $ fetchOnce parentScope ppAccess        
         -- setValidationStateOfFetches repositoryProcessing frs     
         pure []
-  where
-
-    mapLocked rrdpUrl fetchFetchMap stmAction = do 
-        z <- readTVar fetchFetchMap
-        case Map.lookup rrdpUrl z of 
-            Just Stub         -> retry
-            Just (Fetching a) -> pure $ wait a
-            Nothing -> do                                         
-                    modifyTVar' fetchFetchMap $ Map.insert rrdpUrl Stub
-                    stmAction                    
+  where               
 
 --     -- treeLocked rrdpUrl rsyncFetchTree action = do 
 --     --     z <- readTVar rsyncFetchTree
@@ -468,43 +459,78 @@ fetchPPWithFallback1
     fetchPP repo = do
         pure (Right repo, mempty)
 
+    mapLocked :: RrdpURL 
+            -> TVar (Map RrdpURL (FetchTask b)) 
+            -> STM t 
+            -> (t -> IO b) 
+            -> STM (IO b)
+    mapLocked key actionMap stmAction ioAction = do 
+        z <- readTVar actionMap
+        case Map.lookup key z of 
+            Just Stub         -> retry
+            Just (Fetching a) -> pure $ wait a
+            Nothing -> do 
+                modifyTVar' actionMap $ Map.insert key Stub
+                s <- stmAction
+                pure $ do                                         
+                        a <- async $ ioAction s
+                        atomically $ modifyTVar' actionMap $ \m -> do 
+                            case Map.lookup key m of 
+                                Just Stub -> Map.insert key (Fetching a) m
+                                _         -> m
+                        wait a                    
 
-    -- toStep :: [RpkiURL] -> FetchSeq
-    -- -- toStep [] = FetchSeq $ pure $ pure 
-    -- toStep (u : urls) = 
-    --     case u of
-    --         RrdpU rrdpUrl -> FetchSeq $                
-    --                     mapLocked rrdpUrl fetchFetchMap $ do 
-    --                         pps <- readTVar publicationPoints
-    --                         let repo = rrdpRepository pps rrdpUrl                            
-    --                         let fallback = case urls of 
-    --                                             [] -> Nothing
-    --                                             _  -> Just $ toStep urls
-    --                         pure $ do 
-    --                             a <- async $ do 
-    --                                 z <- fetchPP repo
-    --                                 pure (z, fallback)
-    --                             atomically $ modifyTVar' fetchFetchMap $ Map.insert rrdpUrl (Fetching a)
-    --                             wait a
+    toStep :: [RpkiURL] -> FetchSeq
+    toStep (u : urls) = 
+        case u of
+            RrdpU rrdpUrl -> let 
+                    smtA = do 
+                            pps <- readTVar publicationPoints
+                            let repo = maybe (rrdpR rrdpUrl) RrdpR $ rrdpRepository pps rrdpUrl
+                            let fallback = case urls of 
+                                                [] -> Nothing
+                                                _  -> Just $ toStep urls
+                            pure (repo, fallback)
+
+                    ioA (repo, fallback) = do 
+                            z@(r, _) <- fetchPP repo
+                            let wrapUpCurrent = applyFetchResult u repo r
+                            let fallback' = fmap (\(FetchSeq f) -> FetchSeq $ wrapUpCurrent >> f) fallback
+                            pure (getRpkiURL repo, z, fallback')                                        
+
+                in FetchSeq $ mapLocked rrdpUrl fetchFetchMap smtA ioA
+
+
+    applyFetchResult rpkiUrl repo r = do                             
+        let (newRepo, newStatus) = case r of                             
+                Left _      -> (repo, FailedAt $ unNow now)
+                Right repo' -> (repo', FetchedAt $ unNow now)
+
+        modifyTVar' publicationPoints $ \pps -> 
+                adjustSucceededUrl rpkiUrl 
+                        $ updateStatuses (pps ^. typed @PublicationPoints) 
+                        [(newRepo, newStatus)]          
+
+
+stepSeq :: FetchSeq -> IO [FetchResult]
+stepSeq (FetchSeq fs) = do 
+    io <- atomically fs
+    (repoUrl, (r, vs), fallback) <- io
+    let fetchResult = case r of
+            Left _     -> [FetchFailure repoUrl vs]
+            Right repo -> [FetchSuccess repo vs]        
+    case fallback of
+        Nothing -> pure fetchResult
+        Just f  -> (fetchResult <>) <$> stepSeq f    
 
 
 newtype FetchSeq = FetchSeq {
-        unFetchStep :: STM (IO (Fetched, Maybe FetchSeq))
+        unFetchStep :: STM (IO (RpkiURL, Fetched, Maybe FetchSeq))
     }
 
 
--- stepSeq :: FetchSeq -> IO ()
--- stepSeq (FetchSeq fs) = do 
---     io <- atomically fs
---     ((r, vs), fallback) <- io
---     case r of 
---         Left _ -> 
---         Right repo -> 
---     pure ()
-
-
 type Fetched = (Either AppError Repository, ValidationState)
-type FTask = FetchTask Fetched
+type FTask = FetchTask (RpkiURL, Fetched, Maybe FetchSeq)
 
 data CommonRoot = Unavailable | Working FTask
     deriving stock (Eq, Ord, Generic)    
