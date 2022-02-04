@@ -1,7 +1,9 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE OverloadedLabels    #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE QuasiQuotes         #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -16,6 +18,7 @@ import           Data.ASN1.Types
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as LBS
 import qualified Data.Text                          as Text
+import           Data.String.Interpolate.IsString
 
 import qualified Data.Set                           as Set
 
@@ -36,49 +39,111 @@ import           RPKI.Util                          (convert)
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
+import Data.ASN1.BitArray
 
+
+data CertType = BGPCert | CACert | EECert 
 
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
 
+-- TODO That one needs to be refactored in such a way that certificate type is 
+-- known after parsing the certificate on the type level.
 validateResourceCertExtensions ::
     WithResourceCertificate c =>
     c ->
     PureValidatorT c
-validateResourceCertExtensions cert =
-    validateHasCriticalExtensions $ cwsX509certificate $ getCertWithSignature cert
-  where
-    validateHasCriticalExtensions x509cert = do
-        let exts = getExts x509cert
-        case extVal exts id_ce_certificatePolicies of
-            Nothing -> vPureError CertNoPolicyExtension
-            Just bs
-                | BS.null bs -> vPureError CertNoPolicyExtension
-                | otherwise ->
-                    case decodeASN1 DER (LBS.fromStrict bs) of
-                        -- TODO Make it more generic
-                        Right
-                            [ Start Sequence
-                                , Start Sequence
-                                , OID oid
-                                , End Sequence
-                                , End Sequence
-                                ] | oid == id_cp_ipAddr_asNumber -> pure cert
-                        Right
-                            [ Start Sequence
-                                , Start Sequence
-                                , OID oid
-                                , Start Sequence
-                                , Start Sequence
-                                , OID oidCps
-                                , ASN1String _
-                                , End Sequence
-                                , End Sequence
-                                , End Sequence
-                                , End Sequence
-                                ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure cert
-                        _ -> vPureError $ CertWrongPolicyExtension bs
+validateResourceCertExtensions cert = do     
+    let extensions = getExts $ cwsX509certificate $ getCertWithSignature cert
 
+    -- Do not check for SKI, AKI and resource extensions -- they 
+    -- are validated when parsing certificates and are crucial for 
+    -- the whole tree validation.
+    certType extensions >>= \case                        
+        CACert -> do 
+            withExtension extensions id_ce_basicConstraints $ \_ _ -> pure ()                
+            validatePolicyExtension extensions                        
+        BGPCert -> do             
+            noBasicContraint extensions            
+        EECert  -> do 
+            noBasicContraint extensions                        
+
+    validateNoUnknownCriticalExtensions extensions            
+    
+    pure cert
+  where
+    certType extensions =
+        withExtension extensions id_ce_keyUsage $ \bs parsed ->             
+            case parsed of 
+                [BitString ba@(BitArray 7 _)] -> do 
+                    unless (bitArrayGetBit ba 5) $ vPureError $ BrokenKeyUsage "keyCertSign bit is not set"
+                    unless (bitArrayGetBit ba 6) $ vPureError $ BrokenKeyUsage "cRLSign bit is not set"
+                    forM_ [0..4] $ \bit -> 
+                        when (bitArrayGetBit ba bit) $ vPureError $ BrokenKeyUsage 
+                            [i|Bit #{bit} set, only keyCertSign and cRLSign must be set|]
+                    pure CACert            
+
+                [BitString ba@(BitArray 1 _)] -> 
+                    let badExtKU = vPureError $ CertBrokenExtension id_ce_extKeyUsage bs
+                    in case extVal extensions id_ce_extKeyUsage of
+                        Nothing -> do 
+                            unless (bitArrayGetBit ba 0) $ vPureError $ BrokenKeyUsage "digitalSignature bit is not set"                            
+                            pure EECert
+                        Just bs1 
+                            | BS.null bs1 -> badExtKU
+                            | otherwise ->
+                                case decodeASN1 DER (LBS.fromStrict bs1) of
+                                    Left _  -> badExtKU
+                                    Right [Start Sequence, OID oid, End Sequence]
+                                        | oid == id_kp_bgpsecRouter -> pure BGPCert
+                                        | otherwise -> badExtKU                                            
+                                    _ -> badExtKU
+                    
+                _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
+
+    noBasicContraint extensions = 
+        forM_ (extVal extensions id_ce_basicConstraints) $ \bs -> 
+            vPureError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
+
+    validatePolicyExtension extensions = 
+        withExtension extensions id_ce_certificatePolicies $ \bs parsed ->
+            case parsed of 
+                [ Start Sequence
+                    , Start Sequence
+                    , OID oid
+                    , End Sequence
+                    , End Sequence
+                    ] | oid == id_cp_ipAddr_asNumber -> pure ()        
+                [ Start Sequence
+                    , Start Sequence
+                    , OID oid
+                    , Start Sequence
+                    , Start Sequence
+                    , OID oidCps
+                    , ASN1String _
+                    , End Sequence
+                    , End Sequence
+                    , End Sequence
+                    , End Sequence
+                    ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure ()   
+
+                _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
+                 
+    validateNoUnknownCriticalExtensions extensions = do                        
+        forM_ extensions $ \ExtensionRaw {..} -> do 
+            when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
+                vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
+
+    withExtension extensions oid f = do 
+        case extVal extensions oid of
+            Nothing -> vPureError $ MissingCriticalExtension oid
+            Just bs 
+                | BS.null bs -> vPureError $ MissingCriticalExtension oid
+                | otherwise -> do 
+                    case decodeASN1 DER (LBS.fromStrict bs) of
+                        Left _  -> vPureError $ CertBrokenExtension oid bs        
+                        Right z -> f bs z
+        
 
 -- | Validated specifically the TA's self-signed certificate
 -- 
@@ -116,9 +181,9 @@ validateResourceCert ::
     , WithAKI c
     ) =>
     Now ->
-    c ->
+    c ->    
     parent ->
-    Validated CrlObject ->
+    Validated CrlObject ->    
     PureValidatorT (Validated c)
 validateResourceCert (Now now) cert parentCert vcrl = do
     let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
@@ -224,8 +289,8 @@ validateRoa now roa parentCert crl verifiedResources = do
         (a -> (PrefixesAndAsns -> ValidationError) -> PureValidatorT ())
     validatedPrefixInRS = \case
             Nothing               -> \_ _ -> pure ()
-            Just (VerifiedRS vrs) -> \i errorReport ->
-                unless (isInside i (vrs ^. typed)) $
+            Just (VerifiedRS vrs) -> \i' errorReport ->
+                unless (isInside i' (vrs ^. typed)) $
                     vPureError $ errorReport vrs
 
 validateGbr ::

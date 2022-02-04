@@ -123,7 +123,7 @@ parseSignedObject contentBinaryParse =
                 where 
                   saEncoded = encodeASN1' DER $ [Start Set] <> asns <> [End Set]
                   parseSA = getMany $ 
-                          onNextContainer Sequence $ getNext >>= \case 
+                        onNextContainer Sequence $ getNext >>= \case 
                             OID attrId 
                               | attrId == id_contentType -> getNextContainerMaybe Set >>= \case 
                                       Just [OID ct] -> pure $ ContentTypeAttr $ ContentType ct

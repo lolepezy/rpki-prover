@@ -20,6 +20,7 @@ import           Data.Tuple.Strict
 import           RPKI.Domain                 as Domain
 import           RPKI.Reporting
 import           RPKI.Util (fmtLocations)
+import Data.ASN1.Types (OID)
 
 
 toMessage :: AppError -> Text
@@ -149,6 +150,7 @@ toValidationMessage = \case
       ObjectIsTooBig s   -> [i|Object is too big (#{s} bytes) for a valid RPKI object.|]
 
       InvalidSignature e -> [i|Object signature is invalid, error: #{e}.|]
+      InvalidKI e       -> [i|Certificate SKI is invalid, error: #{e}.|]
 
       CMSSignatureAlgorithmMismatch sigEE sigAttr -> 
           [i|Signature algorithm on the EE certificate is #{sigEE} but the CSM attributes says #{sigAttr}.|]
@@ -157,7 +159,10 @@ toValidationMessage = \case
 
       CertNoPolicyExtension -> [i|Certificate has no policy extension.|]
           
-      CertWrongPolicyExtension b -> [i|Certificate policy extension is broken: #{b}.|]
+      CertBrokenExtension oid b -> [i|Certificate extension #{fmtOID oid} is broken: #{b}.|]
+      UnknownCriticalCertificateExtension oid b -> [i|Unknown critical certificate extension, OID: #{fmtOID  oid}, content #{b}.|]
+      MissingCriticalExtension oid -> [i|Missing critical certificate extension #{fmtOID oid}.|]
+      BrokenKeyUsage t -> [i|Broken keyUsage extension: #{t}.|]
 
       ObjectHasMultipleLocations locs -> 
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
@@ -277,3 +282,6 @@ toInternalErrorMessage = \case
     InternalError t     -> t
     WorkerTimeout t     -> t
     WorkerOutOfMemory t -> t
+
+fmtOID :: OID -> Text
+fmtOID oid = Text.intercalate "." $ map (Text.pack . show) oid

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Parse.Internal.Common where
 
@@ -32,7 +33,7 @@ id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
 id_pe_sia, id_ad_rpki_notify, id_ad_rpki_repository :: OID
 id_ad_rpkiManifest :: OID
-
+id_kp_bgpsecRouter :: OID
 
 oid_pkix                  = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
@@ -40,11 +41,13 @@ id_pe_sia                 = oid_pe <> [ 11 ]
 id_pe_ipAddrBlocks        = oid_pe <> [ 7 ]
 id_pe_autonomousSysIds    = oid_pe <> [ 8 ]
 id_pe_ipAddrBlocks_v2     = oid_pe <> [ 28 ]
-id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]  
+id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]
 
 id_ad_rpki_notify         = oid_pkix <> [ 48, 13 ]  
 id_ad_rpki_repository     = oid_pkix <> [ 48, 5 ]  
 id_ad_rpkiManifest        = oid_pkix <> [ 48, 10]
+
+id_kp_bgpsecRouter        = oid_pkix <> [3, 30]
 
 id_cp_ipAddr_asNumber, id_cps_qualifier :: OID
 id_cp_ipAddr_asNumber = oid_pkix <> [ 14, 2 ]
@@ -62,11 +65,25 @@ id_messageDigest      = id_pkcs9 <> [4]
 id_signingTime        = id_pkcs9 <> [5]
 id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 
-id_sha256             = [2, 16, 840, 1, 101, 3, 4, 2, 1]
+id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 
-id_ce_CRLDistributionPoints, id_ce_certificatePolicies :: OID 
+id_ce_CRLDistributionPoints, id_ce_certificatePolicies, id_ce_basicConstraints ::OID 
+id_ce_keyUsage, id_ce_extKeyUsage :: OID 
+id_ce_keyUsage              = [2, 5, 29, 15]
+id_ce_extKeyUsage           = [2, 5, 29, 37]
+id_ce_basicConstraints      = [2, 5, 29, 19]
 id_ce_CRLDistributionPoints = [2, 5, 29, 31]
 id_ce_certificatePolicies   = [2, 5, 29, 32]
+
+
+allowedCriticalOIDs :: [OID]
+allowedCriticalOIDs = [ 
+        id_ce_basicConstraints, 
+        id_ce_certificatePolicies, 
+        id_ce_keyUsage, 
+        id_pe_ipAddrBlocks, 
+        id_pe_autonomousSysIds 
+    ]
 
 fmtErr :: String -> ParseError Text.Text
 fmtErr = ParseError . Text.pack
@@ -129,9 +146,15 @@ getExtsSign = getExts . cwsX509certificate
 parseKI :: BS.ByteString -> ParseResult KI
 parseKI bs = case decodeASN1' BER bs of
     Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
-    Right [OctetString bytes] -> pure $ mkKI bytes
-    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> pure $ mkKI bytes
+    Right [OctetString bytes] -> makeKI bytes
+    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
     Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
+  where
+    makeKI bytes = 
+        let len = BS.length bytes
+        in if len == 20
+            then Right $ mkKI bytes
+            else Left $ fmtErr $ "KI has wrong length, must be 160 bits, but it is " <> show len
 
 oid2Hash :: OID -> ParseASN1 HashALG
 oid2Hash = \case
@@ -193,3 +216,9 @@ getCrlDistributionPoint c = do
 
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just
+
+keyCertSignBit :: BitArray -> Bool
+keyCertSignBit ba = bitArrayGetBit ba 5
+
+cRLSignBit :: BitArray -> Bool
+cRLSignBit ba = bitArrayGetBit ba 6
