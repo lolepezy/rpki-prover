@@ -216,9 +216,3 @@ getCrlDistributionPoint c = do
 
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just
-
-keyCertSignBit :: BitArray -> Bool
-keyCertSignBit ba = bitArrayGetBit ba 5
-
-cRLSignBit :: BitArray -> Bool
-cRLSignBit ba = bitArrayGetBit ba 6
