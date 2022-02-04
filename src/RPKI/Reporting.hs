@@ -34,6 +34,8 @@ import           Data.Monoid.Generic
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
+import           Data.ASN1.Types (OID)
+
 import           GHC.Generics
 
 import           Data.Map.Monoidal.Strict
@@ -52,10 +54,14 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         ObjectIsTooSmall Integer |
                         ObjectIsTooBig Integer |
                         InvalidSignature Text |  
+                        InvalidKI Text |  
                         CMSSignatureAlgorithmMismatch Text Text |                      
                         TACertAKIIsNotEmpty URI |
                         CertNoPolicyExtension |
-                        CertWrongPolicyExtension BS.ByteString |
+                        CertBrokenExtension OID BS.ByteString |
+                        UnknownCriticalCertificateExtension OID BS.ByteString |
+                        MissingCriticalExtension OID |
+                        BrokenKeyUsage Text |
                         ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI Locations |
                         NoCRLOnMFT AKI Locations |
