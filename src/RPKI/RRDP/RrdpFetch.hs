@@ -8,7 +8,6 @@
 module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM           (readTVarIO)
-import           Control.Exception.Lifted         (finally)
 import           Control.Lens                     ((.~), (%~), (&), (^.))
 import           Control.Monad.Except
 import           Data.Generics.Product.Typed
@@ -23,7 +22,6 @@ import           Data.Proxy
 import           GHC.Generics
 
 import qualified Streaming.Prelude                as S
-import           System.Mem                       (performGC)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -192,30 +190,24 @@ downloadAndUpdateRRDP
         
         logInfoM logger message
 
-        -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
-        -- otherwise they will hold too much files open.
-        downloadAndSave `finally` liftIO performGC        
+        -- Do not thrash the same server with too big amount of parallel 
+        -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
+        localRepoBottleneck <- liftIO $ newBottleneckIO 8                        
 
-      where
+        void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
+                (\t -> (& #saveTimeMs %~ (<> TimeMs t))) $ 
+                foldPipeline
+                        (localRepoBottleneck <> ioBottleneck)
+                        (S.each sortedDeltas)
+                        downloadDelta
+                        (\(rawContent, serial, deltaUri) _ -> 
+                            inSubVScope deltaUri $ 
+                                handleDeltaBS repoUri notification serial rawContent)
+                        (mempty :: ())     
 
-        downloadAndSave = do
-            -- Do not thrash the same server with too big amount of parallel 
-            -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
-            localRepoBottleneck <- liftIO $ newBottleneckIO 8                        
+        pure $ repo { rrdpMeta = rrdpMeta' }      
 
-            void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #saveTimeMs %~ (<> TimeMs t))) $ 
-                    foldPipeline
-                            (localRepoBottleneck <> ioBottleneck)
-                            (S.each sortedDeltas)
-                            downloadDelta
-                            (\(rawContent, serial, deltaUri) _ -> 
-                                inSubVScope deltaUri $ 
-                                    handleDeltaBS repoUri notification serial rawContent)
-                            (mempty :: ())     
-
-            pure $ repo { rrdpMeta = rrdpMeta' }
-
+      where        
         downloadDelta (DeltaInfo uri hash serial) = do
             let deltaUri = U.convert uri 
             (rawContent, _, httpStatus') <- 
