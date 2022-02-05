@@ -50,7 +50,6 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import           RPKI.Store.Repository
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
@@ -157,7 +156,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         -- set initial publication point state
         mapException (AppException . storageError) $ 
             roTx database' $ \tx -> do 
-                pps <- getPublicationPoints tx (repositoryStore database')    
+                pps <- getPublicationPoints tx database'
                 atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
         
         rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
@@ -169,7 +168,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         mapException (AppException . storageError) $
             rwTx database' $ \tx -> do                             
                 pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                savePublicationPoints tx (repositoryStore database') pps
+                savePublicationPoints tx database' pps
         
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches repositoryProcessing

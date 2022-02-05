@@ -15,9 +15,7 @@ import           Lmdb.Types hiding (Size)
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
 import           RPKI.Store.Database
-import           RPKI.Store.Repository
 import           RPKI.Store.Sequence
-
 
 
 createObjectStore :: LmdbEnv -> SequenceMap LmdbStorage -> IO (RpkiObjectStore LmdbStorage)

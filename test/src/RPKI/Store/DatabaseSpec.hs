@@ -49,7 +49,6 @@ import qualified RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import           RPKI.Store.Repository
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
 
@@ -268,20 +267,16 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
 
 shouldInsertAndGetAllBackFromRepositoryStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromRepositoryStore io = do  
-    DB {..} <- io
+    db <- io
 
     createdPPs <- generateRepositories
 
-    storedPps1 <- roTx repositoryStore $ \tx -> 
-                    getPublicationPoints tx repositoryStore
+    storedPps1 <- roTx db $ \tx -> getPublicationPoints tx db
 
     let changeSet1 = changeSet storedPps1 createdPPs
 
-    rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet1
-
-    storedPps2 <- roTx repositoryStore $ \tx -> 
-                    getPublicationPoints tx repositoryStore
+    rwTx db $ \tx -> applyChangeSet tx db changeSet1
+    storedPps2 <- roTx db $ \tx -> getPublicationPoints tx db
 
     HU.assertEqual "Not the same publication points" createdPPs storedPps2
 
@@ -292,25 +287,19 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
 
     let changeSet2 = changeSet storedPps2 shrunkPPs
 
-    rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet2
-
-    storedPps3 <- roTx repositoryStore $ \tx -> 
-                    getPublicationPoints tx repositoryStore    
+    rwTx db $ \tx -> applyChangeSet tx db changeSet2
+    storedPps3 <- roTx db $ \tx -> getPublicationPoints tx db
 
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
 
 shouldGetAndSaveRepositories :: Storage s => IO (DB s) -> HU.Assertion
 shouldGetAndSaveRepositories io = do  
-    DB {..} <- io
+    db <- io
 
     pps1 <- generateRepositories
-    rwTx repositoryStore $ \tx -> 
-                savePublicationPoints tx repositoryStore pps1
-
-    pps1' <- roTx repositoryStore $ \tx -> 
-                getPublicationPoints tx repositoryStore       
+    rwTx db $ \tx -> savePublicationPoints tx db pps1
+    pps1' <- roTx db $ \tx -> getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points first" pps1 pps1'
     
@@ -319,11 +308,8 @@ shouldGetAndSaveRepositories io = do
 
     let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
 
-    rwTx repositoryStore $ \tx -> 
-                savePublicationPoints tx repositoryStore pps2
-
-    pps2' <- roTx repositoryStore $ \tx -> 
-                getPublicationPoints tx repositoryStore       
+    rwTx db $ \tx -> savePublicationPoints tx db pps2
+    pps2' <- roTx db $ \tx -> getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points second" pps2 pps2'
     

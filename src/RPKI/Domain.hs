@@ -17,6 +17,7 @@ module RPKI.Domain where
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
+import qualified Data.String.Conversions     as SC
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
@@ -47,7 +48,6 @@ import           Data.Set                 (Set)
 import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
 import           RPKI.Time
-
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving stock (Show, Eq, Ord, Generic)
@@ -140,7 +140,7 @@ newtype AKI  = AKI KI
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype SessionId = SessionId BSS.ShortByteString 
+newtype SessionId = SessionId Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

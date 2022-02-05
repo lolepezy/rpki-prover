@@ -51,7 +51,7 @@ parseNotification bs = catchExceptions $ runST $ do
             (\case
                 ("notification", attributes) -> do
                     forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ toShortBS v
+                        \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ convert v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serialRef . Just)
                     forAttribute attributes "version" NoVersion $
@@ -104,7 +104,7 @@ parseSnapshot bs = catchExceptions $ runST $ do
             (\case
                 ("snapshot", attributes) -> do
                     forAttribute attributes "session_id" NoSessionId $
-                        \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ toShortBS v
+                        \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ convert v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serialRef . Just)
                     forAttribute attributes "version" NoSerial $
@@ -152,7 +152,7 @@ parseDelta bs = catchExceptions $ runST $ do
     let onElement = \case
             ("delta", attributes) -> do
                 forAttribute attributes "session_id" NoSessionId $
-                    \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ toShortBS v
+                    \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ convert v
                 forAttribute attributes "serial" NoSerial $
                     \v -> parseSerial v (lift . writeSTRef serialRef . Just)
                 forAttribute attributes "version" NoSerial $

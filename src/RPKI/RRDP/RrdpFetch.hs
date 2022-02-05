@@ -44,7 +44,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database              (rwAppTx)
 import qualified RPKI.Store.Database              as DB
-import qualified RPKI.Store.Repository            as RS
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 
@@ -342,7 +341,7 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
 
     let savingTx serial' f = 
             rwAppTx objectStore $ \tx ->
-                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
+                f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
     void $ txFoldPipeline 
                 cpuParallelism
@@ -453,7 +452,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     
     let savingTx serial' f = 
             rwAppTx objectStore $ \tx -> 
-                f tx >> RS.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
+                f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
     -- Propagate exceptions from here, anything that can happen here 
     -- (storage failure, file read failure) should stop the validation and 

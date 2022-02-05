@@ -33,6 +33,8 @@ data API api = API {
                 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
 
+        publicationsPoints :: api :- "repositories" :> Get '[JSON] PublicationPointDto,
+
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                     :> QueryParam "hash" Text 
                                     :> Get '[JSON] [RObject]

@@ -24,11 +24,11 @@ import           Data.String.Interpolate.IsString
 
 import qualified Crypto.PubKey.Curve25519    as C25519
 import qualified Crypto.PubKey.Curve448      as C448
-import           Crypto.PubKey.DSA           (Params (..), PublicKey (..))
+import           Crypto.PubKey.DSA           
 import           Crypto.PubKey.ECC.Types
 import qualified Crypto.PubKey.Ed25519       as E25519
 import qualified Crypto.PubKey.Ed448         as E448
-import           Crypto.PubKey.RSA.Types     (PublicKey (..))
+import           Crypto.PubKey.RSA.Types     
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
 import qualified Data.ByteString.Base16      as Hex
@@ -266,7 +266,7 @@ instance ToJSON SerializedPoint
 instance ToJSON Crypto.PubKey.ECC.Types.CurveName
 
 instance ToJSON SessionId where
-    toJSON (SessionId s) = shortBsJson s
+    toJSON (SessionId s) = toJSON s
 
 instance ToJSON RrdpSerial
 
@@ -285,7 +285,6 @@ showHex = decodeUtf8 . Hex.encode
 
 showHexL :: BSL.ByteString -> Text
 showHexL = decodeUtf8 . BSL.toStrict . HexLazy.encode
-
 
 -- FromJSON
 instance FromJSON ASN

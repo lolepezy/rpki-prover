@@ -110,7 +110,7 @@ instance Arbitrary Serial where
     shrink = genericShrink
 
 instance Arbitrary SessionId where
-    arbitrary = SessionId . BSS.toShort . convert <$> 
+    arbitrary = SessionId . convert <$> 
         listOf1 (elements $ ['a'..'z'] ++ ['0'..'9'])
 
 instance Arbitrary RrdpSerial where
