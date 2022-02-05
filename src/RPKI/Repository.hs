@@ -224,7 +224,7 @@ mergeRrdp r@RrdpRepository { .. }
                 Nothing -> Map.insert uri r rrdps
                 Just existing 
                     | r == existing -> rrdps 
-                    | otherwise     -> Map.insert uri r rrdps                    
+                    | otherwise     -> Map.insert uri (r <> existing) rrdps                    
     lastSucceded' = succeededFromStatus (RrdpU uri) status lastSucceded        
 
 
