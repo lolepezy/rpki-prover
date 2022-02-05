@@ -440,7 +440,7 @@ getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ 
 
 savePublicationPoints :: (MonadIO m, Storage s) =>
                         Tx s 'RW -> DB s -> PublicationPoints -> m ()
-savePublicationPoints tx db@DB { ..} newPPs' = do
+savePublicationPoints tx db newPPs' = do
     ppsInDb <- getPublicationPoints tx db
     let changes = changeSet ppsInDb newPPs'
     applyChangeSet tx db changes

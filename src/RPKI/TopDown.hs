@@ -154,10 +154,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     validateThem database' repositoryProcessing = do 
         -- set initial publication point state
-        mapException (AppException . storageError) $ 
-            roTx database' $ \tx -> do 
-                pps <- getPublicationPoints tx database'
-                atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
+        mapException (AppException . storageError) $ do             
+            pps <- roTx database' $ \tx -> getPublicationPoints tx database'
+            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
         
         rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
@@ -165,10 +164,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             pure r    
 
         -- save publication points state    
-        mapException (AppException . storageError) $
-            rwTx database' $ \tx -> do                             
-                pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                savePublicationPoints tx database' pps
+        mapException (AppException . storageError) $ do            
+            pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+            rwTx database' $ \tx -> savePublicationPoints tx database' pps
         
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches repositoryProcessing
