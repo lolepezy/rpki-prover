@@ -208,13 +208,14 @@ fetchPPWithFallback
         let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
+                Now fetchTime <- thisInstant
                 (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                                
                 atomically $ do
                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
 
                     let (newRepo, newStatus) = case r of                             
-                            Left _      -> (repo, FailedAt $ unNow now)
-                            Right repo' -> (repo', FetchedAt $ unNow now)
+                            Left _      -> (repo, FailedAt fetchTime)
+                            Right repo' -> (repo', FetchedAt fetchTime)
 
                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             adjustSucceededUrl rpkiUrl 
