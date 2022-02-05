@@ -169,7 +169,8 @@ fetchPPWithFallback
             [FetchFailure {}] -> do                 
                 -- some terribly hacky stuff for more meaningful logging
                 let nextOne = head pps'
-                (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne
+                now' <- thisInstant
+                (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne now'
                 logWarn_ logger $ if nextOneNeedAFetch
                     then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL nextOne}.|]
                     else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne}) is up-to-date.|]                
@@ -183,8 +184,9 @@ fetchPPWithFallback
     -- Use the same "run only once" logic for every repository that needs a fetch
     --     
     fetchPPOnce parentScope pp = do 
+        now' <- thisInstant
         (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
-            (repoNeedAFetch, repo) <- needsAFetch pp
+            (repoNeedAFetch, repo) <- needsAFetch pp now'
             let rpkiUrl = getRpkiURL repo
             if repoNeedAFetch 
                 then 
@@ -236,11 +238,11 @@ fetchPPWithFallback
         atomically $ modifyTVar' stubs $ Map.insert key (Fetching a)
         wait a
 
-    needsAFetch pp = do 
-        pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+    needsAFetch pp now' = do 
+        pps <- readTVar publicationPoints
         let asIfMerged = mergePP pp pps
         let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
-        let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now
+        let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
         pure (needsFetching', repo)
 
 
@@ -258,7 +260,7 @@ fetchRepository
     appContext@AppContext {..}
     worldVersion
     repo = do
-        logInfoM logger [i|Fetching #{getURL repoURL}.|]   
+        logInfoM logger [i|Fetching #{getURL repoURL}, repo = #{repo}.|]   
         case repo of
             RsyncR r -> RsyncR <$> fetchRsyncRepository r
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
