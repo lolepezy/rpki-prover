@@ -231,7 +231,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             | needsFetching (getTaCertURL tal) fs validationConfig now ->
                 fetchValidateAndStore taStore now
             | otherwise -> do
-                logInfoM logger [i|Not re-fetching TA certificate #{getTaCertURL tal}, it's up-to-date.|]
+                logInfoM logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
   where   
 

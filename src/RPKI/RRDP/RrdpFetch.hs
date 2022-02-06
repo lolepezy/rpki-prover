@@ -137,17 +137,17 @@ downloadAndUpdateRRDP
             useSnapshot snapshotInfo notification
 
         UseDeltas sortedDeltas snapshotInfo message -> 
-                (do 
-                    used RrdpDelta
-                    logDebugM logger [i|Going to use deltas for #{repoUri}: #{message}|]
-                    useDeltas sortedDeltas notification)
-                    `catchError` 
-                \e -> do         
-                    -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
-                    -- some of the deltas
-                    logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
-                    used RrdpSnapshot
-                    useSnapshot snapshotInfo notification            
+            (do 
+                used RrdpDelta
+                logDebugM logger [i|Going to use deltas for #{repoUri}: #{message}|]
+                useDeltas sortedDeltas notification)
+                `catchError` 
+            \e -> do         
+                -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
+                -- some of the deltas
+                logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
+                used RrdpSnapshot
+                useSnapshot snapshotInfo notification            
   where
     
     used z       = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)    
@@ -256,30 +256,35 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
 
         | repoSerial > serial -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure $ NothingToDo [i|Local serial #{repoSerial} is lower than the remote serial #{serial}.|]
+            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is lower than the remote serial #{serial}.|]
 
         | repoSerial == serial -> 
-            pure $ NothingToDo "Up-to-date."
+            pure $ NothingToDo [i|up-to-date, #{repoSessionId}, serial #{repoSerial}|]
     
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
-                ([], _) -> pure $ UseSnapshot snapshotInfo "There is no deltas to use."
+                ([], _) -> pure $ UseSnapshot snapshotInfo 
+                                [i|#{repoSessionId}, there is no deltas to use.|]
 
                 (_, []) | nextSerial repoSerial < deltaSerial (head sortedDeltas) ->
                             -- we are too far behind
-                            pure $ UseSnapshot snapshotInfo [i|Local serial #{repoSerial} is too far behind remote serial #{serial}.|]
+                            pure $ UseSnapshot snapshotInfo 
+                                    [i|#{repoSessionId}, local serial #{repoSerial} is too far behind remote #{serial}.|]
 
                         -- too many deltas means huge overhead -- just use snapshot, 
                         -- it's more data but less chances of getting killed by timeout
                         | length chosenDeltas > 100 ->
-                            pure $ UseSnapshot snapshotInfo [i|There are too many deltas: #{length chosenDeltas}.|]                        
+                            pure $ UseSnapshot snapshotInfo 
+                                    [i|#{repoSessionId}, there are too many deltas: #{length chosenDeltas}.|]
 
                         | otherwise ->
-                            pure $ UseDeltas chosenDeltas snapshotInfo "Deltas look good."
+                            pure $ UseDeltas chosenDeltas snapshotInfo 
+                                    [i|#{repoSessionId}, deltas look good.|]
 
                 (_, nc) -> do 
                     appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
-                    pure $ UseSnapshot snapshotInfo [i|There are non-consecutive delta serials: #{nc}.|]                        
+                    pure $ UseSnapshot snapshotInfo 
+                            [i|#{repoSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
                 
             where
                 sortedSerials = map deltaSerial sortedDeltas

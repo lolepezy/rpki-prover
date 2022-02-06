@@ -170,8 +170,8 @@ fetchPPWithFallback
                 now' <- thisInstant
                 (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne now'
                 logWarn_ logger $ if nextOneNeedAFetch
-                    then [i|Failed to fetch #{getRpkiURL pp}, will fall-back to the next one: #{getRpkiURL nextOne}.|]
-                    else [i|Failed to fetch #{getRpkiURL pp}, next one (#{getRpkiURL nextOne}) is up-to-date.|]                
+                    then [i|Failed to fetch #{getURL $ getRpkiURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL nextOne}.|]
+                    else [i|Failed to fetch #{getURL $ getRpkiURL pp}, next one (#{getURL $ getRpkiURL nextOne}) is up-to-date.|]                
 
                 nextFetch <- fetchWithFallback parentScope pps'
                 pure $ fetch <> nextFetch
