@@ -38,7 +38,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         Pending
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
-        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToDo "Up-to-date."),
+        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToDo "up-to-date, SessionId \"something\", serial 13"),
 
     HU.testCase "Should generate delta update when the session id is the same and serial is larger" $ do
         let sessionId = SessionId "something"
@@ -54,7 +54,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) "Deltas look good."),
+            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            "SessionId \"something\", deltas look good."),
 
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
         let sessionId = SessionId "something"
@@ -69,7 +70,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                 }
         HU.assertEqual "It's a bummer" nextStep (Right $ UseSnapshot 
             (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
-                         "Local serial 13 is too far behind remote serial 15."),
+                         "SessionId \"something\", local serial 13 is too far behind remote 15."),
 
     HU.testCase "Should generate error when deltas are not consecutive" $ do
         let sessionId = SessionId "something"
@@ -88,7 +89,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                     }
         HU.assertEqual "It's a bummer" nextStep 
             (Right (UseSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
-                "There are non-consecutive delta serials: [(13,18),(18,20)]."))
+                "SessionId \"something\", there are non-consecutive delta serials: [(13,18),(18,20)]."))
   ]
     
 
