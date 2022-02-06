@@ -22,6 +22,7 @@ import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
+import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
 
@@ -33,7 +34,9 @@ import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.TAL
+import           RPKI.RRDP.Types
 import           RPKI.SLURM.Types
+import           RPKI.Repository
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -47,7 +50,6 @@ import           RPKI.Util                (increment, ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
-import           RPKI.Store.Repository
 
 -- | RPKI objects store
 
@@ -61,22 +63,23 @@ import           RPKI.Store.Repository
 -- URLs and artificial UrlKeys.
 -- 
 data RpkiObjectStore s = RpkiObjectStore {
-    keys           :: Sequence s,
-    objects        :: SMap "objects" s ObjectKey SValue,
-    hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
-    mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
-    lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
+        keys           :: Sequence s,
+        objects        :: SMap "objects" s ObjectKey SValue,
+        hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
+        mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
+        lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
 
-    objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
-    objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
+        objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
+        objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
 
-    -- Object URL mapping
-    uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
-    uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
+        -- Object URL mapping
+        uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
+        uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
-    urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
-    objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey]
-} deriving stock (Generic)
+        urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
+        objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey]
+    } 
+    deriving stock (Generic)
 
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
@@ -125,6 +128,15 @@ instance Storage s => WithStorage s (VersionStore s) where
 newtype SlurmStore s = SlurmStore {
     slurms :: SMap "slurms" s WorldVersion Slurm
 }
+
+data RepositoryStore s = RepositoryStore {
+    rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+    rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+    lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
+}
+
+instance Storage s => WithStorage s (RepositoryStore s) where
+    storage (RepositoryStore s _ _) = storage s
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
@@ -379,6 +391,61 @@ slurmForVersion tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.get tx s wv
 deleteSlurms :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
+
+
+updateRrdpMeta :: (MonadIO m, Storage s) =>
+                Tx s 'RW -> RepositoryStore s -> (SessionId, RrdpSerial) -> RrdpURL -> m ()
+updateRrdpMeta tx RepositoryStore {..} meta url = liftIO $ do
+    z <- M.get tx rrdpS url
+    for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
+
+
+applyChangeSet :: (MonadIO m, Storage s) =>
+                Tx s 'RW ->
+                DB s ->
+                ChangeSet ->
+                m ()
+applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
+                  (ChangeSet rrdpChanges rsyncChanges lastSucceded) = liftIO $ do
+    -- Do the Remove first and only then Put
+    let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
+
+    for_ rrdpRemoves $ \RrdpRepository{..} -> M.delete tx rrdpS uri
+    for_ rrdpPuts $ \r@RrdpRepository{..}  -> M.put tx rrdpS uri r
+
+    let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
+
+    for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
+    for_ rsyncPuts $ uncurry (M.put tx rsyncS)
+
+    let (lastSPuts, lastSRemoves) = separate lastSucceded
+    for_ lastSRemoves $ \(uri', _) -> M.delete tx lastS uri'
+    for_ lastSPuts $ uncurry (M.put tx lastS)
+  where
+    separate = foldr f ([], [])
+        where
+            f (Put r) (ps, rs)    = (r : ps, rs)
+            f (Remove r) (ps, rs) = (ps, r : rs)
+
+getPublicationPoints :: (MonadIO m, Storage s) =>
+                        Tx s mode -> DB s -> m PublicationPoints
+getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
+    rrdps <- M.all tx rrdpS
+    rsyns <- M.all tx rsyncS
+    lasts <- M.all tx lastS
+    pure $ PublicationPoints
+            (RrdpMap $ Map.fromList rrdps)
+            (RsyncTree $ Map.fromList rsyns)
+            (EverSucceededMap $ Map.fromList lasts)
+
+savePublicationPoints :: (MonadIO m, Storage s) =>
+                        Tx s 'RW -> DB s -> PublicationPoints -> m ()
+savePublicationPoints tx db newPPs' = do
+    ppsInDb <- getPublicationPoints tx db
+    let changes = changeSet ppsInDb newPPs'
+    applyChangeSet tx db changes
+
+
 
 -- More complicated operations
 

@@ -49,11 +49,11 @@ import qualified RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import           RPKI.Store.Repository
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
 
 import           RPKI.Time
+import           RPKI.Util
 
 import           RPKI.RepositorySpec
 
@@ -267,75 +267,62 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
 
 shouldInsertAndGetAllBackFromRepositoryStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromRepositoryStore io = do  
-    DB {..} <- io
+    db <- io
 
     createdPPs <- generateRepositories
 
-    storedPps1 <- roTx repositoryStore $ \tx -> 
-                    getPublicationPoints tx repositoryStore
+    storedPps1 <- roTx db $ \tx -> getPublicationPoints tx db
 
     let changeSet1 = changeSet storedPps1 createdPPs
 
-    rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet1
-
-    storedPps2 <- roTx repositoryStore $ \tx -> 
-                    getPublicationPoints tx repositoryStore
+    rwTx db $ \tx -> applyChangeSet tx db changeSet1
+    storedPps2 <- roTx db $ \tx -> getPublicationPoints tx db
 
     HU.assertEqual "Not the same publication points" createdPPs storedPps2
 
-    rsyncPPs2 <- fromRsyncPPs <$> QC.generate (QC.sublistOf repositoriesURIs)    
+    rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
     rrdpMap2  <- rrdpSubMap createdPPs
 
-    let shrunkPPs = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty mempty
+    let shrunkPPs = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
 
     let changeSet2 = changeSet storedPps2 shrunkPPs
 
-    rwTx repositoryStore $ \tx -> 
-            applyChangeSet tx repositoryStore changeSet2
-
-    storedPps3 <- roTx repositoryStore $ \tx -> 
-                    getPublicationPoints tx repositoryStore    
+    rwTx db $ \tx -> applyChangeSet tx db changeSet2
+    storedPps3 <- roTx db $ \tx -> getPublicationPoints tx db
 
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
 
 shouldGetAndSaveRepositories :: Storage s => IO (DB s) -> HU.Assertion
 shouldGetAndSaveRepositories io = do  
-    DB {..} <- io
+    db <- io
 
     pps1 <- generateRepositories
-    rwTx repositoryStore $ \tx -> 
-                savePublicationPoints tx repositoryStore pps1
-
-    pps1' <- roTx repositoryStore $ \tx -> 
-                getPublicationPoints tx repositoryStore       
+    rwTx db $ \tx -> savePublicationPoints tx db pps1
+    pps1' <- roTx db $ \tx -> getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points first" pps1 pps1'
     
-    rsyncPPs2 <- fromRsyncPPs <$> QC.generate (QC.sublistOf repositoriesURIs)    
+    rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
     rrdpMap2  <- rrdpSubMap pps1
 
-    let pps2 = rsyncPPs2 <> PublicationPoints rrdpMap2 mempty mempty
+    let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
 
-    rwTx repositoryStore $ \tx -> 
-                savePublicationPoints tx repositoryStore pps2
-
-    pps2' <- roTx repositoryStore $ \tx -> 
-                getPublicationPoints tx repositoryStore       
+    rwTx db $ \tx -> savePublicationPoints tx db pps2
+    pps2' <- roTx db $ \tx -> getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points second" pps2 pps2'
     
 
 generateRepositories :: IO PublicationPoints
-generateRepositories = do 
-    let rsyncPPs = fromRsyncPPs repositoriesURIs 
+generateRepositories = do     
     rrdpMap :: RrdpMap <- QC.generate arbitrary    
 
     let everSucceeded = Map.fromList [ (RrdpU u, AtLeastOnce) | 
             RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
 
-    pure $ rsyncPPs <> PublicationPoints rrdpMap mempty (EverSucceededMap everSucceeded)
+    let pps = PublicationPoints rrdpMap newRsyncTree (EverSucceededMap everSucceeded)
+    pure $ List.foldr mergeRsyncPP pps repositoriesURIs    
     
 
 rrdpSubMap :: PublicationPoints -> IO RrdpMap
@@ -454,7 +441,7 @@ releaseLmdb ((dir, e), _) = do
 readObjectFromFile :: FilePath -> IO (RpkiURL, ParseResult RpkiObject)
 readObjectFromFile path = do 
     bs <- BS.readFile path
-    let url = RsyncU $ RsyncURL $ URI $ Text.pack path
+    let url = let Right u = parseRpkiURL ("rsync://host/" <> Text.pack path) in u
     pure (url, readObject url bs)
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject

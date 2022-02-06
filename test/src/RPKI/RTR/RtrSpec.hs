@@ -53,7 +53,7 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
     ]
 
 rtrPduParseGroup :: TestTree 
-rtrPduParseGroup = testGroup "RTR diff unit tests" [
+rtrPduParseGroup = testGroup "RTR PDU parser tests" [
         testParseErrorPdu,
         
         QC.testProperty "Should create, serialise and parse back SerialQueryPdu" 

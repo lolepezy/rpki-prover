@@ -17,6 +17,7 @@ module RPKI.Domain where
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
+import qualified Data.String.Conversions     as SC
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
@@ -27,7 +28,7 @@ import           Data.Kind                (Type)
 import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
-import qualified Data.List                as List
+import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
@@ -47,7 +48,6 @@ import           Data.Set                 (Set)
 import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
 import           RPKI.Time
-
 
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving stock (Show, Eq, Ord, Generic)
@@ -76,8 +76,18 @@ newtype URI = URI { unURI :: Text }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype RsyncURL = RsyncURL URI
-    deriving stock (Eq, Ord, Generic)
+newtype RsyncHost = RsyncHost { unRsyncHost :: Text }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+    deriving newtype Monoid    
+    deriving newtype Semigroup
+
+data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 newtype RrdpURL = RrdpURL URI
@@ -102,7 +112,8 @@ instance Show RpkiURL where
     show (RrdpU u) = show u 
   
 instance WithURL RsyncURL where
-    getURL (RsyncURL u) = u
+    getURL (RsyncURL (RsyncHost host) path) = 
+        URI $ "rsync://" <> host <> mconcat (map (\(RsyncPathChunk p) -> "/" <> p) path)
 
 instance WithURL RrdpURL where
     getURL (RrdpURL u) = u
@@ -129,7 +140,7 @@ newtype AKI  = AKI KI
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
-newtype SessionId = SessionId BSS.ShortByteString 
+newtype SessionId = SessionId Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
@@ -148,9 +159,6 @@ newtype Locations = Locations { unLocations :: NESet RpkiURL }
 
 instance Show URI where
     show (URI u) = show u
-
-instance Show RsyncURL where
-    show (RsyncURL u) = show u
 
 instance Show RrdpURL where
     show (RrdpURL u) = show u

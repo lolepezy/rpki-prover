@@ -50,7 +50,6 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
-import           RPKI.Store.Repository
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
@@ -155,10 +154,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     validateThem database' repositoryProcessing = do 
         -- set initial publication point state
-        mapException (AppException . storageError) $ 
-            roTx database' $ \tx -> do 
-                pps <- getPublicationPoints tx (repositoryStore database')    
-                atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
+        mapException (AppException . storageError) $ do             
+            pps <- roTx database' $ \tx -> getPublicationPoints tx database'
+            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
         
         rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
@@ -166,10 +164,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             pure r    
 
         -- save publication points state    
-        mapException (AppException . storageError) $
-            rwTx database' $ \tx -> do                             
-                pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                savePublicationPoints tx (repositoryStore database') pps
+        mapException (AppException . storageError) $ do            
+            pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+            rwTx database' $ \tx -> savePublicationPoints tx database' pps
         
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches repositoryProcessing
@@ -273,8 +270,7 @@ validateFromTACert
         
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing 
-                    worldVersion now filteredRepos
+        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
         
     -- Do the tree descend, gather validation results and VRPs            
     vp <- askEnv
@@ -362,7 +358,7 @@ validateCaCertificate
                             -- disabled, don't fetch at all.
                             validateThisCertAndGoDown
                         Just filteredPPAccess -> do 
-                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion now filteredPPAccess
+                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
                             primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
                             let goFurther = 
                                     if anySuccess fetches                    

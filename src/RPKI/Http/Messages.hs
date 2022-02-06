@@ -230,6 +230,9 @@ toValidationMessage = \case
       UnknownUriType url -> 
           [i|URL type is neither rsync nor RRDP, #{url}.|]          
 
+      BrokenUri url e -> 
+          [i|Error #{e} parsing URL #{url}.|]          
+
       CertificateDoesntHaveSIA -> 
           [i|Certificate doesn't have SIA with publication point.|]
 

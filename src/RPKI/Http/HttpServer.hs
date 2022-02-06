@@ -64,6 +64,7 @@ httpApi appContext = genericServe HttpApi {
         fullValidationResults    = getValidationsDto appContext,
         validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
         metrics = snd <$> getMetrics appContext,                
+        publicationsPoints = getPPs appContext,
         lmdbStats = getStats appContext,
         objectView = getRpkiObject appContext    
     }
@@ -172,6 +173,12 @@ toVR (Scope scope, issues) = FullVDto {
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             
+
+getPPs :: (MonadIO m, Storage s) => AppContext s -> m PublicationPointDto
+getPPs AppContext {..} = liftIO $ do 
+    db <- readTVarIO database             
+    pps <- roTx db $ \tx -> getPublicationPoints tx db
+    pure $ toPublicationPointDto pps
 
 getRpkiObject :: (MonadIO m, Storage s, MonadError ServerError m) 
                 => AppContext s 

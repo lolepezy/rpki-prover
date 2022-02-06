@@ -22,6 +22,7 @@ import           Data.Aeson.Types
 import           GHC.Generics                (Generic)
 import qualified Data.Vector                 as V
 import qualified Data.List.NonEmpty          as NonEmpty
+import qualified Data.Map.Strict             as Map
 
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
@@ -30,6 +31,7 @@ import           Servant.API
 import           Network.HTTP.Media ((//))
 
 import           RPKI.AppTypes
+import           RPKI.Repository
 import           RPKI.Domain
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
@@ -77,6 +79,11 @@ data MetricsDto = MetricsDto {
         rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric
     } 
     deriving stock (Eq, Show, Generic)
+
+data PublicationPointDto = PublicationPointDto {
+        rrdp :: [(RrdpURL, RrdpRepository)]
+    } 
+    deriving stock (Eq, Show, Generic)
             
 
 data ManualCVS = ManualCVS
@@ -117,6 +124,10 @@ newtype DtoScope (s :: ScopeKind) = DtoScope (Scope s)
     deriving stock (Show, Eq, Ord, Generic)
 
 instance ToJSON MetricsDto
+instance ToJSON RrdpURL
+instance ToJSON FetchStatus
+instance ToJSON RrdpRepository
+instance ToJSON PublicationPointDto
 
 instance ToJSONKey (DtoScope s) where 
     toJSONKey = toJSONKeyText $ \(DtoScope (Scope s)) -> focusToText $ NonEmpty.head s    
@@ -133,6 +144,11 @@ toMetricsDto rawMetrics = MetricsDto {
         groupedValidations = groupedValidationMetric rawMetrics,
         rsync   = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rsyncMetrics,
         rrdp    = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics
+    }
+
+toPublicationPointDto :: PublicationPoints -> PublicationPointDto
+toPublicationPointDto PublicationPoints {..} = PublicationPointDto {
+        rrdp = Map.toList $ unRrdpMap rrdps
     }
 
 parseHash :: Text -> Either Text Hash
