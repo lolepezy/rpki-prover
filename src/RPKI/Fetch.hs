@@ -78,14 +78,12 @@ fetchPPWithFallback :: (MonadIO m, Storage s) =>
                             AppContext s                         
                         -> RepositoryProcessing
                         -> WorldVersion
-                        -> Now 
                         -> PublicationPointAccess  
                         -> ValidatorT m [FetchResult]
 fetchPPWithFallback 
     appContext@AppContext {..}     
     repositoryProcessing
     worldVersion
-    now 
     ppAccess = do 
         parentScope <- askEnv         
         frs <- liftIO $ fetchOnce parentScope ppAccess        

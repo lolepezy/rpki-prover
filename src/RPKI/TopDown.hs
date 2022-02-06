@@ -270,8 +270,7 @@ validateFromTACert
         
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing 
-                    worldVersion now filteredRepos
+        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
         
     -- Do the tree descend, gather validation results and VRPs            
     vp <- askEnv
@@ -359,7 +358,7 @@ validateCaCertificate
                             -- disabled, don't fetch at all.
                             validateThisCertAndGoDown
                         Just filteredPPAccess -> do 
-                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion now filteredPPAccess
+                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
                             primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
                             let goFurther = 
                                     if anySuccess fetches                    
