@@ -258,7 +258,7 @@ fetchRepository
     appContext@AppContext {..}
     worldVersion
     repo = do
-        logInfoM logger [i|Fetching #{getURL repoURL}, repo = #{repo}.|]   
+        logInfoM logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
             RsyncR r -> RsyncR <$> fetchRsyncRepository r
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
