@@ -12,6 +12,7 @@ import           Servant.API.Generic
 import           Servant.HTML.Blaze (HTML)
 import           Text.Blaze.Html5 (Html)
 
+import           RPKI.Config
 import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
@@ -34,6 +35,8 @@ data API api = API {
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
 
         publicationsPoints :: api :- "repositories" :> Get '[JSON] PublicationPointDto,
+
+        config :: api :- "config" :> Get '[JSON] Config,
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                     :> QueryParam "hash" Text 

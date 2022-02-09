@@ -27,6 +27,7 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
 
 import           RPKI.AppContext
+import           RPKI.Config
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
@@ -45,7 +46,7 @@ import           RPKI.Util
 
 
 httpApi :: Storage s => AppContext s -> Application
-httpApi appContext = genericServe HttpApi {
+httpApi appContext@AppContext {..} = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,        
         ui      = uiServer,
@@ -66,7 +67,8 @@ httpApi appContext = genericServe HttpApi {
         metrics = snd <$> getMetrics appContext,                
         publicationsPoints = getPPs appContext,
         lmdbStats = getStats appContext,
-        objectView = getRpkiObject appContext    
+        objectView = getRpkiObject appContext,
+        config = pure config
     }
 
     uiServer = do 

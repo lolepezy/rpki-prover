@@ -43,6 +43,7 @@ import           RPKI.Domain                 as Domain
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 
+import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
 import           RPKI.Resources.IntervalSet
@@ -311,4 +312,14 @@ instance FromJSON DecodedBase64 where
 
 instance ToJSON DecodedBase64 where
     toJSON = toJSON . U.encodeBase64
+
+instance ToJSON LogLevel
+instance ToJSON Config
+instance ToJSON Parallelism
+instance ToJSON ManifestProcessing
+instance ToJSON HttpApiConfig
+instance ToJSON ValidationConfig
+instance ToJSON RtrConfig
+instance ToJSON RrdpConf
+instance ToJSON RsyncConf    
 
