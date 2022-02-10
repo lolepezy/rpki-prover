@@ -51,4 +51,4 @@ jobs:
         tags: false
         prerelease: true
         draft: true        
-        update_latest_release: true        
+        update_latest_release: false        
