@@ -47,22 +47,22 @@ createPrometheusMetrics = do
 
     rrdpCode <- register
             $ vector ("url" :: Text)
-            $ gauge (Info "rrdp_http_code" "HTTP code of the RRDP response")
+            $ gauge (Info "rpki_prover_rrdp_http_code" "HTTP code of the RRDP response")
     downloadTime <- register
             $ vector ("url" :: Text)
-            $ gauge (Info "download_time" "Time of downloading repository (ms)")
+            $ gauge (Info "rpki_prover_download_time" "Time of downloading repository (ms)")
     vrpCounter <- register
             $ vector ("trustanchor" :: Text)
-            $ gauge (Info "vrp_number" "Number of original VRPs")
+            $ gauge (Info "rpki_prover_vrp_number" "Number of original VRPs")
     uniqueVrpNumber <- register
             $ vector ("trustanchor" :: Text)
-            $ gauge (Info "unique_vrp_number" "Number of unique VRPs")
+            $ gauge (Info "rpki_prover_unique_vrp_number" "Number of unique VRPs")
     validObjectNumberPerTa <- register
             $ vector ("trustanchor", "type")
-            $ gauge (Info "object_number" "Number of valid objects of different types per TA")
+            $ gauge (Info "rpki_prover_object_number" "Number of valid objects of different types per TA")
     validObjectNumberPerRepo <- register
             $ vector ("repository", "type")
-            $ gauge (Info "object_number" "Number of valid objects of different types per repository")
+            $ gauge (Info "rpki_prover_object_number" "Number of valid objects of different types per repository")
 
     pure $ PrometheusMetrics {..}
 
