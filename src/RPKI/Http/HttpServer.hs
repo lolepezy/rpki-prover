@@ -27,7 +27,6 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
 
 import           RPKI.AppContext
-import           RPKI.Config
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain

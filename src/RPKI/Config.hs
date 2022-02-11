@@ -2,7 +2,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module RPKI.Config where
@@ -12,7 +12,8 @@ import Codec.Serialise
 import GHC.Conc
 import Numeric.Natural
 import Data.Int
-import Data.Word
+import Data.Text (Text)
+import Data.Word ( Word16 )
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
@@ -48,7 +49,8 @@ data Config = Config {
         storageCompactionInterval :: Seconds,
         lmdbSizeMb                :: Size,
         localExceptions           :: [FilePath],
-        logLevel                  :: LogLevel
+        logLevel                  :: LogLevel,
+        metricsPrefix             :: Text
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -187,7 +189,8 @@ defaultConfig = Config {
     storageCompactionInterval = Seconds $ 60 * 60 * 24,
     lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = [],
-    logLevel = defaultsLogLevel
+    logLevel = defaultsLogLevel,
+    metricsPrefix = "rpki_prover_"
 }
 
 defaultRtrConfig :: RtrConfig

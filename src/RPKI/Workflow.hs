@@ -68,7 +68,7 @@ runWorkflow appContext@AppContext {..} tals = do
     rtrServer <- initRtrIfNeeded
 
     -- Initialise prometheus metrics here
-    prometheusMetrics <- createPrometheusMetrics
+    prometheusMetrics <- createPrometheusMetrics config
 
     -- Run threads that periodicallly generate tasks and one thread that 
     -- executes the tasks. Tasks are put into the queue after having been 

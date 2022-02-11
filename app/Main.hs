@@ -238,6 +238,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
                 & #logLevel .~ derivedLogLevel                
+                & maybeSet #metricsPrefix (convert <$> metricsPrefix)
     }
 
     logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
@@ -518,7 +519,10 @@ data CLIOptions wrapped = CLIOptions {
         "Timebox for one TA validation in seconds (default is 1 hours, i.e. 3600 seconds).",
 
     noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
-    noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)"
+    noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)",
+
+    metricsPrefix :: wrapped ::: Maybe String <?> 
+        "Prefix for Prometheus metrics (default is 'rpki_prover')."
 
 } deriving (Generic)
 

@@ -24,6 +24,7 @@ import           GHC.Generics
 
 import           Prometheus
 import           Prometheus.Metric.GHC
+import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
@@ -33,36 +34,40 @@ data PrometheusMetrics = PrometheusMetrics {
         rrdpCode        :: Vector Text Gauge,
         downloadTime    :: Vector Text Gauge,
         vrpCounter      :: Vector Text Gauge,
-        uniqueVrpNumber :: Vector Text Gauge,
+        vrpCounterPerRepo :: Vector Text Gauge,
+        uniqueVrpNumber   :: Vector Text Gauge,
         validObjectNumberPerTa   :: Vector (Text, Text) Gauge,
         validObjectNumberPerRepo :: Vector (Text, Text) Gauge
     }
     deriving (Generic)
 
 
-createPrometheusMetrics :: MonadIO m => m PrometheusMetrics
-createPrometheusMetrics = do
+createPrometheusMetrics :: MonadIO m => Config -> m PrometheusMetrics
+createPrometheusMetrics Config {..} = do
 
     void $ register ghcMetrics
 
     rrdpCode <- register
             $ vector ("url" :: Text)
-            $ gauge (Info "rpki_prover_rrdp_http_code" "HTTP code of the RRDP response")
+            $ gauge (Info (metricsPrefix <> "rrdp_http_code") "HTTP code of the RRDP response")
     downloadTime <- register
             $ vector ("url" :: Text)
-            $ gauge (Info "rpki_prover_download_time" "Time of downloading repository (ms)")
+            $ gauge (Info (metricsPrefix <> "download_time") "Time of downloading repository (ms)")
     vrpCounter <- register
             $ vector ("trustanchor" :: Text)
-            $ gauge (Info "rpki_prover_vrp_number" "Number of original VRPs")
+            $ gauge (Info (metricsPrefix <> "vrp_total") "Number of original VRPs")
+    vrpCounterPerRepo <- register
+            $ vector ("repository" :: Text)
+            $ gauge (Info (metricsPrefix <> "vrp_total") "Number of original VRPs")            
     uniqueVrpNumber <- register
             $ vector ("trustanchor" :: Text)
-            $ gauge (Info "rpki_prover_unique_vrp_number" "Number of unique VRPs")
+            $ gauge (Info (metricsPrefix <> "unique_vrp_total") "Number of unique VRPs")
     validObjectNumberPerTa <- register
             $ vector ("trustanchor", "type")
-            $ gauge (Info "rpki_prover_object_number" "Number of valid objects of different types per TA")
+            $ gauge (Info (metricsPrefix <> "object_total") "Number of valid objects of different types per TA")
     validObjectNumberPerRepo <- register
             $ vector ("repository", "type")
-            $ gauge (Info "rpki_prover_object_number" "Number of valid objects of different types per repository")
+            $ gauge (Info (metricsPrefix <> "object_total") "Number of valid objects of different types per repository")
 
     pure $ PrometheusMetrics {..}
 
@@ -84,18 +89,17 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} = do
     let grouped = groupedValidationMetric rm
     
     forM_ (MonoidalMap.toList $ grouped ^. #byTa) $ \(TaName name, metric) ->
-        setObjectMetricsPerUrl validObjectNumberPerTa name metric True
+        setObjectMetricsPerUrl validObjectNumberPerTa name metric True vrpCounter
     forM_ (MonoidalMap.toList $ grouped ^. #byRepository) $ \(rpkiUrl, metric) -> 
-        setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) metric False
-
-  where
-      
+        setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) 
+            metric False vrpCounterPerRepo
+  where      
     setValidObjects prometheusVector url tag count = withLabel prometheusVector (url, tag)
             $ flip setGauge
             $ fromIntegral $ unCount count
 
-    setObjectMetricsPerUrl prometheusVector url metric setUniqueVRPs = do
-        withLabel vrpCounter url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpCounter
+    setObjectMetricsPerUrl prometheusVector url metric setUniqueVRPs vrpCounter' = do
+        withLabel vrpCounter' url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpCounter
 
         when setUniqueVRPs $ withLabel uniqueVrpNumber url $ 
             flip setGauge $ fromIntegral $ unCount $ metric ^. #uniqueVrpNumber
