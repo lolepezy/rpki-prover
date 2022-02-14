@@ -117,9 +117,9 @@ getValidations AppContext {..} = do
             validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
             let validationDtos = map toVR $ validationsToList validations
             pure $ ValidationsDto {
-                    version   = lastVersion,
-                    timestamp = versionToMoment lastVersion,
-                    validations = validationDtos
+                    worldVersion = lastVersion,
+                    timestamp    = versionToMoment lastVersion,
+                    validations  = validationDtos
                 }
 
 getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) => 

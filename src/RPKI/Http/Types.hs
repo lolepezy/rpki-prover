@@ -43,9 +43,9 @@ import           RPKI.Util (mkHash)
 
 
 data ValidationsDto a = ValidationsDto {
-        version     :: WorldVersion,
-        timestamp   :: Instant,
-        validations :: [a]
+        worldVersion :: WorldVersion,
+        timestamp    :: Instant,
+        validations  :: [a]
     } 
     deriving stock (Eq, Show, Generic)
 

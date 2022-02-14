@@ -124,7 +124,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     TopDownResult {..} <- addUniqueVRPCount . mconcat <$> 
                                 validateMutlipleTAs appContext worldVersion tals                        
 
-                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics                                    
+                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion                                   
 
                     -- Apply SLURM if it is set in the appState
                     (slurmValidations, maybeSlurm) <- 
