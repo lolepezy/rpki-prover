@@ -82,6 +82,12 @@ data MetricsDto = MetricsDto {
 
 data PublicationPointDto = PublicationPointDto {
         rrdp :: [(RrdpURL, RrdpRepository)]
+        -- TODO Add rsync tree here
+    } 
+    deriving stock (Eq, Show, Generic)
+
+newtype JobsDto = JobsDto {
+        jobs :: [(Text, Instant)]
     } 
     deriving stock (Eq, Show, Generic)
             
@@ -98,6 +104,7 @@ instance MimeRender ManualCVS RawCVS where
 
 instance ToJSON RObject
 instance ToJSON VrpDto     
+instance ToJSON JobsDto     
 
 instance ToJSON a =>  ToJSON (ValidationsDto a)
 

@@ -456,6 +456,10 @@ setJobTime :: (MonadIO m, Storage s) =>
             Tx s 'RW -> DB s -> Text -> Instant -> m ()
 setJobTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t
 
+allJobs :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> m [(Text, Instant)]
+allJobs tx DB { jobStore = JobStore s } = liftIO $ M.all tx s
+
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {

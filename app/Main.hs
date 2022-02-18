@@ -235,6 +235,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+                & maybeSet #oldVersionsLifetime ((\hours -> Seconds (hours * 60 * 60)) <$> oldVersionsLifeTimeHours)
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
                 & #logLevel .~ derivedLogLevel                
@@ -452,6 +453,11 @@ data CLIOptions wrapped = CLIOptions {
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
+
+    oldVersionsLifeTimeHours :: wrapped ::: Maybe Int64 <?>
+        ("Lifetime of versions in the local cache, in hours (default is 24 hours). " +++ 
+         "Every re-validation creates a new version and associates resulting data " +++ 
+         "(validation results, metrics, VRPs, etc.) with it."),
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
         ("Period of time after which an RRDP repository must be updated, "
