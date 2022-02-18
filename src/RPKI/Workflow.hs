@@ -24,6 +24,8 @@ import           Data.Int                         (Int64)
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
+import           GHC.Generics
+
 import           System.Exit
 import           System.Directory
 import           System.FilePath                  ((</>))
@@ -47,6 +49,7 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.AppStorage
+import Data.Text (Text)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) => 
@@ -79,7 +82,6 @@ runWorkflow appContext@AppContext {..} tals = do
             generatePeriodicTask 10_000_000 cacheCleanupInterval cacheGC,
             generatePeriodicTask 30_000_000 cacheCleanupInterval cleanOldVersions,
             generatePeriodicTask (12 * 60 * 60 * 1_000_000) storageCompactionInterval compact,
-            -- generatePeriodicTask (1 * 1_000_000) storageCompactionInterval compact,
             rtrServer   
         ]
     where
@@ -284,3 +286,9 @@ periodically (Seconds interval) action = go
             Done   -> pure ()        
 
 data NextStep = Repeat | Done
+
+
+gcJob, compactionJob, cleanOldVersionsJob :: Text
+gcJob = "gcJob"
+compactionJob = "compactionJob"
+cleanOldVersionsJob = "cleanOldVersionsJob"

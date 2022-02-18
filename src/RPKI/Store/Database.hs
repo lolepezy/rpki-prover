@@ -22,6 +22,7 @@ import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
+import           Data.Text                (Text)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
@@ -50,6 +51,7 @@ import           RPKI.Util                (increment, ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
+import           RPKI.Time
 
 -- | RPKI objects store
 
@@ -133,6 +135,10 @@ data RepositoryStore s = RepositoryStore {
     rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
     rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
     lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
+}
+
+newtype JobStore s = JobStore {
+    jobs :: SMap "jobs" s Text Instant
 }
 
 instance Storage s => WithStorage s (RepositoryStore s) where
@@ -446,6 +452,9 @@ savePublicationPoints tx db newPPs' = do
     applyChangeSet tx db changes
 
 
+setJobTime :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Text -> Instant -> m ()
+setJobTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t
 
 -- More complicated operations
 
@@ -662,6 +671,7 @@ data DB s = DB {
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
+    jobStore         :: JobStore s,
     sequences        :: SequenceMap s
 } deriving stock (Generic)
 
