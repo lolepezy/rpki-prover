@@ -124,7 +124,7 @@ fetchPPWithFallback
                     RrdpU _ -> pure u
                     RsyncU rsyncUrl -> do  
                         pps <- readTVar publicationPoints
-                        pure $ maybe u (RsyncU . fst) $ statusInRsyncTree rsyncUrl (pps ^. typed)            
+                        pure $ maybe u (RsyncU . fst) $ statusInRsyncTree rsyncUrl (pps ^. typed)
 
 
     fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]
@@ -389,129 +389,140 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
 
 
 
-fetchPPWithFallback1 :: (MonadIO m, Storage s) => 
-                            AppContext s                         
-                        -> RepositoryProcessing1
-                        -> WorldVersion
-                        -> Now 
-                        -> PublicationPointAccess  
-                        -> ValidatorT m [FetchResult]
-fetchPPWithFallback1 
-    appContext@AppContext {..}     
-    RepositoryProcessing1 {..}
-    worldVersion
-    now 
-    ppAccess = do 
-        parentScope <- askEnv         
-        -- frs <- liftIO $ fetchOnce parentScope ppAccess        
-        -- setValidationStateOfFetches repositoryProcessing frs     
-        pure []
-  where               
+-- fetchPPWithFallback1 :: (MonadIO m, Storage s) => 
+--                             AppContext s                         
+--                         -> RepositoryProcessing1
+--                         -> WorldVersion
+--                         -> Now 
+--                         -> PublicationPointAccess  
+--                         -> ValidatorT m [FetchResult]
+-- fetchPPWithFallback1 
+--     appContext@AppContext {..}     
+--     RepositoryProcessing1 {..}
+--     worldVersion
+--     now 
+--     ppAccess = do 
+--         parentScope <- askEnv         
+--         -- frs <- liftIO $ fetchOnce parentScope ppAccess        
+--         -- setValidationStateOfFetches repositoryProcessing frs     
+--         pure []
+--   where               
 
---     -- treeLocked rrdpUrl rsyncFetchTree action = do 
---     --     z <- readTVar rsyncFetchTree
+--     fetchPP :: Repository -> IO Fetched
+--     fetchPP repo = do
+--         pure (Right repo, mempty)
 
---     --     case Map.lookup rrdpUrl z of 
---     --         Just Stub         -> retry
---     --         Just (Fetching a) -> pure $ wait a
---     --         Nothing -> do                                         
---     --                 modifyTVar' fetchFetchMap $ Map.insert rrdpUrl Stub
---     --                 pure $ action rrdpUrl            
+--     mapLocked :: RrdpURL 
+--             -> TVar (Map RrdpURL (FetchTask b)) 
+--             -> STM t 
+--             -> (t -> IO b) 
+--             -> STM (IO b)
+--     mapLocked key actionMap stmAction ioAction = do 
+--         z <- readTVar actionMap
+--         case Map.lookup key z of 
+--             Just Stub         -> retry
+--             Just (Fetching a) -> pure $ wait a
+--             Nothing -> do                 
+--                 s <- stmAction
+--                 modifyTVar' actionMap $ Map.insert key Stub
+--                 pure $ do                                         
+--                         a <- async $ ioAction s
+--                         atomically $ modifyTVar' actionMap $ \m -> do 
+--                             case Map.lookup key m of 
+--                                 Just Stub -> Map.insert key (Fetching a) m
+--                                 _         -> m
+--                         wait a                    
 
---     fetchPP parentScope repo = do         
---         let rpkiUrl = getRpkiURL repo
---         let launchFetch = async $ do               
---                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
---                 (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                                
---                 atomically $ do
---                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
+--     rrdpFetchSeq :: RrdpURL -> [RpkiURL] -> FetchSeq
+--     rrdpFetchSeq rrdpUrl otherUrls = do 
+--         let smtA = do 
+--                 pps <- readTVar publicationPoints
+--                 let repo = maybe (rrdpR rrdpUrl) RrdpR $ rrdpRepository pps rrdpUrl                        
+--                 pure (repo, fetchSeq otherUrls)
 
---                     let (newRepo, newStatus) = case r of                             
---                             Left _      -> (repo, FailedAt $ unNow now)
---                             Right repo' -> (repo', FetchedAt $ unNow now)
+--         let ioA (repo, fallback) = do 
+--                 if needsFetching repo (getFetchStatus repo) (config ^. #validationConfig) now
+--                     then do 
+--                         z@(r, _) <- fetchPP repo
+--                         let wrapUpCurrent = do 
+--                                 applyFetchResult (RrdpU rrdpUrl) repo r
+--                                 modifyTVar' fetchMap $ Map.delete rrdpUrl
+--                         let fallback' = fmap (\(FetchSeq f) -> FetchSeq $ wrapUpCurrent >> f) fallback
+--                         pure (getRpkiURL repo, z, fallback')
+--                     else 
+--                         pure (getRpkiURL repo, (Right repo, mempty), Nothing)
 
---                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
---                             adjustSucceededUrl rpkiUrl 
---                                     $ updateStatuses (pps ^. typed @PublicationPoints) 
---                                         [(newRepo, newStatus)]                
---                 pure (r, validations)
+--         FetchSeq $ mapLocked rrdpUrl fetchMap smtA ioA
 
---         bracketOnError 
---             launchFetch 
---             (stopAndDrop indivudualFetchRuns rpkiUrl) 
---             (rememberAndWait indivudualFetchRuns rpkiUrl) 
-    
---     stopAndDrop stubs key a = liftIO $ do         
---         atomically $ modifyTVar' stubs $ Map.delete key
---         cancel a
+--     treeLocked :: RsyncURL 
+--             -> TVar RsyncFetches
+--             -> STM t 
+--             -> (t -> IO (RpkiURL, Fetched, Maybe FetchSeq)) 
+--             -> STM (IO (RpkiURL, Fetched, Maybe FetchSeq))
+--     treeLocked rsyncUrl@(RsyncURL host path) fetches stmAction ioAction = do 
+--         RsyncFetches fetchTree <- readTVar rsyncFetchTree
+--         case findInRsync' rsyncUrl fetchTree of
+--             Just (u, z) ->
+--                 readTVar z >>= \case 
+--                     Stub -> retry
+--                     Fetching a -> pure $ wait a              
 
---     rememberAndWait stubs key a = liftIO $ do 
---         atomically $ modifyTVar' stubs $ Map.insert key (Fetching a)
---         wait a
+--             Nothing -> do 
+--                 node <- newTVar Stub
+--                 subTree <- newTVar NeverTried
+--                 let (fetchTree', replaced) = setNode rsyncUrl fetchTree node subTree
+--                 s <- stmAction
+--                 writeTVar rsyncFetchTree (RsyncFetches fetchTree')
+--                 pure $ fetchAction s node
 
---     needsAFetch pp = do 
---         pps <- readTVar $ repositoryProcessing ^. #publicationPoints
---         let asIfMerged = mergePP pp pps
---         let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
---         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now
---         pure (needsFetching', repo)
-
-    fetchPP :: Repository -> IO Fetched
-    fetchPP repo = do
-        pure (Right repo, mempty)
-
-    mapLocked :: RrdpURL 
-            -> TVar (Map RrdpURL (FetchTask b)) 
-            -> STM t 
-            -> (t -> IO b) 
-            -> STM (IO b)
-    mapLocked key actionMap stmAction ioAction = do 
-        z <- readTVar actionMap
-        case Map.lookup key z of 
-            Just Stub         -> retry
-            Just (Fetching a) -> pure $ wait a
-            Nothing -> do 
-                modifyTVar' actionMap $ Map.insert key Stub
-                s <- stmAction
-                pure $ do                                         
-                        a <- async $ ioAction s
-                        atomically $ modifyTVar' actionMap $ \m -> do 
-                            case Map.lookup key m of 
-                                Just Stub -> Map.insert key (Fetching a) m
-                                _         -> m
-                        wait a                    
-
-    toStep :: [RpkiURL] -> FetchSeq
-    toStep (u : urls) = 
-        case u of
-            RrdpU rrdpUrl -> let 
-                    smtA = do 
-                            pps <- readTVar publicationPoints
-                            let repo = maybe (rrdpR rrdpUrl) RrdpR $ rrdpRepository pps rrdpUrl
-                            let fallback = case urls of 
-                                                [] -> Nothing
-                                                _  -> Just $ toStep urls
-                            pure (repo, fallback)
-
-                    ioA (repo, fallback) = do 
-                            z@(r, _) <- fetchPP repo
-                            let wrapUpCurrent = applyFetchResult u repo r
-                            let fallback' = fmap (\(FetchSeq f) -> FetchSeq $ wrapUpCurrent >> f) fallback
-                            pure (getRpkiURL repo, z, fallback')                                        
-
-                in FetchSeq $ mapLocked rrdpUrl fetchFetchMap smtA ioA
+--         where
+--             fetchAction s node = do 
+--                 a <- async $ ioAction s                
+--                 atomically $ readTVar node >>= \case 
+--                         Stub -> writeTVar node (Fetching a)
+--                         _    -> pure ()
+--                 wait a                   
 
 
-    applyFetchResult rpkiUrl repo r = do                             
-        let (newRepo, newStatus) = case r of                             
-                Left _      -> (repo, FailedAt $ unNow now)
-                Right repo' -> (repo', FetchedAt $ unNow now)
+--     fetchSeq :: [RpkiURL] -> Maybe FetchSeq
+--     fetchSeq [] = Nothing
+--     fetchSeq (u : urls) = Just $ case u of
+--         RrdpU rrdpUrl   -> rrdpFetchSeq rrdpUrl urls              
+--         RsyncU rsyncUrl -> rsyncFetchSeq rsyncUrl urls                
 
-        modifyTVar' publicationPoints $ \pps -> 
-                adjustSucceededUrl rpkiUrl 
-                        $ updateStatuses (pps ^. typed @PublicationPoints) 
-                        [(newRepo, newStatus)]          
 
+--     rsyncFetchSeq :: RsyncURL -> [RpkiURL] -> FetchSeq
+--     rsyncFetchSeq rsyncUrl otherUrls = do 
+--         let smtA = do 
+--                 pps <- readTVar publicationPoints
+--                 let repo = maybe (rsyncR rsyncUrl) RsyncR $ rsyncRepository pps rsyncUrl                        
+--                 pure (repo, fetchSeq otherUrls)
+
+--         let ioA (repo, fallback) = do 
+--                 if needsFetching repo (getFetchStatus repo) (config ^. #validationConfig) now
+--                     then do 
+--                         z@(r, _) <- fetchPP repo
+--                         let wrapUpCurrent = do 
+--                                 applyFetchResult (RsyncU rsyncUrl) repo r
+--                                 fetchTree <- readTVar rsyncFetchTree
+--                                 deleteNode fetchTree rsyncUrl
+--                         let fallback' = fmap (\(FetchSeq f) -> FetchSeq $ wrapUpCurrent >> f) fallback
+--                         pure (getRpkiURL repo, z, fallback')
+--                     else 
+--                         pure (getRpkiURL repo, (Right repo, mempty), Nothing)
+
+--         FetchSeq $ treeLocked rsyncUrl rsyncFetchTree smtA ioA
+
+--     applyFetchResult rpkiUrl repo r = do                             
+--         let (newRepo, newStatus) = case r of                             
+--                 Left _      -> (repo, FailedAt $ unNow now)
+--                 Right repo' -> (repo', FetchedAt $ unNow now)
+
+--         modifyTVar' publicationPoints $ \pps -> 
+--                 adjustSucceededUrl rpkiUrl 
+--                         $ updateStatuses (pps ^. typed @PublicationPoints) 
+--                         [(newRepo, newStatus)]          
+            
 
 stepSeq :: FetchSeq -> IO [FetchResult]
 stepSeq (FetchSeq fs) = do 
@@ -533,15 +544,15 @@ newtype FetchSeq = FetchSeq {
 type Fetched = (Either AppError Repository, ValidationState)
 type FTask = FetchTask (RpkiURL, Fetched, Maybe FetchSeq)
 
-data CommonRoot = Unavailable | Working FTask
+data CommonRoot = NeverTried | Unavailable | Working FTask 
     deriving stock (Eq, Ord, Generic)    
 
-newtype RsyncFetches = RsyncFetches (Map RsyncHost (RsyncNode FTask CommonRoot))
-    deriving stock (Eq, Ord, Generic)    
+newtype RsyncFetches = RsyncFetches (Map RsyncHost (RsyncNode (TVar FTask) (TVar CommonRoot)))
+    deriving stock (Eq, Generic)    
 
     
 data RepositoryProcessing1 = RepositoryProcessing1 {
-        fetchFetchMap     :: TVar (Map RrdpURL FTask),
+        fetchMap          :: TVar (Map RrdpURL FTask),
         rsyncFetchTree    :: TVar RsyncFetches,
         fetchResults      :: TVar (Map RpkiURL ValidationState),
         publicationPoints :: TVar PublicationPoints        
@@ -549,34 +560,82 @@ data RepositoryProcessing1 = RepositoryProcessing1 {
     deriving stock (Eq, Generic)
 
 
+-- findRsyncFetch :: RsyncURL 
+--             -> RsyncFetches 
+--             -> Maybe (RsyncURL, Either (TVar FTask) (RsyncURL, TVar CommonRoot))
+-- findRsyncFetch u (RsyncFetches t) = findInRsyncTree u t
 
-findInRsyncTree :: RsyncURL 
-                   -> Map RsyncHost (RsyncNode a b) 
-                   -> Maybe (RsyncURL, Either a (RsyncURL, b))
-findInRsyncTree (RsyncURL host path) hosts = 
-    go path [] =<< Map.lookup host hosts
-  where    
-    -- TODO Make this 2 configurable
-    maxChildrenBeforeAdvisingCommonRoot = 2
+-- findInRsyncTree :: RsyncURL 
+--                    -> Map RsyncHost (RsyncNode a b) 
+--                    -> Maybe (RsyncURL, Either a (RsyncURL, b))
+-- findInRsyncTree (RsyncURL host path) hosts = 
+--     go path [] =<< Map.lookup host hosts
+--   where    
+--     -- TODO Make this 2 configurable
+--     maxChildrenBeforeAdvisingCommonRoot = 2
 
-    go [] _  SubTree {} = Nothing
+--     go [] _  SubTree {} = Nothing
 
-    go _ realPath (Leaf a) = 
-        Just (RsyncURL host realPath, Left a)
+--     go _ realPath (Leaf a) = 
+--         Just (RsyncURL host realPath, Left a)
     
-    go (u: [lastChunk]) realPath SubTree {..} = 
-        case Map.lookup u rsyncChildren of 
-            Nothing -> Nothing 
-            Just z@SubTree { rsyncChildren = ch }                
-                | not (Map.member lastChunk ch) && 
-                  Map.size ch > maxChildrenBeforeAdvisingCommonRoot 
-                  -> 
-                    let commonRoot = RsyncURL host realPath
-                    in Just (commonRoot, Right (commonRoot, nodePayload))
-                | otherwise -> 
-                    go [lastChunk] (realPath <> [u]) z
-            Just z -> 
-                go [lastChunk] (realPath <> [u]) z
+--     go (u: [lastChunk]) realPath SubTree {..} = 
+--         case Map.lookup u rsyncChildren of 
+--             Nothing -> Nothing 
+--             Just z@SubTree { rsyncChildren = ch }                
+--                 | not (Map.member lastChunk ch) && 
+--                   Map.size ch > maxChildrenBeforeAdvisingCommonRoot 
+--                   -> 
+--                     let commonRoot = RsyncURL host realPath
+--                     in Just (commonRoot, Right (commonRoot, nodePayload))
+--                 | otherwise -> 1
+--                     go [lastChunk] (realPath <> [u]) z
+--             Just z -> 
+--                 go [lastChunk] (realPath <> [u]) z
 
-    go (u: us) realPath SubTree {..} = 
-        Map.lookup u rsyncChildren >>= go us (realPath <> [u])
+--     go (u: us) realPath SubTree {..} = 
+--         Map.lookup u rsyncChildren >>= go us (realPath <> [u])
+
+
+
+-- findInRsync' :: RsyncURL 
+--             -> Map RsyncHost (RsyncNode a b) 
+--             -> Maybe (RsyncURL, a)
+-- findInRsync' (RsyncURL host path) hosts = 
+--     go path [] =<< Map.lookup host hosts
+--   where    
+--     go [] _  SubTree {} = Nothing
+--     go _ realPath (Leaf a) = Just (RsyncURL host realPath, a)
+
+--     go (p: path) realPath SubTree {..} = 
+--         Map.lookup p rsyncChildren >>= go path (realPath <> [p])
+
+
+-- setNode :: RsyncURL 
+--         -> Map RsyncHost (RsyncNode a b) 
+--         -> a 
+--         -> b
+--         -> (Map RsyncHost (RsyncNode a b), Maybe (RsyncNode a b))
+-- setNode (RsyncURL host path) fetchTrees leafPayload subTreePayload =
+--      Map.alter f host fetchTrees    
+--   where
+--     f = \case 
+--             Nothing -> adjustTree path t
+--             Just t  -> adjustTree path t
+
+--     adjustTree [] existing = (Leaf payload, Just existing)
+
+--     adjustTree (p : path) subTree@SubTree {} = 
+--         case Map.lookup p ch of 
+--             Nothing -> let
+--                     z = adjustTree path payload
+--                     s = SubTree {
+--                             rsyncChildren = Map.insert p z ch,
+--                             nodePayload   = subTreePayload
+--                         }
+--                 in (s, Nothing)
+--             Just child -> let 
+--                     s = subTree { 
+--                             rsyncChildren = Map.insert u (adjustTree us fs child) ch 
+--                         }
+--                 in (s, Just child)

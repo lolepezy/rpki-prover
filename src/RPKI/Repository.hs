@@ -197,6 +197,9 @@ rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
 rrdpR  :: RrdpURL  -> Repository
 rrdpR u = RrdpR $ RrdpRepository u Nothing Pending 
 
+rsyncR :: RsyncURL -> FetchStatus -> Repository
+rsyncR u s = RsyncR $ RsyncRepository (RsyncPublicationPoint u) s
+
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository (PublicationPoints (RrdpMap rrdps) _ _) u = Map.lookup u rrdps        
 
@@ -467,13 +470,7 @@ buildRsyncTree (u: us) fs = SubTree {
     }
 
 statusInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, FetchStatus)
-statusInRsyncTree (RsyncURL host path) (RsyncTree t) = 
-    fetchStatus' path [] =<< Map.lookup host t
-  where    
-    fetchStatus' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
-    fetchStatus' [] _  SubTree {} = Nothing
-    fetchStatus' (u: us) realPath SubTree {..} = 
-        Map.lookup u rsyncChildren >>= fetchStatus' us (realPath <> [u])
+statusInRsyncTree rsyncUrl (RsyncTree t) = leafPayload rsyncUrl t    
 
 rsyncStatuses :: RsyncTree -> [(RsyncURL, FetchStatus)]
 rsyncStatuses (RsyncTree hostMap) = 
@@ -484,3 +481,13 @@ rsyncStatuses (RsyncTree hostMap) =
     statuses (RsyncURL host path) SubTree {..} = 
         mconcat [ statuses (RsyncURL host (path <> [p])) t 
                 | (p, t) <- Map.toList rsyncChildren ]        
+
+
+leafPayload :: RsyncURL -> Map RsyncHost (RsyncNode a b) -> Maybe (RsyncURL, a)
+leafPayload (RsyncURL host path) t = 
+    fetchStatus' path [] =<< Map.lookup host t
+  where    
+    fetchStatus' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
+    fetchStatus' [] _  SubTree {} = Nothing
+    fetchStatus' (u: us) realPath SubTree {..} = 
+        Map.lookup u rsyncChildren >>= fetchStatus' us (realPath <> [u])

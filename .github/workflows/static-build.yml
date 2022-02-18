@@ -52,3 +52,4 @@ jobs:
         prerelease: true
         draft: true        
         update_latest_release: false        
+        verbose: true
