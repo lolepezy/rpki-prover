@@ -14,7 +14,7 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 
-import           Control.Lens                     ((^.))
+import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable (for_)
@@ -46,39 +46,44 @@ import           RPKI.Time
 
 import           RPKI.Store.AppStorage
 import qualified Data.Map.Strict as Map
+import GHC.Generics (Generic)
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do
 
-    -- Use a command queue to avoid fully concurrent operations, i.e. cleanup 
+    -- Use a small command queue to avoid fully concurrent operations, i.e. cleanup 
     -- operations and such should not run at the same time with validation 
     -- (not only for consistency reasons, but we also want to avoid locking 
     -- the DB for long time by a cleanup process).
     globalQueue <- newCQueueIO 10
 
     -- Fill in the current state if it's not too old.
-    -- It is useful in case of restarts.        
+    -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
 
     -- Run RTR server thread when rtrConfig is present in the AppConfig.  
     -- If not needed it will the an noop.  
-    rtrServer <- initRtrIfNeeded
+    let rtrServer = initRtrIfNeeded
 
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics config
 
-    -- This is a flag to determine if datbase compaction may be required at all.
-    -- Used only to avoid compaction when it's not really needed.
-    deletedSomeData <- newTVarIO False
+    -- Some shared state between the threads for simplicity.
+    sharedStuff <- newTVarIO newShared
 
-    periodicJobs <- periodicJobThreads deletedSomeData
+    -- Threads that will run periodic jobs and persist timestaps of running them
+    -- for consistent scheduling.
+    periodicJobs <- periodicJobThreads sharedStuff
 
     let threads = [ 
-                jobExecutor,            
-                generateRevalidationJob prometheusMetrics,            
-                rtrServer
+                -- thread that takes jobs from the queue and executes them sequentially
+                jobExecutor,
+                -- thread that generate re-validation jobs
+                generateRevalidationJob prometheusMetrics,
+                -- RTR server job (or a noop)  
+                const rtrServer
             ]
 
     mapConcurrently_ (\f -> f globalQueue) $ threads <> periodicJobs
@@ -93,13 +98,13 @@ runWorkflow appContext@AppContext {..} tals = do
                 `finally`
                     atomically (closeCQueue globalQueue)        
 
-        periodicJobThreads deletedSomeData = do 
+        periodicJobThreads sharedStuff = do 
             let availableJobs = [
                     -- These initial delay numbers are pretty arbitrary and chosen based 
                     -- on reasonable order of the jobs.
-                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC deletedSomeData),
-                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions deletedSomeData),
-                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact deletedSomeData)]                    
+                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC sharedStuff),
+                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions sharedStuff),
+                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedStuff)]                    
             
             persistedJobs <- do
                 db <- readTVarIO database
@@ -183,31 +188,31 @@ runWorkflow appContext@AppContext {..} tals = do
                             completeVersion appState worldVersion vrps maybeSlurm
                         pure (vrps, slurmedVrps)
 
-        cacheGC deletedSomeData worldVersion = do
+        cacheGC sharedStuff worldVersion = do
             database' <- readTVarIO database
             executeOrDie
                 (cleanObjectCache database' $ versionIsOld (versionToMoment worldVersion) (config ^. #cacheLifeTime))
                 (\CleanUpResult {..} elapsed -> do 
                     when (deletedObjects > 0) $ 
-                        atomically $ writeTVar deletedSomeData True
+                        atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
                     logInfo_ logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
 
-        cleanOldVersions deletedSomeData worldVersion = do
+        cleanOldVersions sharedStuff worldVersion = do
             let now = versionToMoment worldVersion
             database' <- readTVarIO database
             executeOrDie
                 (deleteOldVersions database' $ versionIsOld now (config ^. #oldVersionsLifetime))
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ 
-                        atomically $ writeTVar deletedSomeData True
+                        atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
                     logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
-        compact deletedSomeData worldVersion = do
+        compact sharedStuff worldVersion = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
-            deletedSomething <- readTVarIO deletedSomeData
-            if deletedSomething then do 
+            SharedStuff {..} <- readTVarIO sharedStuff
+            if deletedAnythingFromDb then do 
                 (_, elapsed) <- timedMS $ runMaintenance appContext
                 logInfo_ logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
             else 
@@ -226,14 +231,7 @@ runWorkflow appContext@AppContext {..} tals = do
             where
                 exec = do
                     (r, elapsed) <- timedMS f
-                    onRight r elapsed
-
-        initRtrIfNeeded =
-            case config ^. #rtrConfig of
-                Nothing -> do
-                    pure $ \_ -> pure ()
-                Just rtrConfig' ->
-                    pure $ \_ -> runRtrServer appContext rtrConfig'
+                    onRight r elapsed        
 
         -- Write an action to the global queue with given interval.
         generatePeriodicJob delay interval action globalQueue = do
@@ -263,6 +261,9 @@ runWorkflow appContext@AppContext {..} tals = do
                                 [i|is too short for the time validation takes. It is recommended to restart |] <>
                                 [i|with a higher re-validation interval value.|]
             atomically $ writeCQueue globalQueue z
+
+        initRtrIfNeeded = 
+            maybe (pure ()) (runRtrServer appContext) $ config ^. #rtrConfig                        
 
 
 -- | Load the state corresponding to the last completed version.
@@ -320,11 +321,19 @@ periodically interval action = go
             Repeat -> go
             Done   -> pure ()
 
-data NextStep = Repeat | Done
-
-
 leftToWait :: Instant -> Instant -> Seconds -> Int64
 leftToWait start end (Seconds interval) = let
     executionTimeNs = toNanoseconds end - toNanoseconds start
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
     in timeToWaitNs `div` 1000               
+
+
+data NextStep = Repeat | Done
+
+data SharedStuff = SharedStuff { 
+        deletedAnythingFromDb :: Bool
+    }
+    deriving (Show, Eq, Ord, Generic)
+
+newShared :: SharedStuff
+newShared = SharedStuff False
