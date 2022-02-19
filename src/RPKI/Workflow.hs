@@ -18,8 +18,6 @@ import           Control.Lens                     ((^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable (for_)
-import           Data.Maybe (mapMaybe)
-
 import           Data.Int                         (Int64)
 
 import           Data.Hourglass
@@ -47,6 +45,7 @@ import           RPKI.TAL
 import           RPKI.Time
 
 import           RPKI.Store.AppStorage
+import qualified Data.Map.Strict as Map
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
@@ -71,20 +70,18 @@ runWorkflow appContext@AppContext {..} tals = do
     prometheusMetrics <- createPrometheusMetrics config
 
     -- This is a flag to determine if datbase compaction may be required at all.
+    -- Used only to avoid compaction when it's not really needed.
     deletedSomeData <- newTVarIO False
 
-    -- Run threads that 
-    --  - generate re-validation jobs        
-    --  - periodicallly generate jobs and put them into 
-    --    the queue based on the last execution time
-    --  - take jobs from the queue and execute them
-    -- 
-    mapConcurrently_ (\f -> f globalQueue) [
-            jobExecutor,
-            pollJobs deletedSomeData,
-            generateRevalidationJob prometheusMetrics,            
-            rtrServer
-        ]
+    periodicJobs <- periodicJobThreads deletedSomeData
+
+    let threads = [ 
+                jobExecutor,            
+                generateRevalidationJob prometheusMetrics,            
+                rtrServer
+            ]
+
+    mapConcurrently_ (\f -> f globalQueue) $ threads <> periodicJobs
     where
         -- periodically update world version and generate command 
         -- to re-validate all TAs
@@ -96,49 +93,40 @@ runWorkflow appContext@AppContext {..} tals = do
                 `finally`
                     atomically (closeCQueue globalQueue)        
 
-        -- 60 seconds resolution is good enough for all the practical purposes here.
-        pollJobs deletedSomeData globalQueue = periodically 60 $ do
-            
+        periodicJobThreads deletedSomeData = do 
             let availableJobs = [
-                        ("gcJob",               config ^. #cacheCleanupInterval, cacheGC deletedSomeData),
-                        ("cleanOldVersionsJob", config ^. #storageCompactionInterval, compact deletedSomeData),
-                        ("compactionJob",       config ^. #cacheCleanupInterval, cleanOldVersions deletedSomeData)
-                    ]
-
-            Now now <- thisInstant
-            jobs <- do
+                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC deletedSomeData),
+                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions deletedSomeData),
+                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact deletedSomeData)]                    
+            
+            persistedJobs <- do
                 db <- readTVarIO database
-                roTx db $ \tx -> allJobs tx db
+                roTx db $ \tx -> Map.fromList <$> allJobs tx db
 
-            let toBeExecuted = flip mapMaybe availableJobs $
-                        \(job, interval, action) ->
-                            case filter ((==job) . fst) jobs of
-                                [] -> Just (job, action)
-                                [(_, lastExecuted)]
-                                    | lastExecuted > now ||
-                                        closeEnoughMoments lastExecuted now interval
-                                        -> Nothing
-                                    | otherwise
-                                        -> Just (job, action)
-                                _ -> Nothing
+            Now now <- thisInstant                   
+            
+            pure $ 
+                flip map availableJobs $ 
+                    \(job, defInitialDelay, interval, action) -> do 
+                        let initialDelay =                                     
+                                case Map.lookup job persistedJobs of 
+                                    Nothing           -> defInitialDelay
+                                    Just lastExecuted -> fromIntegral $ leftToWait lastExecuted now interval
+                        
+                        let jobAction worldVersion = do                                 
+                                    action worldVersion
+                                `finally` (do
+                                    Now endTime <- thisInstant
+                                    -- re-read `db` since it could have been changed by the time the
+                                    -- job is finished (after compaction, for example)                            
+                                    db <- readTVarIO database
+                                    rwTx db $ \tx -> setJobTime tx db job endTime)
 
-            unless (null toBeExecuted) $
-                logDebug_ logger [i|Jobs to be executed: #{map fst toBeExecuted}.|]
-            for_ toBeExecuted $ \(jobName, jobF) -> do
-                closed <- atomically $ isClosedCQueue globalQueue
-                unless closed $
-                    writeQ globalQueue $ \worldVersion' -> do
-                        logDebug_ logger [i|Executing job #{jobName}.|]
-                        jobF worldVersion' `finally` (do
-                            Now endTime <- thisInstant
-                            -- re-read `db` since it could have been changed by the time the
-                            -- job is finished (after compaction, for example)                            
-                            db <- readTVarIO database
-                            rwTx db $ \tx -> setJobTime tx db jobName endTime)
-
-            closed <- atomically $ isClosedCQueue globalQueue
-            pure $ if closed then Done else Repeat
-
+                        \queue -> do 
+                            let delaySeconds = initialDelay `div` 1_000_000
+                            logDebug_ logger [i|Scheduling job '#{job}' with initial delay #{delaySeconds}s and interval #{interval}.|] 
+                            generatePeriodicJob initialDelay interval jobAction queue                        
+    
         jobExecutor globalQueue = go
           where
             go = do
@@ -214,7 +202,8 @@ runWorkflow appContext@AppContext {..} tals = do
                     logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
         compact deletedSomeData worldVersion = do
-            -- Some heuristics first to see if it's obvisouly too early to run compaction 
+            -- Some heuristics first to see if it's obvisouly too early to run compaction:
+            -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
             deletedSomething <- readTVarIO deletedSomeData
             if deletedSomething then do 
                 (_, elapsed) <- timedMS $ runMaintenance appContext
@@ -244,16 +233,15 @@ runWorkflow appContext@AppContext {..} tals = do
                 Just rtrConfig' ->
                     pure $ \_ -> runRtrServer appContext rtrConfig'
 
-
         -- Write an action to the global queue with given interval.
-        -- generatePeriodicJob delay interval action globalQueue = do
-        --     threadDelay delay
-        --     periodically interval $ do                 
-        --         closed <- atomically $ isClosedCQueue globalQueue
-        --         unless closed $ writeQ globalQueue action
-        --         pure $ if closed 
-        --                 then Done
-        --                 else Repeat
+        generatePeriodicJob delay interval action globalQueue = do
+            threadDelay delay
+            periodically interval $ do                 
+                closed <- atomically $ isClosedCQueue globalQueue
+                unless closed $ writeQ globalQueue action
+                pure $ if closed 
+                        then Done
+                        else Repeat
 
         updateWorldVersion = do
             newVersion <- newWorldVersion
@@ -323,17 +311,18 @@ periodically interval action = go
         Now start <- thisInstant
         nextStep <- action
         Now end <- thisInstant
-        delayFromTo start end interval
+        let pause = leftToWait start end interval
+        when (pause > 0) $
+            threadDelay $ fromIntegral pause
         case nextStep of
             Repeat -> go
             Done   -> pure ()
 
 data NextStep = Repeat | Done
 
-delayFromTo :: Instant -> Instant -> Seconds -> IO ()
-delayFromTo start end (Seconds interval) = do
-    let executionTimeNs = toNanoseconds end - toNanoseconds start
-    when (executionTimeNs < nanosPerSecond * interval) $ do
-        let timeToWaitNs = nanosPerSecond * interval - executionTimeNs
-        when (timeToWaitNs > 0) $
-            threadDelay $ fromIntegral timeToWaitNs `div` 1000           
+
+leftToWait :: Instant -> Instant -> Seconds -> Int64
+leftToWait start end (Seconds interval) = let
+    executionTimeNs = toNanoseconds end - toNanoseconds start
+    timeToWaitNs = nanosPerSecond * interval - executionTimeNs
+    in timeToWaitNs `div` 1000               
