@@ -95,6 +95,8 @@ runWorkflow appContext@AppContext {..} tals = do
 
         periodicJobThreads deletedSomeData = do 
             let availableJobs = [
+                    -- These initial delay numbers are pretty arbitrary and chosen based 
+                    -- on reasonable order of the jobs.
                     ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC deletedSomeData),
                     ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions deletedSomeData),
                     ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact deletedSomeData)]                    
@@ -107,13 +109,13 @@ runWorkflow appContext@AppContext {..} tals = do
             
             pure $ 
                 flip map availableJobs $ 
-                    \(job, defInitialDelay, interval, action) -> do 
+                    \(job, defInitialDelay, interval, action) -> 
                         let initialDelay =                                     
                                 case Map.lookup job persistedJobs of 
                                     Nothing           -> defInitialDelay
                                     Just lastExecuted -> fromIntegral $ leftToWait lastExecuted now interval
                         
-                        let jobAction worldVersion = do                                 
+                            jobAction worldVersion = do                                 
                                     action worldVersion
                                 `finally` (do
                                     Now endTime <- thisInstant
@@ -122,7 +124,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                     db <- readTVarIO database
                                     rwTx db $ \tx -> setJobTime tx db job endTime)
 
-                        \queue -> do 
+                        in \queue -> do 
                             let delaySeconds = initialDelay `div` 1_000_000
                             logDebug_ logger [i|Scheduling job '#{job}' with initial delay #{delaySeconds}s and interval #{interval}.|] 
                             generatePeriodicJob initialDelay interval jobAction queue                        
