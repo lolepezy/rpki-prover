@@ -4,7 +4,6 @@
 module RPKI.Store.MakeLmdb where
 
 import Control.Concurrent.STM
-import Data.Text (Text)
 
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -18,8 +17,22 @@ import           RPKI.Store.Database
 import           RPKI.Store.Sequence
 
 
-createObjectStore :: LmdbEnv -> SequenceMap LmdbStorage -> IO (RpkiObjectStore LmdbStorage)
-createObjectStore e seqMap = do 
+createDatabase :: LmdbEnv -> IO (DB LmdbStorage)
+createDatabase e = do 
+    sequences <- SMap lmdb <$> createLmdbStore e
+    taStore          <- createTAStore
+    repositoryStore  <- createRepositoryStore
+    objectStore      <- createObjectStore sequences
+    validationsStore <- createValidationsStore
+    vrpStore         <- createVRPStore
+    versionStore     <- createVersionStore
+    metricStore      <- createMetricsStore
+    slurmStore       <- createSlurmStore
+    jobStore         <- createJobStore        
+    pure DB {..}    
+  where
+    lmdb = LmdbStorage e        
+    createObjectStore seqMap = do 
         let keys = Sequence "object-key" seqMap
         objects  <- SMap lmdb <$> createLmdbStore e
         mftByAKI <- SMultiMap lmdb <$> createLmdbMultiStore e
@@ -33,43 +46,21 @@ createObjectStore e seqMap = do
         urlKeyToObjectKey  <- SMultiMap lmdb <$> createLmdbMultiStore e
         objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
         pure RpkiObjectStore {..}
-    where 
-        lmdb = LmdbStorage e        
+            
+    createRepositoryStore = 
+        RepositoryStore <$>
+            (SMap lmdb <$> createLmdbStore e) <*>
+            (SMap lmdb <$> createLmdbStore e) <*>
+            (SMap lmdb <$> createLmdbStore e)        
 
-createRepositoryStore :: LmdbEnv -> IO (RepositoryStore LmdbStorage)
-createRepositoryStore e = 
-    RepositoryStore <$>
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMap lmdb <$> createLmdbStore e) <*>
-        (SMap lmdb <$> createLmdbStore e)
-    where 
-        lmdb = LmdbStorage e
-
-createResultStore :: LmdbEnv -> IO (ValidationsStore LmdbStorage)
-createResultStore e = 
-    ValidationsStore <$> (SMap lmdb <$> createLmdbStore e)
-    where 
-        lmdb = LmdbStorage e
-
-createVRPStore :: LmdbEnv -> IO (VRPStore LmdbStorage)
-createVRPStore e = VRPStore . SMap (LmdbStorage e) <$> createLmdbStore e    
-
-createTAStore :: LmdbEnv -> IO (TAStore LmdbStorage)
-createTAStore e = TAStore . SMap (LmdbStorage e) <$> createLmdbStore e    
-
-createVersionStore :: LmdbEnv -> IO (VersionStore LmdbStorage)
-createVersionStore e = VersionStore . SMap (LmdbStorage e) <$> createLmdbStore e    
-
-createMetricsStore :: LmdbEnv -> IO (MetricStore LmdbStorage)
-createMetricsStore e = MetricStore . SMap (LmdbStorage e) <$> createLmdbStore e    
-
-createSlurmStore :: LmdbEnv -> IO (SlurmStore LmdbStorage)
-createSlurmStore e = SlurmStore . SMap (LmdbStorage e) <$> createLmdbStore e    
-
-createSequenceStore :: LmdbEnv -> Text -> IO (Sequence LmdbStorage)
-createSequenceStore e seqName = Sequence seqName . SMap (LmdbStorage e) <$> createLmdbStore e    
-
-
+    createValidationsStore = ValidationsStore . SMap lmdb <$> createLmdbStore e
+    createVRPStore = VRPStore . SMap lmdb <$> createLmdbStore e    
+    createTAStore = TAStore . SMap lmdb <$> createLmdbStore e    
+    createVersionStore = VersionStore . SMap lmdb <$> createLmdbStore e    
+    createMetricsStore = MetricStore . SMap lmdb <$> createLmdbStore e    
+    createSlurmStore = SlurmStore . SMap lmdb <$> createLmdbStore e    
+    createJobStore = JobStore . SMap lmdb <$> createLmdbStore e    
+    
 mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
 mkLmdb fileName maxSizeMb maxReaders = do 
     nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
@@ -89,19 +80,3 @@ closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)
 
 closeNativeLmdb :: Environment e -> IO ()
 closeNativeLmdb = closeEnvironment
-
-
-createDatabase :: LmdbEnv -> IO (DB LmdbStorage)
-createDatabase e = do 
-    seqMap <- SMap (LmdbStorage e) <$> createLmdbStore e
-    DB <$>
-        createTAStore e <*>
-        createRepositoryStore e <*>
-        createObjectStore e seqMap <*>
-        createResultStore e <*>
-        createVRPStore e <*>
-        createVersionStore e <*>
-        createMetricsStore e <*>
-        createSlurmStore e <*>
-        pure seqMap
-

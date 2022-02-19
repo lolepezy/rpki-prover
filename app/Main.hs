@@ -235,9 +235,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+                & maybeSet #oldVersionsLifetime ((\hours -> Seconds (hours * 60 * 60)) <$> oldVersionsLifeTimeHours)
                 & #lmdbSizeMb .~ lmdbRealSize            
                 & #localExceptions .~ localExceptions    
                 & #logLevel .~ derivedLogLevel                
+                & maybeSet #metricsPrefix (convert <$> metricsPrefix)
     }
 
     logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
@@ -452,6 +454,11 @@ data CLIOptions wrapped = CLIOptions {
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
+    oldVersionsLifeTimeHours :: wrapped ::: Maybe Int64 <?>
+        ("Lifetime of versions in the local cache, in hours (default is 24 hours). " +++ 
+         "Every re-validation creates a new version and associates resulting data " +++ 
+         "(validation results, metrics, VRPs, etc.) with it."),
+
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
         ("Period of time after which an RRDP repository must be updated, "
        +++ "in seconds (default is 120 seconds)"),
@@ -518,7 +525,10 @@ data CLIOptions wrapped = CLIOptions {
         "Timebox for one TA validation in seconds (default is 1 hours, i.e. 3600 seconds).",
 
     noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
-    noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)"
+    noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)",
+
+    metricsPrefix :: wrapped ::: Maybe String <?> 
+        "Prefix for Prometheus metrics (default is 'rpki_prover')."
 
 } deriving (Generic)
 

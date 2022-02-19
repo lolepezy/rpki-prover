@@ -33,6 +33,7 @@ data API api = API {
         metrics :: api :- "metrics"        :> Get '[JSON] MetricsDto,
                 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
+        jobs :: api :- "jobs" :> Get '[JSON] JobsDto,
 
         publicationsPoints :: api :- "repositories" :> Get '[JSON] PublicationPointDto,
 

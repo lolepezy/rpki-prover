@@ -27,7 +27,6 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
 
 import           RPKI.AppContext
-import           RPKI.Config
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
@@ -67,6 +66,7 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         metrics = snd <$> getMetrics appContext,                
         publicationsPoints = getPPs appContext,
         lmdbStats = getStats appContext,
+        jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         config = pure config
     }
@@ -118,9 +118,9 @@ getValidations AppContext {..} = do
             validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
             let validationDtos = map toVR $ validationsToList validations
             pure $ ValidationsDto {
-                    version   = lastVersion,
-                    timestamp = versionToMoment lastVersion,
-                    validations = validationDtos
+                    worldVersion = lastVersion,
+                    timestamp    = versionToMoment lastVersion,
+                    validations  = validationDtos
                 }
 
 getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) => 
@@ -175,6 +175,12 @@ toVR (Scope scope, issues) = FullVDto {
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             
+
+getJobs :: (MonadIO m, Storage s) => AppContext s -> m JobsDto
+getJobs AppContext {..} = liftIO $ do 
+    db <- readTVarIO database
+    jobs <- roTx db $ \tx -> allJobs tx db
+    pure JobsDto {..}    
 
 getPPs :: (MonadIO m, Storage s) => AppContext s -> m PublicationPointDto
 getPPs AppContext {..} = liftIO $ do 
