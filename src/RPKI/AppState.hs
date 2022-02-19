@@ -51,10 +51,8 @@ getWorldVerionIO AppState {..} = readTVarIO world
 
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 
-    join $ atomically $ do 
-        readTVar world >>= \case
-            Nothing -> pure $ newWorldVersion
-            Just wv -> pure $ pure wv 
+    join $ atomically $ 
+        maybe newWorldVersion pure <$> readTVar world
 
 versionToMoment :: WorldVersion -> Instant
 versionToMoment (WorldVersion nanos) = fromNanoseconds nanos

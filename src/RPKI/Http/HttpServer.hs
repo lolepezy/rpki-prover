@@ -66,6 +66,7 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         metrics = snd <$> getMetrics appContext,                
         publicationsPoints = getPPs appContext,
         lmdbStats = getStats appContext,
+        jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         config = pure config
     }
@@ -174,6 +175,12 @@ toVR (Scope scope, issues) = FullVDto {
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
 getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database             
+
+getJobs :: (MonadIO m, Storage s) => AppContext s -> m JobsDto
+getJobs AppContext {..} = liftIO $ do 
+    db <- readTVarIO database
+    jobs <- roTx db $ \tx -> allJobs tx db
+    pure JobsDto {..}    
 
 getPPs :: (MonadIO m, Storage s) => AppContext s -> m PublicationPointDto
 getPPs AppContext {..} = liftIO $ do 
