@@ -30,6 +30,8 @@ import           Data.Set                    (Set)
 import GHC.Generics (Generic)
 
 import Time.Types
+import System.Random
+
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -46,6 +48,7 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
+import Control.Concurrent
 
 
 data RepositoryContext = RepositoryContext {
@@ -369,6 +372,17 @@ setValidationStateOfFetches repositoryProcessing frs = liftIO $ do
                         $ Map.insert u vs
     pure frs
 
+
+setValidationStateOfFetches1 :: MonadIO m => RepositoryProcessing1 -> [FetchResult] -> m [FetchResult] 
+setValidationStateOfFetches1 repositoryProcessing frs = liftIO $ do
+    atomically $ do 
+        forM_ frs $ \fr -> do 
+            let (u, vs) = case fr of
+                    FetchFailure r vs'    -> (r, vs')
+                    FetchSuccess repo vs' -> (getRpkiURL repo, vs')                
+            modifyTVar' (repositoryProcessing ^. #fetchResults) $ Map.insert u vs
+    pure frs    
+
 -- 
 cancelFetchTasks :: RepositoryProcessing -> IO ()    
 cancelFetchTasks rp = do 
@@ -389,28 +403,37 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
 
 
 
-fetchPPWithFallback1 :: (MonadIO m, Storage s) => 
+
+ioActionWithFallback :: (MonadIO m, Storage s) => 
                             AppContext s                         
                         -> RepositoryProcessing1
                         -> WorldVersion
                         -> Now 
                         -> PublicationPointAccess  
+                        -> (Repository -> IO Fetched)
                         -> ValidatorT m [FetchResult]
-fetchPPWithFallback1 
+ioActionWithFallback 
     appContext@AppContext {..}     
-    RepositoryProcessing1 {..}
+    repositoryProcessing@RepositoryProcessing1 {..}
     worldVersion
     now 
-    ppAccess = do 
-        parentScope <- askEnv         
-        -- frs <- liftIO $ fetchOnce parentScope ppAccess        
-        -- setValidationStateOfFetches repositoryProcessing frs     
-        pure []
-  where               
+    ppAccess 
+    fetchPP = do 
+        parentScope <- askEnv                 
+        frs <- liftIO $ maybe (pure []) stepSeq $ 
+                    fetchSeq $ 
+                    map getRpkiURL $ NonEmpty.toList $ 
+                    unPublicationPointAccess ppAccess
+        setValidationStateOfFetches1 repositoryProcessing frs     
+        pure frs
 
-    fetchPP :: Repository -> IO Fetched
-    fetchPP repo = do
-        pure (Right repo, mempty)
+  where
+
+    fetchSeq :: [RpkiURL] -> Maybe FetchSeq
+    fetchSeq [] = Nothing
+    fetchSeq (u : urls) = Just $ case u of
+        RrdpU rrdpUrl   -> rrdpFetchSeq rrdpUrl urls              
+        RsyncU rsyncUrl -> rsyncFetchSeq rsyncUrl urls       
 
     mapLocked :: RrdpURL 
             -> TVar (Map RrdpURL (FetchTask b)) 
@@ -433,6 +456,9 @@ fetchPPWithFallback1
                                 _         -> m
                         wait a                    
 
+    mapUnlock rrdpUrl = 
+        modifyTVar' fetchMap $ Map.delete rrdpUrl
+
     rrdpFetchSeq :: RrdpURL -> [RpkiURL] -> FetchSeq
     rrdpFetchSeq rrdpUrl otherUrls = do 
         let smtA = do 
@@ -446,7 +472,7 @@ fetchPPWithFallback1
                         z@(r, _) <- fetchPP repo
                         let wrapUpCurrent = do 
                                 applyFetchResult (RrdpU rrdpUrl) repo r
-                                modifyTVar' fetchMap $ Map.delete rrdpUrl
+                                mapUnlock rrdpUrl
                         let fallback' = fmap (\(FetchSeq f) -> FetchSeq $ wrapUpCurrent >> f) fallback
                         pure (getRpkiURL repo, z, fallback')
                     else 
@@ -455,11 +481,10 @@ fetchPPWithFallback1
         FetchSeq $ mapLocked rrdpUrl fetchMap smtA ioA
 
     treeLocked :: RsyncURL 
-            -> TVar RsyncFetches
             -> STM t 
             -> (t -> IO (RpkiURL, Fetched, Maybe FetchSeq)) 
             -> STM (IO (RpkiURL, Fetched, Maybe FetchSeq))
-    treeLocked rsyncUrl@(RsyncURL host path) fetches stmAction ioAction = do 
+    treeLocked rsyncUrl@(RsyncURL host path) stmAction ioAction = do 
         RsyncFetches fetchTree <- readTVar rsyncFetchTree
         case findInRsync' rsyncUrl fetchTree of
             Just (u, z) ->
@@ -475,21 +500,17 @@ fetchPPWithFallback1
                 writeTVar rsyncFetchTree (RsyncFetches fetchTree')
                 pure $ fetchAction s leaf
         where
-            fetchAction s node = do 
+            fetchAction s leaf = do 
                 a <- async $ ioAction s                
-                atomically $ readTVar node >>= \case 
-                        Stub -> writeTVar node (Fetching a)
+                atomically $ readTVar leaf >>= \case 
+                        Stub -> writeTVar leaf (Fetching a)
                         _    -> pure ()
                 wait a                   
 
+    treeUnlock rsyncUrl = 
+        modifyTVar' rsyncFetchTree $ deleteNode rsyncUrl
 
-    fetchSeq :: [RpkiURL] -> Maybe FetchSeq
-    fetchSeq [] = Nothing
-    fetchSeq (u : urls) = Just $ case u of
-        RrdpU rrdpUrl   -> rrdpFetchSeq rrdpUrl urls              
-        RsyncU rsyncUrl -> rsyncFetchSeq rsyncUrl urls                
-
-
+        
     rsyncFetchSeq :: RsyncURL -> [RpkiURL] -> FetchSeq
     rsyncFetchSeq rsyncUrl otherUrls = do 
         let smtA = do 
@@ -503,13 +524,13 @@ fetchPPWithFallback1
                         z@(r, _) <- fetchPP repo
                         let wrapUpCurrent = do 
                                 applyFetchResult (RsyncU rsyncUrl) repo r
-                                modifyTVar' rsyncFetchTree $ deleteNode rsyncUrl                                
+                                treeUnlock rsyncUrl                                
                         let fallback' = fmap (\(FetchSeq f) -> FetchSeq $ wrapUpCurrent >> f) fallback
                         pure (getRpkiURL repo, z, fallback')
                     else 
                         pure (getRpkiURL repo, (Right repo, mempty), Nothing)
 
-        FetchSeq $ treeLocked rsyncUrl rsyncFetchTree smtA ioA
+        FetchSeq $ treeLocked rsyncUrl smtA ioA
 
     applyFetchResult rpkiUrl repo r = do                             
         let (newRepo, newStatus) = case r of                             
@@ -522,16 +543,37 @@ fetchPPWithFallback1
                         [(newRepo, newStatus)]          
             
 
+
+fetchPPWithFallback1 :: (MonadIO m, Storage s) => 
+                            AppContext s                         
+                        -> RepositoryProcessing1
+                        -> WorldVersion
+                        -> Now 
+                        -> PublicationPointAccess  
+                        -> ValidatorT m [FetchResult]
+fetchPPWithFallback1 appContext@AppContext {..}
+    repositoryProcessing worldVersion now ppAccess = 
+        ioActionWithFallback appContext repositoryProcessing worldVersion now  ppAccess fetchPP       
+  where    
+    fetchPP repo = do
+        logDebug_ logger [i|Test fetching #{repo}|]
+        r <- randomRIO (1, 10)        
+        threadDelay $ 10_000 * r
+        pure (Right repo, mempty)
+
+
 stepSeq :: FetchSeq -> IO [FetchResult]
 stepSeq (FetchSeq fs) = do 
     io <- atomically fs
     (repoUrl, (r, vs), fallback) <- io
-    let fetchResult = case r of
-            Left _     -> [FetchFailure repoUrl vs]
-            Right repo -> [FetchSuccess repo vs]        
-    case fallback of
-        Nothing -> pure fetchResult
-        Just f  -> (fetchResult <>) <$> stepSeq f    
+    case r of
+        Left _ -> do 
+            let fetchResult = FetchFailure repoUrl vs
+            case fallback of
+                Nothing -> pure [fetchResult]
+                Just f  -> (fetchResult :) <$> stepSeq f    
+        Right repo -> 
+            pure [FetchSuccess repo vs]        
 
 
 newtype FetchSeq = FetchSeq {
@@ -622,7 +664,8 @@ setNode (RsyncURL host path) fetchTrees leafPayload branchNodePayload =
                 (t', replaced) = adjustTree path t
             in (Map.insert host t' fetchTrees, replaced)     
   where        
-    adjustTree [] existing = (Leaf leafPayload, Just existing)
+    adjustTree [] existing              = (Leaf leafPayload, Just existing)
+    adjustTree (p : path) leaf@(Leaf _) = (buildTree path, Just leaf)
 
     adjustTree (p : path) subTree@SubTree { rsyncChildren = ch } = 
         case Map.lookup p ch of 

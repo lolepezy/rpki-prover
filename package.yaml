@@ -80,6 +80,7 @@ dependencies:
 - primitive
 - prometheus-client
 - prometheus-metrics-ghc
+- random
 - serialise
 - servant
 - servant-server
