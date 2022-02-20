@@ -197,8 +197,8 @@ rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
 rrdpR  :: RrdpURL  -> Repository
 rrdpR u = RrdpR $ RrdpRepository u Nothing Pending 
 
-rsyncR :: RsyncURL -> FetchStatus -> Repository
-rsyncR u s = RsyncR $ RsyncRepository (RsyncPublicationPoint u) s
+rsyncR :: RsyncURL -> Repository
+rsyncR u = RsyncR $ RsyncRepository (RsyncPublicationPoint u) Pending
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository (PublicationPoints (RrdpMap rrdps) _ _) u = Map.lookup u rrdps        
