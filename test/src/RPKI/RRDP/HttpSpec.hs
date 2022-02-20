@@ -14,7 +14,6 @@ import           RPKI.Repository
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.Http
-import           RPKI.TestTypes
 import           RPKI.Util
 
 import           Test.Tasty
@@ -33,13 +32,13 @@ httpSpec = testGroup "Unit tests for Http updates" [
         let hash = sha256 body
         let size = LBS.length body
 
-        (bs, s, status) :: (LBS.ByteString, Size, HttpStatus) <- downloadToBS testConfig (URI uri)
+        (bs, s, status) :: (LBS.ByteString, Size, HttpStatus) <- downloadToBS defaultConfig (URI uri)
 
         HU.assertEqual "Status" status (HttpStatus 200)
         HU.assertEqual "Size" s (Size size)
         HU.assertEqual "Body" body bs
 
-        z <- downloadHashedBS testConfig (URI uri) hash 
+        z <- downloadHashedBS defaultConfig (URI uri) hash 
                 (\actual -> Left $ "Hash was " <> show actual <> " instead of " <> show hash)
 
         HU.assertBool ("No errors: " <> show z) (isRight z)

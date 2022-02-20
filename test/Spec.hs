@@ -11,6 +11,7 @@ import RPKI.AppMonadSpec
 import RPKI.RepositorySpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
+import RPKI.FetchSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -22,5 +23,6 @@ main = defaultMain $ testGroup "All tests" [
         repositoryGroup,
         rtrGroup,
         httpSpec,
-        slurmGroup
+        slurmGroup,
+        fetchGroup
     ]  
