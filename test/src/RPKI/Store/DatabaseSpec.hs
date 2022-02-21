@@ -56,6 +56,7 @@ import           RPKI.Time
 import           RPKI.Util
 
 import           RPKI.RepositorySpec
+import           RPKI.TestSetup
 
 import Data.Generics.Product (HasField)
 
@@ -416,27 +417,11 @@ stripTime = (& #totalTimeMs .~ TimeMs 0)
 generateSome :: Arbitrary a => IO [a]
 generateSome = replicateM 1000 $ QC.generate arbitrary      
 
-withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
-withDB = withResource (makeLmdbStuff Lmdb.createDatabase) releaseLmdb
-
-
 ioTestCase :: TestName -> (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion) -> TestTree
 ioTestCase s f = withDB $ \io -> HU.testCase s (f io)
 
 dbTestCase :: TestName -> (IO (DB LmdbStorage) -> HU.Assertion) -> TestTree
 dbTestCase s f = ioTestCase s $ f . (snd <$>)
-
-makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
-makeLmdbStuff mkStore = do 
-    dir <- createTempDirectory "/tmp" "lmdb-test"
-    e <- Lmdb.mkLmdb dir 1000 1000 
-    store <- mkStore e
-    pure ((dir, e), store)
-
-releaseLmdb :: ((FilePath, LmdbEnv), b) -> IO ()
-releaseLmdb ((dir, e), _) = do    
-    Lmdb.closeLmdb e
-    removeDirectoryRecursive dir
 
 readObjectFromFile :: FilePath -> IO (RpkiURL, ParseResult RpkiObject)
 readObjectFromFile path = do 

@@ -39,22 +39,22 @@ data AppLogger = AppLogger {
 instance Logger AppLogger where
     logError_ AppLogger {..} = logWhat E logAction
 
-    logWarn_  AppLogger {..} s = 
-        when (logLevel >= WarnL) $ logWhat W logAction s        
+    logWarn_  AppLogger {..} s =
+        when (logLevel >= WarnL) $ logWhat W logAction s
 
-    logInfo_  AppLogger {..} s = 
+    logInfo_  AppLogger {..} s =
         when (logLevel >= InfoL) $ logWhat I logAction s
 
-    logDebug_ AppLogger {..} s = 
-        when (logLevel >= DebugL) $ logWhat D logAction s        
+    logDebug_ AppLogger {..} s =
+        when (logLevel >= DebugL) $ logWhat D logAction s
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
 
 logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
-logWhat sev la textMessage = la <& Msg sev callStack textMessage    
+logWhat sev la textMessage = la <& Msg sev callStack textMessage
 
-logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => 
+logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) =>
                                             logger -> Text -> m ()
 logErrorM logger t = liftIO $ logError_ logger t
 logWarnM logger t  = liftIO $ logWarn_ logger t
@@ -63,23 +63,23 @@ logDebugM logger t = liftIO $ logDebug_ logger t
 
 
 withMainAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withMainAppLogger logLevel f = withLogger logLevel (stdout, logTextStdout) f  
+withMainAppLogger logLevel = withLogger logLevel (stdout, logTextStdout)
 
 withWorkerLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withWorkerLogger logLevel f = withLogger logLevel (stderr, logTextStderr) f  
+withWorkerLogger logLevel = withLogger logLevel (stderr, logTextStderr)
 
 withLogger :: LogLevel -> (Handle, LogAction IO Text) -> (AppLogger -> LoggerT Text IO a) -> IO a
-withLogger logLevel (stream, streamLogger) f = do     
+withLogger logLevel (stream, streamLogger) f = do
     hSetBuffering stream LineBuffering
     withBackgroundLogger
         defCapacity
         streamLogger
         (\logg -> usingLoggerT logg $ f $ AppLogger logLevel (fullMessageAction logg))
   where
-    fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
-        cmapM (\msg -> fmtRichMessageCustomDefault msg formatRichMessage) logg    
-        
+    fullMessageAction logg = upgradeMessageAction defaultFieldMap $
+        cmapM (`fmtRichMessageCustomDefault` formatRichMessage) logg
+
     formatRichMessage _ (maybe "" showTime -> time) Msg{..} =
         showSeverity msgSeverity
-        <> time            
-        <> msgText           
+        <> time
+        <> msgText          

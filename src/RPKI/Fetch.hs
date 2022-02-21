@@ -9,6 +9,7 @@
 
 module RPKI.Fetch where
 
+import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
@@ -48,7 +49,6 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
-import Control.Concurrent
 
 
 data RepositoryContext = RepositoryContext {
@@ -419,7 +419,7 @@ ioActionWithFallback
     now 
     ppAccess 
     fetchPP = do 
-        parentScope <- askEnv                 
+        parentScope <- askEnv
         frs <- liftIO $ maybe (pure []) stepSeq $ 
                     fetchSeq $ 
                     map getRpkiURL $ NonEmpty.toList $ 
@@ -599,6 +599,14 @@ data RepositoryProcessing1 = RepositoryProcessing1 {
     }
     deriving stock (Eq, Generic)
 
+
+newRepositoryProcessing1 :: STM RepositoryProcessing1
+newRepositoryProcessing1 = do 
+    fetchMap          <- newTVar mempty
+    rsyncFetchTree    <- newTVar $ RsyncFetches mempty
+    fetchResults      <- newTVar mempty
+    publicationPoints <- newTVar newPPs
+    pure RepositoryProcessing1 {..}
 
 findRsyncFetch :: RsyncURL 
             -> RsyncFetches 
