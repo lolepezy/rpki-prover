@@ -402,9 +402,7 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
 
 
 
-
-
-ioActionWithFallback :: (MonadIO m, Storage s) => 
+fetchWithFallback1 :: (MonadIO m, Storage s) => 
                             AppContext s                         
                         -> RepositoryProcessing1
                         -> WorldVersion
@@ -412,7 +410,7 @@ ioActionWithFallback :: (MonadIO m, Storage s) =>
                         -> PublicationPointAccess  
                         -> (Repository -> IO Fetched)
                         -> ValidatorT m [FetchResult]
-ioActionWithFallback 
+fetchWithFallback1 
     appContext@AppContext {..}     
     repositoryProcessing@RepositoryProcessing1 {..}
     worldVersion
@@ -426,7 +424,6 @@ ioActionWithFallback
                     unPublicationPointAccess ppAccess
         setValidationStateOfFetches1 repositoryProcessing frs     
         pure frs
-
   where
 
     fetchSeq :: [RpkiURL] -> Maybe FetchSeq
@@ -553,7 +550,7 @@ fetchPPWithFallback1 :: (MonadIO m, Storage s) =>
                         -> ValidatorT m [FetchResult]
 fetchPPWithFallback1 appContext@AppContext {..}
     repositoryProcessing worldVersion now ppAccess = 
-        ioActionWithFallback appContext repositoryProcessing worldVersion now  ppAccess fetchPP       
+        fetchWithFallback1 appContext repositoryProcessing worldVersion now  ppAccess fetchPP       
   where    
     fetchPP repo = do
         logDebug_ logger [i|Test fetching #{repo}|]
@@ -695,7 +692,7 @@ setNode (RsyncURL host path) fetchTrees leafPayload branchNodePayload =
             rsyncChildren = Map.singleton u (buildTree us),
             nodePayload  = branchNodePayload
         }
-
+ 
 
 deleteNode :: RsyncURL -> RsyncFetches -> RsyncFetches
-deleteNode _ f = f
+deleteNode (RsyncURL host path) (RsyncFetches fetches) = RsyncFetches fetches

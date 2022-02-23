@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedLabels  #-}
+{-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 module RPKI.TestSetup where
