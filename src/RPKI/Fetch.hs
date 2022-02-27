@@ -695,4 +695,16 @@ setNode (RsyncURL host path) fetchTrees leafPayload branchNodePayload =
  
 
 deleteNode :: RsyncURL -> RsyncFetches -> RsyncFetches
-deleteNode (RsyncURL host path) (RsyncFetches fetches) = RsyncFetches fetches
+deleteNode (RsyncURL host path) fs@(RsyncFetches fetches) = 
+    RsyncFetches $ Map.alter f host fetches
+  where
+    f Nothing = Nothing
+    f (Just tree) = withoutBranch path tree
+
+    withoutBranch [] (Leaf _) = Nothing
+    withoutBranch [] _       = Nothing
+
+    withoutBranch (p: path) subTree@SubTree { rsyncChildren = ch } = Nothing
+        
+
+    
