@@ -51,7 +51,8 @@ import           RPKI.Reporting
 
 fetchGroup :: TestTree
 fetchGroup = testGroup "Fetching" [    
-        HU.testCase "Doanload one URL" shouldDownloadOneURL        
+        HU.testCase "Download one URL" shouldDownloadOneURL,
+        HU.testCase "setNode" shouldSetAndCheckNode
     ]
 
 shouldDownloadOneURL :: HU.Assertion
@@ -78,7 +79,24 @@ shouldDownloadOneURL = appContextTest $ \appContext -> do
         pure (Right repo, mempty)        
     
 
+shouldSetAndCheckNode :: HU.Assertion
+shouldSetAndCheckNode = do 
+    let RsyncFetches tree = RsyncFetches mempty
+    node <- newTVarIO Stub
+    leaf <- newTVarIO NeverTried
+    let url = rsyncURL_ "rsync://rpki.ripe.net/repository"
+    let (tree', _) = setNode url tree node leaf
+    case findInRsync' url tree' of 
+        Nothing -> HU.assertBool "Wrong" False
+        Just (z, q) -> do 
+            HU.assertEqual "Wrong 2" z url        
+            qq <- readTVarIO q
+            HU.assertBool "Wrong 2" (Stub == qq)        
+
+
 rsyncPP_ :: Text -> PublicationPoint
 rsyncPP_ u = RsyncPP $ RsyncPublicationPoint $ let Right r = parseRsyncURL u in r
 
+rsyncURL_ :: Text -> RsyncURL
+rsyncURL_ u = let Right r = parseRsyncURL u in r
                     

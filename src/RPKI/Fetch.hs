@@ -702,9 +702,25 @@ deleteNode (RsyncURL host path) fs@(RsyncFetches fetches) =
     f (Just tree) = withoutBranch path tree
 
     withoutBranch [] (Leaf _) = Nothing
-    withoutBranch [] _       = Nothing
+    withoutBranch [] _        = Nothing
 
-    withoutBranch (p: path) subTree@SubTree { rsyncChildren = ch } = Nothing
+    withoutBranch (p: path) leaf@(Leaf _) = Just leaf
+
+    withoutBranch (p: path) subTree@SubTree { rsyncChildren = ch } = 
+        case Map.lookup p ch of 
+            Nothing    -> Just subTree
+            Just child -> 
+                case withoutBranch path child of 
+                    Nothing -> let 
+                        ch' = Map.delete p ch 
+                        in if Map.null ch' 
+                            then Nothing 
+                            else Just $ subTree { rsyncChildren = ch' }
+                    Just branch -> 
+                        Just $ subTree { 
+                                rsyncChildren = Map.insert p branch ch 
+                            }
+
         
 
     
