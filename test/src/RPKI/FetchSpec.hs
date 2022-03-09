@@ -3,7 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE QuasiQuotes #-}
 
-module RPKI.FetchSpec where    
+module RPKI.FetchSpec where
 
 import           Control.Concurrent
 import Control.Monad (replicateM)
@@ -13,7 +13,7 @@ import Control.Monad.IO.Class
 import Data.Text
 
 import Data.ByteString.Short (toShort)
-import Data.Maybe (maybeToList, catMaybes)
+import Data.Maybe (maybeToList, catMaybes, isNothing)
 import Data.List (sort, isPrefixOf, sortOn)
 import qualified Data.Map.Strict as Map
 
@@ -50,48 +50,59 @@ import           RPKI.Reporting
 
 
 fetchGroup :: TestTree
-fetchGroup = testGroup "Fetching" [    
+fetchGroup = testGroup "Fetching" [
         HU.testCase "Download one URL" shouldDownloadOneURL,
-        HU.testCase "setNode" shouldSetAndCheckNode
+        HU.testCase "setNode" shouldSetAndCheckNode,
+        HU.testCase "setNodeDelete" shouldSetDeleteAndCheckNode
     ]
 
 shouldDownloadOneURL :: HU.Assertion
-shouldDownloadOneURL = appContextTest $ \appContext -> do 
+shouldDownloadOneURL = appContextTest $ \appContext -> do
     now <- thisInstant
     rp1 <- atomically newRepositoryProcessing1
-    worldVersion <- newWorldVersion    
+    worldVersion <- newWorldVersion
     results <- newTVarIO Map.empty
     let rsyncPP1 = rsyncPP_ "rsync://rpki.ripe.net/repository"
     let ppAccess = PublicationPointAccess $ rsyncPP1 :| []
-    z <- runValidatorT (newScopes "fetch") $ fetchWithFallback1 
+    z <- runValidatorT (newScopes "fetch") $ fetchWithFallback1
             appContext rp1 worldVersion now ppAccess (kindaFetch results)
-    
+
     r <- readTVarIO results
-    HU.assertEqual 
-        "Not the same Validations" 
+    HU.assertEqual
+        "Not the same Validations"
         (Map.lookup (getRpkiURL rsyncPP1) r)
         (Just 1)
-  where 
-    kindaFetch result repo = do         
-        r <- randomRIO (1, 10)        
+  where
+    kindaFetch result repo = do
+        r <- randomRIO (1, 10)
         threadDelay $ 10_000 * r
-        atomically $ modifyTVar' result $ Map.unionWith (+) (Map.singleton (getRpkiURL repo) 1)         
-        pure (Right repo, mempty)        
-    
+        atomically $ modifyTVar' result $ Map.unionWith (+) (Map.singleton (getRpkiURL repo) 1)
+        pure (Right repo, mempty)
+
 
 shouldSetAndCheckNode :: HU.Assertion
-shouldSetAndCheckNode = do 
+shouldSetAndCheckNode = do
     let RsyncFetches tree = RsyncFetches mempty
     node <- newTVarIO Stub
     leaf <- newTVarIO NeverTried
     let url = rsyncURL_ "rsync://rpki.ripe.net/repository"
     let (tree', _) = setNode url tree node leaf
-    case findInRsync' url tree' of 
+    case findInRsync' url tree' of
         Nothing -> HU.assertBool "Wrong" False
-        Just (z, q) -> do 
-            HU.assertEqual "Wrong 2" z url        
+        Just (z, q) -> do
+            HU.assertEqual "Wrong 2" z url
             qq <- readTVarIO q
-            HU.assertBool "Wrong 2" (Stub == qq)        
+            HU.assertBool "Wrong 2" (Stub == qq)
+
+shouldSetDeleteAndCheckNode :: HU.Assertion
+shouldSetDeleteAndCheckNode = do
+    let RsyncFetches tree = RsyncFetches mempty
+    node <- newTVarIO Stub
+    leaf <- newTVarIO NeverTried
+    let url = rsyncURL_ "rsync://rpki.ripe.net/repository"
+    let (tree', _) = setNode url tree node leaf
+    let tree'' = deleteNode url tree'
+    HU.assertBool "Wrong" (isNothing $ findInRsync' url tree'')
 
 
 rsyncPP_ :: Text -> PublicationPoint
@@ -99,4 +110,4 @@ rsyncPP_ u = RsyncPP $ RsyncPublicationPoint $ let Right r = parseRsyncURL u in 
 
 rsyncURL_ :: Text -> RsyncURL
 rsyncURL_ u = let Right r = parseRsyncURL u in r
-                    
+

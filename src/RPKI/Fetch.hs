@@ -505,7 +505,7 @@ fetchWithFallback1
                 wait a                   
 
     treeUnlock rsyncUrl = 
-        modifyTVar' rsyncFetchTree $ deleteNode rsyncUrl
+        modifyTVar' rsyncFetchTree (\(RsyncFetches f) -> RsyncFetches $ deleteNode rsyncUrl f)
 
         
     rsyncFetchSeq :: RsyncURL -> [RpkiURL] -> FetchSeq
@@ -694,9 +694,9 @@ setNode (RsyncURL host path) fetchTrees leafPayload branchNodePayload =
         }
  
 
-deleteNode :: RsyncURL -> RsyncFetches -> RsyncFetches
-deleteNode (RsyncURL host path) fs@(RsyncFetches fetches) = 
-    RsyncFetches $ Map.alter f host fetches
+deleteNode :: RsyncURL -> Map RsyncHost (RsyncNode a b)  -> Map RsyncHost (RsyncNode a b) 
+deleteNode (RsyncURL host path) = 
+    Map.alter f host
   where
     f Nothing = Nothing
     f (Just tree) = withoutBranch path tree
