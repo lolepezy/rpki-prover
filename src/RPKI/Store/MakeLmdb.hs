@@ -13,6 +13,7 @@ import           Lmdb.Types hiding (Size)
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
+import           RPKI.Parallel
 import           RPKI.Store.Database
 import           RPKI.Store.Sequence
 
@@ -66,7 +67,7 @@ mkLmdb fileName maxSizeMb maxReaders = do
     nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
-        createSemaphore maxReaders    
+        createSemaphoreIO maxReaders    
 
 newNativeLmdb :: FilePath -> Size -> Int -> IO (Environment 'ReadWrite)
 newNativeLmdb fileName (Size maxSizeMb) maxReaders = 

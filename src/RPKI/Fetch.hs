@@ -46,6 +46,7 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
+import RPKI.Parallel (withSemaphore)
 
 
 data RepositoryContext = RepositoryContext {
@@ -82,7 +83,7 @@ fetchPPWithFallback :: (MonadIO m, Storage s) =>
                         -> ValidatorT m [FetchResult]
 fetchPPWithFallback 
     appContext@AppContext {..}     
-    repositoryProcessing
+    repositoryProcessing@RepositoryProcessing {..}
     worldVersion
     ppAccess = do 
         parentScope <- askEnv         
@@ -129,7 +130,7 @@ fetchPPWithFallback
 
     fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]
 
-    fetchWithFallback _          []   = pure []
+    fetchWithFallback _           []   = pure []
     fetchWithFallback parentScope [pp] = do 
         ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentScope pp                
         let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed     
@@ -204,7 +205,7 @@ fetchPPWithFallback
 
     -- Do fetch the publication point and update the #publicationPoints
     -- 
-    fetchPP parentScope repo = do         
+    fetchPP parentScope repo = withSemaphore fetchSemaphore $ do         
         let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope

@@ -237,30 +237,29 @@ newTask io bn@(Bottleneck bottlenecks) execution = do
                 case execution of
                     Requestor -> pure $ RequestorTask io -- wrap it in RequestorTask                    
                     Submitter -> appLift $ submitterTask env
-        where            
-                    
-            incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
-            decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
+  where                    
+    incSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize succ
+    decSizes = forM_ bottlenecks $ \(currentSize, _) -> modifyTVar' currentSize pred
 
-            asyncForTask env = async $ 
-                                    runValidatorT env io 
-                                        `finally` 
-                                        liftIO (atomically decSizes)
+    asyncForTask env = async $ 
+                            runValidatorT env io 
+                                `finally` 
+                                liftIO (atomically decSizes)
 
-            -- TODO This is not very safe w.r.t. exceptions.
-            -- submitterTask :: ValidatorT m (Task m a)
-            submitterTask env = do 
-                liftIO $ atomically incSizes
-                a <- asyncForTask env 
-                -- Wait for either the task to finish, or until there's 
-                -- some free space in the bottleneck.
-                liftIO (atomically $ do 
-                    spaceInBottlenecks <- someSpaceInBottleneck bn
-                    unless spaceInBottlenecks $ void $ waitSTM a)
-                    `onException`
-                        cancel a
+    -- TODO This is not very safe w.r.t. exceptions.
+    -- submitterTask :: ValidatorT m (Task m a)
+    submitterTask env = do 
+        liftIO $ atomically incSizes
+        a <- asyncForTask env 
+        -- Wait for either the task to finish, or until there's 
+        -- some free space in the bottleneck.
+        liftIO (atomically $ do 
+            spaceInBottlenecks <- someSpaceInBottleneck bn
+            unless spaceInBottlenecks $ void $ waitSTM a)
+            `onException`
+                cancel a
 
-                pure $! AsyncTask a      
+        pure $! AsyncTask a      
 
 
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m a
@@ -279,3 +278,24 @@ killAll queue kill = do
         Nothing -> pure ()
         Just as -> kill as >> killAll queue kill
 
+
+-- Auxialliry stuff for limiting the amount of parallel reading LMDB transactions    
+data Semaphore = Semaphore Int (TVar Int)
+    deriving (Eq)
+
+createSemaphoreIO :: Int -> IO Semaphore
+createSemaphoreIO = atomically . createSemaphore
+
+createSemaphore :: Int -> STM Semaphore
+createSemaphore n = Semaphore n <$> newTVar 0
+
+withSemaphore :: Semaphore -> IO a -> IO a
+withSemaphore (Semaphore maxCounter current) f = 
+    bracket incr decrement' (const f)
+    where 
+        incr = atomically $ do 
+            c <- readTVar current
+            if c >= maxCounter 
+                then retry
+                else writeTVar current (c + 1)
+        decrement' _ = atomically $ modifyTVar' current $ \c -> c - 1

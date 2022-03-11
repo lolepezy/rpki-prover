@@ -20,7 +20,6 @@ import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
-
 import           Data.Either                      (fromRight, partitionEithers)
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
@@ -34,6 +33,8 @@ import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
+
+import           UnliftIO.Async
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -57,7 +58,6 @@ import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
 
-import           UnliftIO.Async
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -146,7 +146,7 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
     database' <- readTVarIO database 
 
-    repositoryProcessing <- newRepositoryProcessingIO 
+    repositoryProcessing <- newRepositoryProcessingIO config
 
     validateThem database' repositoryProcessing 
         `finally` 
