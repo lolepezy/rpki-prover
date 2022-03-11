@@ -105,6 +105,7 @@ dependencies:
 - quickcheck-instances
 - unix
 - unordered-containers
+- unliftio
 - vector
 - warp
 - xeno

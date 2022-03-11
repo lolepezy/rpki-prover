@@ -57,6 +57,8 @@ import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
 
+import           UnliftIO.Async
+
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext s = TopDownContext {    
@@ -157,8 +159,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         mapException (AppException . storageError) $ do             
             pps <- roTx database' $ \tx -> getPublicationPoints tx database'
             atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
-        
-        rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
+     
+        rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
             logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
@@ -559,8 +561,7 @@ validateCaCertificate
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
-        liftIO $ inParallelUnordered
-            (totalBottleneck appBottlenecks)
+        liftIO $ pooledForConcurrently
             nonCrlChildren
             $ \(T2 filename hash') -> runValidatorT vp $ do 
                     ro <- findManifestEntryObject filename hash' 
@@ -569,8 +570,7 @@ validateCaCertificate
 
     independentMftChildrenResults nonCrlChildren validCrl = do
         vp <- askEnv
-        liftIO $ inParallelUnordered
-            (totalBottleneck appBottlenecks)
+        liftIO $ pooledForConcurrently
             nonCrlChildren
             $ \(T2 filename hash') -> do 
                 (r, vs) <- runValidatorT vp $ findManifestEntryObject filename hash' 

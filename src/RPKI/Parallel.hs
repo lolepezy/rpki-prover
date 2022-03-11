@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE StrictData                 #-}
+{-# LANGUAGE AllowAmbiguousTypes        #-}
 
 module RPKI.Parallel where
 
@@ -195,20 +195,6 @@ maxBottleneckSize :: Bottleneck -> Natural
 maxBottleneckSize (Bottleneck bottlenecks) = 
         atLeastOne $ minimum $ NonEmpty.map snd bottlenecks
 
-
-pushInto, takeOut :: Bottleneck -> STM ()
-pushInto  (Bottleneck bottlenecks) = 
-    forM_ bottlenecks $ \(currentSize, maxSize) -> do 
-        cs <- readTVar currentSize
-        if cs < maxSize
-            then modifyTVar' currentSize succ
-            else retry
-
-takeOut (Bottleneck bottlenecks) = 
-    forM_ bottlenecks $ \(currentSize, _) -> 
-        modifyTVar' currentSize pred
-            -- if s == 0 then 0 else s - 1
-
 someSpaceInBottleneck :: Bottleneck -> STM Bool
 someSpaceInBottleneck (Bottleneck bottlenecks) =
     fmap and $ 
@@ -277,7 +263,6 @@ newTask io bn@(Bottleneck bottlenecks) execution = do
                 pure $! AsyncTask a      
 
 
-
 waitTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m a
 waitTask (RequestorTask t) = t
 waitTask (AsyncTask a)     = embedValidatorT $ wait a
@@ -285,83 +270,6 @@ waitTask (AsyncTask a)     = embedValidatorT $ wait a
 cancelTask :: (MonadBaseControl IO m, MonadIO m) => Task m a -> ValidatorT m ()
 cancelTask (RequestorTask _) = pure ()
 cancelTask (AsyncTask a)     = cancel a
-
-
-
-data Slot = Free | Taken | NotForTaking
-
-
--- | Compute a function for a list of inputs in parallel using the bottleneck.
--- The order of the results in the list is random and based on how fast each 
--- of the inputs is processed.
--- 
-inParallelUnordered :: 
-                    Bottleneck 
-                    -> [a]
-                    -> (a -> IO b) 
-                    -> IO [b]
-inParallelUnordered bottleneck as f = do     
-    let size = maxBottleneckSize bottleneck
-    taskMap <- newTVarIO IM.empty    
-    queue   <- liftIO $ atomically $ newCQueue $ 2 * size    
-
-    snd <$> concurrently
-                (runAll taskMap queue `finally` atomically (closeCQueue queue)) 
-                (readResults queue)
-            `finally` (do                   
-                t <- readTVarIO taskMap
-                mapM_ cancel $ IM.elems t)
-  where                
-    
-    runAll taskMap queue = do
-        forM_ (zip as [1..]) $ \(s, nextKey) -> do                                 
-            slot <- liftIO $ newTVarIO Free
-            a <- async $ do                     
-                    atomically . writeCQueue queue =<< evaluate =<< try (f s)                        
-                    `finally` (do 
-                            atomically $ releaseSlot bottleneck slot
-                            atomically $ do 
-                                t <- readTVar taskMap
-                                check $ IM.member nextKey t                                
-                                writeTVar taskMap $ IM.delete nextKey t)                        
-
-            atomically $ modifyTVar' taskMap $ IM.insert nextKey a
-            atomically (takeSlot slot bottleneck `orElse` void (waitSTM a))
-
-        -- wait until taskMap is empty
-        atomically $ check . IM.null =<< readTVar taskMap
-            
-        
-    readResults queue = 
-        atomically (readCQueue queue) >>= \case             
-            Nothing                          -> pure []
-            Just (Left (e :: SomeException)) -> throwIO e
-            Just (Right z)                   -> (z : ) <$> readResults queue                 
-
-
-
-parallePutToTheQueueWhenReady :: ClosableQueue a -> Bottleneck -> TVar Slot -> a -> STM Bool
-parallePutToTheQueueWhenReady queue bottleneck slot t = do
-    closed <- isClosedCQueue queue
-    unless closed $ do 
-        takeSlot slot bottleneck        
-        writeCQueue queue t
-    pure closed   
-
-
-takeSlot :: TVar Slot -> Bottleneck -> STM ()
-takeSlot slot bottleneck = 
-    readTVar slot >>= \case
-        Free -> do 
-            writeTVar slot Taken
-            pushInto bottleneck
-        _ -> pure ()                                        
-
-releaseSlot :: Bottleneck -> TVar Slot -> STM ()
-releaseSlot bottleneck slot = do 
-    readTVar slot >>= \case                            
-        Taken -> takeOut bottleneck
-        _     -> writeTVar slot NotForTaking
 
 
 killAll :: MonadIO m => ClosableQueue t -> (t -> m a) -> m ()

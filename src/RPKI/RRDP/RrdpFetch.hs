@@ -340,12 +340,12 @@ saveSnapshot appContext worldVersion repoUri notification snapshotContent = do
             rwAppTx objectStore $ \tx ->
                 f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
 
-    void $ txFoldPipeline 
-                cpuParallelism
-                (S.mapM (newStorable objectStore) $ S.each snapshotItems)
-                (savingTx serial)
-                (saveStorable objectStore)
-                (mempty :: ())
+    txFoldPipeline 
+            cpuParallelism
+            (S.mapM (newStorable objectStore) $ S.each snapshotItems)
+            (savingTx serial)
+            (saveStorable objectStore)
+            (mempty :: ())
   where        
 
     newStorable objectStore (SnapshotPublish uri encodedb64) =             
@@ -460,7 +460,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
             (savingTx serial)
             (saveStorable objectStore)
             (mempty :: ())
-    where        
+  where        
 
     newStorable item = do 
         case item of
