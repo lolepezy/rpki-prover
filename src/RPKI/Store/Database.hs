@@ -739,13 +739,13 @@ appTxEx ws err f txF = do
             Handler $ \(TxRollbackException e vs) -> pure (Left e, vs),
             Handler $ \e -> pure (Left (err e), mempty)
         ]       
-    where
-        transaction env = txF (storage ws) $ \tx -> do 
-            z@(r, vs) <- runValidatorT env (f tx)
-            case r of
-                -- abort transaction on ExceptT error
-                Left e  -> throwIO $ TxRollbackException e vs
-                Right _ -> pure z
+  where
+    transaction env = txF (storage ws) $ \tx -> do 
+        z@(r, vs) <- runValidatorT env (f tx)
+        case r of
+            -- abort transaction on ExceptT error
+            Left e  -> throwIO $ TxRollbackException e vs
+            Right _ -> pure z
 
 
 data TxRollbackException = TxRollbackException AppError ValidationState
