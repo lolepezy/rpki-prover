@@ -53,7 +53,6 @@ import           RPKI.Reporting
 import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
-import           RPKI.Parallel
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
@@ -174,10 +173,6 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ setCpuCount cpuCount'
     let parallelism = makeParallelism cpuCount'
 
-    appBottlenecks <- liftIO $ AppBottleneck <$>
-                        newBottleneckIO (parallelism ^. #cpuParallelism) <*>
-                        newBottleneckIO (parallelism ^. #ioParallelism)
-
     let rtrConfig = if withRtr
             then Just $ defaultRtrConfig
                         & maybeSet #rtrPort rtrPort
@@ -204,8 +199,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     programPath <- liftIO getExecutablePath
     let appContext = AppContext {
         appState = appState',
-        database = tvarDatabase,
-        appBottlenecks = appBottlenecks,
+        database = tvarDatabase,        
         logger = logger,        
         config = defaults               
                 & #programBinaryPath .~ programPath
@@ -400,12 +394,7 @@ readWorkerContext input logger = do
                     (input ^. #config . #cacheDirectory)
                     (input ^. #config . #lmdbSizeMb)
 
-    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
-    
-    let parallelism = input ^. #config . #parallelism
-    appBottlenecks <- liftIO $ AppBottleneck <$>
-                        newBottleneckIO (parallelism ^. #cpuParallelism) <*>
-                        newBottleneckIO (parallelism ^. #ioParallelism)        
+    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
 
     appState     <- liftIO newAppState
     tvarDatabase <- liftIO $ newTVarIO database
@@ -413,15 +402,13 @@ readWorkerContext input logger = do
     pure AppContext {
             appState = appState,
             database = tvarDatabase,
-            appBottlenecks = appBottlenecks,
             logger = logger,        
             config = input ^. #config
         }       
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
-checkPreconditions CLIOptions {..} = do 
-    checkRsyncInPath rsyncClientPath           
+checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath           
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {

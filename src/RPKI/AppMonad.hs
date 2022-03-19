@@ -170,8 +170,8 @@ appWarn :: Monad m =>
             AppError -> ValidatorT m ()
 appWarn = validatorWarning . VWarning
 
-askEnv :: MonadReader r m => m r
-askEnv = ask
+askScopes :: MonadReader r m => m r
+askScopes = ask
 
 inSubVScope :: Monad m => 
               Text -> ValidatorT m r -> ValidatorT m r
@@ -217,7 +217,7 @@ timedMetric' :: forall m metric r .
             -> ValidatorT m r 
             -> ValidatorT m r
 timedMetric' _ f v = do
-    vp <- askEnv
+    vp <- askScopes
     ((r, vs), elapsed) <- appLift $ timedMS $ runValidatorT vp v          
     embedState vs
     updateMetric (f elapsed)

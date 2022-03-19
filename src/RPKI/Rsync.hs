@@ -1,8 +1,9 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
+{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Rsync where
     
@@ -21,12 +22,10 @@ import qualified Data.ByteString                  as BS
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy
 import           Data.List (stripPrefix)
-import           Data.Foldable (for_)
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Tuple.Strict
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -54,6 +53,9 @@ import           System.FilePath
 import           System.Process.Typed
 
 import           System.Mem                       (performGC)
+import Control.Concurrent.Async
+
+import qualified Streaming.Prelude                as S
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
@@ -93,7 +95,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
             [ worderIdS workerId ] <>
             rtsArguments [ rtsN maxCpuAvailable, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
 
-    vp <- askEnv
+    vp <- askScopes
     ((RsyncFetchResult (z, vs), stderr'), elapsed) <- 
                     timedMS $ runWorker 
                                 logger
@@ -108,7 +110,6 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
         Right r -> do 
             logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr' elapsed            
             pure r
-
     
 
 -- | Download one file using rsync
@@ -188,37 +189,36 @@ loadRsyncRepository :: Storage s =>
                     -> DB.RpkiObjectStore s 
                     -> ValidatorT IO ()
 loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectStore =    
-    void $ bracketChanClosable 
-        -- it makes sense to run slightly more tasks because they 
-        -- will spend some time waiting for the file IO to finish.
-        (2 * cpuParallelism)
-        traverseFS
-        saveObjects
-        (cancelTask . snd)        
-  where    
-    threads = cpuBottleneck appBottlenecks
+    txFoldPipeline 
+            cpuParallelism
+            traverseFS
+            (DB.rwAppTx objectStore)
+            saveStorable   
+  where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
 
-    traverseFS queue = 
+    traverseFS = 
         mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
-            traverseDirectory queue rootPath
+            traverseDirectory rootPath
 
-    traverseDirectory queue currentPath = do
+    traverseDirectory currentPath = do
         names <- liftIO $ getDirectoryContents currentPath
         let properNames = filter (`notElem` [".", ".."]) names
         forM_ properNames $ \name -> do
             let path = currentPath </> name
             liftIO (doesDirectoryExist path) >>= \case
-                True  -> traverseDirectory queue path
+                True  -> traverseDirectory path
                 False -> 
                     when (supportedExtension path) $ do         
                         let uri = restoreUriFromPath repositoryUrl rootPath path
-                        task <- readAndParseObject path (RsyncU uri) `strictTask` threads                                                                      
-                        liftIO $ atomically $ writeCQueue queue (uri, task)
-      where                                
-        readAndParseObject filePath uri = 
+                        s <- askScopes                     
+                        let task = runValidatorT s (readAndParseObject path (RsyncU uri))
+                        a <- liftIO $ async $ evaluate =<< task
+                        S.yield a
+      where
+        readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
-                Left e        -> pure $! T2 uri (Right $! SError e)
+                Left e        -> pure $ CantReadFile rpkiURL filePath $ VErr e
                 Right (_, bs) -> 
                     liftIO $ roTx objectStore $ \tx -> do
                         -- Check if the object is already in the storage
@@ -226,48 +226,39 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                         let hash = U.sha256s bs  
                         exists <- DB.hashExists tx objectStore hash
                         pure $! if exists 
-                            then T2 uri (Left hash)
+                            then HashExists rpkiURL hash
                             else 
-                                case first ParseE $ readObject uri bs of
-                                    Left e -> T2 uri (Right $! SError e)
+                                case first ParseE $ readObject rpkiURL bs of
+                                    Left e  -> ObjectParsingProblem rpkiURL (VErr e)
                                     -- All these bangs here make sense because
                                     -- 
                                     -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
                                     -- force computation of the serialised object and gain some parallelism
                                     -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                    -- a slow CPU-intensive transaction (verify that it's the case)
-                                    Right ro -> T2 uri (Right $! SObject $ toStorableObject ro)
-    
-    saveObjects queue = do            
-        mapException (AppException . StorageE . StorageError . U.fmtEx) <$> 
-            DB.rwAppTx objectStore go
-      where
-        go tx = do 
-            z <- liftIO $ atomically $ readCQueue queue
-            for_ z $ \(uri, a) -> do 
-                        r <- try $ waitTask a
-                        process tx uri r
-                        go tx            
-
-        process tx rsyncURL = \case
-            Left (e :: SomeException) -> 
-                throwIO $ AppException $ UnspecifiedE (unURI $ getURL rsyncURL) (U.fmtEx e)
+                                    -- a slow CPU-intensive transaction (verify that it's the case)                                    
+                                    Right ro -> Success rpkiURL (toStorableObject ro)
             
-            Right (T2 rpkiURL (Left hash)) -> do
-                DB.linkObjectToUrl tx objectStore rpkiURL hash
 
-            Right (T2 rpkiURL (Right (SError e))) -> do
-                logErrorM logger [i|An error parsing or serialising the object #{rpkiURL}: #{e}|]
-                appWarn e
-
-            Right (T2 rpkiURL (Right (SObject so@StorableObject {..}))) -> do                        
-                alreadyThere <- DB.hashExists tx objectStore (getHash object)
-                unless alreadyThere $ do 
-                    DB.putObject tx objectStore so worldVersion                                               
-                    DB.linkObjectToUrl tx objectStore rpkiURL (getHash object)                                    
+    saveStorable tx a = do 
+        (r, vs) <- fromTry (UnspecifiedE "Something bad happened" . U.fmtEx) $ wait a                
+        embedState vs
+        case r of 
+            Left e  -> appError e
+            Right z -> case z of 
+                HashExists rpkiURL hash ->
+                    DB.linkObjectToUrl tx objectStore rpkiURL hash
+                CantReadFile rpkiUrl filePath (VErr e) -> do                    
+                    logErrorM logger [i|Cannot read file #{filePath}, error #{e} |]
+                    inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
+                ObjectParsingProblem rpkiUrl (VErr e) -> do                    
+                    logErrorM logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
+                    inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
+                Success rpkiUrl so@StorableObject {..} -> do 
+                    DB.putObject tx objectStore so worldVersion                    
+                    DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
-                                
-                    
+                other -> 
+                    logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
@@ -327,5 +318,10 @@ restoreUriFromPath url@(RsyncURL host rootPath) rsyncRoot filePath =
     case stripPrefix (splitDirectories rsyncRoot) (splitDirectories filePath) of
         Nothing   -> url
         Just diff -> RsyncURL host (rootPath <> map (RsyncPathChunk . U.convert) diff)
-
     
+data RsyncObjectProcessingResult =           
+          CantReadFile RpkiURL FilePath VIssue
+        | HashExists RpkiURL Hash
+        | ObjectParsingProblem RpkiURL VIssue
+        | Success RpkiURL (StorableObject RpkiObject)
+    deriving Show

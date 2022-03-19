@@ -86,15 +86,10 @@ fetchPPWithFallback
     repositoryProcessing@RepositoryProcessing {..}
     worldVersion
     ppAccess = do 
-        parentScope <- askEnv         
+        parentScope <- askScopes         
         frs <- liftIO $ fetchOnce parentScope ppAccess        
         setValidationStateOfFetches repositoryProcessing frs            
   where
-
-    ppSeqFetchRuns = repositoryProcessing ^. #ppSeqFetchRuns
-    indivudualFetchRuns = repositoryProcessing ^. #indivudualFetchRuns
-    publicationPoints = repositoryProcessing ^. #publicationPoints
-
     funRun runs key = Map.lookup key <$> readTVar runs            
 
     -- Use "run only once" logic for the whole list of PPs
@@ -403,7 +398,7 @@ fetchPPWithFallback1
     worldVersion
     now 
     ppAccess = do 
-        parentScope <- askEnv         
+        parentScope <- askScopes         
         -- frs <- liftIO $ fetchOnce parentScope ppAccess        
         -- setValidationStateOfFetches repositoryProcessing frs     
         pure []

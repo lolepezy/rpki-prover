@@ -275,7 +275,7 @@ validateFromTACert
         void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
         
     -- Do the tree descend, gather validation results and VRPs            
-    vp <- askEnv
+    vp <- askScopes
     T2 vrps validationState <- fromTry 
                 (\e -> UnspecifiedE (unTaName taName) (fmtEx e)) 
                 (validateCA appContext vp topDownContext taCert)
@@ -560,7 +560,7 @@ validateCaCertificate
             pure manifestResult            
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
-        vp <- askEnv
+        vp <- askScopes
         liftIO $ pooledForConcurrently
             nonCrlChildren
             $ \(T2 filename hash') -> runValidatorT vp $ do 
@@ -569,7 +569,7 @@ validateCaCertificate
                     validateMftObject ro filename validCrl                
 
     independentMftChildrenResults nonCrlChildren validCrl = do
-        vp <- askEnv
+        vp <- askScopes
         liftIO $ pooledForConcurrently
             nonCrlChildren
             $ \(T2 filename hash') -> do 
@@ -832,6 +832,3 @@ addUniqueVRPCount s = let
                 Count (fromIntegral $ uniqueVrpCount $ s ^. #vrps)
          & vrpCountLens . #perTaUnique .~
                 MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ s ^. #vrps)    
-
-totalBottleneck :: AppBottleneck -> Bottleneck
-totalBottleneck AppBottleneck {..} = cpuBottleneck <> ioBottleneck
