@@ -190,7 +190,7 @@ loadRsyncRepository :: Storage s =>
                     -> ValidatorT IO ()
 loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectStore =    
     txFoldPipeline 
-            cpuParallelism
+            (2 * cpuParallelism)
             traverseFS
             (DB.rwAppTx objectStore)
             saveStorable   
@@ -240,7 +240,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
             
 
     saveStorable tx a = do 
-        (r, vs) <- fromTry (UnspecifiedE "Something bad happened" . U.fmtEx) $ wait a                
+        (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
         embedState vs
         case r of 
             Left e  -> appError e
