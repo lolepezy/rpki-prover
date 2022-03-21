@@ -20,7 +20,6 @@ import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
-
 import           Data.Either                      (fromRight, partitionEithers)
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
@@ -34,6 +33,8 @@ import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
+
+import           UnliftIO.Async
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -56,6 +57,7 @@ import           RPKI.Time
 import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
+
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -144,7 +146,7 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
     database' <- readTVarIO database 
 
-    repositoryProcessing <- newRepositoryProcessingIO 
+    repositoryProcessing <- newRepositoryProcessingIO config
 
     validateThem database' repositoryProcessing 
         `finally` 
@@ -157,8 +159,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         mapException (AppException . storageError) $ do             
             pps <- roTx database' $ \tx -> getPublicationPoints tx database'
             atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
-        
-        rs <- inParallelUnordered (totalBottleneck appBottlenecks) tals $ \tal -> do           
+     
+        rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
             logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
@@ -273,7 +275,7 @@ validateFromTACert
         void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
         
     -- Do the tree descend, gather validation results and VRPs            
-    vp <- askEnv
+    vp <- askScopes
     T2 vrps validationState <- fromTry 
                 (\e -> UnspecifiedE (unTaName taName) (fmtEx e)) 
                 (validateCA appContext vp topDownContext taCert)
@@ -558,9 +560,8 @@ validateCaCertificate
             pure manifestResult            
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
-        vp <- askEnv
-        liftIO $ inParallelUnordered
-            (totalBottleneck appBottlenecks)
+        vp <- askScopes
+        liftIO $ pooledForConcurrently
             nonCrlChildren
             $ \(T2 filename hash') -> runValidatorT vp $ do 
                     ro <- findManifestEntryObject filename hash' 
@@ -568,9 +569,8 @@ validateCaCertificate
                     validateMftObject ro filename validCrl                
 
     independentMftChildrenResults nonCrlChildren validCrl = do
-        vp <- askEnv
-        liftIO $ inParallelUnordered
-            (totalBottleneck appBottlenecks)
+        vp <- askScopes
+        liftIO $ pooledForConcurrently
             nonCrlChildren
             $ \(T2 filename hash') -> do 
                 (r, vs) <- runValidatorT vp $ findManifestEntryObject filename hash' 
@@ -832,6 +832,3 @@ addUniqueVRPCount s = let
                 Count (fromIntegral $ uniqueVrpCount $ s ^. #vrps)
          & vrpCountLens . #perTaUnique .~
                 MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ s ^. #vrps)    
-
-totalBottleneck :: AppBottleneck -> Bottleneck
-totalBottleneck AppBottleneck {..} = cpuBottleneck <> ioBottleneck

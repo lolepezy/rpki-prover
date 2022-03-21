@@ -33,6 +33,7 @@ import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.TAL
+import           RPKI.Parallel
 import           RPKI.Util
 
 
@@ -127,7 +128,8 @@ data RepositoryProcessing = RepositoryProcessing {
         indivudualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
         indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
         ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
-        publicationPoints      :: TVar PublicationPoints        
+        publicationPoints      :: TVar PublicationPoints,
+        fetchSemaphore         :: Semaphore
     }
     deriving stock (Eq, Generic)
 
@@ -179,15 +181,17 @@ getFetchStatus (RsyncR r) = r ^. #status
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty
 
-newRepositoryProcessing :: STM RepositoryProcessing
-newRepositoryProcessing = RepositoryProcessing <$> 
+newRepositoryProcessing :: Config -> STM RepositoryProcessing
+newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
         newTVar mempty <*> 
         newTVar mempty <*>          
         newTVar mempty <*>          
-        newTVar newPPs 
+        newTVar newPPs <*>
+        createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)
 
-newRepositoryProcessingIO :: IO RepositoryProcessing
-newRepositoryProcessingIO = atomically newRepositoryProcessing
+
+newRepositoryProcessingIO :: Config -> IO RepositoryProcessing
+newRepositoryProcessingIO = atomically . newRepositoryProcessing
 
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint

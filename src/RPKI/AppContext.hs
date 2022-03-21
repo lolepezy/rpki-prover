@@ -8,21 +8,13 @@ import           GHC.Generics
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Logging
-import           RPKI.Parallel
 import           RPKI.Store.Database
-
-data AppBottleneck = AppBottleneck {
-        cpuBottleneck :: Bottleneck,
-        ioBottleneck :: Bottleneck
-    } 
-    deriving stock (Generic)
 
 data AppContext s = AppContext {
         logger               :: AppLogger, 
         config               :: Config,
         appState             :: AppState,
-        database             :: TVar (DB s),
-        appBottlenecks       :: AppBottleneck      
+        database             :: TVar (DB s)        
     } 
     deriving stock (Generic)
 
