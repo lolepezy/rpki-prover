@@ -21,6 +21,7 @@ import Data.Coerce (coerce)
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
+import RPKI.Parallel
 import RPKI.Util
 
 import Data.IORef
@@ -34,6 +35,7 @@ import Lmdb.Codec (byteString)
 import qualified Lmdb.Map as LMap
 import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
+
 
 import Pipes
 
@@ -90,7 +92,7 @@ withTransaction1 LmdbEnv {..} f = do
                 Disabled     -> retry           
                 ROEnv _      -> retry
                 RWEnv native -> pure native
-        withTransaction nEnv f
+        withSemaphore txSem $ withTransaction nEnv f
 
 
 -- | Basic storage implemented using LMDB
@@ -176,23 +178,6 @@ defaultMultiDbSettngs = makeMultiSettings
     (Lmdb.SortNative Lmdb.NativeSortLexographic) 
     (Lmdb.SortNative Lmdb.NativeSortLexographic) 
     byteString byteString
-
--- Auxialliry stuff for limiting the amount of parallel reading LMDB transactions    
-data Semaphore = Semaphore Int (TVar Int)
-
-createSemaphore :: Int -> IO Semaphore
-createSemaphore n = Semaphore n <$> newTVarIO 0
-
-withSemaphore :: Semaphore -> IO a -> IO a
-withSemaphore (Semaphore maxCounter current) f = 
-    bracket incr decrement' (const f)
-    where 
-        incr = atomically $ do 
-            c <- readTVar current
-            if c >= maxCounter 
-                then retry
-                else writeTVar current (c + 1)
-        decrement' _ = atomically $ modifyTVar' current $ \c -> c - 1
 
 
 getNativeEnv :: LmdbEnv -> STM Env 

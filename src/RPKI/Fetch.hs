@@ -49,6 +49,7 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
+import RPKI.Parallel (withSemaphore)
 
 
 data RepositoryContext = RepositoryContext {
@@ -85,18 +86,13 @@ fetchPPWithFallback :: (MonadIO m, Storage s) =>
                         -> ValidatorT m [FetchResult]
 fetchPPWithFallback 
     appContext@AppContext {..}     
-    repositoryProcessing
+    repositoryProcessing@RepositoryProcessing {..}
     worldVersion
     ppAccess = do 
-        parentScope <- askEnv         
+        parentScope <- askScopes         
         frs <- liftIO $ fetchOnce parentScope ppAccess        
         setValidationStateOfFetches repositoryProcessing frs            
   where
-
-    ppSeqFetchRuns = repositoryProcessing ^. #ppSeqFetchRuns
-    indivudualFetchRuns = repositoryProcessing ^. #indivudualFetchRuns
-    publicationPoints = repositoryProcessing ^. #publicationPoints
-
     funRun runs key = Map.lookup key <$> readTVar runs            
 
     -- Use "run only once" logic for the whole list of PPs
@@ -132,7 +128,7 @@ fetchPPWithFallback
 
     fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]
 
-    fetchWithFallback _          []   = pure []
+    fetchWithFallback _           []   = pure []
     fetchWithFallback parentScope [pp] = do 
         ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentScope pp                
         let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed     
@@ -207,7 +203,7 @@ fetchPPWithFallback
 
     -- Do fetch the publication point and update the #publicationPoints
     -- 
-    fetchPP parentScope repo = do         
+    fetchPP parentScope repo = withSemaphore fetchSemaphore $ do         
         let rpkiUrl = getRpkiURL repo
         let launchFetch = async $ do               
                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
@@ -417,7 +413,7 @@ fetchWithFallback1
     now 
     ppAccess 
     fetchPP = do 
-        parentScope <- askEnv
+        parentScope <- askScopes
         frs <- liftIO $ maybe (pure []) stepSeq $ 
                     fetchSeq $ 
                     map getRpkiURL $ NonEmpty.toList $ 
@@ -431,6 +427,58 @@ fetchWithFallback1
     fetchSeq (u : urls) = Just $ case u of
         RrdpU rrdpUrl   -> rrdpFetchSeq rrdpUrl urls              
         RsyncU rsyncUrl -> rsyncFetchSeq rsyncUrl urls       
+
+--     -- treeLocked rrdpUrl rsyncFetchTree action = do 
+--     --     z <- readTVar rsyncFetchTree
+
+--     --     case Map.lookup rrdpUrl z of 
+--     --         Just Stub         -> retry
+--     --         Just (Fetching a) -> pure $ wait a
+--     --         Nothing -> do                                         
+--     --                 modifyTVar' fetchFetchMap $ Map.insert rrdpUrl Stub
+--     --                 pure $ action rrdpUrl            
+
+--     fetchPP parentScope repo = do         
+--         let rpkiUrl = getRpkiURL repo
+--         let launchFetch = async $ do               
+--                 let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
+--                 (r, validations) <- runValidatorT repoScope $ fetchRepository appContext worldVersion repo                                
+--                 atomically $ do
+--                     modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
+
+--                     let (newRepo, newStatus) = case r of                             
+--                             Left _      -> (repo, FailedAt $ unNow now)
+--                             Right repo' -> (repo', FetchedAt $ unNow now)
+
+--                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
+--                             adjustSucceededUrl rpkiUrl 
+--                                     $ updateStatuses (pps ^. typed @PublicationPoints) 
+--                                         [(newRepo, newStatus)]                
+--                 pure (r, validations)
+
+--         bracketOnError 
+--             launchFetch 
+--             (stopAndDrop indivudualFetchRuns rpkiUrl) 
+--             (rememberAndWait indivudualFetchRuns rpkiUrl) 
+    
+--     stopAndDrop stubs key a = liftIO $ do         
+--         atomically $ modifyTVar' stubs $ Map.delete key
+--         cancel a
+
+--     rememberAndWait stubs key a = liftIO $ do 
+--         atomically $ modifyTVar' stubs $ Map.insert key (Fetching a)
+--         wait a
+
+--     needsAFetch pp = do 
+--         pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+--         let asIfMerged = mergePP pp pps
+--         let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
+--         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now
+--         pure (needsFetching', repo)
+
+    fetchPP :: Repository -> IO Fetched
+    fetchPP repo = do
+        pure (Right repo, mempty)
 
     mapLocked :: RrdpURL 
             -> TVar (Map RrdpURL (FetchTask b)) 

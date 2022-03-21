@@ -24,9 +24,9 @@ import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
 data Parallelism = Parallelism {
-        cpuCount :: Natural,
-        cpuParallelism :: Natural,
-        ioParallelism :: Natural
+        cpuCount         :: Natural,
+        cpuParallelism   :: Natural,
+        fetchParallelism :: Natural
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -57,9 +57,9 @@ data Config = Config {
 
 data RsyncConf = RsyncConf {
         rsyncClientPath :: Maybe FilePath,
-        rsyncRoot    :: FilePath,
-        rsyncTimeout :: Seconds,
-        enabled     :: Bool
+        rsyncRoot       :: FilePath,
+        rsyncTimeout    :: Seconds,
+        enabled         :: Bool
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -143,7 +143,7 @@ setCpuCount = setNumCapabilities . fromIntegral
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
 makeParallelism :: Natural -> Parallelism
-makeParallelism cpus = Parallelism cpus (2 * cpus) 64
+makeParallelism cpus = Parallelism cpus (2 * cpus) (3 * cpus)
 
 defaultConfig :: Config
 defaultConfig = Config {    
