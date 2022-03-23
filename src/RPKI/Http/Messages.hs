@@ -156,6 +156,9 @@ toValidationMessage = \case
           [i|Signature algorithm on the EE certificate is #{sigEE} but the CSM attributes says #{sigAttr}.|]
 
       TACertAKIIsNotEmpty u -> [i|TA certificate #{u} has an AKI.|]
+      TACertOlderThanPrevious {..} -> 
+          [i|New TA certificate has validity period of #{before}-#{after}, previous one has #{prevBefore}-#{prevAfter}. |] <>
+          [i|Will use previous TA certificate. NOTE: this means something really bad happened to the TA, consider stop using it at all.|]
 
       CertNoPolicyExtension -> [i|Certificate has no policy extension.|]
           

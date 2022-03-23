@@ -139,7 +139,10 @@ pureWarning warning = do
     modify' (typed %~ (mWarning validationScope warning <>))
 
 vPureError :: ValidationError -> PureValidatorT r
-vPureError e = pureError $ ValidationE e    
+vPureError = pureError . ValidationE
+
+vPureWarning :: ValidationError -> PureValidatorT r
+vPureWarning e = pureError $ ValidationE e    
 
 pureError :: AppError -> PureValidatorT r
 pureError e = do
