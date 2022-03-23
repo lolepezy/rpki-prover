@@ -27,6 +27,8 @@ import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 
+import Data.Hourglass
+
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -121,8 +123,7 @@ rsyncRpkiObject :: AppContext s ->
 rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile rsyncRoot uri
-    let validationConfig = config ^. typed @Config . typed @ValidationConfig
-    let rsync = rsyncProcess validationConfig uri destination RsyncOneFile
+    let rsync = rsyncProcess config uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
         ExitFailure errorCode -> do
@@ -152,10 +153,9 @@ updateObjectForRsyncRepository
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
-        let validationConfig = config ^. typed @Config . typed @ValidationConfig
         objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
-        let rsync = rsyncProcess validationConfig uri destination RsyncDirectory
+        let rsync = rsyncProcess config uri destination RsyncDirectory
             
         logDebugM logger [i|Runnning #{U.trimmed rsync}|]
         (exitCode, out, err) <- fromTry 
@@ -262,15 +262,17 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
-rsyncProcess :: ValidationConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
-rsyncProcess vc rsyncURL destination rsyncMode = 
+rsyncProcess :: Config -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
+rsyncProcess Config {..} rsyncURL destination rsyncMode = 
     proc "rsync" $ 
-        [ "--timeout=300",  "--update",  "--times" ] <> 
-        [ "--max-size=" <> show (vc ^. #maxObjectSize) ] <> 
-        [ "--min-size=" <> show (vc ^. #minObjectSize) ] <> 
+        [ "--update",  "--times" ] <> 
+        [ "--timeout=" <> show timeout' ] <>         
+        [ "--max-size=" <> show (validationConfig ^. #maxObjectSize) ] <> 
+        [ "--min-size=" <> show (validationConfig ^. #minObjectSize) ] <> 
         extraOptions <> 
         [ sourceUrl, destination ]
     where 
+        Seconds timeout' = rsyncConf ^. #rsyncTimeout
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])
