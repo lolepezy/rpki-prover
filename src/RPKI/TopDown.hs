@@ -228,24 +228,27 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     taStore  <- taStore <$> liftIO (readTVarIO database)
     taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore (getTaName tal)
     case taByName of
-        Nothing -> fetchValidateAndStore taStore now
+        Nothing -> fetchValidateAndStore taStore now Nothing
         Just StorableTA { taCert, initialRepositories, fetchStatus = fs }
             | needsFetching (getTaCertURL tal) fs validationConfig now ->
-                fetchValidateAndStore taStore now
+                fetchValidateAndStore taStore now (Just taCert)
             | otherwise -> do
                 logInfoM logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
-  where   
-
-    fetchValidateAndStore taStore (Now moment) = do 
+  where
+    fetchValidateAndStore taStore (Now moment) previousCert = do 
         (uri', ro) <- fetchTACertificate appContext tal
         cert       <- vHoist $ validateTACert tal uri' ro            
-        case publicationPointsFromTAL tal cert of
-            Left e      -> appError $ ValidationE e
+        -- Check for replay attacks
+        actualCert <- case previousCert of 
+                        Nothing       -> pure cert
+                        Just previous -> vHoist $ validateTACertWithPreviousCert cert previous
+        case publicationPointsFromTAL tal actualCert of
+            Left e         -> appError $ ValidationE e
             Right ppAccess -> 
                 rwAppTxEx taStore storageError $ \tx -> do 
-                    putTA tx taStore (StorableTA tal cert (FetchedAt moment) ppAccess)
-                    pure (locatedTaCert uri' cert, ppAccess, Updated)
+                    putTA tx taStore (StorableTA tal actualCert (FetchedAt moment) ppAccess)
+                    pure (locatedTaCert uri' actualCert, ppAccess, Updated)
             
     locatedTaCert url cert = Located (toLocations url) cert
 

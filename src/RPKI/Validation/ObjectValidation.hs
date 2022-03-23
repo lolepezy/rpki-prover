@@ -182,6 +182,22 @@ validateTACert tal u (CerRO taCert) = do
       
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
+-- | Compare new certificate and the previous one
+-- If validaity period of the new certificate is somehow earlier than 
+-- the one of the previoius certificate, emit a warning and use
+-- the previous certificate.
+--
+validateTACertWithPreviousCert :: CerObject -> CerObject -> PureValidatorT CerObject
+validateTACertWithPreviousCert cert previousCert = do
+    let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
+    let (before, after) = validities cert
+    let (prevBefore, prevAfter) = validities previousCert
+    if before < prevBefore || after < prevAfter 
+        then do
+            vPureWarning $ TACertOlderThanPrevious {..}
+            pure previousCert 
+        else 
+            pure cert
 
 -- | In general, resource certifcate validation is:
 --
