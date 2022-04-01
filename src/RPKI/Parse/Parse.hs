@@ -37,7 +37,7 @@ supportedExtension filename =
         in dot == '.' && isSupportedExtension ext
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
-isSupportedExtension s = s `elem` ["cer", "mft", "crl", "roa", "gbr"]
+isSupportedExtension s = s `elem` ["cer", "mft", "crl", "roa", "gbr", ".sig"]
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename

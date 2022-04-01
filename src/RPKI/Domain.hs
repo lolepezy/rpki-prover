@@ -221,6 +221,7 @@ data CMSBasedObject a = CMSBasedObject {
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
+type RscObject = CMSBasedObject RCS
 
 data EECerObject = EECerObject {
         ski         :: {-# UNPACK #-} SKI,
@@ -359,6 +360,11 @@ data Gbr = Gbr BSS.ShortByteString
     deriving anyclass Serialise
 
 
+data RCS = RCS {        
+
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 -- | Types for the signed object template 
 -- https://tools.ietf.org/html/rfc5652
