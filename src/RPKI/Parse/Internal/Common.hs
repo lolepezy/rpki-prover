@@ -58,13 +58,16 @@ id_subjectKeyId   = [2, 5, 29, 14]
 id_authorityKeyId = [2, 5, 29, 35]
 id_crlNumber      = [2, 5, 29, 20]
 
-id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime, id_sha256 :: OID
+id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
+id_sha256, id_ct_signedChecklist :: OID
+
 id_pkcs9              = [1, 2, 840, 113549, 1, 9]
 id_contentType        = id_pkcs9 <> [3]
 id_messageDigest      = id_pkcs9 <> [4]
 id_signingTime        = id_pkcs9 <> [5]
 id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
-
+id_ct_signedChecklist = id_pkcs9 <> [16, 1, 48]
+                        
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 
 id_ce_CRLDistributionPoints, id_ce_certificatePolicies, id_ce_basicConstraints ::OID 
@@ -127,11 +130,18 @@ getBitString f m = getNext >>= \case
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
 getAddressFamily m = getNext >>= \case 
     (OctetString familyType) -> 
-        case BS.take 2 familyType of 
-            "\NUL\SOH" -> pure $ Right Ipv4F
-            "\NUL\STX" -> pure $ Right Ipv6F
-            af         -> pure $ Left af 
+        pure $ case BS.take 2 familyType of 
+            "\NUL\SOH" -> Right Ipv4F
+            "\NUL\STX" -> Right Ipv6F
+            af         -> Left af 
     a              -> parseError m a      
+
+getDigest :: ParseASN1 (Maybe OID)
+getDigest = 
+    getNext >>= \case
+        OID oid -> pure $ Just oid
+        Null    -> pure Nothing
+        s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s
 
 -- Certificate utilities
 extVal :: [ExtensionRaw] -> OID -> Maybe BS.ByteString
@@ -144,11 +154,12 @@ getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
 getExtsSign = getExts . cwsX509certificate
 
 parseKI :: BS.ByteString -> ParseResult KI
-parseKI bs = case decodeASN1' BER bs of
-    Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
-    Right [OctetString bytes] -> makeKI bytes
-    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
-    Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
+parseKI bs = 
+    case decodeASN1' BER bs of
+        Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
+        Right [OctetString bytes] -> makeKI bytes
+        Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
+        Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
   where
     makeKI bytes = 
         let len = BS.length bytes

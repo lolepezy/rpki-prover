@@ -254,8 +254,8 @@ validateResources
     (getRC -> ResourceCertificate parentCert) =
         validateChildParentResources
             validationRFC
-            (withRFC cert resources)
-            (withRFC parentCert resources)
+            (withRFC cert (^. typed))
+            (withRFC parentCert (^. typed))
             verifiedResources
       where
         validationRFC = forRFC cert (const Strict_) (const Reconsidered_)

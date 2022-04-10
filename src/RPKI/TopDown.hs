@@ -44,7 +44,6 @@ import           RPKI.Domain
 import           RPKI.Fetch
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Resources.Resources
@@ -116,7 +115,7 @@ newRepositoryContext publicationPoints = let
 
 createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
-    VerifiedRS $ toPrefixesAndAsns $ withRFC certificate resources
+    VerifiedRS $ toPrefixesAndAsns $ withRFC certificate (^. typed)
 
 
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited

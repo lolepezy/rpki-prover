@@ -42,7 +42,7 @@ toResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, 
 toResourceCert cert = do  
     let exts = getExtsSign cert
     case extVal exts id_subjectKeyId of 
-        Just s  -> do
+        Just s -> do
             rc <- parseResources cert    
             ki <- parseKI s
             aki' <- case extVal exts id_authorityKeyId of
@@ -59,14 +59,14 @@ parseResources x509cert = do
           ext' id_pe_ipAddrBlocks_v2,
           ext' id_pe_autonomousSysIds,
           ext' id_pe_autonomousSysIds_v2) 
-        of
-        (Just _, Just _, _, _)   -> broken "Both IP extensions"
-        (_, _, Just _, Just _)   -> broken "Both ASN extensions"
-        (Just _, _, _, Just _)   -> broken "There is both IP V1 and ASN V2 extensions"
-        (_, Just _, Just _, _)   -> broken "There is both IP V2 and ASN V1 extensions"
+      of
+        (Just _, Just _, _, _) -> broken "Both IP extensions"
+        (_, _, Just _, Just _) -> broken "Both ASN extensions"
+        (Just _, _, _, Just _) -> broken "There is both IP V1 and ASN V2 extensions"
+        (_, Just _, Just _, _) -> broken "There is both IP V2 and ASN V1 extensions"
         (ips, Nothing, asns, Nothing) -> strictCert <$> cert' x509cert ips asns
         (Nothing, ips, Nothing, asns) -> reconsideredCert <$> cert' x509cert ips asns
-  where
+  where 
     broken = Left . fmtErr    
     cert' x509c ips asns = do 
         ips'  <- maybe (pure emptyIpResources) (parseR parseIpExt) ips

@@ -11,10 +11,10 @@ import           RPKI.Logging
 import           RPKI.Store.Database
 
 data AppContext s = AppContext {
-        logger               :: AppLogger, 
-        config               :: Config,
-        appState             :: AppState,
-        database             :: TVar (DB s)        
+        logger   :: AppLogger, 
+        config   :: Config,
+        appState :: AppState,
+        database :: TVar (DB s)        
     } 
     deriving stock (Generic)
 

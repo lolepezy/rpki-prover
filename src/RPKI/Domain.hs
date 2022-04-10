@@ -361,7 +361,8 @@ data Gbr = Gbr BSS.ShortByteString
 
 
 data RCS = RCS {        
-
+        resources :: AllResources,
+        checkList :: [T2 (Maybe Text) Hash]
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
