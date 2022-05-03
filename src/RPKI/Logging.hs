@@ -11,8 +11,12 @@ import Colog
 
 import Data.Text (Text)
 
-import Control.Monad (when)
+import Control.Monad
 import Control.Monad.IO.Class
+import Control.Concurrent.Async
+import Control.Concurrent.STM
+
+import qualified Control.Concurrent.STM.TBQueue  as Q
 
 import GHC.Generics (Generic)
 
@@ -63,10 +67,10 @@ logDebugM logger t = liftIO $ logDebug_ logger t
 
 
 withMainAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withMainAppLogger logLevel f = withLogger logLevel (stdout, logTextStdout) f  
+withMainAppLogger logLevel = withLogger logLevel (stdout, logTextStdout)
 
 withWorkerLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
-withWorkerLogger logLevel f = withLogger logLevel (stderr, logTextStderr) f  
+withWorkerLogger logLevel = withLogger logLevel (stderr, logTextStderr)
 
 withLogger :: LogLevel -> (Handle, LogAction IO Text) -> (AppLogger -> LoggerT Text IO a) -> IO a
 withLogger logLevel (stream, streamLogger) f = do     
@@ -77,9 +81,23 @@ withLogger logLevel (stream, streamLogger) f = do
         (\logg -> usingLoggerT logg $ f $ AppLogger logLevel (fullMessageAction logg))
   where
     fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
-        cmapM (\msg -> fmtRichMessageCustomDefault msg formatRichMessage) logg    
+        cmapM (`fmtRichMessageCustomDefault` formatRichMessage) logg    
         
     formatRichMessage _ (maybe "" showTime -> time) Msg{..} =
         showSeverity msgSeverity
         <> time            
         <> msgText           
+
+
+data LogMessage1 = LogMessage1 LogLevel Text
+
+newtype Logger1 = Logger1 (TBQueue LogMessage1)
+
+withLogger_ f = do 
+    q <- Q.newTBQueueIO 1000
+    withAsync (logForever q) $ \_ -> f (Logger1 q)          
+    where
+        logForever q = forever $ do
+            z <- atomically $ Q.readTBQueue q
+
+            pure ()
