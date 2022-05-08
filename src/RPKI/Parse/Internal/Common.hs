@@ -4,11 +4,16 @@
 module RPKI.Parse.Internal.Common where
 
 import Data.Bifunctor
+import Control.Applicative
 import Control.Monad
+
+import Data.Bits
 
 import qualified Data.ByteString as BS  
 import qualified Data.Text as Text  
 import Data.Text.Encoding (decodeUtf8)
+
+import qualified Data.List as List
 
 import Data.Char (chr)
 import Data.Maybe
@@ -25,6 +30,9 @@ import Data.X509 as X509
 import RPKI.Resources.Types
 import RPKI.Domain
 import RPKI.Reporting (ParseError(..))
+
+import           RPKI.Resources.Resources   as R
+import qualified RPKI.Util                  as U
 
 type ParseResult a = Either (ParseError Text.Text) a
 
@@ -227,3 +235,139 @@ getCrlDistributionPoint c = do
 
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just
+
+
+{-
+  Parse IP address extension.
+
+  https://tools.ietf.org/html/rfc3779#section-2.2.3
+
+   IPAddrBlocks        ::= SEQUENCE OF IPAddressFamily
+
+   IPAddressFamily     ::= SEQUENCE {    -- AFI & optional SAFI --
+      addressFamily        OCTET STRING (SIZE (2..3)),
+      ipAddressChoice      IPAddressChoice }
+
+   IPAddressChoice     ::= CHOICE {
+      inherit              NULL, -- inherit from issuer --
+      addressesOrRanges    SEQUENCE OF IPAddressOrRange }
+
+   IPAddressOrRange    ::= CHOICE {
+      addressPrefix        IPAddress,
+      addressRange         IPAddressRange }
+
+   IPAddressRange      ::= SEQUENCE {
+      min                  IPAddress,
+      max                  IPAddress }
+
+   IPAddress           ::= BIT STRING
+-}
+parseIpExt' :: ParseASN1 IpResources
+parseIpExt' = do
+    afs <- getMany addrFamily    
+    pure $ IpResources $ IpResourceSet
+      (rs [ af | Left  af <- afs ]) 
+      (rs [ af | Right af <- afs ])
+  where
+    rs []       = R.emptyRS
+    rs (af : _) = af
+    addrFamily = onNextContainer Sequence $
+        getAddressFamily "Expected an address family here" >>= \case
+            Right Ipv4F -> Left  <$> ipResourceSet ipv4Address
+            Right Ipv6F -> Right <$> ipResourceSet ipv6Address
+            Left af     -> throwParseError $ "Unsupported address family " <> show af
+      where
+        ipResourceSet address =
+            getNull_ (pure Inherit) <|>
+            onNextContainer Sequence (R.toRS . mconcat <$> getMany address)
+
+
+ipv4Address :: ParseASN1 [Ipv4Prefix]
+ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
+
+ipv6Address :: ParseASN1 [Ipv6Prefix]
+ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
+
+makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
+makeOneIP bs nz = [make bs (fromIntegral nz)]
+
+ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
+    getNextContainerMaybe Sequence >>= \case
+        Nothing -> getNext >>= \case
+            (BitString (BitArray nzBits bs)) -> do
+                -- throwParseError $ "asns = " <> show bs
+                pure $ makePrefix bs nzBits
+            s -> throwParseError ("Unexpected prefix representation: " <> show s)
+        Just [
+            BitString (BitArray _       bs1),
+            BitString (BitArray nzBits2 bs2)
+            ] ->
+                let w1 = wToAddr $ BS.unpack bs1
+                    w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
+                        (fromIntegral nzBits2) fullLength
+                in pure $ rangeToPrefixes w1 w2
+
+        s -> throwParseError $ "Unexpected address representation: " <> show s
+
+--
+-- Set all the bits to `1` starting from `setBitsNum`
+-- `allBitsNum` is the total number of bits.
+--
+setLowerBitsToOne ws setBitsNum allBitsNum =
+    R.rightPad (allBitsNum `div` 8) 0xFF $
+        List.zipWith setBits ws (map (*8) [0..])
+    where
+        setBits w8 i | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
+                        | i < setBitsNum = w8
+                        | otherwise = 0xFF
+        extra lastBitsNum =
+            List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum - 1]
+
+
+parseIpExt :: [ASN1] -> ParseResult IpResources
+parseIpExt asns = mapParseErr $ runParseASN1 
+        (onNextContainer Sequence parseIpExt') asns
+
+
+{-
+  https://tools.ietf.org/html/rfc3779#section-3.2.3
+
+  id-pe-autonomousSysIds  OBJECT IDENTIFIER ::= { id-pe 8 }
+
+   ASIdentifiers       ::= SEQUENCE {
+       asnum               [0] EXPLICIT ASIdentifierChoice OPTIONAL,
+       rdi                 [1] EXPLICIT ASIdentifierChoice OPTIONAL}
+
+   ASIdentifierChoice  ::= CHOICE {
+      inherit              NULL, -- inherit from issuer --
+      asIdsOrRanges        SEQUENCE OF ASIdOrRange }
+
+   ASIdOrRange         ::= CHOICE {
+       id                  ASId,
+       range               ASRange }
+   ASRange             ::= SEQUENCE {
+       min                 ASId,
+       max                 ASId }
+
+   ASId                ::= INTEGER
+-}
+parseAsnExt :: [ASN1] -> ParseResult AsResources
+parseAsnExt asnBlocks = mapParseErr $ runParseASN1 
+        (onNextContainer Sequence parseAsnExt') asnBlocks 
+  where
+    parseAsnExt' = do     
+      -- we only want the first element of the sequence
+      AsResources <$> onNextContainer (Container Context 0)
+          (getNull_ (pure Inherit) <|>
+           R.toRS <$> onNextContainer Sequence (getMany asOrRange))
+
+asOrRange :: ParseASN1 AsResource
+asOrRange = 
+    getNextContainerMaybe Sequence >>= \case
+        Nothing -> getNext >>= \case
+            IntVal asn -> pure $ AS $ as' asn
+            something  -> throwParseError $ "Unknown ASN specification " <> show something
+        Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
+        Just something -> throwParseError $ "Unknown ASN specification " <> show something
+  where
+    as' = ASN . fromInteger

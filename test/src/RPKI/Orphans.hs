@@ -219,6 +219,10 @@ instance Arbitrary Gbr where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RSC where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink

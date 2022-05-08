@@ -451,6 +451,7 @@ replaceAKI a = \case
     MftRO c -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c -> RoaRO $ c & #cmsPayload %~ mapCms
     GbrRO c -> GbrRO $ c & #cmsPayload %~ mapCms
+    RscRO c -> RscRO $ c & #cmsPayload %~ mapCms
     where
         mapCms :: CMS a -> CMS a
         mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a

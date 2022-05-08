@@ -257,8 +257,8 @@ validateResources
             (withRFC cert (^. typed))
             (withRFC parentCert (^. typed))
             verifiedResources
-      where
-        validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
+  where
+    validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
@@ -272,8 +272,8 @@ validateCrl now crlObject parentCert = do
     void $ validateThisUpdate now thisUpdateTime
     void $ validateNextUpdate now nextUpdateTime    
     pure $ Validated crlObject
-    where
-        SignCRL {..} = signCrl crlObject
+  where
+    SignCRL {..} = signCrl crlObject
 
 validateMft ::
   (WithResourceCertificate c, WithSKI c) =>

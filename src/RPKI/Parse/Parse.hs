@@ -8,6 +8,7 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.ROA,
     module RPKI.Parse.Internal.SignedObject,
     module RPKI.Parse.Internal.GBR,
+    module RPKI.Parse.Internal.RSC,
     readObject,
     supportedExtension,
     isSupportedExtension
@@ -27,6 +28,7 @@ import           RPKI.Parse.Internal.CRL
 import           RPKI.Parse.Internal.MFT
 import           RPKI.Parse.Internal.ROA
 import           RPKI.Parse.Internal.GBR
+import           RPKI.Parse.Internal.RSC
 import           RPKI.Parse.Internal.SignedObject
 
 -- | 
@@ -51,6 +53,7 @@ readObject objectURL content = do
         ".roa" -> parse_ parseRoa RoaRO content                    
         ".crl" -> parse_ parseCrl CrlRO content            
         ".gbr" -> parse_ parseGbr GbrRO content            
+        ".sig" -> parse_ parseRSC RscRO content            
         _      -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
             parse_ parse constructor bs = 
