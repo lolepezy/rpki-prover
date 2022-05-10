@@ -363,8 +363,9 @@ data Gbr = Gbr BSS.ShortByteString
 
 
 data RSC = RSC {        
-        rscResources :: PrefixesAndAsns,        
-        checkList    :: [T2 (Maybe Text) Hash]
+        rscResources    :: PrefixesAndAsns,        
+        checkList       :: [T2 (Maybe Text) Hash],
+        digestAlgorithm :: DigestAlgorithmIdentifier
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -462,6 +463,10 @@ newtype CMSVersion = CMSVersion Int
     deriving anyclass Serialise
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

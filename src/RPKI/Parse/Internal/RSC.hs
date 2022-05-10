@@ -12,7 +12,6 @@ import Data.ASN1.BinaryEncoding
 import Data.ASN1.Parse
 
 import Data.Bifunctor
-import Data.String.Interpolate.IsString
 
 import Data.Tuple.Strict
 
@@ -22,7 +21,6 @@ import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
 import RPKI.Util
-import RPKI.Resources.Resources as R
 import RPKI.Resources.IntervalSet as IS
 import Data.Either
 
@@ -38,10 +36,13 @@ parseRSC bs = do
   where     
     parseRsc' = onNextContainer Sequence $ do        
         ((v4, v6), asn) <- parseResourceSet        
-        digestAlgorithm <- onNextContainer Sequence getDigest
-        checkList       <- parseCheckList
-        let rscResources = PrefixesAndAsns v4 v6 asn
-        pure RSC {..}
+        da <- onNextContainer Sequence getDigest
+        case da of 
+            Nothing -> throwParseError "Undefined digest algorithm."
+            Just (DigestAlgorithmIdentifier -> digestAlgorithm) -> do             
+                checkList <- parseCheckList
+                let rscResources = PrefixesAndAsns v4 v6 asn        
+                pure RSC {..}
 
     parseResourceSet = 
         onNextContainer Sequence $ do

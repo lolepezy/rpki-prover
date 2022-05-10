@@ -213,6 +213,7 @@ instance ToJSON SignatureValue
 instance ToJSON SignatureAlgorithmIdentifier
 instance ToJSON SignedAttributes
 instance ToJSON Attribute
+instance ToJSON DigestAlgorithmIdentifier
 instance ToJSON DigestAlgorithmIdentifiers
 instance ToJSON CMSVersion
 

@@ -340,6 +340,10 @@ instance Arbitrary CMSVersion where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary DigestAlgorithmIdentifier where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary DigestAlgorithmIdentifiers where
     arbitrary = genericArbitrary
     shrink = genericShrink

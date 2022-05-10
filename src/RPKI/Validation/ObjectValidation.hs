@@ -344,6 +344,21 @@ validateGbr now gbr parentCert crl verifiedResources = do
                 Right _ -> pure ()
     pure $ Validated gbr
 
+validateRSC ::
+    (WithResourceCertificate c, WithSKI c) =>
+    Now ->
+    RscObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated RscObject)
+validateRSC now rsc parentCert crl verifiedResources = do
+    void $
+        validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \gbrCms -> do
+            
+            pure ()
+    pure $ Validated rsc
+
 
 validateCms ::
     (WithResourceCertificate c, WithSKI c) =>

@@ -15,6 +15,7 @@ import Data.Text.Encoding (decodeUtf8)
 
 import qualified Data.List as List
 
+import Data.Word
 import Data.Char (chr)
 import Data.Maybe
 
@@ -32,7 +33,6 @@ import RPKI.Domain
 import RPKI.Reporting (ParseError(..))
 
 import           RPKI.Resources.Resources   as R
-import qualified RPKI.Util                  as U
 
 type ParseResult a = Either (ParseError Text.Text) a
 
@@ -291,6 +291,11 @@ ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
 makeOneIP bs nz = [make bs (fromIntegral nz)]
 
+ipvVxAddress :: ([Word8] -> t)
+            -> Int
+            -> (BS.ByteString -> Word64 -> b)
+            -> (t -> t -> b)
+            -> ParseASN1 b
 ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
     getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
@@ -313,6 +318,7 @@ ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
 -- Set all the bits to `1` starting from `setBitsNum`
 -- `allBitsNum` is the total number of bits.
 --
+setLowerBitsToOne :: (Bits a, Num a) => [a] -> Int -> Int -> [a]
 setLowerBitsToOne ws setBitsNum allBitsNum =
     R.rightPad (allBitsNum `div` 8) 0xFF $
         List.zipWith setBits ws (map (*8) [0..])
