@@ -69,9 +69,22 @@ validateChildParentResources validationRFC childResources parentResources verifi
     AllResources childIpv4s childIpv6s childAsns = childResources
     AllResources parentIpv4s parentIpv6s parentAsns = parentResources
 
-    overclaimed (Left _) = IS.empty
-    overclaimed (Right (_, Overclaiming o)) = o
+overclaimed :: Either a (b, Overclaiming (IntervalSet c)) -> IntervalSet c
+overclaimed (Left _) = IS.empty
+overclaimed (Right (_, Overclaiming o)) = o
 
-    nested (Left (Nested n)) = n
-    nested (Right (Nested n, _)) = n
+nested :: Either (Nested p) (Nested p, b) -> p
+nested (Left (Nested n)) = n
+nested (Right (Nested n, _)) = n
+
+
+validateNested :: PrefixesAndAsns -> PrefixesAndAsns -> PureValidatorT ()
+validateNested (PrefixesAndAsns i4 i6 ia) (PrefixesAndAsns o4 o6 oa) = do 
+    let i4c = IS.subsetCheck i4 o4
+    let i6c = IS.subsetCheck i6 o6
+    let ac  = IS.subsetCheck ia oa
+    case (i4c, i6c, ac) of
+        (Left (Nested _), Left (Nested _), Left (Nested _)) -> pure ()
+        _ -> vPureError $ OverclaimedResources $ 
+          PrefixesAndAsns (overclaimed i4c) (overclaimed i6c) (overclaimed ac)
 
