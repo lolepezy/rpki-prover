@@ -26,6 +26,7 @@ import qualified Data.ByteString.Lazy as LBS
 import           Data.String
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
+import           Data.Conduit.Process.Typed
 
 import           GHC.Generics
 
@@ -255,3 +256,72 @@ workerLogMessage workerId stderr elapsed =
 
 worderIdS :: WorkerId -> String
 worderIdS (WorkerId w) = unpack w
+
+
+
+
+runWorker1 :: (Serialise r, Show r) => 
+            AppLogger 
+            -> Config            
+            -> WorkerId
+            -> WorkerParams                             
+            -> Timebox
+            -> [String] 
+            -> ValidatorT IO (r, LBS.ByteString)  
+runWorker1 logger config workerId params timeout extraCli = do  
+    thisProcessId <- liftIO getProcessID
+
+    let binaryToRun = config ^. #programBinaryPath    
+    let workerStdin = serialise $ WorkerInput params config thisProcessId timeout
+    let worker = 
+            setStdin (byteStringInput workerStdin) $             
+                proc binaryToRun $ [ "--worker" ] <> extraCli
+
+    logDebugM logger [i|Running worker: #{trimmed worker}|]    
+
+    runIt worker `catches` [                    
+            Handler $ \e@(SomeAsyncException _) -> throwIO e,
+            Handler $ \(_ :: IOException)       -> complain [i|Worker #{workerId} died/killed.|],
+            Handler $ \e@(SomeException _)      -> complain [i|Worker #{workerId} died in a strange way: #{fmtEx e}|]       
+        ] 
+  where    
+    runIt worker = do   
+        (exitCode, workerStdout, workerStderr) <- liftIO $ readProcess worker                                
+        case exitCode of  
+            exit@(ExitFailure errorCode)
+                | exit == exitTimeout -> do                     
+                    let message = [i|Worker #{workerId} execution timed out, stderr = [#{textual workerStderr}]|]
+                    logErrorM logger message
+                    appError $ InternalE $ WorkerTimeout message
+                | exit == exitOutOfMemory -> do                     
+                    let message = [i|Worker #{workerId} ran out of memory, stderr = [#{textual workerStderr}]|]
+                    logErrorM logger message
+                    appError $ InternalE $ WorkerOutOfMemory message
+                | exit == exitKillByTypedProcess -> do
+                    -- 
+                    -- This is a hack to work around a problem in `readProcess`:
+                    -- it apparently catches an async exception, kills the process (with some signal?)
+                    -- but doesn't rethrow the exception, so all we have is the worker that exited 
+                    -- with error code '-2'.
+                    --
+                    -- TODO try to find a way to fix with `typed-process` features.
+                    -- TODO Otherwise make sure it's safe to assume it's always '-2'.
+                    -- 
+                    -- This logging message is slightly deceiving: it's not that just the worker 
+                    -- was killed, but we also know that there was an asynchronous exception, which 
+                    -- we retrow here to make sure "outer threads" know about it.
+                    --
+                    logErrorM logger [i|Worker #{workerId} died/killed.|]
+                    throwIO AsyncCancelled                    
+                | otherwise ->     
+                    complain [i|Worker #{workerId} exited with code = #{errorCode}, stderr = [#{textual workerStderr}]|]
+            ExitSuccess -> 
+                case deserialiseOrFail workerStdout of 
+                    Left e -> 
+                        complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
+                    Right r -> 
+                        pure (r, workerStderr)
+
+    complain message = do 
+        logErrorM logger message
+        appError $ InternalE $ InternalError message

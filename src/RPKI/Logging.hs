@@ -101,3 +101,7 @@ withLogger_ f = do
             z <- atomically $ Q.readTBQueue q
 
             pure ()
+
+data RealLogger = RealLogger
+
+instance Logger RealLogger where
