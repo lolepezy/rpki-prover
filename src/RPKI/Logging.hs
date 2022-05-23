@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE QuasiQuotes        #-}
 
 module RPKI.Logging where
 
@@ -15,8 +16,11 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Char8 as C8
 
 import Data.Bifunctor
+import Data.Foldable
 import Data.Traversable
 import Data.Text (Text)
+
+import Data.String.Interpolate.IsString
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -32,6 +36,7 @@ import System.IO (BufferMode (..), Handle, hSetBuffering, stdout, stderr)
 
 import RPKI.Domain
 import RPKI.Util
+import RPKI.Time
 
 class Logger logger where
     logError_ :: logger -> Text -> IO ()
@@ -114,33 +119,43 @@ withLogger_ f = do
             pure ()
 
 
-{-
+logRaw bs = BS.hPut stderr bs
 
-main process
+-- TODO Make it appropriate
+logFormat t level message = [i|#{level}\t#{t}\t#{message}|]
 
+mainLogWithLevel level message = do 
+    t <- thisInstant
+    putStrLn $ logFormat t level message
 
-logWithLevel level t = do 
-    putStrLn $ logFormat level t    
-
-worker 
- - readChildLog = forever $ readBS >>= logRaw
-
- - logWithLevel level t = do 
-     logRaw $ toBase64 $ serialise $ Msg level t     
-     logRaw EOL
-
--}
+workerLogWithLevel level t = do 
+     logRaw $ msgToBs $ LogMessage1 level t     
+     logRaw $ C8.singleton eol
 
 eol :: Char
 eol = '\n' 
 
-readChildLog readBS = go mempty
+workerChildLog readBS = go
+  where
+    go = readBS >>= \case 
+        Nothing -> pure ()
+        Just bs -> logRaw bs
+
+
+mainReadChildLog readBS = go mempty
   where
     go accum = do 
-        bs <- readBS
-        let (complete, leftover) = gatherMsgs accum bs
-        -- for_ complete $ logMessage . deserialise                
-        go leftover        
+        readBS >>= \case 
+            Nothing -> pure ()
+            Just bs -> do 
+                let (complete, leftover) = gatherMsgs accum bs                
+                for_ complete $ \bs -> 
+                    -- case bsToMsg bs of 
+                    --     Left e -> do 
+                    --         logError_ 
+                    --     Right msg -> logMsg
+                    pure ()
+                go leftover        
 
 gatherMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
 gatherMsgs accum bs = 
