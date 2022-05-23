@@ -62,6 +62,7 @@ import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
 import           Data.Map.Monoidal.Strict
+import           RPKI.Logging
 import           RPKI.Util       (convert, mkHash)
 
 
@@ -167,6 +168,13 @@ instance Arbitrary Notification where
 
 -- 
 
+instance Arbitrary LogLevel where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary LogMessage1 where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (X509.SignedExact a) where
     arbitrary = genericArbitrary

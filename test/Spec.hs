@@ -8,6 +8,7 @@ import RPKI.RRDP.UpdateSpec
 import RPKI.RRDP.HttpSpec
 import RPKI.ResourcesSpec
 import RPKI.AppMonadSpec
+import RPKI.LoggingSpec
 import RPKI.RepositorySpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
@@ -22,5 +23,6 @@ main = defaultMain $ testGroup "All tests" [
         repositoryGroup,
         rtrGroup,
         httpSpec,
-        slurmGroup
+        slurmGroup,
+        loggingSpec
     ]  

@@ -9,6 +9,13 @@ module RPKI.Logging where
 import Codec.Serialise
 import Colog
 
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Char8 as C8
+
+import Data.Bifunctor
+import Data.Traversable
 import Data.Text (Text)
 
 import Control.Monad
@@ -23,6 +30,8 @@ import GHC.Generics (Generic)
 import GHC.Stack (callStack)
 import System.IO (BufferMode (..), Handle, hSetBuffering, stdout, stderr)
 
+import RPKI.Domain
+import RPKI.Util
 
 class Logger logger where
     logError_ :: logger -> Text -> IO ()
@@ -90,6 +99,8 @@ withLogger logLevel (stream, streamLogger) f = do
 
 
 data LogMessage1 = LogMessage1 LogLevel Text
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
 
 newtype Logger1 = Logger1 (TBQueue LogMessage1)
 
@@ -99,5 +110,65 @@ withLogger_ f = do
     where
         logForever q = forever $ do
             z <- atomically $ Q.readTBQueue q
-
+            -- write z to the actual file/stdout
             pure ()
+
+
+
+{-
+
+main process
+
+
+logWithLevel level t = do 
+    putStrLn $ logFormat level t    
+
+worker 
+ - readChildLog = forever $ readBS >>= logRaw
+
+ - logWithLevel level t = do 
+     logRaw $ toBase64 $ serialise $ Msg level t     
+     logRaw EOL
+
+-}
+
+eol :: Char
+eol = '\n' 
+
+readChildLog readBS = go mempty
+  where
+    go accum = do 
+        bs <- readBS
+        let (complete, leftover) = gatherMsgs accum bs
+        -- for_ complete $ logMessage . deserialise                
+        go leftover        
+
+gatherMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
+gatherMsgs accum bs = 
+    case C8.split eol bs of
+        []      -> ([], accum)
+        [chunk] -> ([], accum <> BB.byteString chunk)
+        chunk : chunks -> let
+                z = LBS.toStrict $ BB.toLazyByteString $ accum <> BB.byteString chunk
+                (inits, last) = splitLast chunks
+            in (z : inits, BB.byteString last)
+  where
+    splitLast [] = error "Will never happen"
+    splitLast [a] = ([], a)
+    splitLast (a: as) = let 
+        (inits, last) = splitLast as
+        in (a : inits, last)
+
+
+msgToBs :: LogMessage1 -> BS.ByteString
+msgToBs msg = let 
+    s = serialise msg
+    EncodedBase64 bs = encodeBase64 (DecodedBase64 $ LBS.toStrict s)
+    in bs
+
+bsToMsg :: BS.ByteString -> Either Text LogMessage1
+bsToMsg bs = 
+    case decodeBase64 (EncodedBase64 bs) "Broken base64 input" of 
+        Left e -> Left $ fmtGen e
+        Right (DecodedBase64 decoded) -> 
+            first fmtGen $ deserialiseOrFail $ LBS.fromStrict decoded    
