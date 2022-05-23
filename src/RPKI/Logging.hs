@@ -114,7 +114,6 @@ withLogger_ f = do
             pure ()
 
 
-
 {-
 
 main process
@@ -172,3 +171,4 @@ bsToMsg bs =
         Left e -> Left $ fmtGen e
         Right (DecodedBase64 decoded) -> 
             first fmtGen $ deserialiseOrFail $ LBS.fromStrict decoded    
+

@@ -45,6 +45,7 @@ dependencies:
 - co-log
 - co-log-core
 - conduit
+- conduit-extra
 - cryptonite
 - cryptohash-sha256
 - deepseq
