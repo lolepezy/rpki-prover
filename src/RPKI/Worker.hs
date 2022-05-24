@@ -23,6 +23,7 @@ import           Control.Lens ((^.))
 
 import           Conduit
 
+import           Data.Foldable
 import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
 import           Data.String
@@ -277,11 +278,12 @@ worderIdS (WorkerId w) = unpack w
 --     let workerStdin = serialise $ WorkerInput params config thisProcessId timeout
 
 --     let workerLogStream = createSource
---     let workerOutput = createSource
+--     let workerOutput = byteStringOutput
 
 --     let worker = 
 --             setStdin (byteStringInput workerStdin) $             
 --             setStderr workerLogStream $
+--             setStdout workerOutput $
 --                 proc binaryToRun $ [ "--worker" ] <> extraCli
 
 --     logDebugM logger [i|Running worker: #{trimmed worker}|]        
@@ -298,20 +300,24 @@ worderIdS (WorkerId w) = unpack w
 --         stopProcess
 --         (\p -> (,) <$> f p <*> waitExitCode p) 
 
+--     sinkLog = do 
+--         z <- await
+--         for_ z (logStreamFromChild logger)
+
 --     runIt worker = do   
 --         (_, exitCode) <- liftIO $ waitForProcess worker $ \p -> do
---             z <- runConduitRes $ getStdout p
+--             runConduitRes $ getStderr p .| sinkLog
+
 --             pure ()
 
---         (exitCode, workerStdout, workerStderr) <- liftIO $ readProcess worker                                
 --         case exitCode of  
 --             exit@(ExitFailure errorCode)
 --                 | exit == exitTimeout -> do                     
---                     let message = [i|Worker #{workerId} execution timed out, stderr = [#{textual workerStderr}]|]
+--                     let message = [i|Worker #{workerId} execution timed out]|]
 --                     logErrorM logger message
 --                     appError $ InternalE $ WorkerTimeout message
 --                 | exit == exitOutOfMemory -> do                     
---                     let message = [i|Worker #{workerId} ran out of memory, stderr = [#{textual workerStderr}]|]
+--                     let message = [i|Worker #{workerId} ran out of memory|]
 --                     logErrorM logger message
 --                     appError $ InternalE $ WorkerOutOfMemory message
 --                 | exit == exitKillByTypedProcess -> do
@@ -331,7 +337,7 @@ worderIdS (WorkerId w) = unpack w
 --                     logErrorM logger [i|Worker #{workerId} died/killed.|]
 --                     throwIO AsyncCancelled                    
 --                 | otherwise ->     
---                     complain [i|Worker #{workerId} exited with code = #{errorCode}, stderr = [#{textual workerStderr}]|]
+--                     complain [i|Worker #{workerId} exited with code = #{errorCode}|]
 --             ExitSuccess -> 
 --                 case deserialiseOrFail workerStdout of 
 --                     Left e -> 

@@ -141,10 +141,13 @@ workerChildLog readBS = go
         Nothing -> pure ()
         Just bs -> logRaw bs
 
+logStreamFromChild logger _ = do 
+    pure ()
+
 
 mainReadChildLog readBS = go mempty
   where
-    go accum = do 
+    go accum = 
         readBS >>= \case 
             Nothing -> pure ()
             Just bs -> do 
