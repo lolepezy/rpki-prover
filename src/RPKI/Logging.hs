@@ -180,7 +180,7 @@ gatherMsgs accum bs =
 msgToBs :: LogMessage1 -> BS.ByteString
 msgToBs msg = let 
     s = serialise msg
-    EncodedBase64 bs = encodeBase64 (DecodedBase64 $ LBS.toStrict s)
+    EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ LBS.toStrict s
     in bs
 
 bsToMsg :: BS.ByteString -> Either Text LogMessage1
