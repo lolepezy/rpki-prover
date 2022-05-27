@@ -64,7 +64,7 @@ Every worker calls `executeWork` that takes care of worker lifecycle.
 Some of the machinery is also in Main.
 
 -}
-
+    
 newtype WorkerId = WorkerId Text
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -262,7 +262,6 @@ worderIdS (WorkerId w) = unpack w
 
 
 
-
 runWorker1 :: (Serialise r, Show r) => 
             AppLogger 
             -> Config            
@@ -277,13 +276,10 @@ runWorker1 logger config workerId params timeout extraCli = do
     let binaryToRun = config ^. #programBinaryPath    
     let workerStdin = serialise $ WorkerInput params config thisProcessId timeout
 
-    let workerLogStream = createSource
-    let workerOutput = byteStringOutput
-
     let worker = 
             setStdin (byteStringInput workerStdin) $             
-            setStderr workerLogStream $
-            setStdout workerOutput $
+            setStderr createSource $
+            setStdout byteStringOutput $
                 proc binaryToRun $ [ "--worker" ] <> extraCli
 
     logDebugM logger [i|Running worker: #{trimmed worker}|]        
@@ -300,18 +296,20 @@ runWorker1 logger config workerId params timeout extraCli = do
         stopProcess
         (\p -> (,) <$> f p <*> waitExitCode p) 
 
-    sinkLog = do
-        z <- await
-        for_ z (\bs -> logStreamFromChild logger bs >> sinkLog)
-
     runIt worker = do   
         ((_, workerStdout), exitCode) <- 
             liftIO $ waitForProcess worker $ \p ->
                 concurrently 
-                    (runConduitRes $ getStderr p .| sinkLog)
+                    (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)
 
         case exitCode of  
+            ExitSuccess -> 
+                case deserialiseOrFail workerStdout of 
+                    Left e -> 
+                        complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
+                    Right r -> 
+                        pure r            
             exit@(ExitFailure errorCode)
                 | exit == exitTimeout -> do                     
                     let message = [i|Worker #{workerId} execution timed out.|]
@@ -339,12 +337,6 @@ runWorker1 logger config workerId params timeout extraCli = do
                     throwIO AsyncCancelled                    
                 | otherwise ->     
                     complain [i|Worker #{workerId} exited with code = #{errorCode}|]
-            ExitSuccess -> 
-                case deserialiseOrFail workerStdout of 
-                    Left e -> 
-                        complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
-                    Right r -> 
-                        pure r
 
     complain message = do 
         logErrorM logger message
