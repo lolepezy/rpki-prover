@@ -42,8 +42,6 @@ dependencies:
 - bytestring-mmap
 - cborg
 - containers
-- co-log
-- co-log-core
 - conduit
 - conduit-extra
 - cryptonite
