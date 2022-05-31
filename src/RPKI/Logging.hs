@@ -152,11 +152,10 @@ withLogger mkLogger logLevel f = do
             MsgQE logMessage -> 
                 mainLogWithLevel logMessage
 
-        loopWorker = loop $ \qe -> do 
+        loopWorker = loop $ \qe ->
             logRaw $ case qe of 
                         BinQE b   -> b
-                        MsgQE msg -> msgToBs msg
-            logRaw $ C8.singleton eol                      
+                        MsgQE msg -> msgToBs msg            
 
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]
