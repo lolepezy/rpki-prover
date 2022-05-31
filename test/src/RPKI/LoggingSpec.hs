@@ -24,25 +24,23 @@ import RPKI.Util (toNatural)
 import Data.Maybe (fromMaybe)
 
 
-splitToMessagesCorrectly :: QC.Property
-splitToMessagesCorrectly = QC.forAll arbitrary $ \(msgs :: [LogMessage1]) -> 
-    let
-        messages = map msgToBs msgs
-        all = mconcat $ map (<> C8.singleton eol) messages
-        chunks = aplitRandomly all 
-        (_, msgs' :: [LogMessage1]) = 
-                foldr (\chunk (builder, msgs) -> let 
-                        (complete, leftover) = gatherMsgs builder chunk
-                        mm = map (\c -> let Right d = bsToMsg c in d) complete
-                        in (leftover, msgs <> mm)
-                     ) (mempty, []) chunks
-        in msgs' == msgs
-    where 
-        aplitRandomly bs = 
-            [bs]
-
-
 loggingSpec :: TestTree
 loggingSpec = testGroup "Logging" [
-        QC.testProperty "Splitted log messages are restored" splitToMessagesCorrectly
+        loggingUnitSpec
     ]
+
+loggingUnitSpec :: TestTree
+loggingUnitSpec = testGroup "Logging split stream" [
+        HU.testCase "Should gather messages" $ do         
+            check mempty "" (("" ==) . BB.toLazyByteString) null
+            check mempty "123" (("123" ==) . BB.toLazyByteString) null
+            check mempty "123\n" ((mempty ==) . BB.toLazyByteString) (==["123"])
+            check mempty "123\n678" (("678" ==) . BB.toLazyByteString) (==["123"])
+            check mempty "123\n678\n" ((mempty ==) . BB.toLazyByteString) (==["123", "678"])           
+            check mempty "123\n678\n\n" ((mempty ==) . BB.toLazyByteString) (==["123", "678"])           
+    ]
+  where 
+    check acc bs f g = do
+        let (chunks, acc') = gatherMsgs acc bs
+        HU.assertBool "Wrong acc" $ f acc'
+        HU.assertBool ("Wrong chunks: |" <> show chunks <> "|") $ g chunks

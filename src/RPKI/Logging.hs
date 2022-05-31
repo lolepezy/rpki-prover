@@ -8,7 +8,6 @@
 module RPKI.Logging where
 
 import Codec.Serialise
--- import Colog
 
 import           Conduit
 
@@ -19,13 +18,11 @@ import qualified Data.ByteString.Char8 as C8
 
 import Data.Bifunctor
 import Data.Foldable
-import Data.Traversable
-import Data.Text (Text)
+import Data.Text (Text, justifyLeft)
 
 import Data.String.Interpolate.IsString
 
 import Control.Monad
-import Control.Monad.IO.Class
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 
@@ -33,8 +30,9 @@ import qualified Control.Concurrent.STM.TBQueue  as Q
 
 import GHC.Generics (Generic)
 
-import GHC.Stack (callStack)
-import System.IO (BufferMode (..), Handle, hSetBuffering, stdout, stderr)
+import System.Posix.Types
+import System.Posix.Process
+import System.IO (BufferMode (..), hSetBuffering, stdout, stderr)
 
 import RPKI.Domain
 import RPKI.Util
@@ -42,71 +40,18 @@ import RPKI.Time
 
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (Serialise)
-
--- class Logger logger where
---     logError_ :: logger -> Text -> IO ()
---     logWarn_  :: logger -> Text -> IO ()
---     logInfo_  :: logger -> Text -> IO ()
---     logDebug_ :: logger -> Text -> IO ()
-
-
--- data AppLogger = AppLogger {
---         logLevel :: LogLevel,
---         logAction :: LogAction IO Message
---     }
-
-
--- instance Logger AppLogger where
---     logError_ AppLogger {..} = logWhat E logAction
-
---     logWarn_  AppLogger {..} s = 
---         when (logLevel >= WarnL) $ logWhat W logAction s        
-
---     logInfo_  AppLogger {..} s = 
---         when (logLevel >= InfoL) $ logWhat I logAction s
-
---     logDebug_ AppLogger {..} s = 
---         when (logLevel >= DebugL) $ logWhat D logAction s        
+   
+instance Show LogLevel where
+    show = \case 
+        ErrorL -> "Error"
+        WarnL  -> "Warn"
+        InfoL  -> "Info"
+        DebugL -> "Debug"
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
-
--- logWhat :: Severity -> LogAction IO Message -> Text -> IO ()
--- logWhat sev la textMessage = la <& Msg sev callStack textMessage    
-
--- logErrorM, logWarnM, logInfoM, logDebugM :: (Logger logger, MonadIO m) => 
---                                             logger -> Text -> m ()
--- logErrorM logger t = liftIO $ logError_ logger t
--- logWarnM logger t  = liftIO $ logWarn_ logger t
--- logInfoM logger t  = liftIO $ logInfo_ logger t
--- logDebugM logger t = liftIO $ logDebug_ logger t
-
-
-
--- withMainAppLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
--- withMainAppLogger logLevel = withLogger logLevel (stdout, logTextStdout)
-
--- withWorkerLogger :: LogLevel -> (AppLogger -> LoggerT Text IO a) -> IO a
--- withWorkerLogger logLevel = withLogger logLevel (stderr, logTextStderr)
-
--- withLogger :: LogLevel -> (Handle, LogAction IO Text) -> (AppLogger -> LoggerT Text IO a) -> IO a
--- withLogger logLevel (stream, streamLogger) f = do     
---     hSetBuffering stream LineBuffering
---     withBackgroundLogger
---         defCapacity
---         streamLogger
---         (\logg -> usingLoggerT logg $ f $ AppLogger logLevel (fullMessageAction logg))
---   where
---     fullMessageAction logg = upgradeMessageAction defaultFieldMap $ 
---         cmapM (`fmtRichMessageCustomDefault` formatRichMessage) logg    
-        
---     formatRichMessage _ (maybe "" showTime -> time) Msg{..} =
---         showSeverity msgSeverity
---         <> time            
---         <> msgText           
-
 
 data AppLogger = AppLogger {
         logLevel :: LogLevel,
@@ -115,8 +60,7 @@ data AppLogger = AppLogger {
 
 logError_, logWarn_, logInfo_, logDebug_ :: AppLogger -> Text -> IO ()
 
-logError_ AppLogger {..} s = logWLevel actualLogger $ LogMessage ErrorL s
-
+logError_ AppLogger {..} s = logWLevel actualLogger =<< mkLogMessage ErrorL s
 logWarn_ = logIfAboveLevel WarnL
 logInfo_ = logIfAboveLevel InfoL
 logDebug_ = logIfAboveLevel DebugL
@@ -124,7 +68,7 @@ logDebug_ = logIfAboveLevel DebugL
 logIfAboveLevel :: LogLevel -> AppLogger -> Text -> IO ()
 logIfAboveLevel level AppLogger {..} s = 
     when (logLevel >= level) $ 
-        logWLevel actualLogger $ LogMessage level s
+        logWLevel actualLogger =<< mkLogMessage level s        
 
 
 logErrorM, logWarnM, logInfoM, logDebugM :: MonadIO m => AppLogger -> Text -> m ()
@@ -133,7 +77,18 @@ logWarnM logger t  = liftIO $ logWarn_ logger t
 logInfoM logger t  = liftIO $ logInfo_ logger t
 logDebugM logger t = liftIO $ logDebug_ logger t
 
-data LogMessage = LogMessage LogLevel Text
+mkLogMessage :: LogLevel -> Text -> IO LogMessage
+mkLogMessage logLevel message = do 
+    Now time <- thisInstant
+    processId <- getProcessID
+    pure LogMessage {..}
+
+data LogMessage = LogMessage { 
+        logLevel :: LogLevel,
+        message ::  Text,
+        processId :: ProcessID,
+        time :: Instant
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
@@ -153,14 +108,14 @@ logBytes logger bytes =
     atomically $ Q.writeTBQueue (getQueue logger) $ BinQE bytes             
 
 
-forQueue :: ProcessLogger -> (TBQueue QElem -> p) -> (TBQueue QElem -> p) -> p
-forQueue logger f g = 
+forLogger :: ProcessLogger -> (TBQueue QElem -> p) -> (TBQueue QElem -> p) -> p
+forLogger logger f g = 
     case logger of 
         MainLogger q -> f q
         WorkerLogger q -> g q
 
 getQueue :: ProcessLogger -> TBQueue QElem
-getQueue logger = forQueue logger id id
+getQueue logger = forLogger logger id id
 
 withLogger :: (TBQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
 withLogger mkLogger logLevel f = do 
@@ -170,44 +125,46 @@ withLogger mkLogger logLevel f = do
 
     -- Main process writes to stdout, workers -- to stderr
     -- TODO Think about it more, maybe there's more consistent option
-    let logStream = forQueue logger (const stdout) (const stderr)
+    let logStream = forLogger logger (const stdout) (const stderr)
+
+    -- TODO Figure out why removing it leads to the whole process getting stuck
     hSetBuffering logStream LineBuffering    
     
-    runWithLog (BS.hPut logStream) logger (\_ -> f appLogger)
+    let logRaw s = do 
+            BS.hPut logStream s
+            BS.hPut logStream $ C8.singleton eol        
+
+    runWithLog logRaw logger (\_ -> f appLogger)
 
   where
     loop g q = forever $ g =<< atomically (Q.readTBQueue q)
 
-    runWithLog logRaw logger f =         
-        withAsync (forQueue logger loopMain loopWorker) f
+    runWithLog logRaw logger g =         
+        withAsync (forLogger logger loopMain loopWorker) g
       where                
         loopMain = loop $ \case 
             BinQE b -> do 
                 case bsToMsg b of 
                     Left e ->                                     
-                        mainLogWithLevel ErrorL [i|Problem deserialising binary log message: #{b}.|]
-                    Right (LogMessage level text) -> 
-                        mainLogWithLevel level text
-            MsgQE (LogMessage level text) -> 
-                mainLogWithLevel level text
+                        mainLogWithLevel =<< mkLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}].|]
+                    Right logMessage -> 
+                        mainLogWithLevel logMessage
+            MsgQE logMessage -> 
+                mainLogWithLevel logMessage
 
         loopWorker = loop $ \qe -> do 
             logRaw $ case qe of 
                         BinQE b   -> b
                         MsgQE msg -> msgToBs msg
             logRaw $ C8.singleton eol                      
-        
 
-        mainLogWithLevel level message = do 
-            t <- thisInstant
-            logRaw $ logFormat t level message
-
-    -- TODO Make it appropriate
-    logFormat t level message = [i|#{level}\t#{t}\t#{message}|]
-
+        mainLogWithLevel LogMessage {..} = do
+            let level = justifyLeft 6 ' ' [i|#{logLevel}|]
+            let pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
+            logRaw [i|#{level}  #{pid}  #{time}   #{message}|]            
+    
 eol :: Char
 eol = '\n' 
-     
 
 sinkLog :: MonadIO m => AppLogger -> ConduitT C8.ByteString o m ()
 sinkLog AppLogger {..} = go mempty        
@@ -220,22 +177,14 @@ sinkLog AppLogger {..} = go mempty
                 liftIO $ logBytes actualLogger b
             go leftover
 
-
 gatherMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
 gatherMsgs accum bs = 
-    case C8.split eol bs of
-        []      -> ([], accum)
-        [chunk] -> ([], accum <> BB.byteString chunk)
-        chunk : chunks -> let
-                z = LBS.toStrict $ BB.toLazyByteString $ accum <> BB.byteString chunk
-                (inits, last) = splitLast chunks
-            in (z : inits, BB.byteString last)
-  where
-    splitLast [] = error "Will never happen"
-    splitLast [a] = ([], a)
-    splitLast (a: as) = let 
-        (inits, last) = splitLast as
-        in (a : inits, last)
+    (reverse $ map LBS.toStrict $ filter (not . LBS.null) fullChunks, acc)
+  where  
+    (acc, fullChunks) = C8.foldl' splitByEol (accum, []) bs      
+    splitByEol (acc, chunks) c 
+        | c == eol  = (mempty, BB.toLazyByteString acc : chunks)
+        | otherwise = (acc <> BB.char8 c, chunks)
 
 
 msgToBs :: LogMessage -> BS.ByteString

@@ -44,7 +44,6 @@ import           RPKI.Domain
 import           RPKI.Fetch
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Resources.Resources

@@ -61,6 +61,8 @@ import qualified Crypto.PubKey.RSA                    as RSA
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
+import System.Posix.Types
+
 import           Data.Map.Monoidal.Strict
 import           RPKI.Logging
 import           RPKI.Util       (convert, mkHash)
@@ -172,7 +174,11 @@ instance Arbitrary LogLevel where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary LogMessage1 where
+instance Arbitrary CPid where
+    arbitrary = CPid <$> arbitrary
+    shrink (CPid i) = Prelude.map CPid $ shrink i
+
+instance Arbitrary LogMessage where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
