@@ -161,7 +161,7 @@ withLogger mkLogger logLevel f = do
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]
             let pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
-            logRaw [i|#{level}  #{pid}  #{time}   #{message}|]            
+            logRaw [i|#{level}  #{pid}  #{time}  #{message}|]            
     
 eol :: Char
 eol = '\n' 
@@ -173,15 +173,14 @@ sinkLog AppLogger {..} = go mempty
         z <- await
         for_ z $ \bs -> do 
             let (complete, leftover) = gatherMsgs accum bs            
-            for_ complete $ \b -> 
-                liftIO $ logBytes actualLogger b
+            for_ complete $ liftIO . logBytes actualLogger
             go leftover
 
 gatherMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
 gatherMsgs accum bs = 
-    (reverse $ map LBS.toStrict $ filter (not . LBS.null) fullChunks, acc)
+    (reverse $ map LBS.toStrict $ filter (not . LBS.null) fullChunks, accum')
   where  
-    (acc, fullChunks) = C8.foldl' splitByEol (accum, []) bs      
+    (accum', fullChunks) = C8.foldl' splitByEol (accum, []) bs      
     splitByEol (acc, chunks) c 
         | c == eol  = (mempty, BB.toLazyByteString acc : chunks)
         | otherwise = (acc <> BB.char8 c, chunks)
