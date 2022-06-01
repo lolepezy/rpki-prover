@@ -258,9 +258,8 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 
 -- | The only reason to do LMDB copying as a separate worker process is memory.
 -- Even thought is a perfectly streaming-like activity, without enough GC pressure 
--- it allocates a large heap, so it's .
--- 
--- So instead we run a worker process with limited heap that does the copying.
+-- it allocates a large heap, so instead we run a worker process with limited heap 
+-- that does the copying.
 -- 
 runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
 runCopyWorker AppContext {..} dbtats targetLmdbPath = do 
@@ -274,7 +273,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             [ worderIdS workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
-    ((z, _ignoreStderr), elapsed) <- 
+    ((z, vs), elapsed) <- 
                     timedMS $ 
                         runValidatorT 
                             (newScopes "lmdb-compaction-worker") $ 
@@ -293,7 +292,6 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             let message = [i|Failed to run compaction worker: #{e}|]
             logError_ logger message            
             throwIO $ AppException $ InternalE $ InternalError message
-        Right (CompactionResult _, stderr) ->
-            logDebugM logger $ workerLogMessage (convert $ worderIdS workerId) stderr elapsed
+        Right (CompactionResult _) -> 
+            pure ()            
             
-    
