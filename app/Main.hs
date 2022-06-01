@@ -76,7 +76,7 @@ main = do
         Just _  -> do           
             input <- readWorkerInput
             let logLevel' = input ^. typed @Config . #logLevel
-            withWorkerLogger logLevel' $ \logger -> liftIO $ do
+            withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
                 (z, validations) <- do
                             runValidatorT (newScopes "worker-create-app-context")
                                 $ readWorkerContext input logger
@@ -89,8 +89,8 @@ main = do
 
 mainProcess :: CLIOptions Unwrapped -> IO ()
 mainProcess cliOptions = do 
-    withLogLevel cliOptions $ \logLevel ->
-        withMainAppLogger logLevel $ \logger -> liftIO $ do
+    withLogLevel cliOptions $ \logLevel ->        
+        withLogger MainLogger logLevel $ \logger -> do             
             logDebug_ logger [i|Main process.|]
             if cliOptions ^. #initialise
                 then

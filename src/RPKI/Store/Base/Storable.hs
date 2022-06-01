@@ -1,9 +1,6 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingVia    #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StrictData #-}
-
+{-# LANGUAGE StrictData     #-}
 
 module RPKI.Store.Base.Storable where
 
@@ -14,9 +11,12 @@ import Control.DeepSeq
 import Codec.Serialise
 import GHC.Generics
 
+import Data.Bifunctor (first)
 import Data.Monoid.Generic
 
 import RPKI.Config
+import RPKI.Reporting
+import RPKI.Util (fmtGen)
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    
     deriving stock (Eq, Ord, Show, Generic)
@@ -48,20 +48,18 @@ storableValue = SValue . toStorable
 storableKey :: Serialise v => v -> SKey
 storableKey = SKey . toStorable
 
--- TODO Consider having type-safe storage errors
--- 
--- fromStorable :: Serialise t => Storable -> Either StorageError t
--- fromStorable (Storable b) = first (DeserialisationError . fmtEx) $ 
---     deserialiseOrFail $ LBS.fromStrict b
-
--- fromSValue :: Serialise t => SValue -> Either StorageError t
--- fromSValue (SValue b) = fromStorable b
-
 fromStorable :: Serialise t => Storable -> t
 fromStorable (Storable b) = deserialise $ LBS.fromStrict b
 
 fromSValue :: Serialise t => SValue -> t
 fromSValue (SValue b) = fromStorable b
+
+fromStorable' :: Serialise t => Storable -> Either StorageError t
+fromStorable' (Storable b) = first (DeserialisationError . fmtGen) $ 
+    deserialiseOrFail $ LBS.fromStrict b
+
+fromSValue' :: Serialise t => SValue -> Either StorageError t
+fromSValue' (SValue b) = fromStorable' b
 
 
 data SStats = SStats {

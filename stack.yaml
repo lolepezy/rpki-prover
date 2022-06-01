@@ -50,14 +50,6 @@ extra-deps:
       - x509
       - x509-validation
 
-    # TODO Replace with LTS version as soon as `showTime`
-    # is exported from co-log.
-  - git: https://github.com/kowainik/co-log.git
-    commit: d2c7ad66af4e79c7a8f8d5e6c324ea3ff2739277
-    subdirs:
-      - co-log-core
-      - co-log
-
     # TODO Replace it with the LTS version as soon as the stupid 
     # 'rpki-prover: Thread killed by timeout manager' message 
     # is fixed.

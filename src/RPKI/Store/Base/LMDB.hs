@@ -14,7 +14,6 @@ import Codec.Serialise
 
 import Control.Monad (forM, forever)
 import Control.Concurrent.STM
-import Control.Exception
 
 import qualified Data.ByteString as BS
 import Data.Coerce (coerce)

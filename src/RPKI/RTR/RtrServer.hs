@@ -270,8 +270,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 --
 -- TODO Do something with contravariant logging here, it's the right place.
 -- 
-responseAction :: (Show peer, Logger logger) => 
-                   logger 
+responseAction :: Show peer => 
+                   AppLogger 
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 

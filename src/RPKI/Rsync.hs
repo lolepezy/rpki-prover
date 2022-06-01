@@ -98,7 +98,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
             rtsArguments [ rtsN maxCpuAvailable, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
 
     vp <- askScopes
-    ((RsyncFetchResult (z, vs), stderr'), elapsed) <- 
+    (RsyncFetchResult (z, vs), elapsed) <- 
                     timedMS $ runWorker 
                                 logger
                                 config
@@ -107,11 +107,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                                 (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
                                 arguments                        
     embedState vs
-    case z of 
-        Left e  -> appError e
-        Right r -> do 
-            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr' elapsed            
-            pure r
+    either appError pure z    
     
 
 -- | Download one file using rsync

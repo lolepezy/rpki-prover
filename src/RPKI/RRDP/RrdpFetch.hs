@@ -63,8 +63,8 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
 
     vp <- askScopes
-    ((RrdpFetchResult (z, vs), stderr), elapsed) <- 
-                    timedMS $ runWorker 
+    (RrdpFetchResult (z, vs), elapsed) <- 
+                    timedMS $ runWorker
                                 logger
                                 config
                                 workerId 
@@ -72,11 +72,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                                 (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
                                 arguments                        
     embedState vs
-    case z of 
-        Left e  -> appError e
-        Right r -> do 
-            logDebugM logger $ workerLogMessage (U.convert $ worderIdS workerId) stderr elapsed            
-            pure r
+    either appError pure z    
 
 
 -- | 

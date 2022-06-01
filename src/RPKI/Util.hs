@@ -91,6 +91,9 @@ isSpace_ = isSpace . chr . fromEnum
 fmtEx :: SomeException -> Text.Text
 fmtEx = Text.pack . show
 
+fmtGen :: Show a => a -> Text.Text
+fmtGen = Text.pack . show
+
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
