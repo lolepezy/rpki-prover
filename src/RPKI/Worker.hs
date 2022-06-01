@@ -22,11 +22,8 @@ import           Control.Concurrent.STM
 import           Control.Lens ((^.))
 
 import           Conduit
-
-import           Data.Foldable
 import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
-import           Data.String
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
 import           Data.Conduit.Process.Typed
@@ -35,17 +32,18 @@ import           GHC.Generics
 
 import           System.Exit
 import           System.IO (stdin, stdout)
-import           System.Process.Typed
 import           System.Posix.Types
 import           System.Posix.Process
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.TAL
 import           RPKI.Logging
-import           RPKI.Util (fmtEx, textual, trimmed)
+import           RPKI.Util (fmtEx, trimmed)
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -84,7 +82,11 @@ data WorkerParams = RrdpFetchParams {
             } | 
             CompactionParams { 
                 targetLmdbEnv :: FilePath 
-            }
+            } | 
+            ValidationParams {                 
+                worldVersion :: WorldVersion,
+                tals         :: [TAL]
+            } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
@@ -113,6 +115,10 @@ newtype RsyncFetchResult = RsyncFetchResult
     deriving anyclass (Serialise)
 
 newtype CompactionResult = CompactionResult ()                             
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+    
+newtype ValidationResult = ValidationResult [(Vrps, ValidationState)]
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
@@ -212,8 +218,8 @@ runWorker logger config workerId params timeout extraCli = do
         ] 
   where    
 
-    waitForProcess config f = bracket
-        (startProcess config)
+    waitForProcess conf f = bracket
+        (startProcess conf)
         stopProcess
         (\p -> (,) <$> f p <*> waitExitCode p) 
 

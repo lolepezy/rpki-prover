@@ -71,7 +71,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                                 (RrdpFetchParams vp repository worldVersion)                        
                                 (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
                                 arguments                        
-    embedState vs
+    embedState vs    
     either appError pure z    
 
 
