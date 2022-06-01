@@ -118,10 +118,10 @@ getQueue :: ProcessLogger -> TBQueue QElem
 getQueue logger = forLogger logger id id
 
 withLogger :: (TBQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
-withLogger mkLogger logLevel f = do 
+withLogger mkLogger maxLogLevel f = do 
     q <- Q.newTBQueueIO 1000
     let logger = mkLogger q    
-    let appLogger = AppLogger logLevel logger
+    let appLogger = AppLogger maxLogLevel logger
 
     -- Main process writes to stdout, workers -- to stderr
     -- TODO Think about it more, maybe there's more consistent option
@@ -152,10 +152,9 @@ withLogger mkLogger logLevel f = do
             MsgQE logMessage -> 
                 mainLogWithLevel logMessage
 
-        loopWorker = loop $ \qe ->
-            logRaw $ case qe of 
-                        BinQE b   -> b
-                        MsgQE msg -> msgToBs msg            
+        loopWorker = loop $ logRaw . \case 
+                                BinQE b   -> b
+                                MsgQE msg -> msgToBs msg            
 
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]
@@ -171,9 +170,9 @@ sinkLog AppLogger {..} = go mempty
     go accum = do 
         z <- await
         for_ z $ \bs -> do 
-            let (complete, leftover) = gatherMsgs accum bs            
+            let (complete, leftover') = gatherMsgs accum bs            
             for_ complete $ liftIO . logBytes actualLogger
-            go leftover
+            go leftover'
 
 gatherMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
 gatherMsgs accum bs = 
@@ -193,7 +192,7 @@ msgToBs msg = let
 
 bsToMsg :: BS.ByteString -> Either Text LogMessage
 bsToMsg bs = 
-    case decodeBase64 (EncodedBase64 bs) "Broken base64 input" of 
+    case decodeBase64 (EncodedBase64 bs) ("Broken base64 input" :: Text) of 
         Left e -> Left $ fmtGen e
         Right (DecodedBase64 decoded) -> 
             first fmtGen $ deserialiseOrFail $ LBS.fromStrict decoded    
