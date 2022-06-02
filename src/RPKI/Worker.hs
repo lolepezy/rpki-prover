@@ -44,6 +44,7 @@ import           RPKI.Repository
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Util (fmtEx, trimmed)
+import           RPKI.SLURM.Types
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -83,7 +84,7 @@ data WorkerParams = RrdpFetchParams {
             CompactionParams { 
                 targetLmdbEnv :: FilePath 
             } | 
-            ValidationParams {                 
+            ValidatedTALsParams {                 
                 worldVersion :: WorldVersion,
                 tals         :: [TAL]
             } 
@@ -117,8 +118,8 @@ newtype RsyncFetchResult = RsyncFetchResult
 newtype CompactionResult = CompactionResult ()                             
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
-    
-newtype ValidationResult = ValidationResult [(Vrps, ValidationState)]
+
+data ValidatedTALsResult = ValidatedTALsResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 

@@ -67,7 +67,6 @@ import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Worker
 import           RPKI.Workflow
-import           RPKI.TopDown
 
 main :: IO ()
 main = do    
@@ -385,9 +384,9 @@ executeWorker input appContext =
             CompactionParams {..} -> do 
                 z <- copyLmdbEnvironment appContext targetLmdbEnv                
                 resultHandler $ CompactionResult z
-            ValidationParams {..} -> do 
-                z <- validateMutlipleTAsImpl appContext worldVersion tals                
-                resultHandler $ ValidationResult z
+            ValidatedTALsParams {..} -> do 
+                (vs, z) <- runValidation appContext worldVersion tals                
+                resultHandler $ ValidatedTALsResult vs z
    
 
 readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO AppLmdbEnv

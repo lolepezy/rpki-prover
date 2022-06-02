@@ -20,7 +20,6 @@ import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
-import           Data.List
 import           Data.Either                      (fromRight, partitionEithers)
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
@@ -57,7 +56,6 @@ import           RPKI.Time
 import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
-import           RPKI.Worker
 
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
@@ -143,41 +141,7 @@ validateMutlipleTAs :: Storage s =>
                     -> WorldVersion 
                     -> [TAL]
                     -> IO [TopDownResult]
-validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
-
-    -- This is for humans to read in `top` or `ps`, actual parameters
-    -- are passed as 'RrdpFetchParams'.
-    let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
-    let workerId = WorkerId $ "validator:" <> talsStr
-
-    let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-
-    let arguments = 
-            [ worderIdS workerId ] <>
-            rtsArguments [ rtsN maxCpuAvailable, rtsA "24m", rtsAL "64m", rtsMaxMemory "4G" ]
-    
-    ((z, vs), elapsed) <- 
-                    timedMS $ runValidatorT 
-                            (newScopes "validator") $ 
-                                runWorker
-                                    logger
-                                    config
-                                    workerId 
-                                    (ValidationParams worldVersion tals)                        
-                                    (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                                    arguments                            
-    pure $ case z of 
-        Left _                      -> [TopDownResult mempty vs]
-        Right (ValidationResult rs) -> map (uncurry TopDownResult) rs
-
--- | It is the main entry point for the top-down validation. 
--- Validates a bunch of TA starting from their TALs.  
-validateMutlipleTAsImpl :: Storage s => 
-                        AppContext s 
-                        -> WorldVersion 
-                        -> [TAL]
-                        -> IO [(Vrps, ValidationState)]
-validateMutlipleTAsImpl appContext@AppContext {..} worldVersion tals = do                    
+validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                                     
     database' <- readTVarIO database 
 
     repositoryProcessing <- newRepositoryProcessingIO config
@@ -206,9 +170,7 @@ validateMutlipleTAsImpl appContext@AppContext {..} worldVersion tals = do
         
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches repositoryProcessing
-        pure $ map (\TopDownResult {..} -> (vrps, topDownValidations)) $ fromValidations fetchValidation : rs  
-            
-
+        pure $ fromValidations fetchValidation : rs              
 
 --
 validateTA :: Storage s => 

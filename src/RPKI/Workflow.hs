@@ -16,9 +16,13 @@ import           Control.Monad
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
+import           GHC.Generics (Generic)
 
+import           Data.List
 import           Data.Foldable (for_)
 import           Data.Int                         (Int64)
+import qualified Data.Text                        as Text
+import qualified Data.Map.Strict as Map
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -43,10 +47,10 @@ import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
+import           RPKI.Worker
 
 import           RPKI.Store.AppStorage
-import qualified Data.Map.Strict as Map
-import GHC.Generics (Generic)
+import           RPKI.SLURM.Types
 
 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
@@ -155,38 +159,20 @@ runWorkflow appContext@AppContext {..} tals = do
                     logDebugM logger [i|Cleaning up temporary directory #{tmpDir}.|]
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
 
-                processTALs database' = do
-                    TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
-                                validateMutlipleTAs appContext worldVersion tals
-
+                processTALs db = do
+                    (topDownValidations, maybeSlurm) <- processTALsWorker worldVersion
                     updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
 
-                    -- Apply SLURM if it is set in the appState
-                    (slurmValidations, maybeSlurm) <-
-                        case appState ^. #readSlurm of
-                            Nothing       -> pure (mempty, Nothing)
-                            Just readFunc -> do
-                                logInfoM logger [i|Re-reading and re-validating SLURM files.|]
-                                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
-                                case z of
-                                    Left e -> do
-                                        logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
-                                        pure (vs, Nothing)
-                                    Right slurm ->
-                                        pure (vs, Just slurm)
+                    roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
+                        Nothing -> do 
+                            logError_ logger [i|Something weird happened: .|]
+                            pure (mempty, mempty)
+                        Just vrps -> do                 
+                            slurmedVrps <- atomically $ do
+                                    setCurrentVersion appState worldVersion
+                                    completeVersion appState worldVersion vrps maybeSlurm
+                            pure (vrps, slurmedVrps)
 
-                    -- Save all the results into LMDB
-                    let updatedValidation = slurmValidations <> topDownValidations ^. typed
-                    rwTx database' $ \tx -> do
-                        putValidations tx database' worldVersion (updatedValidation ^. typed)
-                        putMetrics tx database' worldVersion (topDownValidations ^. typed)
-                        putVrps tx database' vrps worldVersion
-                        for_ maybeSlurm $ putSlurm tx database' worldVersion
-                        completeWorldVersion tx database' worldVersion
-                        slurmedVrps <- atomically $ do
-                            setCurrentVersion appState worldVersion
-                            completeVersion appState worldVersion vrps maybeSlurm
-                        pure (vrps, slurmedVrps)
 
         cacheGC sharedStuff worldVersion = do
             database' <- readTVarIO database
@@ -216,7 +202,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (_, elapsed) <- timedMS $ runMaintenance appContext
                 logInfo_ logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
             else 
-                logDebug_ logger [i|Nothing has been deleted from the storage, will not run compaction.|]
+                logDebug_ logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight =
@@ -264,6 +250,69 @@ runWorkflow appContext@AppContext {..} tals = do
 
         initRtrIfNeeded = 
             maybe (pure ()) (runRtrServer appContext) $ config ^. #rtrConfig                        
+
+
+        processTALsWorker worldVersion = do 
+            let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
+            let workerId = WorkerId $ "validator:" <> talsStr
+
+            let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+
+            let arguments = 
+                    [ worderIdS workerId ] <>
+                    rtsArguments [ rtsN maxCpuAvailable, rtsA "32m", rtsAL "64m", rtsMaxMemory "2G" ]
+            
+            ((z, vs), elapsed) <- 
+                            timedMS $ runValidatorT 
+                                (newScopes "validator") $ 
+                                    runWorker
+                                        logger
+                                        config
+                                        workerId 
+                                        (ValidatedTALsParams worldVersion tals)                        
+                                        (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+                                        arguments                            
+            pure $ case z of 
+                Left _                          -> (vs, Nothing)
+                Right (ValidatedTALsResult v s) -> (vs <> v, s)
+
+
+
+runValidation :: Storage s =>
+                AppContext s
+            -> WorldVersion
+            -> [TAL]
+            -> IO (ValidationState, Maybe Slurm)
+runValidation appContext@AppContext {..} worldVersion tals = do       
+    database' <- readTVarIO database
+
+    TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
+                validateMutlipleTAs appContext worldVersion tals
+
+    -- Apply SLURM if it is set in the appState
+    (slurmValidations, maybeSlurm) <-
+        case appState ^. #readSlurm of
+            Nothing       -> pure (mempty, Nothing)
+            Just readFunc -> do
+                logInfoM logger [i|Re-reading and re-validating SLURM files.|]
+                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
+                case z of
+                    Left e -> do
+                        logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
+                        pure (vs, Nothing)
+                    Right slurm ->
+                        pure (vs, Just slurm)
+
+    -- Save all the results into LMDB
+    let updatedValidation = slurmValidations <> topDownValidations ^. typed
+    rwTx database' $ \tx -> do
+        putValidations tx database' worldVersion (updatedValidation ^. typed)
+        putMetrics tx database' worldVersion (topDownValidations ^. typed)
+        putVrps tx database' vrps worldVersion
+        for_ maybeSlurm $ putSlurm tx database' worldVersion
+        completeWorldVersion tx database' worldVersion
+
+    pure (topDownValidations, maybeSlurm)
 
 
 -- | Load the state corresponding to the last completed version.
