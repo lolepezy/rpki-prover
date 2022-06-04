@@ -260,7 +260,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
             let arguments = 
                     [ worderIdS workerId ] <>
-                    rtsArguments [ rtsN maxCpuAvailable, rtsA "32m", rtsAL "64m", rtsMaxMemory "2G" ]
+                    rtsArguments [ rtsN maxCpuAvailable, rtsA "24m", rtsAL "128m", rtsMaxMemory "2G" ]
             
             ((z, vs), elapsed) <- 
                             timedMS $ runValidatorT 
