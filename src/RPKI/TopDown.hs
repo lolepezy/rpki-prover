@@ -133,16 +133,15 @@ verifyLimit hitTheLimit limit =
             pure AlreadyReportedLimit
         AlreadyReportedLimit -> 
             pure AlreadyReportedLimit
-            
 
 -- | It is the main entry point for the top-down validation. 
--- Validates a bunch of TA starting from their TALs.  
+-- Validates a bunch of TAs starting from their TALs.  
 validateMutlipleTAs :: Storage s => 
                     AppContext s 
                     -> WorldVersion 
                     -> [TAL]
                     -> IO [TopDownResult]
-validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                    
+validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                                     
     database' <- readTVarIO database 
 
     repositoryProcessing <- newRepositoryProcessingIO config
@@ -171,8 +170,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches repositoryProcessing
-        pure $ fromValidations fetchValidation : rs
-
+        pure $ fromValidations fetchValidation : rs              
 
 --
 validateTA :: Storage s => 

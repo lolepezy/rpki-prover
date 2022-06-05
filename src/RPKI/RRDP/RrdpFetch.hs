@@ -44,7 +44,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database              (rwAppTx)
 import qualified RPKI.Store.Database              as DB
-import           RPKI.Time
 import qualified RPKI.Util                        as U
 
 
@@ -60,18 +59,21 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
 
     let arguments = 
             [ worderIdS workerId ] <>
-            rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
+            rtsArguments [ 
+                rtsN 1, 
+                rtsA "20m", 
+                rtsAL "64m", 
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ]
 
     vp <- askScopes
-    (RrdpFetchResult (z, vs), elapsed) <- 
-                    timedMS $ runWorker
-                                logger
-                                config
-                                workerId 
-                                (RrdpFetchParams vp repository worldVersion)                        
-                                (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
-                                arguments                        
-    embedState vs
+    RrdpFetchResult (z, vs) <- runWorker
+                                    logger
+                                    config
+                                    workerId 
+                                    (RrdpFetchParams vp repository worldVersion)                        
+                                    (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
+                                    arguments                        
+    embedState vs    
     either appError pure z    
 
 
