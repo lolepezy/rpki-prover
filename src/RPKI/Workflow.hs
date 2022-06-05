@@ -269,12 +269,12 @@ runWorkflow appContext@AppContext {..} tals = do
                                         logger
                                         config
                                         workerId 
-                                        (ValidatedTALsParams worldVersion tals)                        
+                                        (ValidationParams worldVersion tals)                        
                                         (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                                         arguments                            
             pure $ case z of 
                 Left _                          -> (vs, Nothing)
-                Right (ValidatedTALsResult v s) -> (vs <> v, s)
+                Right (ValidationResult v s) -> (vs <> v, s)
 
 
 

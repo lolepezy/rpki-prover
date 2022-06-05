@@ -384,9 +384,9 @@ executeWorker input appContext =
             CompactionParams {..} -> do 
                 z <- copyLmdbEnvironment appContext targetLmdbEnv                
                 resultHandler $ CompactionResult z
-            ValidatedTALsParams {..} -> do 
+            ValidationParams {..} -> do 
                 (vs, z) <- runValidation appContext worldVersion tals                
-                resultHandler $ ValidatedTALsResult vs z
+                resultHandler $ ValidationResult vs z
    
 
 readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO AppLmdbEnv

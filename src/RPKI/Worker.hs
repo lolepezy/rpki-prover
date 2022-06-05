@@ -38,7 +38,6 @@ import           System.Posix.Process
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
-import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.TAL
@@ -84,7 +83,7 @@ data WorkerParams = RrdpFetchParams {
             CompactionParams { 
                 targetLmdbEnv :: FilePath 
             } | 
-            ValidatedTALsParams {                 
+            ValidationParams {                 
                 worldVersion :: WorldVersion,
                 tals         :: [TAL]
             } 
@@ -119,7 +118,7 @@ newtype CompactionResult = CompactionResult ()
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
-data ValidatedTALsResult = ValidatedTALsResult ValidationState (Maybe Slurm)
+data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
