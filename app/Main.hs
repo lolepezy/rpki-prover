@@ -72,23 +72,16 @@ main :: IO ()
 main = do    
     cliOptions@CLIOptions{..} <- unwrapRecord "RPKI prover, relying party software for RPKI"
     case worker of 
-        Nothing -> mainProcess cliOptions
-        Just _  -> do           
-            input <- readWorkerInput
-            let logLevel' = input ^. typed @Config . #logLevel
-            withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
-                (z, validations) <- do
-                            runValidatorT (newScopes "worker-create-app-context")
-                                $ readWorkerContext input logger
-                case z of
-                    Left e ->                        
-                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                    Right appContext -> 
-                        executeWorker input appContext
+        Nothing -> 
+            if verifySignature 
+                then executeVerifier cliOptions
+                else executeMainProcess cliOptions                
+        Just _ -> 
+            executeWorkerProcess
 
 
-mainProcess :: CLIOptions Unwrapped -> IO ()
-mainProcess cliOptions = do 
+executeMainProcess :: CLIOptions Unwrapped -> IO ()
+executeMainProcess cliOptions = do 
     withLogLevel cliOptions $ \logLevel ->        
         withLogger MainLogger logLevel $ \logger -> do             
             logDebug_ logger [i|Main process.|]
@@ -108,11 +101,52 @@ mainProcess cliOptions = do
                         Right appContext' ->
                             void $ race
                                 (runHttpApi appContext')
-                                (runValidatorApp appContext')
+                                (runValidatorServer appContext')
+
+executeWorkerProcess :: IO ()
+executeWorkerProcess = do
+    input <- readWorkerInput
+    let logLevel' = input ^. typed @Config . #logLevel
+    withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
+        (z, validations) <- do
+                    runValidatorT (newScopes "worker-create-app-context")
+                        $ readWorkerContext input logger
+        case z of
+            Left e ->                        
+                logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+            Right appContext -> 
+                executeWorker input appContext     
 
 
-runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runValidatorApp appContext@AppContext {..} = do
+executeVerifier :: CLIOptions Unwrapped -> IO ()
+executeVerifier cliOptions@CLIOptions {..} = do 
+    withLogLevel cliOptions $ \logLevel ->        
+        withLogger MainLogger logLevel $ \logger -> do
+            case signatureFile of 
+                Nothing   -> logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
+                Just sigf -> 
+                    case verifyDirectory of 
+                        Nothing -> logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
+                        Just verifyDir -> do 
+                            
+                            pure ()
+
+            -- run the validator
+            (appContext, validations) <- do
+                        runValidatorT (newScopes "initialise") $ do 
+                            checkPreconditions cliOptions
+                            createAppContext cliOptions logger logLevel
+            case appContext of
+                Left _ ->
+                    logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
+                Right appContext' ->
+                    void $ race
+                        (runHttpApi appContext')
+                        (runValidatorServer appContext')
+
+
+runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
+runValidatorServer appContext@AppContext {..} = do
     logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- newWorldVersion
     talNames <- listTALFiles $ talDirectory config
@@ -432,6 +466,16 @@ data CLIOptions wrapped = CLIOptions {
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
+
+    verifySignature :: wrapped ::: Bool <?>
+        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++ 
+        "of validated RPKI objects and VRPs to exist and be poulateds. So executeVerifier can (and should) run next to " +++
+        "the running daemon instance of rpki-prover"),         
+
+    signatureFile :: wrapped ::: Maybe FilePath <?> ("Path to the RSC signature file."),
+
+    verifyDirectory :: wrapped ::: Maybe FilePath <?>
+        ("Path to the directory with the files to be verified using and RSC signaure file."),         
 
     cpuCount :: wrapped ::: Maybe Natural <?>
         "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",
