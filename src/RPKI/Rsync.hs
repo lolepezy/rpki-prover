@@ -44,7 +44,6 @@ import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
-import RPKI.Time ( timedMS )
 import           RPKI.Worker
 
 import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
@@ -94,18 +93,21 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
     let arguments = 
-            [ worderIdS workerId ] <>
-            rtsArguments [ rtsN maxCpuAvailable, rtsA "20m", rtsAL "64m", rtsMaxMemory "1G" ]
+            [ worderIdS workerId ] <> 
+            rtsArguments [ 
+                rtsN maxCpuAvailable, 
+                rtsA "20m", 
+                rtsAL "64m", 
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
 
     vp <- askScopes
-    (RsyncFetchResult (z, vs), elapsed) <- 
-                    timedMS $ runWorker 
-                                logger
-                                config
-                                workerId 
-                                (RsyncFetchParams vp rsyncRepo worldVersion)                        
-                                (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
-                                arguments                        
+    RsyncFetchResult (z, vs) <- runWorker 
+                                    logger
+                                    config
+                                    workerId 
+                                    (RsyncFetchParams vp rsyncRepo worldVersion)                        
+                                    (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
+                                    arguments                        
     embedState vs
     either appError pure z    
     
