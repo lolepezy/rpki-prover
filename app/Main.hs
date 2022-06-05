@@ -234,6 +234,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #localExceptions .~ localExceptions    
                 & #logLevel .~ derivedLogLevel                
                 & maybeSet #metricsPrefix (convert <$> metricsPrefix)
+                & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
+                & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
+                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
     }
 
     logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
@@ -518,7 +521,16 @@ data CLIOptions wrapped = CLIOptions {
     noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)",
 
     metricsPrefix :: wrapped ::: Maybe String <?> 
-        "Prefix for Prometheus metrics (default is 'rpki_prover')."
+        "Prefix for Prometheus metrics (default is 'rpki_prover').",
+
+    maxRrdpFetchMemory :: wrapped ::: Maybe Int <?>
+        "Maximal allowed memory allocation (in megabytes) for RRDP fetcher process (default is 1024).",        
+
+    maxRsyncFetchMemory :: wrapped ::: Maybe Int <?>
+        "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",        
+
+    maxValidationMemory :: wrapped ::: Maybe Int <?>
+        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."
 
 } deriving (Generic)
 

@@ -320,6 +320,7 @@ instance ToJSON ManifestProcessing
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
+instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
 

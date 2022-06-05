@@ -180,6 +180,9 @@ rtsAL m = "-AL" <> m
 rtsN :: Int -> String
 rtsN n = "-N" <> show n
 
+rtsMemValue :: Int -> String
+rtsMemValue mb = show mb <> "m"
+
 exitParentDied, exitTimeout, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
 exitParentDied  = ExitFailure 11
 exitTimeout     = ExitFailure 12

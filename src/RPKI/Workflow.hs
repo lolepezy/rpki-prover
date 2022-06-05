@@ -260,22 +260,24 @@ runWorkflow appContext@AppContext {..} tals = do
 
             let arguments = 
                     [ worderIdS workerId ] <>
-                    rtsArguments [ rtsN maxCpuAvailable, rtsA "24m", rtsAL "128m", rtsMaxMemory "2G" ]
+                    rtsArguments [ 
+                        rtsN maxCpuAvailable, 
+                        rtsA "24m", 
+                        rtsAL "128m", 
+                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
             
-            ((z, vs), elapsed) <- 
-                            timedMS $ runValidatorT 
-                                (newScopes "validator") $ 
-                                    runWorker
-                                        logger
-                                        config
-                                        workerId 
-                                        (ValidationParams worldVersion tals)                        
-                                        (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                                        arguments                            
+            (z, vs) <- runValidatorT 
+                    (newScopes "validator") $ 
+                        runWorker
+                            logger
+                            config
+                            workerId 
+                            (ValidationParams worldVersion tals)                        
+                            (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+                            arguments                            
             pure $ case z of 
-                Left _                          -> (vs, Nothing)
+                Left _                       -> (vs, Nothing)
                 Right (ValidationResult v s) -> (vs <> v, s)
-
 
 
 runValidation :: Storage s =>

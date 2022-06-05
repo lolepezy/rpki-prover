@@ -41,6 +41,7 @@ data Config = Config {
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
         validationConfig          :: ValidationConfig,
+        systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
         cacheCleanupInterval      :: Seconds,
@@ -123,7 +124,15 @@ data HttpApiConfig = HttpApiConfig {
 
 data RtrConfig = RtrConfig {
         rtrAddress :: String,
-        rtrPort    :: Int16
+        rtrPort    :: Int16            
+    } 
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)
+
+data SystemConfig = SystemConfig {
+        rsyncWorkerMemoryMb      :: Int,
+        rrdpWorkerMemoryMb       :: Int,
+        validationWorkerMemoryMb :: Int
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
@@ -181,6 +190,11 @@ defaultConfig = Config {
     },
     httpApiConf = HttpApiConfig {
         port = 9999
+    },    
+    systemConfig = SystemConfig {
+        rsyncWorkerMemoryMb      = 1024,
+        rrdpWorkerMemoryMb       = 1024,
+        validationWorkerMemoryMb = 2048
     },
     rtrConfig                 = Nothing,
     cacheCleanupInterval      = Seconds $ 60 * 60 * 12,
@@ -198,3 +212,4 @@ defaultRtrConfig = RtrConfig {
         rtrAddress = "localhost",
         rtrPort    = 8283
     }
+    
