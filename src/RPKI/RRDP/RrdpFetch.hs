@@ -44,7 +44,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database              (rwAppTx)
 import qualified RPKI.Store.Database              as DB
-import           RPKI.Time
 import qualified RPKI.Util                        as U
 
 
