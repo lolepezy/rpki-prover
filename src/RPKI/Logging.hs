@@ -79,15 +79,15 @@ logDebugM logger t = liftIO $ logDebug_ logger t
 
 mkLogMessage :: LogLevel -> Text -> IO LogMessage
 mkLogMessage logLevel message = do 
-    Now time <- thisInstant
+    Now timestamp <- thisInstant
     processId <- getProcessID
     pure LogMessage {..}
 
 data LogMessage = LogMessage { 
-        logLevel :: LogLevel,
-        message ::  Text,
+        logLevel  :: LogLevel,
+        message   :: Text,
         processId :: ProcessID,
-        time :: Instant
+        timestamp :: Instant
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
@@ -159,7 +159,7 @@ withLogger mkLogger maxLogLevel f = do
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]
             let pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
-            logRaw [i|#{level}  #{pid}  #{time}  #{message}|]            
+            logRaw [i|#{level}  #{pid}  #{timestamp}  #{message}|]      
     
 eol :: Char
 eol = '\n' 

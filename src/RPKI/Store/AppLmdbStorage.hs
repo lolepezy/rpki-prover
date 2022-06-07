@@ -287,7 +287,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
     case z of 
         Left e  -> do 
             -- Make it more consistent if it makes sense
-            let message = [i|Failed to run compaction worker: #{e}|]
+            let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
             logError_ logger message            
             throwIO $ AppException $ InternalE $ InternalError message
         Right (CompactionResult _) -> 
