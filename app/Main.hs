@@ -44,6 +44,8 @@ import           System.IO (hPutStrLn, stderr)
 
 import           Options.Generic
 
+import           Shower
+
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -239,7 +241,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
     }
 
-    logInfoM logger [i|Created application context: #{appContext ^. typed @Config}|]
+    logInfoM logger [i|Created application context with configuration: 
+#{shower (appContext ^. typed @Config)}|]
     pure appContext
 
 
