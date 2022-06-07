@@ -83,6 +83,7 @@ dependencies:
 - servant
 - servant-server
 - servant-blaze
+- shower
 - split
 - stm
 - streaming

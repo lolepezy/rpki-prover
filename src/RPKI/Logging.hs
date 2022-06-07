@@ -146,7 +146,7 @@ withLogger mkLogger maxLogLevel f = do
             BinQE b -> do 
                 case bsToMsg b of 
                     Left e ->                                     
-                        mainLogWithLevel =<< mkLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}].|]
+                        mainLogWithLevel =<< mkLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
                     Right logMessage -> 
                         mainLogWithLevel logMessage
             MsgQE logMessage -> 
