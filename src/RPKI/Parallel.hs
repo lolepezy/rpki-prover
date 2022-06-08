@@ -6,26 +6,20 @@
 module RPKI.Parallel where
 
 import           Control.Concurrent.STM
-import           Control.Monad
-import           Control.Monad.Reader
-import           Numeric.Natural
-
 import qualified Control.Concurrent.STM.TBQueue  as Q
-
-import           Control.Exception.Lifted
-
 import           Control.Concurrent.Async.Lifted
+import           Control.Exception.Lifted
+import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 
-import           Data.List.NonEmpty              (NonEmpty (..))
-import qualified Data.List.NonEmpty              as NonEmpty
+import           Data.Foldable (for_)
 
-import qualified Data.IntMap                     as IM
+import           Numeric.Natural
 
 import           RPKI.AppMonad
 import           Streaming
 import qualified Streaming.Prelude               as S
-import Data.Foldable (for_)
+
 
 
 atLeastOne :: Natural -> Natural
@@ -114,7 +108,7 @@ txFoldPipeline parallelism stream withTx consume =
 
 
 -- 
--- | Created two threads and queue between then. Calls
+-- | Create two threads and queue between then. Calls
 -- 'produce' in one thread and 'consume' in the other thread,
 -- 'kill' is used to kill an item in the queue in case
 -- the whole thing is interrupted with an exception.
@@ -198,7 +192,7 @@ killAll queue kill = do
         Nothing -> pure ()
         Just as -> kill as >> killAll queue kill
 
--- Auxialliry stuff for limiting the amount of parallel reading LMDB transactions    
+-- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
 data Semaphore = Semaphore Int (TVar Int)
     deriving (Eq)
 

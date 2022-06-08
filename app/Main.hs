@@ -322,6 +322,7 @@ fsLayout cliOptions logger talsHandle = do
     pure (rootDir, tald, rsyncd, tmpd, cached)
 
 
+getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Maybe FilePath, FilePath)
 getRoot cliOptions = do 
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let root = getRootDirectory cliOptions
@@ -364,7 +365,7 @@ checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
     let subDirectory = root </> sub
     doesDirectoryExist subDirectory >>= \case
-        False -> pure $ Left [i| Directory #{subDirectory} doesn't exist.|]
+        False -> pure $ Left [i|Directory #{subDirectory} doesn't exist.|]
         True  -> pure $ Right subDirectory
 
 createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
@@ -426,21 +427,21 @@ checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 -- | Run rpki-prover in a CLI mode for verifying RSC signature .sig 
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do 
-    withLogLevel cliOptions $ \logLevel ->        
-        withLogger MainLogger logLevel $ \logger -> 
+    withLogLevel cliOptions $ \logLevel1 ->        
+        withLogger MainLogger logLevel1 $ \logger -> 
             case signatureFile of 
-                Nothing      -> logError_ logger [i|RSC file is not set.|]
+                Nothing      -> logError_ logger "RSC file is not set."
                 Just rscFile -> 
                     case verifyDirectory of 
                         Nothing -> 
-                            logError_ logger [i|Directory for files to verify with RSC is not set.|]
+                            logError_ logger "Directory for files to verify with RSC is not set."
                         Just verifyDir -> do
                             (ac, vs) <- runValidatorT 
-                                                    (newScopes "initialise") 
-                                                    (readVerifierContext cliOptions logger)
+                                            (newScopes "initialise") 
+                                            (readVerifierContext cliOptions logger)
                             case ac of
                                 Left _ -> 
-                                    logError_ logger [i|Could not initialise application, errors: #{vs} .|]
+                                    logError_ logger [i|Could not initialise application, errors: #{vs}.|]
                                 Right appContext -> 
                                     rscVerify appContext rscFile verifyDir
 

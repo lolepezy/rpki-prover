@@ -313,7 +313,7 @@ validateCaCertificate
     topDownContext@TopDownContext {..} 
     certificate = do          
     
-    let validationConfig = appContext ^. typed @Config . typed @ValidationConfig
+    let validationConfig = config ^. typed @ValidationConfig
 
     -- First check if we have reached some limit for the total depth of the CA tree
     -- it's total size of the number of repositories. 
@@ -404,7 +404,7 @@ validateCaCertificate
 
         -- Everything else is either extra checks or metrics.
         --         
-        let childrenAki    = toAKI $ getSKI certificate
+        let childrenAki   = toAKI $ getSKI certificate
         let certLocations = getLocations certificate        
         
         validateObjectLocations certificate
