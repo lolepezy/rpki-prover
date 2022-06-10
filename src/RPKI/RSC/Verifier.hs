@@ -13,6 +13,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
+import           Control.Monad.IO.Class
 
 import           Control.Lens
 
@@ -57,15 +58,14 @@ import           RPKI.Worker
 
 import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
+import           RPKI.Util
 
 
-rscVerify :: Storage s => AppContext s -> FilePath -> FilePath -> IO ()
+rscVerify :: Storage s => AppContext s -> FilePath -> FilePath -> ValidatorT IO ()
 rscVerify AppContext {..} rscFile directory = do 
-    bs <- BS.readFile rscFile
-    -- case parseRSC bs of 
-    --     Left e -> 
-
-    --     Right parsed -> do 
-
-
-    pure ()
+    bs <- fromTry (InitE . InitError . fmtEx) $ BS.readFile rscFile
+    case parseRSC bs of 
+        Left e -> 
+            pure ()
+        Right parsed -> do 
+            pure ()

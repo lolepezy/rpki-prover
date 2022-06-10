@@ -436,14 +436,16 @@ executeVerifier cliOptions@CLIOptions {..} = do
                         Nothing -> 
                             logError_ logger "Directory for files to verify with RSC is not set."
                         Just verifyDir -> do
-                            (ac, vs) <- runValidatorT 
-                                            (newScopes "initialise") 
-                                            (readVerifierContext cliOptions logger)
+                            (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
+                                            appContext <- readVerifierContext cliOptions logger
+                                            rscVerify appContext rscFile verifyDir                                            
                             case ac of
                                 Left _ -> 
                                     logError_ logger [i|Could not initialise application, errors: #{vs}.|]
-                                Right appContext -> 
-                                    rscVerify appContext rscFile verifyDir
+                                Right _ -> 
+                                    logInfo_ logger [i|Done.|]
+                                    
+                                    
 
 
 readVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
