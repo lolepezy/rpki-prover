@@ -70,6 +70,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
         lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
+        certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
         objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
         objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
@@ -196,10 +197,13 @@ putObject tx RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
         M.put tx hashToKey h objectKey
         M.put tx objects objectKey storable                           
         M.put tx objectInsertedBy objectKey wv
-        for_ (getAKI object) $ \aki' ->
-            case object of
-                MftRO mft -> MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                _         -> pure ()
+        case object of
+            CerRO c -> 
+                M.put tx certBySKI (getSKI c) objectKey
+            MftRO mft -> 
+                for_ (getAKI object) $ \aki' ->
+                    MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+            _ -> pure ()        
 
 
 linkObjectToUrl :: (MonadIO m, Storage s) => 
@@ -244,16 +248,19 @@ deleteObject tx store@RpkiObjectStore {..} h = liftIO $
             M.delete tx objectInsertedBy objectKey        
             M.delete tx objectValidatedBy objectKey        
             M.delete tx hashToKey h        
+            case ro of 
+                CerRO c -> M.delete tx certBySKI (getSKI c)
+                _       -> pure ()
             ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
                 M.delete tx objectKeyToUrlKeys objectKey            
                 forM_ urlKeys $ \urlKey ->
                     MM.delete tx urlKeyToObjectKey urlKey objectKey                
             
-                for_ (getAKI ro) $ \aki' -> do 
-                    M.delete tx lastValidMft aki'
-                    case ro of
-                        MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                        _         -> pure ()        
+            for_ (getAKI ro) $ \aki' -> do 
+                M.delete tx lastValidMft aki'
+                case ro of
+                    MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                    _         -> pure ()        
 
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
@@ -316,6 +323,12 @@ getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $ do
                 Just (Located loc (MftRO mft)) -> Just $ Located loc mft
                 _                              -> Nothing
 
+
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> SKI -> m (Maybe CerObject)
+getBySKI tx store@RpkiObjectStore {..} ski = liftIO $ runMaybeT $ do 
+    key <- MaybeT $ M.get tx certBySKI ski
+    CerRO c <- MaybeT $ getObjectByKey tx store key
+    pure c
 
 -- TA store functions
 

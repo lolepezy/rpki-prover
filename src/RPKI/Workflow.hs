@@ -39,7 +39,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
-import           RPKI.TopDown
+import           RPKI.Validation.TopDown
 
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus

@@ -55,7 +55,7 @@ import           RPKI.Time
 import           RPKI.RRDP.RrdpFetch
 import           RPKI.RRDP.Http
 import           RPKI.TAL
-import           RPKI.TopDown
+import           RPKI.Validation.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 

@@ -32,7 +32,7 @@ import RPKI.Resources.Types
 import RPKI.Domain
 import RPKI.Reporting (ParseError(..))
 
-import           RPKI.Resources.Resources   as R
+import RPKI.Resources.Resources   as R
 
 type ParseResult a = Either (ParseError Text.Text) a
 

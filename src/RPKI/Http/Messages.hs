@@ -155,7 +155,10 @@ toValidationMessage = \case
       CMSSignatureAlgorithmMismatch sigEE sigAttr -> 
           [i|Signature algorithm on the EE certificate is #{sigEE} but the CSM attributes says #{sigAttr}.|]
 
+      NoAKI -> "NO AKI found"
+
       TACertAKIIsNotEmpty u -> [i|TA certificate #{u} has an AKI.|]
+      
       TACertOlderThanPrevious {..} -> 
           [i|New TA certificate has validity period of #{before}-#{after}, previous one has #{prevBefore}-#{prevAfter}. |] <>
           [i|Will use previous TA certificate. NOTE: this means something really bad happened to the TA, consider stopping to use it at all.|]

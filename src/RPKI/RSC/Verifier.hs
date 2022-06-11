@@ -25,6 +25,7 @@ import qualified Data.ByteString.Char8 as C8
 import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
 
+import           Data.Bifunctor
 import           Data.List
 import           Data.Foldable (for_)
 import           Data.Int                         (Int64)
@@ -60,12 +61,24 @@ import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
 import           RPKI.Util
 
+import qualified RPKI.Store.Database              as DB
+
 
 rscVerify :: Storage s => AppContext s -> FilePath -> FilePath -> ValidatorT IO ()
-rscVerify AppContext {..} rscFile directory = do 
-    bs <- fromTry (InitE . InitError . fmtEx) $ BS.readFile rscFile
-    case parseRSC bs of 
-        Left e -> 
-            pure ()
-        Right parsed -> do 
-            pure ()
+rscVerify appContext@AppContext {..} rscFile directory = do 
+    bs     <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
+    parsed <- vHoist $ fromEither $ first ParseE $ parseRSC bs
+
+    case getAKI parsed of 
+        Nothing  -> appError $ ValidationE NoAKI 
+        Just aki -> do 
+            taCerts <- getTACertificates
+            findCertificateChainToTA aki taCerts
+  where
+    findCertificateChainToTA aki taCerts = do
+        
+        pure ()
+
+    getTACertificates = do 
+        pure []
+    

@@ -32,7 +32,7 @@ import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.RRDP.RrdpFetch
 import           RPKI.TAL
-import           RPKI.TopDown
+import           RPKI.Validation.TopDown
 import           RPKI.Util                        (convert, fmtEx)
 import           RPKI.AppState
 

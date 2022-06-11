@@ -8,7 +8,7 @@
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
 
-module RPKI.TopDown where
+module RPKI.Validation.TopDown where
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
