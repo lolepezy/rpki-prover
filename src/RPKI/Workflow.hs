@@ -160,18 +160,29 @@ runWorkflow appContext@AppContext {..} tals = do
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
 
                 processTALs db = do
-                    (topDownValidations, maybeSlurm) <- processTALsWorker worldVersion
-                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
+                    (z, vs) <- processTALsWorker worldVersion                    
+                    case z of 
+                        Left e -> do 
+                            logError_ logger [i|Validator process failed: #{e}.|]                            
+                            rwTx db $ \tx -> do
+                                putValidations tx db worldVersion (vs ^. typed)
+                                putMetrics tx db worldVersion (vs ^. typed)
+                                completeWorldVersion tx db worldVersion                            
+                            updatePrometheus (vs ^. typed) prometheusMetrics worldVersion
+                            pure (mempty, mempty)            
+                        Right (ValidationResult v s) -> do                             
+                            let (topDownValidations, maybeSlurm) = (vs <> v, s)
+                            updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
 
-                    roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
-                        Nothing -> do 
-                            logError_ logger [i|Something weird happened: .|]
-                            pure (mempty, mempty)
-                        Just vrps -> do                 
-                            slurmedVrps <- atomically $ do
-                                    setCurrentVersion appState worldVersion
-                                    completeVersion appState worldVersion vrps maybeSlurm
-                            pure (vrps, slurmedVrps)
+                            roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
+                                Nothing -> do 
+                                    logError_ logger [i|Something weird happened: .|]
+                                    pure (mempty, mempty)
+                                Just vrps -> do                 
+                                    slurmedVrps <- atomically $ do
+                                            setCurrentVersion appState worldVersion
+                                            completeVersion appState worldVersion vrps maybeSlurm
+                                    pure (vrps, slurmedVrps)
 
 
         cacheGC sharedStuff worldVersion = do
@@ -266,7 +277,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         rtsAL "128m", 
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
             
-            (z, vs) <- runValidatorT 
+            runValidatorT 
                     (newScopes "validator") $ 
                         runWorker
                             logger
@@ -274,10 +285,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             workerId 
                             (ValidationParams worldVersion tals)                        
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                            arguments                            
-            pure $ case z of 
-                Left _                       -> (vs, Nothing)
-                Right (ValidationResult v s) -> (vs <> v, s)
+                            arguments                                        
 
 
 runValidation :: Storage s =>
