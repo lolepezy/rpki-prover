@@ -57,6 +57,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         InvalidKI Text |  
                         CMSSignatureAlgorithmMismatch Text Text |                      
                         NoAKI |
+                        UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
                         TACertAKIIsNotEmpty URI |
                         TACertOlderThanPrevious { 
                                 before :: Instant,

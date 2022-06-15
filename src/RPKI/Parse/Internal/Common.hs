@@ -67,7 +67,7 @@ id_authorityKeyId = [2, 5, 29, 35]
 id_crlNumber      = [2, 5, 29, 20]
 
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
-id_sha256, id_ct_signedChecklist :: OID
+id_sha256, id_sha512, id_ct_signedChecklist :: OID
 
 id_pkcs9              = [1, 2, 840, 113549, 1, 9]
 id_contentType        = id_pkcs9 <> [3]
@@ -77,6 +77,7 @@ id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 id_ct_signedChecklist = id_pkcs9 <> [16, 1, 48]
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
+id_sha512            = [2, 16, 840, 1, 101, 3, 4, 2, 3]
 
 id_ce_CRLDistributionPoints, id_ce_certificatePolicies, id_ce_basicConstraints ::OID 
 id_ce_keyUsage, id_ce_extKeyUsage :: OID 
