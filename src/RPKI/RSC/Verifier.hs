@@ -55,9 +55,7 @@ import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Worker
 
-import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
 import           RPKI.Util
 
@@ -65,20 +63,32 @@ import qualified RPKI.Store.Database              as DB
 
 
 rscVerify :: Storage s => AppContext s -> FilePath -> FilePath -> ValidatorT IO ()
-rscVerify appContext@AppContext {..} rscFile directory = do 
+rscVerify appContext@AppContext {..} rscFile directory = do
     bs     <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
-    parsed <- vHoist $ fromEither $ first ParseE $ parseRSC bs
+    parsedRsc <- vHoist $ fromEither $ first ParseE $ parseRSC bs
 
-    case getAKI parsed of 
-        Nothing  -> appError $ ValidationE NoAKI 
-        Just aki -> do 
-            taCerts <- getTACertificates
-            findCertificateChainToTA aki taCerts
+    db@DB {..} <- liftIO $ readTVarIO database
+    roAppTx db $ \tx -> do
+        taCerts <- getTACertificates tx taStore
+
+        case getAKI parsedRsc of
+            Nothing  -> appError $ ValidationE NoAKI
+            Just aki -> do            
+                -- validate bottom-up
+                findCertificateChainToTA tx aki taCerts
+                -- verify the files
+                verifyFiles parsedRsc directory
   where
-    findCertificateChainToTA aki taCerts = do
-        
+    findCertificateChainToTA tx aki taCerts = do
+        appError $ ValidationE NoAKI        
         pure ()
 
-    getTACertificates = do 
-        pure []
-    
+    getTACertificates tx taStore = 
+        liftIO $ map ((^. #taCert) . snd) <$> DB.getTAs tx taStore
+
+    verifyFiles parsedRsc directory = do 
+        files <- fromTry (UnspecifiedE "No directory" . fmtEx) $ getDirectoryContents directory
+        for_ files $ \f -> do 
+            pure ()            
+        pure ()
+

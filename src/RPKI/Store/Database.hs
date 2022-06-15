@@ -338,6 +338,9 @@ putTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe StorableTA)
 getTA tx (TAStore s) name = liftIO $ M.get tx s name
 
+getTAs :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> m [(TaName, StorableTA)]
+getTAs tx (TAStore s) = liftIO $ M.all tx s
+
 putValidations :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
 putValidations tx DB { validationsStore = ValidationsStore s } wv validations = liftIO $ M.put tx s wv validations
@@ -700,11 +703,11 @@ instance Storage s => WithStorage s (DB s) where
 
 roAppTx :: (Storage s, WithStorage s ws) => 
             ws -> (Tx s 'RO -> ValidatorT IO a) -> ValidatorT IO a 
-roAppTx s f = appTx s f roTx    
+roAppTx ws f = appTx ws f roTx    
 
 rwAppTx :: (Storage s, WithStorage s ws) => 
             ws -> (Tx s 'RW -> ValidatorT IO a) -> ValidatorT IO a
-rwAppTx s f = appTx s f rwTx
+rwAppTx ws f = appTx ws f rwTx
 
 
 appTx :: (Storage s, WithStorage s ws) => 
@@ -714,12 +717,12 @@ appTx :: (Storage s, WithStorage s ws) =>
             -> (Tx s mode -> IO (Either AppError a, ValidationState))
             -> IO (Either AppError a, ValidationState)) 
         -> ValidatorT IO a
-appTx s f txF = do
+appTx ws f txF = do
     env <- ask        
     embedValidatorT $ transaction env `catch` 
                     (\(TxRollbackException e vs) -> pure (Left e, vs))
   where
-    transaction env = txF s $ \tx -> do 
+    transaction env = txF ws $ \tx -> do 
         z@(r, vs) <- runValidatorT env (f tx)
         case r of
             -- abort transaction on ExceptT error
