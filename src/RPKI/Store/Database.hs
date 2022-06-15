@@ -445,9 +445,9 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     for_ lastSPuts $ uncurry (M.put tx lastS)
   where
     separate = foldr f ([], [])
-        where
-            f (Put r) (ps, rs)    = (r : ps, rs)
-            f (Remove r) (ps, rs) = (ps, r : rs)
+      where
+        f (Put r)    (ps, rs) = (r : ps, rs)
+        f (Remove r) (ps, rs) = (ps, r : rs)
 
 getPublicationPoints :: (MonadIO m, Storage s) =>
                         Tx s mode -> DB s -> m PublicationPoints
