@@ -58,6 +58,8 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         CMSSignatureAlgorithmMismatch Text Text |                      
                         NoAKI |
                         UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
+                        NotFoundOnChecklist Hash Text |
+                        ChecklistFileNameMismatch Hash Text Text |
                         TACertAKIIsNotEmpty URI |
                         TACertOlderThanPrevious { 
                                 before :: Instant,

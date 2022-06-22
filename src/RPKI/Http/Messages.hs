@@ -157,6 +157,10 @@ toValidationMessage = \case
 
       NoAKI -> "NO AKI found"
 
+      UnsupportedHashAlgorithm digest -> [i|Unsupported hashing algorithm #{digest}|]
+      NotFoundOnChecklist hash file -> [i|File #{file} with hash #{hash} is not found on the checklist.|]
+      ChecklistFileNameMismatch hash f1 f2 -> [i|File with hash #{hash} has name #{f1} but marked as #{f2} on the checklist.|]
+
       TACertAKIIsNotEmpty u -> [i|TA certificate #{u} has an AKI.|]
       
       TACertOlderThanPrevious {..} -> 
