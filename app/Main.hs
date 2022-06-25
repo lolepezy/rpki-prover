@@ -429,23 +429,25 @@ executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do 
     withLogLevel cliOptions $ \logLevel1 ->        
         withLogger MainLogger logLevel1 $ \logger -> 
-            case signatureFile of 
-                Nothing      -> logError_ logger "RSC file is not set."
-                Just rscFile -> 
-                    case verifyDirectory of 
-                        Nothing -> 
-                            logError_ logger "Directory for files to verify with RSC is not set."
-                        Just verifyDir -> do
-                            (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
-                                            appContext <- readVerifierContext cliOptions logger
-                                            rscVerify appContext rscFile verifyDir                                            
-                            case ac of
-                                Left _ -> 
-                                    logError_ logger [i|Could not initialise application, errors: #{vs}.|]
-                                Right _ -> 
-                                    logInfo_ logger [i|Done.|]
-                                    
-                                    
+            withVerifier logger $ \verifyPath rscFile -> do                    
+                (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
+                                appContext <- readVerifierContext cliOptions logger
+                                rscVerify appContext rscFile verifyPath                                            
+                case ac of
+                    Left _ -> 
+                        logError_ logger [i|Could not initialise application, errors: #{vs}.|]
+                    Right _ -> 
+                        logInfo_ logger [i|Done.|]
+  where 
+    withVerifier logger f = 
+        case signatureFile of 
+            Nothing      -> logError_ logger "RSC file is not set."
+            Just rscFile -> 
+                case (verifyDirectory, verifyFiles) of 
+                    (Nothing, [])  -> logError_ logger "Neither files nor directory for files to verify with RSC are not set."
+                    (Nothing, vfs) -> f (FileList vfs) rscFile
+                    (Just vd, [])  -> f (Directory vd) rscFile
+                    _              -> logError_ logger "Both directory and list of files are set, leave just one of them to verify."                    
 
 
 readVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
@@ -491,6 +493,9 @@ data CLIOptions wrapped = CLIOptions {
 
     verifyDirectory :: wrapped ::: Maybe FilePath <?>
         ("Path to the directory with the files to be verified using and RSC signaure file."),         
+
+    verifyFiles :: wrapped ::: [FilePath] <?>
+        ("Files to be verified using and RSC signaure file, may be multiple files."),         
 
     cpuCount :: wrapped ::: Maybe Natural <?>
         "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",

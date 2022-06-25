@@ -70,8 +70,13 @@ import qualified RPKI.Store.Database              as DB
 import Data.Traversable (for)
 
 
-rscVerify :: Storage s => AppContext s -> FilePath -> FilePath -> ValidatorT IO ()
-rscVerify appContext@AppContext {..} rscFile directory = do
+data VerifyPath = FileList [FilePath] 
+                | Directory FilePath
+    deriving stock (Show, Eq, Ord, Generic)    
+
+
+rscVerify :: Storage s => AppContext s -> FilePath -> VerifyPath -> ValidatorT IO ()
+rscVerify appContext@AppContext {..} rscFile verifyPath = do
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
     parsedRsc <- vHoist $ fromEither $ first ParseE $ parseRSC bs
 
@@ -88,7 +93,7 @@ rscVerify appContext@AppContext {..} rscFile directory = do
                 pure parsedRsc 
 
         -- verify the files
-    verifyFiles validatedRsc directory
+    verifyFiles validatedRsc
   where
     findCertificateChainToTA tx aki taCerts = do
         appError $ ValidationE NoAKI        
@@ -97,7 +102,7 @@ rscVerify appContext@AppContext {..} rscFile directory = do
     getTACertificates tx taStore = 
         liftIO $ map ((^. #taCert) . snd) <$> DB.getTAs tx taStore
 
-    verifyFiles parsedRsc directory = do         
+    verifyFiles parsedRsc = do         
         let rsc = getCMSContent $ parsedRsc ^. #cmsPayload
         let digest = rsc ^. #digestAlgorithm        
         case findHashFunc digest of 
@@ -113,11 +118,16 @@ rscVerify appContext@AppContext {..} rscFile directory = do
                             | otherwise -> pure ()
                         _ -> pure ()                    
 
-    fileMap hashC = do 
-        files <- fromTry (UnspecifiedE "No directory" . fmtEx) $ getDirectoryContents directory        
-        liftIO $ for files $ \f -> do 
-            let fullPath = directory </> f
-            (f, ) . mkHash <$> runConduitRes (sourceFile fullPath .| hashC)                
+    fileMap hashC = 
+        case verifyPath of 
+            FileList files -> 
+                liftIO $ for files $ \f -> 
+                    (f, ) . mkHash <$> runConduitRes (sourceFile f .| hashC)                                                
+            Directory directory -> do 
+                files <- fromTry (UnspecifiedE [i|No directory #{directory}|] . fmtEx) $ getDirectoryContents directory        
+                liftIO $ for files $ \f -> do 
+                    let fullPath = directory </> f
+                    (f, ) . mkHash <$> runConduitRes (sourceFile fullPath .| hashC)                
 
     findHashFunc (DigestAlgorithmIdentifier oid) = 
         case () of 
