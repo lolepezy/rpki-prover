@@ -764,12 +764,12 @@ appTxEx ws err f txF = do
             Right _ -> pure z
 
 
+-- Utils of different sorts
+
 data TxRollbackException = TxRollbackException AppError ValidationState
     deriving stock (Show, Eq, Ord, Generic)
 
 instance Exception TxRollbackException
-
--- Utils of different sorts
 
 -- | URLs can potentially be much larger than 512 bytes that are allowed as LMDB
 -- keys. So we 

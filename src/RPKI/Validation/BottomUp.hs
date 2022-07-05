@@ -53,7 +53,16 @@ import           RPKI.Store.Database
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx, fmtLocations)
+import           RPKI.Util (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
 
+
+-- validateBottomUp :: Storage s => 
+--                 AppContext s 
+--                 -> TAL 
+--                 -> WorldVersion             
+--                 -> RepositoryProcessing 
+--                 -> IO ()
+-- validateBottomUp 
+--     appContext@AppContext{..}

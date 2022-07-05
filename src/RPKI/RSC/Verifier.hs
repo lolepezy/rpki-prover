@@ -31,6 +31,7 @@ import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
 
 import           Data.Bifunctor
+import           Data.Maybe
 import           Data.List
 import           Data.Foldable (for_)
 import           Data.Int                         (Int64)
@@ -77,14 +78,18 @@ data VerifyPath = FileList [FilePath]
 
 rscVerify :: Storage s => AppContext s -> FilePath -> VerifyPath -> ValidatorT IO ()
 rscVerify appContext@AppContext {..} rscFile verifyPath = do
-    bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
-    parsedRsc <- vHoist $ fromEither $ first ParseE $ parseRSC bs
 
     db@DB {..} <- liftIO $ readTVarIO database
 
+    -- First check that there's some validated data
+    lastVersion <- liftIO $ roTx db $ getLastCompletedVersion db    
+    when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
+    
+    bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
+    parsedRsc <- vHoist $ fromEither $ first ParseE $ parseRSC bs    
+
     validatedRsc <- roAppTx db $ \tx -> do
         taCerts <- getTACertificates tx taStore
-
         case getAKI parsedRsc of
             Nothing  -> appError $ ValidationE NoAKI
             Just aki -> do            
@@ -92,12 +97,10 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                 findCertificateChainToTA tx aki taCerts
                 pure parsedRsc 
 
-        -- verify the files
     verifyFiles validatedRsc
   where
     findCertificateChainToTA tx aki taCerts = do
         appError $ ValidationE NoAKI        
-        pure ()
 
     getTACertificates tx taStore = 
         liftIO $ map ((^. #taCert) . snd) <$> DB.getTAs tx taStore
@@ -116,7 +119,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                         Just (Just f')  
                             | f /= f'   -> appError $ ValidationE $ ChecklistFileNameMismatch h f f'
                             | otherwise -> pure ()
-                        _ -> pure ()                    
+                        _ -> pure ()
 
     fileMap hashC = 
         case verifyPath of 
@@ -133,8 +136,10 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
         case () of 
               _ | oid == id_sha256 -> Just $ sinkHash S256.init S256.update S256.finalize            
                 | oid == id_sha512 -> Just $ sinkHash S512.init S512.update S512.finalize
+                -- TODO Support more hashes
                 | otherwise        -> Nothing
 
+    -- Conduit sink computing a hash in an incremental fashion
     sinkHash initialValue updateValue finalValue = do 
         loop initialValue        
       where    
@@ -142,3 +147,4 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
             await >>= \case
                 Nothing    -> pure $ finalValue ctx
                 Just chunk -> loop $ updateValue ctx chunk
+

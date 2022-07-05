@@ -57,6 +57,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         InvalidKI Text |  
                         CMSSignatureAlgorithmMismatch Text Text |                      
                         NoAKI |
+                        NoValidatedVersion |
                         UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
                         NotFoundOnChecklist Hash Text |
                         ChecklistFileNameMismatch Hash Text Text |
