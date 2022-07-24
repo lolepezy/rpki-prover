@@ -292,8 +292,8 @@ instance WithHash RpkiObject where
     getHash (RscRO c) = getHash c
 
 data Located a = Located { 
-        locations      :: Locations,
-        payload :: a
+        locations :: Locations,
+        payload   :: a
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise

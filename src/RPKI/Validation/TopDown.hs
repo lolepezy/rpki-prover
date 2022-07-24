@@ -37,6 +37,7 @@ import           Data.Proxy
 import           UnliftIO.Async
 
 import           RPKI.AppContext
+import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -55,7 +56,7 @@ import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                        (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
-import           RPKI.AppState
+import           RPKI.Validation.Common
 
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
@@ -414,51 +415,28 @@ validateCaCertificate
 
         -- first try to use the latest manifest 
         -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
-        findLatestMft childrenAki >>= \case                        
+        maybeMft <- findLatestMft database childrenAki
+        let goForLatestValid = tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
+        case maybeMft of                        
             Nothing -> 
                 -- Use awkward vError + catchError to force the error to 
                 -- get into the Validations in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
-                    tryLatestValidCachedManifest Nothing childrenAki certLocations
+                    goForLatestValid
                 
             Just mft -> 
-                tryManifest mft childrenAki certLocations
+                useManifest mft childrenAki certLocations
                     `catchError` 
-                    tryLatestValidCachedManifest (Just mft) childrenAki certLocations
+                    goForLatestValid
 
       where                       
 
-        tryManifest mft childrenAki certLocations = do             
+        useManifest mft childrenAki certLocations = do             
             validateManifestAndItsChildren mft childrenAki certLocations
-                `finallyError`
+                `recover`
                 -- manifest should be marked as visited regardless of its validitity
                 visitObject appContext topDownContext mft               
-
-        tryLatestValidCachedManifest latestMft childrenAki certLocations e =
-            -- this "fetch" has failed so we are falling back to a latest valid 
-            -- cached manifest for this CA               
-            -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
-            --
-            findLatestCachedValidMft childrenAki >>= \case
-                Nothing             -> throwError e
-                Just latestValidMft ->             
-                    let mftLoc = fmtLocations $ getLocations latestValidMft            
-                    in case latestMft of 
-                        Nothing -> do 
-                            appWarn e      
-                            logWarnM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
-                            tryManifest latestValidMft childrenAki certLocations                                
-                        Just latestMft'
-                            | getHash latestMft' == getHash latestValidMft 
-                                -- it doesn't make sense to try the same manifest again
-                                -- just re-trow the error
-                                -> throwError e
-                            | otherwise -> do 
-                                appWarn e                                    
-                                logWarnM logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
-                                                  [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
-                                tryManifest latestValidMft childrenAki certLocations
 
 
         validateManifestAndItsChildren locatedMft childrenAki certLocations = do                         
@@ -550,7 +528,7 @@ validateCaCertificate
 
                                 useMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
 
-                        mconcat <$> processChildren `finallyError` markAllEntriesAsVisited                                                
+                        mconcat <$> processChildren `recover` markAllEntriesAsVisited                                                
 
                     Just _ -> 
                         vError $ CRLHashPointsToAnotherObject crlHash certLocations   
@@ -637,24 +615,6 @@ validateCaCertificate
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
             Just ro' -> pure ro'
 
-
-    allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
-    validateMftFileName filename =                
-        case Text.splitOn "." filename of 
-            [ mainName, extension ] -> do                    
-                unless (isSupportedExtension $ Text.toLower extension) $ 
-                    vError $ BadFileNameOnMFT filename 
-                                ("Unsupported filename extension " <> extension)
-
-                unless (Text.all (`elem` allowedMftFileNameCharacters) mainName) $ do 
-                    let badChars = Text.filter (`notElem` allowedMftFileNameCharacters) mainName
-                    vError $ BadFileNameOnMFT filename 
-                                ("Unsupported characters in filename: '" <> badChars <> "'")
-
-            _somethingElse -> 
-                vError $ BadFileNameOnMFT filename 
-                            "Filename doesn't have exactly one DOT"            
-
     
     validateChild validCrl child@(Located locations ro) = do
         -- At the moment of writing RFC 6486-bis 
@@ -718,50 +678,7 @@ validateCaCertificate
                 where                 
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
-
-
-    findLatestMft childrenAki = liftIO $ do 
-        objectStore' <- (^. #objectStore) <$> readTVarIO database
-        roTx objectStore' $ \tx -> 
-            findLatestMftByAKI tx objectStore' childrenAki
-
-    findLatestCachedValidMft childrenAki = liftIO $ do 
-        objectStore' <- (^. #objectStore) <$> readTVarIO database
-        roTx objectStore' $ \tx -> 
-            getLatestValidMftByAKI tx objectStore' childrenAki
-
-
-    -- TODO Is there a more reliable way to find it?
-    findCrlOnMft mft = filter (\(T2 name _) -> ".crl" `Text.isSuffixOf` name) $
-        mftEntries $ getCMSContent $ cmsPayload mft
-
-
-    -- | Check that manifest URL in the certificate is the same as the one 
-    -- the manifest was actually fetched from.
-    validateMftLocation mft certficate = 
-        case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of
-            Nothing     -> vError $ NoMFTSIA $ getLocations certficate
-            Just mftSIA -> do 
-                let mftLocations = getLocations mft
-                when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
-                    vWarn $ MFTOnDifferentLocation mftSIA mftLocations                    
-
-    -- | Validate that the object has only one location: if not, 
-    -- it's generally is a warning, not really an error.
-    validateObjectLocations (getLocations -> locs@(Locations locSet)) =
-        inSubObjectVScope (locationsToText locs) $ 
-            when (NESet.size locSet > 1) $ 
-                vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
-
-    -- | Check that CRL URL in the certificate is the same as the one 
-    -- the CRL was actually fetched from. 
-    -- 
-    checkCrlLocation crl eeCert = 
-        for_ (getCrlDistributionPoint $ cwsX509certificate eeCert) $ \crlDP -> do
-            let crlLocations = getLocations crl
-            when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
-                vError $ CRLOnDifferentLocation crlDP crlLocations
-
+   
 
 -- Mark validated objects in the database, i.e.
 -- 

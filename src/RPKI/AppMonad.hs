@@ -240,8 +240,8 @@ getPureMetric = do
     pure $ lookupMetric metricScope metricMap
             
 
-finallyError :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
-finallyError tryF finallyF = 
+recover :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
+recover tryF finallyF = 
     tryIt `catchError` catchIt
   where
     tryIt = do  

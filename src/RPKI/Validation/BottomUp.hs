@@ -55,14 +55,51 @@ import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util (fmtEx, fmtLocations)
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Validation.Common
 import           RPKI.AppState
 
 
--- validateBottomUp :: Storage s => 
---                 AppContext s 
---                 -> TAL 
---                 -> WorldVersion             
---                 -> RepositoryProcessing 
---                 -> IO ()
--- validateBottomUp 
---     appContext@AppContext{..}
+validateBottomUp :: Storage s => 
+                AppContext s 
+                -> RpkiObject
+                -> ValidatorT IO ()
+validateBottomUp 
+    appContext@AppContext{..}
+    object = do 
+    db@DB {..} <- liftIO $ readTVarIO database
+    case getAKI object of 
+        Nothing  -> appError $ ValidationE NoAKI
+        Just (AKI ki) -> do 
+            parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
+            case parentCert of 
+                Nothing -> appError $ ValidationE ParentCertificateNotFound
+                Just c  -> do
+                    validateManifest c                                        
+                    pure ()
+            pure ()
+  where
+    validateManifest certificate = do
+        let childrenAki   = toAKI $ getSKI certificate
+        let certLocations = getLocations certificate        
+        -- first try to use the latest manifest 
+        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
+        maybeMft <- findLatestMft database childrenAki           
+        case maybeMft of 
+            Nothing -> 
+                -- Use awkward vError + catchError to force the error to 
+                -- get into the Validations in the state.
+                vError (NoMFT childrenAki certLocations)
+                    `catchError`
+                    tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
+                
+            Just mft -> 
+                useManifest mft childrenAki certLocations
+                    `catchError` 
+                    tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
+
+        pure ()
+
+    useManifest mft childrenAki certLocations = do 
+        pure ()
+
+

@@ -5,17 +5,20 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedLabels      #-}
 
 module RPKI.Store.Database where
 
 import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
+import           Control.Lens
 import           Control.Monad.Trans.Maybe
 import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.IORef.Lifted
 import           Data.Foldable            (for_)
+import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
@@ -324,11 +327,11 @@ getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $ do
                 _                              -> Nothing
 
 
-getBySKI :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> SKI -> m (Maybe CerObject)
-getBySKI tx store@RpkiObjectStore {..} ski = liftIO $ runMaybeT $ do 
-    key <- MaybeT $ M.get tx certBySKI ski
-    CerRO c <- MaybeT $ getObjectByKey tx store key
-    pure c
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CerObject))
+getBySKI tx DB { objectStore = store@RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
+    objectKey <- MaybeT $ M.get tx certBySKI ski
+    located   <- MaybeT $ getLocatedByKey tx store objectKey
+    pure $ located & #payload %~ (\(CerRO c) -> c)
 
 -- TA store functions
 
