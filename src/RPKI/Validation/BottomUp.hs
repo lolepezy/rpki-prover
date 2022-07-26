@@ -62,10 +62,12 @@ import           RPKI.AppState
 validateBottomUp :: Storage s => 
                 AppContext s 
                 -> RpkiObject
+                -> Now
                 -> ValidatorT IO ()
 validateBottomUp 
     appContext@AppContext{..}
-    object = do 
+    object 
+    now = do 
     db@DB {..} <- liftIO $ readTVarIO database
     case getAKI object of 
         Nothing  -> appError $ ValidationE NoAKI
@@ -74,20 +76,20 @@ validateBottomUp
             case parentCert of 
                 Nothing -> appError $ ValidationE ParentCertificateNotFound
                 Just c  -> do
-                    validateManifest c                                        
+                    validateManifest db c                                        
                     pure ()
             pure ()
   where
-    validateManifest certificate = do
+    validateManifest db@DB{..} certificate = do
+        {- This resembles `validateThisCertAndGoDown` from TopDown.hs 
+           but the difference is that we don't do any descent down the tree
+           and don't track visited object or metrics.
+         -}
         let childrenAki   = toAKI $ getSKI certificate
-        let certLocations = getLocations certificate        
-        -- first try to use the latest manifest 
-        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
+        let certLocations = getLocations certificate                
         maybeMft <- findLatestMft database childrenAki           
         case maybeMft of 
             Nothing -> 
-                -- Use awkward vError + catchError to force the error to 
-                -- get into the Validations in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
@@ -96,10 +98,33 @@ validateBottomUp
                 useManifest mft childrenAki certLocations
                     `catchError` 
                     tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
+      where 
+        -- TODO Decide what to do with nested scopes (we go bottom up, 
+        -- so nesting doesn't work the same way).
+        useManifest locatedMft childrenAki certLocations = do 
+            let mft = locatedMft ^. #payload
+            validateObjectLocations locatedMft
+            validateMftLocation locatedMft certificate
+            T2 _ crlHash <- case findCrlOnMft mft of 
+                        []    -> vError $ NoCRLOnMFT childrenAki certLocations
+                        [crl] -> pure crl
+                        crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
+            
+            crlObject <- liftIO $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
+            case crlObject of 
+                Nothing -> 
+                    vError $ NoCRLExists childrenAki certLocations    
 
-        pure ()
+                Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
+                    validateObjectLocations foundCrl           
+                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                    checkCrlLocation foundCrl mftEECert
+                    vHoist $ validateCrl now crl certificate         
+                    pure ()
 
-    useManifest mft childrenAki certLocations = do 
-        pure ()
+                Just _ -> 
+                    vError $ CRLHashPointsToAnotherObject crlHash certLocations   
+
+
 
 

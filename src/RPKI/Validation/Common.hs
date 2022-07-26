@@ -94,19 +94,23 @@ findLatestCachedValidMft database childrenAki = liftIO $ do
         getLatestValidMftByAKI tx objectStore' childrenAki
 
 
-tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash a) =>
+-- 
+-- Reusable piece for the cases when a "fetch" has failed so we are falling 
+-- back to a latest valid cached manifest for this CA
+-- https://datatracker.ietf.org/doc/html/rfc9286#section-6.6
+-- 
+-- This function doesn't make much sense by itself, it's just a chunk of code 
+-- reusable by both TopDown and BottomUp.
+-- 
+tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
         AppContext s
-    -> (Located MftObject -> AKI -> t -> ValidatorT m b)
-    -> Maybe a
+    -> (Located MftObject -> AKI -> Locations -> ValidatorT m b)
+    -> Maybe mft
     -> AKI
-    -> t
+    -> Locations
     -> AppError
     -> ValidatorT m b
 tryLatestValidCachedManifest AppContext{..} useManifest latestMft childrenAki certLocations e =
-    -- this "fetch" has failed so we are falling back to a latest valid 
-    -- cached manifest for this CA               
-    -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.7
-    --
     findLatestCachedValidMft database childrenAki >>= \case
         Nothing             -> throwError e
         Just latestValidMft ->             

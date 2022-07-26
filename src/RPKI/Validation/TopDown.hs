@@ -414,7 +414,8 @@ validateCaCertificate
         visitObject appContext topDownContext (CerRO $ certificate ^. #payload)                                                    
 
         -- first try to use the latest manifest 
-        -- https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#section-6.2                                     
+        -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-6486bis-11#section-6.2
+        -- 
         maybeMft <- findLatestMft database childrenAki
         let goForLatestValid = tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
         case maybeMft of                        
