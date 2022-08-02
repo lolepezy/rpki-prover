@@ -58,7 +58,11 @@ import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.Common
 import           RPKI.AppState
 
-
+{- 
+    Given an object
+     - find a path up to a TA certificate
+     - validate the chain and the given object     
+-}
 validateBottomUp :: Storage s => 
                 AppContext s 
                 -> RpkiObject
@@ -75,11 +79,30 @@ validateBottomUp
             parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
             case parentCert of 
                 Nothing -> appError $ ValidationE ParentCertificateNotFound
-                Just c  -> do
-                    validateManifest db c                                        
+                Just pc  -> do
+                    (mft, crl) <- validateManifest db pc
                     pure ()
             pure ()
   where
+
+    findPathToRoot db@DB{..} certificate = do                  
+        tas <- roAppTx db $ \tx -> getTAs tx taStore         
+        let taCerts = Map.fromList $ map (\(_, StorableTA {..}) -> (getSKI taCert, taCert)) tas 
+        go taCerts certificate
+      where        
+        go taCerts c = case getAKI c of 
+            Nothing       -> appError $ ValidationE NoAKI
+            Just (AKI ki) -> do 
+                parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
+                case parentCert of 
+                    Nothing -> do                         
+                        case Map.lookup (SKI ki) taCerts of 
+                            Nothing -> appError $ ValidationE ParentCertificateNotFound
+                            Just c  -> pure [c]
+                    Just pc  -> do
+                        z <- go taCerts pc
+                        pure $ payload pc : z
+
     validateManifest db@DB{..} certificate = do
         {- This resembles `validateThisCertAndGoDown` from TopDown.hs 
            but the difference is that we don't do any descent down the tree
@@ -119,12 +142,12 @@ validateBottomUp
                     validateObjectLocations foundCrl           
                     let mftEECert = getEECert $ unCMS $ cmsPayload mft
                     checkCrlLocation foundCrl mftEECert
-                    vHoist $ validateCrl now crl certificate         
-                    pure ()
+                    vHoist $ validateCrl now crl certificate
+                    pure (mft, crl)
 
                 Just _ -> 
                     vError $ CRLHashPointsToAnotherObject crlHash certLocations   
-
+            
 
 
 
