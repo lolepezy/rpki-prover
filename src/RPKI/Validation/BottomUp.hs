@@ -72,36 +72,55 @@ validateBottomUp
     appContext@AppContext{..}
     object 
     now = do 
-    db@DB {..} <- liftIO $ readTVarIO database
+    db@DB {..} <- liftIO $ readTVarIO database    
     case getAKI object of 
         Nothing  -> appError $ ValidationE NoAKI
         Just (AKI ki) -> do 
             parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
             case parentCert of 
                 Nothing -> appError $ ValidationE ParentCertificateNotFound
-                Just pc  -> do
-                    (mft, crl) <- validateManifest db pc
-                    pure ()
-            pure ()
+                Just pc  -> do                    
+                    certPath <- reverse <$> findPathToRoot db pc
+                    validateTopDownAlongPath db certPath             
   where
+
+    validateTopDownAlongPath db certPath = do
+        -- TODO Make it NonEmpty?
+        let taCert = head certPath
+        let u = pickLocation $ getLocations taCert
+        vHoist $ validateTaCertAKI taCert u
+        let verifiedResources = createVerifiedResources $ payload taCert
+        go verifiedResources certPath
+      where        
+        go verifiedResources (cert : certs) = do             
+            void $ validateManifest db cert            
+            go verifiedResources certs
+
+        go verifiedResources (bottomCert: []) = do 
+            void $ validateManifest db bottomCert
+
+            -- validate the object        
 
     findPathToRoot db@DB{..} certificate = do                  
         tas <- roAppTx db $ \tx -> getTAs tx taStore         
-        let taCerts = Map.fromList $ map (\(_, StorableTA {..}) -> (getSKI taCert, taCert)) tas 
+        let taCerts = Map.fromList $ 
+                        map (\(_, StorableTA {..}) ->                             
+                        (getSKI taCert, Located (talCertLocations tal) taCert)) tas 
         go taCerts certificate
       where        
-        go taCerts c = case getAKI c of 
-            Nothing       -> appError $ ValidationE NoAKI
-            Just (AKI ki) -> do 
-                parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
-                case parentCert of 
-                    Nothing -> do                         
-                        case Map.lookup (SKI ki) taCerts of 
-                            Nothing -> appError $ ValidationE ParentCertificateNotFound
-                            Just c  -> pure [c]
-                    Just pc  -> do
-                        z <- go taCerts pc
-                        pure $ payload pc : z
+        go taCerts cert = 
+            case getAKI cert of 
+                Nothing       -> appError $ ValidationE NoAKI
+                Just (AKI ki) -> do 
+                    parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
+                    case parentCert of 
+                        Nothing -> do                         
+                            case Map.lookup (SKI ki) taCerts of 
+                                Nothing -> appError $ ValidationE ParentCertificateNotFound
+                                Just c  -> pure [c]
+                        Just pc ->
+                            (pc :) <$> go taCerts pc
+
 
     validateManifest db@DB{..} certificate = do
         {- This resembles `validateThisCertAndGoDown` from TopDown.hs 
@@ -148,6 +167,4 @@ validateBottomUp
                 Just _ -> 
                     vError $ CRLHashPointsToAnotherObject crlHash certLocations   
             
-
-
 

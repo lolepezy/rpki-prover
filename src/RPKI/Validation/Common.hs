@@ -58,6 +58,9 @@ import           RPKI.Validation.ObjectValidation
 import           RPKI.AppState
 
 
+createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
+createVerifiedResources (getRC -> ResourceCertificate certificate) = 
+    VerifiedRS $ toPrefixesAndAsns $ withRFC certificate (^. typed)
 
 allowedMftFileNameCharacters :: [Char]
 allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"

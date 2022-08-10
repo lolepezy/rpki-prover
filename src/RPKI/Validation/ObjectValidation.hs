@@ -167,20 +167,24 @@ validateResourceCertExtensions cert = do
 -- 
 validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CerObject
 validateTACert tal u (CerRO taCert) = do
-  let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
-  unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
-  case getAKI taCert of
-    Nothing -> continue
-    Just (AKI ki)
-      | SKI ki == getSKI taCert -> continue
-      | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
-  where
-    continue = do
-      -- It's self-signed, so use itself as a parent to check the signature
-      signatureCheck $ validateCertSignature taCert taCert
-      validateResourceCertExtensions taCert >> pure taCert
+    let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
+    unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
+    validateTaCertAKI taCert u
+    signatureCheck $ validateCertSignature taCert taCert
+    validateResourceCertExtensions taCert
+    pure taCert
       
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
+
+
+validateTaCertAKI :: (WithAKI taCert, WithSKI taCert) 
+                    => taCert -> RpkiURL -> PureValidatorT ()
+validateTaCertAKI taCert u = 
+    case getAKI taCert of
+        Nothing -> pure ()
+        Just (AKI ki)
+            | SKI ki == getSKI taCert -> pure ()
+            | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
 
 -- | Compare new certificate and the previous one
 -- If validaity period of the new certificate is somehow earlier than 

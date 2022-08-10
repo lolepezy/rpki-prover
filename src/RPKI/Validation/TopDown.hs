@@ -114,10 +114,6 @@ newRepositoryContext publicationPoints = let
     takenCareOf = Set.empty 
     in RepositoryContext {..}
 
-createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
-createVerifiedResources (getRC -> ResourceCertificate certificate) = 
-    VerifiedRS $ toPrefixesAndAsns $ withRFC certificate (^. typed)
-
 
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited
 verifyLimit hitTheLimit limit =
