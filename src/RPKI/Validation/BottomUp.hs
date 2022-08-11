@@ -92,14 +92,28 @@ validateBottomUp
         let verifiedResources = createVerifiedResources $ payload taCert
         go verifiedResources certPath
       where        
-        go verifiedResources (cert : certs) = do             
-            void $ validateManifest db cert            
+        go verifiedResources (cert : certs) = do
+            (mft, crl) <- validateManifest db cert
             go verifiedResources certs
 
-        go verifiedResources (bottomCert: []) = do 
-            void $ validateManifest db bottomCert
+        go verifiedResources (bottomCert: []) = do
+            (mft, crl) <- validateManifest db bottomCert
+            -- validate the object
+            validateObjectItself bottomCert mft crl
+            pure ()
 
-            -- validate the object        
+    validateObjectItself bottomCert mft crl = 
+        case object of 
+            CerRO child -> do 
+                Validated validCert <- vHoist $ 
+                            validateResourceCert now child (bottomCert ^. #payload) crl
+                pure ()
+            RoaRO roa -> pure ()
+            GbrRO gbr -> pure ()
+            RscRO rsc -> pure ()
+            _somethingElse -> do 
+                logWarnM logger [i|Unsupported type of object: #{_somethingElse}.|]        
+
 
     findPathToRoot db@DB{..} certificate = do                  
         tas <- roAppTx db $ \tx -> getTAs tx taStore         
@@ -161,8 +175,8 @@ validateBottomUp
                     validateObjectLocations foundCrl           
                     let mftEECert = getEECert $ unCMS $ cmsPayload mft
                     checkCrlLocation foundCrl mftEECert
-                    vHoist $ validateCrl now crl certificate
-                    pure (mft, crl)
+                    validCrl <- vHoist $ validateCrl now crl certificate
+                    pure (mft, validCrl)
 
                 Just _ -> 
                     vError $ CRLHashPointsToAnotherObject crlHash certLocations   
