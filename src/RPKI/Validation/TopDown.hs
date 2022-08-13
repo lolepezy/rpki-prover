@@ -644,7 +644,7 @@ validateCaCertificate
                     validateObjectLocations child
                     inSubObjectVScope (locationsToText locations) $ 
                         allowRevoked $ do
-                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources                            
+                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
                             let vrpList = getCMSContent $ cmsPayload roa                            
                             oneMoreRoa                            
                             moreVrps $ Count $ fromIntegral $ length vrpList

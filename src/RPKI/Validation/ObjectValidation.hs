@@ -348,7 +348,7 @@ validateGbr now gbr parentCert crl verifiedResources = do
                 Right _ -> pure ()
     pure $ Validated gbr
 
-validateRSC ::
+validateRsc ::
     (WithResourceCertificate c, WithSKI c) =>
     Now ->
     RscObject ->
@@ -356,7 +356,7 @@ validateRSC ::
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated RscObject)
-validateRSC now rsc parentCert crl verifiedResources = do
+validateRsc now rsc parentCert crl verifiedResources = do
     void $
         validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
             let rsc = getCMSContent rscCms

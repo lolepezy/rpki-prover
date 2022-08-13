@@ -83,7 +83,9 @@ validateBottomUp
                     certPath <- reverse <$> findPathToRoot db pc
                     validateTopDownAlongPath db certPath             
   where
-
+    {- Given a chain of certificatees from a TA to the object, 
+       proceed with top-down validation along this chain only.
+    -}
     validateTopDownAlongPath db certPath = do
         -- TODO Make it NonEmpty?
         let taCert = head certPath
@@ -92,25 +94,30 @@ validateBottomUp
         let verifiedResources = createVerifiedResources $ payload taCert
         go verifiedResources certPath
       where        
+        go _ [] = pure ()
+
+        go verifiedResources [bottomCert] = do
+            (mft, crl) <- validateManifest db bottomCert
+            validateObjectItself bottomCert mft crl verifiedResources
+
         go verifiedResources (cert : certs) = do
             (mft, crl) <- validateManifest db cert
-            go verifiedResources certs
+            let childCert = head certs
+            Validated validCert    <- vHoist $ validateResourceCert now childCert (cert ^. #payload) crl
+            childVerifiedResources <- vHoist $ validateResources (Just verifiedResources) childCert validCert            
+            go childVerifiedResources certs
 
-        go verifiedResources (bottomCert: []) = do
-            (mft, crl) <- validateManifest db bottomCert
-            -- validate the object
-            validateObjectItself bottomCert mft crl
-            pure ()
-
-    validateObjectItself bottomCert mft crl = 
+    validateObjectItself bottomCert mft crl verifiedResources =         
         case object of 
             CerRO child -> do 
-                Validated validCert <- vHoist $ 
-                            validateResourceCert now child (bottomCert ^. #payload) crl
+                Validated validCert <- vHoist $ validateResourceCert now child (bottomCert ^. #payload) crl
                 pure ()
-            RoaRO roa -> pure ()
-            GbrRO gbr -> pure ()
-            RscRO rsc -> pure ()
+            RoaRO roa -> 
+                void $ vHoist $ validateRoa now roa bottomCert crl (Just verifiedResources)
+            GbrRO gbr -> 
+                void $ vHoist $ validateGbr now gbr bottomCert crl (Just verifiedResources)
+            RscRO rsc -> 
+                void $ vHoist $ validateRsc now rsc bottomCert crl (Just verifiedResources)
             _somethingElse -> do 
                 logWarnM logger [i|Unsupported type of object: #{_somethingElse}.|]        
 
