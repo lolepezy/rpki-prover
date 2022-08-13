@@ -155,7 +155,11 @@ toValidationMessage = \case
       CMSSignatureAlgorithmMismatch sigEE sigAttr -> 
           [i|Signature algorithm on the EE certificate is #{sigEE} but the CSM attributes says #{sigAttr}.|]
 
+      NoValidatedVersion -> "No tree validations has been run, cannot validate the object"
+
       NoAKI -> "NO AKI found"
+      ParentCertificateNotFound  -> "Could not find parent ceertificate for the object"
+      ObjectNotOnManifest        -> "Object is not listed on the parent manifest"
 
       UnsupportedHashAlgorithm digest -> [i|Unsupported hashing algorithm #{digest}|]
       NotFoundOnChecklist hash file -> [i|File #{file} with hash #{hash} is not found on the checklist.|]

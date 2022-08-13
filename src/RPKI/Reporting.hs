@@ -59,6 +59,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         NoAKI |
                         NoValidatedVersion |
                         ParentCertificateNotFound |
+                        ObjectNotOnManifest |
                         UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
                         NotFoundOnChecklist Hash Text |
                         ChecklistFileNameMismatch Hash Text Text |

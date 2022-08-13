@@ -98,14 +98,24 @@ validateBottomUp
 
         go verifiedResources [bottomCert] = do
             (mft, crl) <- validateManifest db bottomCert
+            validateOnMft mft object            
             validateObjectItself bottomCert mft crl verifiedResources
 
         go verifiedResources (cert : certs) = do
-            (mft, crl) <- validateManifest db cert
+            (mft, crl) <- validateManifest db cert            
             let childCert = head certs
+            validateOnMft mft childCert            
             Validated validCert    <- vHoist $ validateResourceCert now childCert (cert ^. #payload) crl
             childVerifiedResources <- vHoist $ validateResources (Just verifiedResources) childCert validCert            
             go childVerifiedResources certs
+        
+        validateOnMft mft o = do 
+            let oHash = getHash o
+            let mftChildren = mftEntries $ getCMSContent $ cmsPayload mft
+            case filter (\(T2 _ h) -> h == oHash) mftChildren of 
+                [] -> appError $ ValidationE ObjectNotOnManifest
+                _  -> pure ()            
+
 
     validateObjectItself bottomCert mft crl verifiedResources =         
         case object of 
