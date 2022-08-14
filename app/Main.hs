@@ -114,7 +114,7 @@ executeWorkerProcess = do
     withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT 
                                 (newScopes "worker-create-app-context")
-                                (readWorkerContext config logger)
+                                (createWorkerAppContext config logger)
         case z of
             Left e ->                        
                 logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
@@ -403,10 +403,9 @@ executeWorker input appContext =
             ValidationParams {..} -> do 
                 (vs, z) <- runValidation appContext worldVersion tals                
                 resultHandler $ ValidationResult vs z
-   
 
-readWorkerContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
-readWorkerContext config logger = do    
+createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
+createWorkerAppContext config logger = do    
     lmdbEnv <- setupWorkerLmdbCache                     
                     logger
                     (config ^. #cacheDirectory)
@@ -424,7 +423,7 @@ checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath           
 
 
--- | Run rpki-prover in a CLI mode for verifying RSC signature .sig 
+-- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do 
     withLogLevel cliOptions $ \logLevel1 ->        
