@@ -359,10 +359,10 @@ validateRsc ::
 validateRsc now rsc parentCert crl verifiedResources = do
     void $
         validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
-            let rsc = getCMSContent rscCms
+            let rsc' = getCMSContent rscCms
             let ResourceCertificate rc = getRC $ getEEResourceCert $ unCMS rscCms
             let eeCert = toPrefixesAndAsns $ withRFC rc resources
-            validateNested (rsc ^. #rscResources) eeCert            
+            validateNested (rsc' ^. #rscResources) eeCert            
             
     pure $ Validated rsc
 
