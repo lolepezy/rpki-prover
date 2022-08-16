@@ -140,17 +140,16 @@ withLogger mkLogger maxLogLevel f = do
     runWithLog logRaw logger (f appLogger)
 
   where
-    loop g queue = (do 
-            z <- atomically $ readCQueue queue        
-            for_ z $ \m -> g m >> loop g queue)
-        `finally`
-            atomically (closeCQueue queue)
 
-    runWithLog logRaw logger g = 
+    finallyCloseQ logger ff = 
+            ff `finally` forLogger1 logger (atomically . closeCQueue)
+
+    runWithLog logRaw logger g = do        
         snd <$> concurrently 
-                    (forLogger logger loopMain loopWorker) 
-                    (g `finally` forLogger1 logger (atomically . closeCQueue))
+                    (finallyCloseQ logger $ forLogger logger loopMain loopWorker)                     
+                    (finallyCloseQ logger g)
       where                
+
         loopMain = loop $ \case 
             BinQE b -> do 
                 case bsToMsg b of 
@@ -163,7 +162,11 @@ withLogger mkLogger maxLogLevel f = do
 
         loopWorker = loop $ logRaw . \case 
                                 BinQE b   -> b
-                                MsgQE msg -> msgToBs msg            
+                                MsgQE msg -> msgToBs msg
+
+        loop g queue = do 
+                z <- atomically $ readCQueue queue        
+                for_ z $ \m -> g m >> loop g queue            
 
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]
