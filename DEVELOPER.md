@@ -13,7 +13,7 @@ Preprocessing library for rpki-prover-0.1.0.0..
 Building library for rpki-prover-0.1.0.0..
 [43 of 70] Compiling RPKI.Orphans.Json [RPKI.Config changed]
 
-/home/puz/dev/haskell/rpki-prover/src/RPKI/Orphans/Json.hs:246:10: error:
+.../rpki-prover/src/RPKI/Orphans/Json.hs:246:10: error:
     • No instance for (GToJSON'
                          Value Zero (GHC.Generics.Rep Crypto.PubKey.RSA.Types.PublicKey))
         arising from a use of ‘aeson-1.5.6.0:Data.Aeson.Types.ToJSON.$dmtoJSON’
