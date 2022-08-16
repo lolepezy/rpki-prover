@@ -6,7 +6,7 @@ Setting up development environment is relatively simple.
 - The command for using `ghcid` is `ghcid --command="stack repl rpki-prover:lib rpki-prover:rpki-prover"` 
   or `ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test" ` for the set of modules includsing tests.
  
-From time to time during `stack install ...` the following (up to line numbers) can happen
+From time to time during `stack install ...` the following (up to the line numbers) can happen
 ```
 rpki-prover> build (lib + exe)
 Preprocessing library for rpki-prover-0.1.0.0..
@@ -31,5 +31,5 @@ Building library for rpki-prover-0.1.0.0..
 ```
 
 It is related to the way orphan instances are derived for some library types. Something is probably wrong 
-in the wat modules are organised, but it looks more like a compiler quirk. In some cases it help to just rerun the `stack install (or test)...` command, 
+in the way modules are organised, but it looks more like a compiler quirk. In some cases it helps to just rerun the `stack install (or test)...` command, 
 otherwise `stack clean` and full rebuild helps. It's annoying but I haven't found a way to fix it.
