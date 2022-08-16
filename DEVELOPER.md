@@ -2,7 +2,7 @@ Setting up development environment is relatively simple.
 
 - You need `stack` to start (https://docs.haskellstack.org/en/stable/README/)
 - Full build is done by `stack install rpki-prover:rpki-prover`, it should normally take 30-40 minutes on an average computer.
-- Test can be run using `stack test rpki-prover:lib rpki-prover:test:rpki-prover-test`.
+- Tests can be run using `stack test rpki-prover:lib rpki-prover:test:rpki-prover-test`.
 - The command for using `ghcid` is `ghcid --command="stack repl rpki-prover:lib rpki-prover:rpki-prover"` 
   or `ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test" ` for the set of mudules includsing tests.
  
