@@ -10,6 +10,7 @@ module RPKI.Logging where
 import Codec.Serialise
 
 import           Conduit
+import           Control.Exception
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -26,8 +27,6 @@ import Control.Monad
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 
-import qualified Control.Concurrent.STM.TBQueue  as Q
-
 import GHC.Generics (Generic)
 
 import System.Posix.Types
@@ -37,6 +36,7 @@ import System.IO (BufferMode (..), hSetBuffering, stdout, stderr)
 import RPKI.Domain
 import RPKI.Util
 import RPKI.Time
+import RPKI.Parallel
 
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
@@ -93,33 +93,38 @@ data LogMessage = LogMessage {
     deriving anyclass (Serialise)
 
 data QElem = BinQE BS.ByteString | MsgQE LogMessage
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
-data ProcessLogger = MainLogger (TBQueue QElem) 
-                   | WorkerLogger (TBQueue QElem) 
+data ProcessLogger = MainLogger (ClosableQueue QElem) 
+                   | WorkerLogger (ClosableQueue QElem) 
 
 
 logWLevel :: ProcessLogger -> LogMessage -> IO ()
 logWLevel logger msg = 
-    atomically $ Q.writeTBQueue (getQueue logger) $ MsgQE msg  
+    atomically $ writeCQueue (getQueue logger) $ MsgQE msg  
 
 logBytes :: ProcessLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
-    atomically $ Q.writeTBQueue (getQueue logger) $ BinQE bytes             
+    atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
 
 
-forLogger :: ProcessLogger -> (TBQueue QElem -> p) -> (TBQueue QElem -> p) -> p
+forLogger :: ProcessLogger -> (ClosableQueue QElem -> p) -> (ClosableQueue QElem -> p) -> p
 forLogger logger f g = 
     case logger of 
         MainLogger q -> f q
         WorkerLogger q -> g q
 
-getQueue :: ProcessLogger -> TBQueue QElem
+getQueue :: ProcessLogger -> ClosableQueue QElem
 getQueue logger = forLogger logger id id
 
-withLogger :: (TBQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
+finallyClose :: ProcessLogger -> IO a -> IO a
+finallyClose logger f = f `finally` forLogger logger closeIt closeIt
+  where
+    closeIt = atomically . closeCQueue
+
+withLogger :: (ClosableQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
 withLogger mkLogger maxLogLevel f = do 
-    q <- Q.newTBQueueIO 1000
+    q <- newCQueueIO 1000
     let logger = mkLogger q    
     let appLogger = AppLogger maxLogLevel logger
 
@@ -134,13 +139,20 @@ withLogger mkLogger maxLogLevel f = do
             BS.hPut logStream s
             BS.hPut logStream $ C8.singleton eol        
 
-    runWithLog logRaw logger (\_ -> f appLogger)
+    runWithLog logRaw logger (f appLogger)
 
   where
-    loop g q = forever $ g =<< atomically (Q.readTBQueue q)
+    loop g queue = (do 
+            z <- atomically $ readCQueue queue        
+            for_ z $ \m -> g m >> loop g queue)
+        `finally`
+            atomically (closeCQueue queue)
 
-    runWithLog logRaw logger g =         
-        withAsync (forLogger logger loopMain loopWorker) g
+
+    runWithLog logRaw logger g = 
+        snd <$> concurrently 
+                    (forLogger logger loopMain loopWorker) 
+                    (finallyClose logger g)        
       where                
         loopMain = loop $ \case 
             BinQE b -> do 

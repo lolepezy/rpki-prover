@@ -427,8 +427,9 @@ checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do 
     withLogLevel cliOptions $ \logLevel1 ->        
-        withLogger MainLogger logLevel1 $ \logger -> 
-            withVerifier logger $ \verifyPath rscFile -> do                    
+        withLogger MainLogger logLevel1 $ \logger ->             
+            withVerifier logger $ \verifyPath rscFile -> do               
+                logDebugM logger [i|Verifying #{verifyPath}, #{rscFile}.|]                                 
                 (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
                                 appContext <- readVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath                                            
