@@ -114,13 +114,11 @@ forLogger logger f g =
         MainLogger q -> f q
         WorkerLogger q -> g q
 
-getQueue :: ProcessLogger -> ClosableQueue QElem
-getQueue logger = forLogger logger id id
+forLogger1 :: ProcessLogger -> (ClosableQueue QElem -> p) -> p
+forLogger1 logger f = forLogger logger f f 
 
-finallyClose :: ProcessLogger -> IO a -> IO a
-finallyClose logger f = f `finally` forLogger logger closeIt closeIt
-  where
-    closeIt = atomically . closeCQueue
+getQueue :: ProcessLogger -> ClosableQueue QElem
+getQueue logger = forLogger1 logger id
 
 withLogger :: (ClosableQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
 withLogger mkLogger maxLogLevel f = do 
@@ -148,11 +146,10 @@ withLogger mkLogger maxLogLevel f = do
         `finally`
             atomically (closeCQueue queue)
 
-
     runWithLog logRaw logger g = 
         snd <$> concurrently 
                     (forLogger logger loopMain loopWorker) 
-                    (finallyClose logger g)        
+                    (g `finally` forLogger1 logger (atomically . closeCQueue))
       where                
         loopMain = loop $ \case 
             BinQE b -> do 
