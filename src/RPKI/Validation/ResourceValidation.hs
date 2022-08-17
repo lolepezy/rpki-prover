@@ -86,5 +86,5 @@ validateNested (PrefixesAndAsns i4 i6 ia) (PrefixesAndAsns o4 o6 oa) = do
     case (i4c, i6c, ac) of
         (Left (Nested _), Left (Nested _), Left (Nested _)) -> pure ()
         _ -> vPureError $ OverclaimedResources $ 
-          PrefixesAndAsns (overclaimed i4c) (overclaimed i6c) (overclaimed ac)
+                PrefixesAndAsns (overclaimed i4c) (overclaimed i6c) (overclaimed ac)
 

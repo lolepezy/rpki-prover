@@ -431,7 +431,7 @@ executeVerifier cliOptions@CLIOptions {..} = do
             withVerifier logger $ \verifyPath rscFile -> do               
                 logDebugM logger [i|Verifying #{verifyPath}, #{rscFile}.|]                                 
                 (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
-                                appContext <- readVerifierContext cliOptions logger
+                                appContext <- createVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath                                            
                 case ac of
                     Left _ -> 
@@ -450,8 +450,8 @@ executeVerifier cliOptions@CLIOptions {..} = do
                     _              -> logError_ logger "Both directory and list of files are set, leave just one of them to verify."                    
 
 
-readVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
-readVerifierContext cliOptions logger = do    
+createVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
+createVerifierContext cliOptions logger = do    
 
     (_, rootDir) <- getRoot cliOptions
     cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirN
