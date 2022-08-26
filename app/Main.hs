@@ -51,6 +51,7 @@ import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
@@ -429,15 +430,17 @@ executeVerifier cliOptions@CLIOptions {..} = do
     withLogLevel cliOptions $ \logLevel1 ->        
         withLogger MainLogger logLevel1 $ \logger ->             
             withVerifier logger $ \verifyPath rscFile -> do               
-                logDebugM logger [i|Verifying #{verifyPath}, #{rscFile}.|]                                 
+                logDebugM logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]                                 
                 (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
                                 appContext <- createVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath                                            
                 case ac of
-                    Left _ -> 
-                        logError_ logger [i|Could not initialise application, errors: #{vs}.|]
+                    Left _ -> do
+                        let report = formatValidations $ vs ^. #validations
+                        logError_ logger [i|Verification failed: 
+#{report}.|]
                     Right _ -> 
-                        logInfo_ logger [i|Done.|]
+                        logInfo_ logger [i|Verification succeeded.|]
   where 
     withVerifier logger f = 
         case signatureFile of 

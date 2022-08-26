@@ -30,7 +30,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Http.Messages
+import           RPKI.Messages
 import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Http.Api
