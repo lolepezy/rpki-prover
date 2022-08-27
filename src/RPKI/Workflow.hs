@@ -35,6 +35,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -163,7 +164,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     (z, vs) <- processTALsWorker worldVersion                    
                     case z of 
                         Left e -> do 
-                            logError_ logger [i|Validator process failed: #{e}.|]                            
+                            logError_ logger [i|Validator process failed: #{e}.|]
                             rwTx db $ \tx -> do
                                 putValidations tx db worldVersion (vs ^. typed)
                                 putMetrics tx db worldVersion (vs ^. typed)
@@ -172,6 +173,10 @@ runWorkflow appContext@AppContext {..} tals = do
                             pure (mempty, mempty)            
                         Right (ValidationResult v s) -> do                             
                             let (topDownValidations, maybeSlurm) = (vs <> v, s)
+
+                            let tdValidations = topDownValidations ^. typed
+                            logDebugM logger [i|Validation result: 
+#{formatValidations tdValidations}.|]
                             updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
 
                             roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
