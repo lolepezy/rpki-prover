@@ -107,7 +107,7 @@ validateBottomUp
                 RscRO rsc -> 
                     void $ vHoist $ validateRsc now rsc bottomCert crl (Just verifiedResources)
                 _somethingElse -> do 
-                    logWarnM logger [i|Unsupported type of object: #{_somethingElse}.|]        
+                    logWarn logger [i|Unsupported type of object: #{_somethingElse}.|]        
 
 
     findPathToRoot db@DB{..} certificate = do                  

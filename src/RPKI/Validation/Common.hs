@@ -121,7 +121,7 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft childrenAki ce
             in case latestMft of 
                 Nothing -> do 
                     appWarn e      
-                    logWarnM logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
+                    logWarn logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
                     useManifest latestValidMft childrenAki certLocations                                
                 Just latestMft'
                     | getHash latestMft' == getHash latestValidMft 
@@ -130,7 +130,7 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft childrenAki ce
                         -> throwError e
                     | otherwise -> do 
                         appWarn e                                    
-                        logWarnM logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
+                        logWarn logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
                                             [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
                         useManifest latestValidMft childrenAki certLocations
 

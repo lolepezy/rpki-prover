@@ -61,7 +61,7 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
     case lmdbFlow of 
         UseExisting -> pure ()
         Reset -> do 
-            logInfoM logger [i|The option `reset` is present: cleaning up #{cacheDir}.|] 
+            logInfo logger [i|The option `reset` is present: cleaning up #{cacheDir}.|] 
             cleanDir cacheDir
     
     currentExists <- liftIO $ doesPathExist currentCache    
@@ -76,14 +76,14 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
                     -- them all.
                     removePossibleOtherLMDBCaches linkTarget
 
-                    logInfoM logger [i|Using #{currentCache} for LMDB cache.|] 
+                    logInfo logger [i|Using #{currentCache} for LMDB cache.|] 
                     createLmdb currentCache
                 else do 
                     -- link is broken so clean it up and re-create
-                    logWarnM logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
+                    logWarn logger [i|#{currentCache} doesn't point to an existing directory, resetting LMDB.|] 
                     resetCacheDir  
         else do 
-            logWarnM logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
+            logWarn logger [i|#{currentCache} doesn't exist, resetting LMDB.|] 
             resetCacheDir
     
     where        
@@ -119,11 +119,11 @@ setupWorkerLmdbCache logger cacheDir lmdbSize = do
                 then createLmdb currentCache
                 else do
                     let message = [i|#{currentCache} doesn't point to an existing directory, broken LMDB.|]
-                    logErrorM logger message
+                    logError logger message
                     appError $ InternalE $ InternalError message
         else do
             let message = [i|#{currentCache} doesn't exist, bailing out.|]
-            logErrorM logger message
+            logError logger message
             appError $ InternalE $ InternalError message
     where        
         currentCache = cacheDir </> "current"
@@ -154,7 +154,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
     let cacheDir = config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
-    logInfo_ logger [i|Compacting LMDB storage.|]
+    logInfo logger [i|Compacting LMDB storage.|]
 
     currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 
@@ -186,10 +186,10 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             createDirectory newLmdbDirName            
 
             currentLinkTarget <- liftIO $ readSymbolicLink currentCache
-            logDebug_ logger [i|Created #{newLmdbDirName} for storage copy, current one is #{currentLinkTarget}|]
+            logDebug logger [i|Created #{newLmdbDirName} for storage copy, current one is #{currentLinkTarget}|]
 
             runCopyWorker appContext dbStats newLmdbDirName                                    
-            logDebug_ logger [i|Copied all data to #{newLmdbDirName}.|]            
+            logDebug logger [i|Copied all data to #{newLmdbDirName}.|]            
 
             -- create a new symlink first and only then atomically rename it into "current"
             createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
@@ -217,13 +217,13 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
     if fileSizeMb > (2 * dataSizeMb)    
         then do 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
+            logDebug logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
             copyToNewEnvironmentAndSwap dbStats `catch` (
                 \(e :: SomeException) -> do
-                    logError_ logger [i|ERROR: #{e}.|]        
+                    logError logger [i|ERROR: #{e}.|]        
                     cleanUpAfterException)            
         else 
-            logDebug_ logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
+            logDebug logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
         
 
 generateLmdbDir :: MonadIO m => FilePath -> m FilePath
@@ -288,7 +288,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
         Left e  -> do 
             -- Make it more consistent if it makes sense
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
-            logError_ logger message            
+            logError logger message            
             throwIO $ AppException $ InternalE $ InternalError message
         Right (CompactionResult _) -> 
             pure ()            

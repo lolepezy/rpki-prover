@@ -88,7 +88,7 @@ executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions = 
     withLogLevel cliOptions $ \logLevel ->
         withLogger MainLogger logLevel $ \logger -> do             
-            logDebug_ logger [i|Main process.|]
+            logDebug logger [i|Main process.|]
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -101,7 +101,7 @@ executeMainProcess cliOptions =
                                     createAppContext cliOptions logger logLevel
                     case appContext of
                         Left _ ->
-                            logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
+                            logError logger [i|Couldn't initialise, problems: #{validations}.|]
                         Right appContext' ->
                             void $ race
                                 (runHttpApi appContext')
@@ -118,14 +118,14 @@ executeWorkerProcess = do
                                 (createWorkerAppContext config logger)
         case z of
             Left e ->                        
-                logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
             Right appContext -> 
                 executeWorker input appContext     
 
 
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
-    logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
+    logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- newWorldVersion
     talNames <- listTALFiles $ talDirectory config
     let validationContext = newScopes "validation-root"
@@ -134,13 +134,13 @@ runValidatorServer appContext@AppContext {..} = do
             inSubVScope' TAFocus (convert taName) $ 
                 parseTALFromFile talFilePath (Text.pack taName)
 
-    logInfo_ logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
+    logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 
     database' <- readTVarIO database
     rwTx database' $ \tx -> putValidations tx database' worldVersion (vs ^. typed)
     case tals of
         Left e -> do
-            logError_ logger [i|Error reading some of the TALs, e = #{e}.|]
+            logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
             -- this is where it blocks and loops in never-ending re-validation
@@ -197,7 +197,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     database  <- liftIO $ newTVarIO db
 
     let readSlurms files = do 
-            logDebugM logger [i|Reading SLURM files: #{files}.|]
+            logDebug logger [i|Reading SLURM files: #{files}.|]
             readSlurmFiles files
 
     -- Read the files first to fail fast
@@ -248,7 +248,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
 
     let appContext = AppContext {..}
-    logInfoM logger [i|Created application context with configuration: 
+    logInfo logger [i|Created application context with configuration: 
 #{shower (appContext ^. typed @Config)}|]    
     pure appContext
 
@@ -263,7 +263,7 @@ initialiseFS cliOptions logger = do
             (r, _) <- runValidatorT
                 (newScopes "initialise")
                 $ do
-                    logInfoM logger [i|Initialising FS layout...|]
+                    logInfo logger [i|Initialising FS layout...|]
 
                     -- this one checks that "tals" exists
                     (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
@@ -271,13 +271,13 @@ initialiseFS cliOptions logger = do
                     let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
                     let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
 
-                    logInfoM logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
+                    logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
                     fromTryM
                         (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
                         $ forM_ talNames
                             $ \tal -> do
                                 let talUrl = Text.pack $ talsUrl <> tal
-                                logDebugM logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
+                                logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
                                 httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
                                 unless (isHttpSuccess httpStatus) $ do
                                     appError $ UnspecifiedE
@@ -285,10 +285,10 @@ initialiseFS cliOptions logger = do
                                         [i|Http status #{unHttpStatus httpStatus}|]
             case r of
                 Left e -> do
-                    logErrorM logger [i|Failed to initialise: #{e}.|]
-                    logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
+                    logError logger [i|Failed to initialise: #{e}.|]
+                    logError logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
                 Right _ ->
-                    logInfoM logger [i|Done.|]
+                    logInfo logger [i|Done.|]
         else do
             putStrLn [i|
 Before downloading and installing ARIN TAL, you must read
@@ -314,7 +314,7 @@ fsLayout cliOptions logger talsHandle = do
                 Just d  -> [i|Root directory is set to #{d}.|]
                 Nothing -> [i|Root directory is not set, using defaul ${HOME}/.rpki|]
 
-    logInfoM logger message
+    logInfo logger message
 
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir talsHandle
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
@@ -430,27 +430,27 @@ executeVerifier cliOptions@CLIOptions {..} = do
     withLogLevel cliOptions $ \logLevel1 ->        
         withLogger MainLogger logLevel1 $ \logger ->             
             withVerifier logger $ \verifyPath rscFile -> do               
-                logDebugM logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]                                 
+                logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]                                 
                 (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
                                 appContext <- createVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath                                            
                 case ac of
                     Left _ -> do
                         let report = formatValidations $ vs ^. #validations
-                        logError_ logger [i|Verification failed: 
+                        logError logger [i|Verification failed: 
 #{report}.|]
                     Right _ -> 
-                        logInfo_ logger [i|Verification succeeded.|]
+                        logInfo logger [i|Verification succeeded.|]
   where 
     withVerifier logger f = 
         case signatureFile of 
-            Nothing      -> logError_ logger "RSC file is not set."
+            Nothing      -> logError logger "RSC file is not set."
             Just rscFile -> 
                 case (verifyDirectory, verifyFiles) of 
-                    (Nothing, [])  -> logError_ logger "Neither files nor directory for files to verify with RSC are not set."
+                    (Nothing, [])  -> logError logger "Neither files nor directory for files to verify with RSC are not set."
                     (Nothing, vfs) -> f (FileList vfs) rscFile
                     (Just vd, [])  -> f (Directory vd) rscFile
-                    _              -> logError_ logger "Both directory and list of files are set, leave just one of them to verify."                    
+                    _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."                    
 
 
 createVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv

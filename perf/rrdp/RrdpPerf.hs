@@ -94,12 +94,12 @@ testSnapshotLoad = do
                 let fileName =  "../tmp/test-data/snapshot.xml"
                 fileSize <- Size . fromIntegral <$> getFileSize fileName
                 snapshotContent <- readB fileName fileSize
-                logDebug_ logger [i|Starting |]        
+                logDebug logger [i|Starting |]        
                 let notification = makeNotification (SessionId "f8542d84-3d8a-4e5a-aee7-aa87198f61f2") (RrdpSerial 673)
                 void $ forever $ do 
                     (_, t) <- timedMS $ runValidatorT (newScopes "snapshot") $ 
                                 saveSnapshot appContext (RrdpURL $ URI "bla.xml") notification snapshotContent    
-                    logDebug_ logger [i|Saved snapshot in #{t}ms |]  
+                    logDebug logger [i|Saved snapshot in #{t}ms |]  
 
 testDeltaLoad :: IO ()
 testDeltaLoad = do
@@ -107,7 +107,7 @@ testDeltaLoad = do
         (Right appContext, _) <- runValidatorT (newScopes "configuration") $ createAppContext logger    
         deltas <- filter (`notElem` [".", "..", "snapshot.xml"]) <$> listDirectory "../tmp/test-data/"
         deltaContents <- forM deltas $ \d -> LBS.readFile $ "../tmp/test-data/" </> d
-        logDebug_ logger [i|Starting |]    
+        logDebug logger [i|Starting |]    
 
 
 testLmdbCompact :: IO ()
@@ -173,7 +173,7 @@ createAppContext logger = do
         appBottlenecks = appBottlenecks
     }  
 
-    logInfoM logger [i|Created application context: #{config appContext}|]
+    logInfo logger [i|Created application context: #{config appContext}|]
     pure appContext   
 
 

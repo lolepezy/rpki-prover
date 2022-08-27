@@ -157,7 +157,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
      
         rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
             (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
-            logInfo_ logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
+            logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
         -- save publication points state    
@@ -183,7 +183,7 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
                 maxDuration
                 validateFromTAL
                 (do 
-                    logErrorM logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
+                    logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
     
     pure $ TopDownResult (either (const mempty) (newVrps taName) r) vs
@@ -227,7 +227,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             | needsFetching (getTaCertURL tal) fs validationConfig now ->
                 fetchValidateAndStore taStore now (Just taCert)
             | otherwise -> do
-                logInfoM logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
+                logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
   where
     fetchValidateAndStore taStore (Now moment) previousCert = do 
@@ -319,7 +319,7 @@ validateCaCertificate
     let treeDepthLimit = (
             pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
             do 
-                logErrorM logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum tree depth is reached.|]
+                logError logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum tree depth is reached.|]
                 vError $ CertificatePathTooDeep 
                             (getLocations certificate) 
                             (validationConfig ^. #maxCertificatePathDepth)
@@ -329,7 +329,7 @@ validateCaCertificate
     let visitedObjectCountLimit = (
             (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes,
             do 
-                logErrorM logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total object number in the tree is reached.|]
+                logError logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total object number in the tree is reached.|]
                 vError $ TreeIsTooBig 
                             (getLocations certificate) 
                             (validationConfig ^. #maxTotalTreeSize)
@@ -341,7 +341,7 @@ validateCaCertificate
                 pps <- readTVar $ repositoryProcessing ^. #publicationPoints
                 pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
             do 
-                logErrorM logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total new repository count is reached.|]
+                logError logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total new repository count is reached.|]
                 vError $ TooManyRepositories 
                             (getLocations certificate) 
                             (validationConfig ^. #maxTaRepositories)
@@ -661,7 +661,7 @@ validateCaCertificate
             -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
             -- they will emit a warning.
             _somethingElse -> do 
-                logWarnM logger [i|Unsupported type of object: #{locations}.|]
+                logWarn logger [i|Unsupported type of object: #{locations}.|]
                 pure mempty
 
         where                
@@ -699,7 +699,7 @@ markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
 
             pure (Set.size vhs, Map.size vmfts)
 
-    logInfo_ logger 
+    logInfo logger 
         [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid for TA #{unTaName taName}, took #{elapsed}ms.|]
 
 

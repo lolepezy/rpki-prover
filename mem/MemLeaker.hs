@@ -85,9 +85,9 @@ main = do
                             validateTA appContext' tal worldVersion repositoryContext 
 
                 let TopDownResult {..} = mconcat results
-                logInfo_ logger [i|Validated GC, #{Set.size vrps} VRPs, took #{elapsed}ms|]
+                logInfo logger [i|Validated GC, #{Set.size vrps} VRPs, took #{elapsed}ms|]
                 (cleanup, elapsed2) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
-                logInfo_ logger [i|Done with cache GC, #{cleanup}, took #{elapsed2}ms|]
+                logInfo logger [i|Done with cache GC, #{cleanup}, took #{elapsed2}ms|]
 
     where
         sources = let 

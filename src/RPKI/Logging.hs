@@ -58,24 +58,17 @@ data AppLogger = AppLogger {
         actualLogger :: ProcessLogger
     }
 
-logError_, logWarn_, logInfo_, logDebug_ :: AppLogger -> Text -> IO ()
+logError, logWarn, logInfo, logDebug :: MonadIO m => AppLogger -> Text -> m ()
 
-logError_ AppLogger {..} s = logWLevel actualLogger =<< mkLogMessage ErrorL s
-logWarn_ = logIfAboveLevel WarnL
-logInfo_ = logIfAboveLevel InfoL
-logDebug_ = logIfAboveLevel DebugL
+logError AppLogger {..} s = liftIO $ logWLevel actualLogger =<< mkLogMessage ErrorL s
+logWarn  = logIfAboveLevel WarnL
+logInfo  = logIfAboveLevel InfoL
+logDebug = logIfAboveLevel DebugL
 
-logIfAboveLevel :: LogLevel -> AppLogger -> Text -> IO ()
-logIfAboveLevel level AppLogger {..} s = 
+logIfAboveLevel :: MonadIO m => LogLevel -> AppLogger -> Text -> m ()
+logIfAboveLevel level AppLogger {..} s = liftIO $
     when (logLevel >= level) $ 
         logWLevel actualLogger =<< mkLogMessage level s        
-
-
-logErrorM, logWarnM, logInfoM, logDebugM :: MonadIO m => AppLogger -> Text -> m ()
-logErrorM logger t = liftIO $ logError_ logger t
-logWarnM logger t  = liftIO $ logWarn_ logger t
-logInfoM logger t  = liftIO $ logInfo_ logger t
-logDebugM logger t = liftIO $ logDebug_ logger t
 
 mkLogMessage :: LogLevel -> Text -> IO LogMessage
 mkLogMessage logLevel message = do 

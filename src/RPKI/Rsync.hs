@@ -125,7 +125,7 @@ rsyncRpkiObject AppContext{..} uri = do
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
         ExitFailure errorCode -> do
-            logErrorM logger [i|Rsync process failed: #rsync 
+            logError logger [i|Rsync process failed: #rsync 
                                         with code #{errorCode}, 
                                         stderr = #{err}, 
                                         stdout = #{out}|]        
@@ -155,11 +155,11 @@ updateObjectForRsyncRepository
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config uri destination RsyncDirectory
             
-        logDebugM logger [i|Runnning #{U.trimmed rsync}|]
+        logDebug logger [i|Runnning #{U.trimmed rsync}|]
         (exitCode, out, err) <- fromTry 
                 (RsyncE . RsyncRunningError . U.fmtEx) $ 
                 readProcess rsync
-        logInfoM logger [i|Finished rsynching #{destination}.|]
+        logInfo logger [i|Finished rsynching #{destination}.|]
         case exitCode of  
             ExitSuccess -> do 
                 -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
@@ -168,7 +168,7 @@ updateObjectForRsyncRepository
                             `finally` liftIO performGC            
                 pure repo
             ExitFailure errorCode -> do
-                logErrorM logger [i|Rsync process failed: #{rsync} 
+                logError logger [i|Rsync process failed: #{rsync} 
                                             with code #{errorCode}, 
                                             stderr = #{err}, 
                                             stdout = #{out}|]
@@ -246,17 +246,17 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                 HashExists rpkiURL hash ->
                     DB.linkObjectToUrl tx objectStore rpkiURL hash
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
-                    logErrorM logger [i|Cannot read file #{filePath}, error #{e} |]
+                    logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
                 ObjectParsingProblem rpkiUrl (VErr e) -> do                    
-                    logErrorM logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
+                    logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
                 Success rpkiUrl so@StorableObject {..} -> do 
                     DB.putObject tx objectStore so worldVersion                    
                     DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                 other -> 
-                    logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
+                    logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
