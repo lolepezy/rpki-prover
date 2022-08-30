@@ -106,10 +106,10 @@ toRrdpMessage = \case
         [i|Snapshot hash is #{actualHash} but required hash is #{expectedHash}.|]  
 
     SnapshotSessionMismatch {..} -> 
-        [i|Snapshot session ID is #{actualSessionId} but required hash is #{expectedSessionId}.|]  
+        [i|Snapshot session ID is #{actualSessionId} but required session ID is #{expectedSessionId}.|]  
 
     SnapshotSerialMismatch {..} -> 
-        [i|Snapshot serial is #{actualSerial} but required hash is #{expectedSerial}.|]  
+        [i|Snapshot serial is #{actualSerial} but required serial is #{expectedSerial}.|]  
 
     DeltaHashMismatch {..} -> 
         [i|Delta #{serial} hash is #{actualHash} but required hash is #{expectedHash}.|]  
