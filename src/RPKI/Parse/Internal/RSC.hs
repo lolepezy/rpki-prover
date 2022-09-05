@@ -27,8 +27,8 @@ import Data.Either
 
 -- | Parse RSC, https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
 -- 
-parseRSC :: BS.ByteString -> ParseResult RscObject
-parseRSC bs = do    
+parseRsc :: BS.ByteString -> ParseResult RscObject
+parseRsc bs = do    
     asns      <- first (fmtErr . show) $ decodeASN1' BER bs      
     signedRsc <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseRsc') asns
     hash' <- getMetaFromSigned signedRsc bs
@@ -54,7 +54,9 @@ parseRSC bs = do
             
             ips <- getNextContainerMaybe (Container Context 1) >>= \case 
                     Nothing   -> pure (IS.empty, IS.empty)
-                    Just asn1 -> f parseIps asn1                        
+                    Just asn1 -> do
+                        -- throwParseError $ "Ips: " ++ show asn1
+                        f parseIps asn1                        
 
             pure (ips, asns)
 

@@ -76,7 +76,12 @@ validateBottomUp
         go verifiedResources [bottomCert] = do            
             inSubObjectVScope (locationsToText $ getLocations bottomCert) $ do
                 (mft, crl) <- validateManifest db bottomCert
-                validateOnMft mft object
+
+                -- RSC objects are not supposed to be on a manifest
+                case object of
+                    RscRO _ -> pure ()
+                    _       -> validateOnMft mft object
+
                 validateObjectItself bottomCert crl verifiedResources
 
         go verifiedResources (cert : certs) = do            

@@ -53,7 +53,7 @@ readObject objectURL content = do
         ".roa" -> parse_ parseRoa RoaRO content                    
         ".crl" -> parse_ parseCrl CrlRO content            
         ".gbr" -> parse_ parseGbr GbrRO content            
-        ".sig" -> parse_ parseRSC RscRO content            
+        ".sig" -> parse_ parseRsc RscRO content            
         _      -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
             parse_ parse constructor bs = 
