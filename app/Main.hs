@@ -431,14 +431,14 @@ executeVerifier cliOptions@CLIOptions {..} = do
         withLogger MainLogger logLevel1 $ \logger ->             
             withVerifier logger $ \verifyPath rscFile -> do               
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]                                 
-                (ac, vs) <- runValidatorT (newScopes "verify-rsc") $ do 
+                (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do 
                                 appContext <- createVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath                                            
                 case ac of
                     Left _ -> do
                         let report = formatValidations $ vs ^. #validations
                         logError logger [i|Verification failed: 
-#{report}.|]
+#{report}|]
                     Right _ -> 
                         logInfo logger [i|Verification succeeded.|]
   where 

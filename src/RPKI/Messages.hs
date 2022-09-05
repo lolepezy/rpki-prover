@@ -165,7 +165,7 @@ toValidationMessage = \case
       ParentCertificateNotFound  -> "Could not find parent ceertificate for the object"
       ObjectNotOnManifest        -> "Object is not listed on the parent manifest"
 
-      UnsupportedHashAlgorithm digest -> [i|Unsupported hashing algorithm #{digest}|]
+      UnsupportedHashAlgorithm digest -> [i|Unsupported hashing algorithm #{digest}.|]
       NotFoundOnChecklist hash file -> [i|File #{file} with hash #{hash} is not found on the checklist.|]
       ChecklistFileNameMismatch hash f1 f2 -> [i|File with hash #{hash} has name #{f1} but marked as #{f2} on the checklist.|]
 
