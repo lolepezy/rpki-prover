@@ -297,13 +297,17 @@ ipvVxAddress :: ([Word8] -> t)
             -> (BS.ByteString -> Word64 -> b)
             -> (t -> t -> b)
             -> ParseASN1 b
-ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =
+ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =     
     getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
-            (BitString (BitArray nzBits bs)) -> do
-                -- throwParseError $ "asns = " <> show bs
+            (BitString (BitArray nzBits bs)) -> 
                 pure $ makePrefix bs nzBits
-            s -> throwParseError ("Unexpected prefix representation: " <> show s)
+            s -> 
+                throwParseError ("Unexpected prefix representation: " <> show s)
+
+        Just [BitString (BitArray nzBits bs)] ->                
+                pure $ makePrefix bs nzBits
+
         Just [
             BitString (BitArray _       bs1),
             BitString (BitArray nzBits2 bs2)
