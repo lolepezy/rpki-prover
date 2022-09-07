@@ -80,12 +80,17 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
   where    
     verifyFiles parsedRsc = do         
         let rsc = getCMSContent $ parsedRsc ^. #cmsPayload
-        let digest = rsc ^. #digestAlgorithm        
+        let digest = rsc ^. #digestAlgorithm
         case findHashFunc digest of 
             Nothing       -> appError $ ValidationE $ UnsupportedHashAlgorithm digest
             Just hashFunc -> do 
                 actualFiles <- fileMap hashFunc
                 let checkList = Map.fromList $ map (\(T2 t h) -> (h, t)) $ rsc ^. #checkList
+                let checklistText = Text.intercalate "\n" 
+                        $ map (\(T2 t h) ->  Text.pack (show h) <> "\t\t" <> fromMaybe "" t) 
+                        $ rsc ^. #checkList
+                logDebug logger [i|Check list:
+#{checklistText}|]
                 for_ actualFiles $ \(Text.pack -> f, h) -> do
                     case Map.lookup h checkList of 
                         Nothing         -> appError $ ValidationE $ NotFoundOnChecklist h f
@@ -119,5 +124,6 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
         loop ctx =
             await >>= \case
                 Nothing    -> pure $ finalValue ctx
-                Just chunk -> loop $ updateValue ctx chunk
+                Just chunk -> loop $ updateValue ctx chunk        
+            
 
