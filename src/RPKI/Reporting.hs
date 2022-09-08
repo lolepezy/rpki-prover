@@ -469,8 +469,8 @@ focusToText :: Focus -> Text
 focusToText = \case
     TAFocus txt         -> txt
     ObjectFocus txt     -> txt
-    PPFocus txt         -> unURI $ getURL txt
-    RepositoryFocus txt -> unURI $ getURL txt
+    PPFocus uri         -> unURI $ getURL uri
+    RepositoryFocus uri -> unURI $ getURL uri
     TextFocus txt       -> txt
 
 scopeList :: Scope a -> [Focus]

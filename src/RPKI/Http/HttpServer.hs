@@ -164,8 +164,8 @@ getSlurm AppContext {..} = do
 toVR :: (Scope a, Set.Set VIssue) -> FullVDto
 toVR (Scope scope, issues) = FullVDto {
         issues = map toDto $ Set.toList issues,
-        path   = map focusToText $ NonEmpty.toList scope,
-        url    = focusToText $ NonEmpty.head scope
+        path   = NonEmpty.toList scope,
+        url    = NonEmpty.head scope
     }
   where
     toDto = \case
