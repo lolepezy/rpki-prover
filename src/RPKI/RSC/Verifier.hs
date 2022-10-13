@@ -105,10 +105,19 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                 liftIO $ for files $ \f -> 
                     (f, ) . mkHash <$> runConduitRes (sourceFile f .| hashC)                                                
             Directory directory -> do 
-                files <- fromTry (UnspecifiedE [i|No directory #{directory}|] . fmtEx) $ getDirectoryContents directory        
-                liftIO $ for files $ \f -> do 
-                    let fullPath = directory </> f
-                    (f, ) . mkHash <$> runConduitRes (sourceFile fullPath .| hashC)                
+                files <- fromTry (UnspecifiedE [i|No directory #{directory}|] . fmtEx) $ getDirectoryContents directory
+
+                liftIO $ do 
+                    fmap mconcat $ for files $ \f -> do 
+                        let fullPath = directory </> f
+                        isFile <- doesFileExist fullPath
+                        if isFile then do
+                            hash <- mkHash <$> runConduitRes (sourceFile fullPath .| hashC)                            
+                            pure [(f, hash)] 
+                        else 
+                            pure []
+
+                    
 
     findHashFunc (DigestAlgorithmIdentifier oid) = 
         case () of 
