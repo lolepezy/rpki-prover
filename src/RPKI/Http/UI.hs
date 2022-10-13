@@ -379,6 +379,3 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
-
--- instance ToMarkup Focus where 
---     toMarkup = toMarkup . focusToText
