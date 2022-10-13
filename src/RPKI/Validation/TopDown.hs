@@ -573,6 +573,9 @@ validateCaCertificate
     -- with the objects they are pointing to.    
     validateMftEntries mft crlHash = do         
         let mftChildren = mftEntries $ getCMSContent $ cmsPayload mft
+        when (null mftChildren) $ 
+            vError ZeroManifestEntries
+
         let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') mftChildren
                     
         -- Make sure all the entries are unique

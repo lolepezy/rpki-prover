@@ -203,6 +203,9 @@ toValidationMessage = \case
       BadFileNameOnMFT filename message -> 
             [i|File #{filename} is malformed #{message}.|]
 
+      ZeroManifestEntries -> 
+            [i|Manifest doesn't contain any entries.|]
+
       NonUniqueManifestEntries nonUniqueEntries -> 
             [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
 
