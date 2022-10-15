@@ -471,9 +471,9 @@ savePublicationPoints tx db newPPs' = do
     applyChangeSet tx db changes
 
 
-setJobTime :: (MonadIO m, Storage s) => 
+setJobCompletionTime :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Text -> Instant -> m ()
-setJobTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t
+setJobCompletionTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t
 
 allJobs :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> m [(Text, Instant)]
