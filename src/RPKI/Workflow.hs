@@ -109,7 +109,9 @@ runWorkflow appContext@AppContext {..} tals = do
                     -- on reasonable order of the jobs.
                     ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC sharedStuff),
                     ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions sharedStuff),
-                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedStuff)]                    
+                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedStuff),
+                    ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
+                    ]  
             
             persistedJobs <- do
                 db <- readTVarIO database
@@ -120,19 +122,19 @@ runWorkflow appContext@AppContext {..} tals = do
             pure $ 
                 flip map availableJobs $ 
                     \(job, defInitialDelay, interval, action) -> 
-                        let initialDelay =                                     
+                        let (initialDelay, jobRun) =  
                                 case Map.lookup job persistedJobs of 
-                                    Nothing           -> defInitialDelay
-                                    Just lastExecuted -> fromIntegral $ leftToWait lastExecuted now interval
+                                    Nothing           -> (defInitialDelay, FirstRun)
+                                    Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
                         
                             jobAction worldVersion = do                                 
-                                    action worldVersion
+                                    action worldVersion jobRun
                                 `finally` (do
                                     Now endTime <- thisInstant
                                     -- re-read `db` since it could have been changed by the time the
                                     -- job is finished (after compaction, for example)                            
                                     db <- readTVarIO database
-                                    rwTx db $ \tx -> setJobTime tx db job endTime)
+                                    rwTx db $ \tx -> setJobCompletionTime tx db job endTime)
 
                         in \queue -> do 
                             let delaySeconds = initialDelay `div` 1_000_000
@@ -161,7 +163,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
 
                 processTALs db = do
-                    (z, vs) <- processTALsWorker worldVersion                    
+                    (z, vs) <- runProcessTALsWorker worldVersion                    
                     case z of 
                         Left e -> do 
                             logError logger [i|Validator process failed: #{e}.|]
@@ -190,7 +192,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                     pure (vrps, slurmedVrps)
 
 
-        cacheGC sharedStuff worldVersion = do
+        cacheGC sharedStuff worldVersion _ = do
             database' <- readTVarIO database
             executeOrDie
                 (cleanObjectCache database' $ versionIsOld (versionToMoment worldVersion) (config ^. #cacheLifeTime))
@@ -200,7 +202,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
 
-        cleanOldVersions sharedStuff worldVersion = do
+        cleanOldVersions sharedStuff worldVersion _ = do
             let now = versionToMoment worldVersion
             database' <- readTVarIO database
             executeOrDie
@@ -208,9 +210,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ 
                         atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
-                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
+                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])                    
 
-        compact sharedStuff worldVersion = do
+        compact sharedStuff worldVersion _ = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
             SharedStuff {..} <- readTVarIO sharedStuff
@@ -219,6 +221,23 @@ runWorkflow appContext@AppContext {..} tals = do
                 logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
             else 
                 logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
+
+        rsyncCleanup _ jobRun =
+            executeOrDie
+                (case jobRun of 
+                    FirstRun -> 
+                        -- Do no actually do anything at the very first run.
+                        -- Statistically the first run would mean that the application 
+                        -- just was installed and started working and it's not very likely 
+                        -- that there's already a lot of garbage in the rsync mirror difrectory.                        
+                        pure ()
+                    RanBefore -> do
+                        let rsyncDir = config ^. #rsyncConf . #rsyncRoot
+                        logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
+                        listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
+                )
+                (\_ elapsed -> do                     
+                    logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight =
@@ -265,10 +284,10 @@ runWorkflow appContext@AppContext {..} tals = do
             atomically $ writeCQueue globalQueue z
 
         initRtrIfNeeded = 
-            maybe (pure ()) (runRtrServer appContext) $ config ^. #rtrConfig                        
+            for_ (config ^. #rtrConfig) $ runRtrServer appContext
 
 
-        processTALsWorker worldVersion = do 
+        runProcessTALsWorker worldVersion = do 
             let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
             let workerId = WorkerId $ "validator:" <> talsStr
 
@@ -398,6 +417,9 @@ data SharedStuff = SharedStuff {
         deletedAnythingFromDb :: Bool
     }
     deriving (Show, Eq, Ord, Generic)
+
+data JobRun = FirstRun | RanBefore
+    deriving (Show, Eq, Ord, Generic)  
 
 newShared :: SharedStuff
 newShared = SharedStuff False
