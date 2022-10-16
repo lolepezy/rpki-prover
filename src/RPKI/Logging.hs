@@ -10,6 +10,7 @@ module RPKI.Logging where
 import Codec.Serialise
 
 import           Conduit
+import           Control.Exception
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -26,8 +27,6 @@ import Control.Monad
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 
-import qualified Control.Concurrent.STM.TBQueue  as Q
-
 import GHC.Generics (Generic)
 
 import System.Posix.Types
@@ -37,6 +36,7 @@ import System.IO (BufferMode (..), hSetBuffering, stdout, stderr)
 import RPKI.Domain
 import RPKI.Util
 import RPKI.Time
+import RPKI.Parallel
 
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
@@ -58,68 +58,64 @@ data AppLogger = AppLogger {
         actualLogger :: ProcessLogger
     }
 
-logError_, logWarn_, logInfo_, logDebug_ :: AppLogger -> Text -> IO ()
+logError, logWarn, logInfo, logDebug :: MonadIO m => AppLogger -> Text -> m ()
 
-logError_ AppLogger {..} s = logWLevel actualLogger =<< mkLogMessage ErrorL s
-logWarn_ = logIfAboveLevel WarnL
-logInfo_ = logIfAboveLevel InfoL
-logDebug_ = logIfAboveLevel DebugL
+logError AppLogger {..} s = liftIO $ logWLevel actualLogger =<< mkLogMessage ErrorL s
+logWarn  = logIfAboveLevel WarnL
+logInfo  = logIfAboveLevel InfoL
+logDebug = logIfAboveLevel DebugL
 
-logIfAboveLevel :: LogLevel -> AppLogger -> Text -> IO ()
-logIfAboveLevel level AppLogger {..} s = 
+logIfAboveLevel :: MonadIO m => LogLevel -> AppLogger -> Text -> m ()
+logIfAboveLevel level AppLogger {..} s = liftIO $
     when (logLevel >= level) $ 
         logWLevel actualLogger =<< mkLogMessage level s        
 
-
-logErrorM, logWarnM, logInfoM, logDebugM :: MonadIO m => AppLogger -> Text -> m ()
-logErrorM logger t = liftIO $ logError_ logger t
-logWarnM logger t  = liftIO $ logWarn_ logger t
-logInfoM logger t  = liftIO $ logInfo_ logger t
-logDebugM logger t = liftIO $ logDebug_ logger t
-
 mkLogMessage :: LogLevel -> Text -> IO LogMessage
 mkLogMessage logLevel message = do 
-    Now time <- thisInstant
+    Now timestamp <- thisInstant
     processId <- getProcessID
     pure LogMessage {..}
 
 data LogMessage = LogMessage { 
-        logLevel :: LogLevel,
-        message ::  Text,
+        logLevel  :: LogLevel,
+        message   :: Text,
         processId :: ProcessID,
-        time :: Instant
+        timestamp :: Instant
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (Serialise)
 
 data QElem = BinQE BS.ByteString | MsgQE LogMessage
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
-data ProcessLogger = MainLogger (TBQueue QElem) 
-                   | WorkerLogger (TBQueue QElem) 
+data ProcessLogger = MainLogger (ClosableQueue QElem) 
+                   | WorkerLogger (ClosableQueue QElem) 
 
 
 logWLevel :: ProcessLogger -> LogMessage -> IO ()
 logWLevel logger msg = 
-    atomically $ Q.writeTBQueue (getQueue logger) $ MsgQE msg  
+    atomically $ writeCQueue (getQueue logger) $ MsgQE msg  
 
 logBytes :: ProcessLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
-    atomically $ Q.writeTBQueue (getQueue logger) $ BinQE bytes             
+    atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
 
 
-forLogger :: ProcessLogger -> (TBQueue QElem -> p) -> (TBQueue QElem -> p) -> p
+forLogger :: ProcessLogger -> (ClosableQueue QElem -> p) -> (ClosableQueue QElem -> p) -> p
 forLogger logger f g = 
     case logger of 
         MainLogger q -> f q
         WorkerLogger q -> g q
 
-getQueue :: ProcessLogger -> TBQueue QElem
-getQueue logger = forLogger logger id id
+forLogger1 :: ProcessLogger -> (ClosableQueue QElem -> p) -> p
+forLogger1 logger f = forLogger logger f f 
 
-withLogger :: (TBQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
+getQueue :: ProcessLogger -> ClosableQueue QElem
+getQueue logger = forLogger1 logger id
+
+withLogger :: (ClosableQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
 withLogger mkLogger maxLogLevel f = do 
-    q <- Q.newTBQueueIO 1000
+    q <- newCQueueIO 1000
     let logger = mkLogger q    
     let appLogger = AppLogger maxLogLevel logger
 
@@ -134,14 +130,19 @@ withLogger mkLogger maxLogLevel f = do
             BS.hPut logStream s
             BS.hPut logStream $ C8.singleton eol        
 
-    runWithLog logRaw logger (\_ -> f appLogger)
+    runWithLog logRaw logger (f appLogger)
 
   where
-    loop g q = forever $ g =<< atomically (Q.readTBQueue q)
 
-    runWithLog logRaw logger g =         
-        withAsync (forLogger logger loopMain loopWorker) g
+    finallyCloseQ logger ff = 
+            ff `finally` forLogger1 logger (atomically . closeCQueue)
+
+    runWithLog logRaw logger g = do        
+        snd <$> concurrently 
+                    (finallyCloseQ logger $ forLogger logger loopMain loopWorker)                     
+                    (finallyCloseQ logger g)
       where                
+
         loopMain = loop $ \case 
             BinQE b -> do 
                 case bsToMsg b of 
@@ -154,12 +155,16 @@ withLogger mkLogger maxLogLevel f = do
 
         loopWorker = loop $ logRaw . \case 
                                 BinQE b   -> b
-                                MsgQE msg -> msgToBs msg            
+                                MsgQE msg -> msgToBs msg
+
+        loop g queue = do 
+                z <- atomically $ readCQueue queue        
+                for_ z $ \m -> g m >> loop g queue            
 
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]
             let pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
-            logRaw [i|#{level}  #{pid}  #{time}  #{message}|]            
+            logRaw [i|#{level}  #{pid}  #{timestamp}  #{message}|]      
     
 eol :: Char
 eol = '\n' 

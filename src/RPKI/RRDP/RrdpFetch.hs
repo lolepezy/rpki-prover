@@ -126,24 +126,24 @@ downloadAndUpdateRRDP
     case nextStep of
         NothingToDo message -> do 
             used RrdpNoUpdate
-            logDebugM logger [i|Nothing to update for #{repoUri}: #{message}|]
+            logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
             pure repo
 
         UseSnapshot snapshotInfo message -> do 
             used RrdpSnapshot
-            logDebugM logger [i|Going to use snapshot for #{repoUri}: #{message}|]
+            logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
             useSnapshot snapshotInfo notification
 
         UseDeltas sortedDeltas snapshotInfo message -> 
             (do 
                 used RrdpDelta
-                logDebugM logger [i|Going to use deltas for #{repoUri}: #{message}|]
+                logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                 useDeltas sortedDeltas notification)
                 `catchError` 
             \e -> do         
                 -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
                 -- some of the deltas
-                logErrorM logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
+                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
                 used RrdpSnapshot
                 useSnapshot snapshotInfo notification            
   where
@@ -153,7 +153,7 @@ downloadAndUpdateRRDP
 
     useSnapshot (SnapshotInfo uri hash) notification = 
         inSubObjectVScope (U.convert uri) $ do
-            logInfoM logger [i|#{uri}: downloading snapshot.|]
+            logInfo logger [i|#{uri}: downloading snapshot.|]
             
             (rawContent, _, httpStatus') <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
@@ -184,7 +184,7 @@ downloadAndUpdateRRDP
                 then [i|#{repoURI}: downloading delta #{minDeltaSerial}.|]
                 else [i|#{repoURI}: downloading deltas from #{minDeltaSerial} to #{maxDeltaSerial}.|]
         
-        logInfoM logger message
+        logInfo logger message
 
         -- Do not thrash the same server with too big amount of parallel 
         -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
@@ -392,20 +392,20 @@ saveSnapshot
                 HashExists rpkiURL hash ->
                     DB.linkObjectToUrl tx objectStore rpkiURL hash
                 UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
-                    logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
+                    logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                     inSubObjectVScope (unURI uri) $ appWarn e 
                 DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                    logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
                 ObjectParsingProblem rpkiUrl (VErr e) -> do                    
-                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    logError logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
                 Success rpkiUrl so@StorableObject {..} -> do 
                     DB.putObject tx objectStore so worldVersion                    
                     DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
                     addedObject                     
                 other -> 
-                    logDebugM logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
+                    logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
     
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
@@ -516,13 +516,13 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
             Left e  -> appError e
             Right z -> case z of 
                 UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
-                    logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
+                    logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                     inSubObjectVScope (unURI uri) $ appWarn e 
                 DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                    logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                                     
                 ObjectParsingProblem rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    logError logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e 
                 Success rpkiUrl so@StorableObject {..} -> do 
                     let hash' = getHash object
@@ -535,7 +535,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
                             DB.linkObjectToUrl tx objectStore rpkiUrl hash'
                             addedObject
                 other -> 
-                    logDebugM logger [i|Weird thing happened in `addObject` #{other}.|]
+                    logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
 
     replaceObject objectStore tx uri a oldHash = do      
         (r, vs) <- liftIO $ wait a
@@ -544,13 +544,13 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
             Left e  -> appError e
             Right z -> case z of               
                 UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
-                    logErrorM logger [i|Skipped object #{rpkiUrl}, error #{e} |]
+                    logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                     inSubObjectVScope (unURI uri) $ appWarn e
                 DecodingTrouble rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
+                    logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                                           
                 ObjectParsingProblem rpkiUrl (VErr e) -> do
-                    logErrorM logger [i|Couldn't parse object #{uri}, error #{e} |]
+                    logError logger [i|Couldn't parse object #{uri}, error #{e} |]
                     inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e 
                 Success rpkiUrl so@StorableObject {..} -> do 
                     oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
@@ -559,7 +559,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
                             -- Ignore withdraws and just use the time-based garbage collection
                             deletedObject
                         else do 
-                            logErrorM logger [i|No object #{uri} with hash #{oldHash} to replace.|]
+                            logError logger [i|No object #{uri} with hash #{oldHash} to replace.|]
                             inSubObjectVScope (unURI uri) $ 
                                 appError $ RrdpE $ NoObjectToReplace uri oldHash
 
@@ -574,7 +574,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
                             addedObject
 
                 other -> 
-                    logDebugM logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
+                    logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
 
     logger           = appContext ^. typed @AppLogger           
     cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism    

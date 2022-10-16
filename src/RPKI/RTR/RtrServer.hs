@@ -92,11 +92,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
         loop sock = forever $ do
             (conn, peer) <- accept sock
-            logDebug_ logger [i|Connection from #{peer}|]
+            logDebug logger [i|Connection from #{peer}|]
             void $ forkFinally 
                 (serveConnection conn peer updateBroadcastChan rtrState) 
                 (\_ -> do 
-                    logDebug_ logger [i|Closing connection with #{peer}|]
+                    logDebug logger [i|Closing connection with #{peer}|]
                     close conn)
     
     -- | Block on updates on `appState` and when these update happen
@@ -108,7 +108,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
         -- If a version is recovered from the storage after the start, 
         -- use it, otherwise wait until some complete version is generated        
-        logInfo_ logger [i|RTR server: waiting for the first complete world version.|] 
+        logInfo logger [i|RTR server: waiting for the first complete world version.|] 
         worldVersion <- atomically $ waitForVersion appState                
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
@@ -116,7 +116,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         vrps <- readTVarIO (appState ^. #filteredVrps)
         let maxStoredDiffs = estimateVrpCount vrps
                 
-        logDebug_ logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
+        logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
         atomically $ writeTVar rtrState $ 
                         Just $ newRtrState worldVersion maxStoredDiffs
@@ -147,18 +147,18 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 
             let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
 
-            logDebug_ logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrpsFlattened}|]
+            logDebug logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrpsFlattened}|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreVrpUpdates
                     then updatedRtrState rtrState' newVersion vrpDiff
                     else rtrState' { lastKnownWorldVersion = newVersion }
 
-            logDebug_ logger [i|Generated new diff in VRP set: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
+            logDebug logger [i|Generated new diff in VRP set: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
             when thereAreVrpUpdates $ do 
                 let RtrState {..} = nextRtrState
                 let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{Set.size $ added d}, deleted = #{Set.size $ deleted d})|]) $ toList diffs
-                logDebug_ logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
+                logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
 
             Now now <- thisInstant            
 
@@ -183,7 +183,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     --      sendToClient simply sends all PDU to the client
     -- They communicate using the outboxChan
     serveConnection connection peer updateBroadcastChan rtrState = do        
-        logDebug_ logger [i|Waiting first PDU from the client #{peer}|]
+        logDebug logger [i|Waiting first PDU from the client #{peer}|]
         firstPdu <- recv connection 1024
         (rtrState', vrps, outboxQueue) <- 
             atomically $ (,,) <$> 
@@ -199,18 +199,18 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         for_ errorPdu $ \errorPdu' -> 
             sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
 
-        for_ message $ logError_ logger
+        for_ message $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
             case processFirstPdu rtrState' vrps versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduToBytes errorPdu' V0
-                    logError_ logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
+                    logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
                                        [i|error PDU: #{errorPdu'}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu' V0}|]
                     sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
 
                 Right (responsePdus, session, warning) -> do
-                    for_ warning $ logWarn_ logger
+                    for_ warning $ logWarn logger
                     atomically $ writeCQueue outboxQueue responsePdus
 
                     withAsync (sendToClient session outboxQueue) $ \sender -> do
@@ -245,9 +245,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
             -- Main loop of the client-server interaction: wait for a PDU from the client, 
             -- 
             serveLoop session outboxQueue = do
-                logDebug_ logger [i|Waiting data from the client #{peer}|]
+                logDebug logger [i|Waiting data from the client #{peer}|]
                 pduBytes <- recv connection 1024                
-                logDebug_ logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
+                logDebug logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
                 -- Empty bytestring means connection is closed, so if it's 
                 -- empty just silently stop doing anything
                 unless (BS.null pduBytes) $
@@ -285,7 +285,7 @@ responseAction logger peer session rtrState vrps pduBytes =
         (errorPdu, message, versionedPdu) = 
                 analyzePdu peer pduBytesLazy $ bytesToVersionedPdu pduBytesLazy
         
-        logError = maybe mempty (logError_ logger) message
+        logError' = maybe mempty (logError logger) message
 
         errorResponse = maybe mempty (: []) errorPdu
                 
@@ -298,15 +298,15 @@ responseAction logger peer session rtrState vrps pduBytes =
                     session
             in case r of 
                 Left (errorPdu', message') -> let
-                    ioAction = logDebug_ logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
+                    ioAction = logDebug logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
                     in Left ([errorPdu'], ioAction)                                     
                 Right (pdus, warning) -> let
                     ioAction = do 
-                        for_ warning $ logWarn_ logger
-                        logDebug_ logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}.. PDUs.|]                            
+                        for_ warning $ logWarn logger
+                        logDebug logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}.. PDUs.|]                            
                     in Right (pdus, ioAction)                                     
 
-        errors = (mempty, logError) <> (errorResponse, mempty)
+        errors = (mempty, logError') <> (errorResponse, mempty)
     in 
         case versionedPdu of 
             Nothing                   -> Left errors

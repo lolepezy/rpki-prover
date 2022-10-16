@@ -51,6 +51,7 @@ import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
@@ -69,31 +70,25 @@ import           RPKI.TAL
 import           RPKI.Util               (convert, fmtEx)
 import           RPKI.Worker
 import           RPKI.Workflow
+import           RPKI.RSC.Verifier
 
 main :: IO ()
 main = do    
     cliOptions@CLIOptions{..} <- unwrapRecord "RPKI prover, relying party software for RPKI"
     case worker of 
-        Nothing -> mainProcess cliOptions
-        Just _  -> do           
-            input <- readWorkerInput
-            let logLevel' = input ^. typed @Config . #logLevel
-            withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
-                (z, validations) <- do
-                            runValidatorT (newScopes "worker-create-app-context")
-                                $ readWorkerContext input logger
-                case z of
-                    Left e ->                        
-                        logErrorM logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                    Right appContext -> 
-                        executeWorker input appContext
+        Nothing -> 
+            if verifySignature 
+                then executeVerifier cliOptions
+                else executeMainProcess cliOptions                
+        Just _ -> 
+            executeWorkerProcess
 
 
-mainProcess :: CLIOptions Unwrapped -> IO ()
-mainProcess cliOptions = do 
-    withLogLevel cliOptions $ \logLevel ->        
+executeMainProcess :: CLIOptions Unwrapped -> IO ()
+executeMainProcess cliOptions = 
+    withLogLevel cliOptions $ \logLevel ->
         withLogger MainLogger logLevel $ \logger -> do             
-            logDebug_ logger [i|Main process.|]
+            logDebug logger [i|Main process.|]
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -106,16 +101,31 @@ mainProcess cliOptions = do
                                     createAppContext cliOptions logger logLevel
                     case appContext of
                         Left _ ->
-                            logError_ logger [i|Couldn't initialise, problems: #{validations}.|]
+                            logError logger [i|Couldn't initialise, problems: #{validations}.|]
                         Right appContext' ->
                             void $ race
                                 (runHttpApi appContext')
-                                (runValidatorApp appContext')
+                                (runValidatorServer appContext')
+
+executeWorkerProcess :: IO ()
+executeWorkerProcess = do
+    input <- readWorkerInput
+    let config = input ^. typed @Config
+    let logLevel' = config ^. #logLevel
+    withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
+        (z, validations) <- runValidatorT 
+                                (newScopes "worker-create-app-context")
+                                (createWorkerAppContext config logger)
+        case z of
+            Left e ->                        
+                logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+            Right appContext -> 
+                executeWorker input appContext     
 
 
-runValidatorApp :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runValidatorApp appContext@AppContext {..} = do
-    logInfo_ logger [i|Reading TAL files from #{talDirectory config}|]
+runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
+runValidatorServer appContext@AppContext {..} = do
+    logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- newWorldVersion
     talNames <- listTALFiles $ talDirectory config
     let validationContext = newScopes "validation-root"
@@ -124,13 +134,13 @@ runValidatorApp appContext@AppContext {..} = do
             inSubVScope' TAFocus (convert taName) $ 
                 parseTALFromFile talFilePath (Text.pack taName)
 
-    logInfo_ logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
+    logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 
     database' <- readTVarIO database
     rwTx database' $ \tx -> putValidations tx database' worldVersion (vs ^. typed)
     case tals of
         Left e -> do
-            logError_ logger [i|Error reading some of the TALs, e = #{e}.|]
+            logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
             -- this is where it blocks and loops in never-ending re-validation
@@ -152,6 +162,8 @@ runHttpApi appContext = let
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
+    programPath <- liftIO getExecutablePath
+
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
     let defaults = defaultConfig
@@ -163,7 +175,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     cached
                     lmdbRealSize
 
-    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd
@@ -181,11 +193,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & maybeSet #rtrAddress rtrAddress
             else Nothing
 
-    appState <- liftIO newAppState
-    tvarDatabase <- liftIO $ newTVarIO database
+    appState1 <- liftIO newAppState
+    database  <- liftIO $ newTVarIO db
 
     let readSlurms files = do 
-            logDebugM logger [i|Reading SLURM files: #{files}|]
+            logDebug logger [i|Reading SLURM files: #{files}.|]
             readSlurmFiles files
 
     -- Read the files first to fail fast
@@ -193,17 +205,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         void $ readSlurms localExceptions        
 
     -- Set the function that re-reads SLURM files with every re-validation.
-    let appState' =
+    let appState =
             case localExceptions of
-                []         -> appState
-                slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles
+                []         -> appState1
+                slurmFiles -> appState1 & #readSlurm ?~ readSlurms slurmFiles
 
-    programPath <- liftIO getExecutablePath
-    let appContext = AppContext {
-        appState = appState',
-        database = tvarDatabase,        
-        logger = logger,        
-        config = defaults               
+    let config = defaults               
                 & #programBinaryPath .~ programPath
                 & #rootDirectory .~ root                
                 & #talDirectory .~ tald 
@@ -239,10 +246,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
                 & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
                 & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
-    }
 
-    logInfoM logger [i|Created application context with configuration: 
-#{shower (appContext ^. typed @Config)}|]
+    let appContext = AppContext {..}
+    logInfo logger [i|Created application context with configuration: 
+#{shower (appContext ^. typed @Config)}|]    
     pure appContext
 
 
@@ -256,7 +263,7 @@ initialiseFS cliOptions logger = do
             (r, _) <- runValidatorT
                 (newScopes "initialise")
                 $ do
-                    logInfoM logger [i|Initialising FS layout...|]
+                    logInfo logger [i|Initialising FS layout...|]
 
                     -- this one checks that "tals" exists
                     (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
@@ -264,13 +271,13 @@ initialiseFS cliOptions logger = do
                     let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
                     let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
 
-                    logInfoM logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
+                    logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
                     fromTryM
                         (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
                         $ forM_ talNames
                             $ \tal -> do
                                 let talUrl = Text.pack $ talsUrl <> tal
-                                logDebugM logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
+                                logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
                                 httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
                                 unless (isHttpSuccess httpStatus) $ do
                                     appError $ UnspecifiedE
@@ -278,10 +285,10 @@ initialiseFS cliOptions logger = do
                                         [i|Http status #{unHttpStatus httpStatus}|]
             case r of
                 Left e -> do
-                    logErrorM logger [i|Failed to initialise: #{e}.|]
-                    logErrorM logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
+                    logError logger [i|Failed to initialise: #{e}.|]
+                    logError logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
                 Right _ ->
-                    logInfoM logger [i|Done.|]
+                    logInfo logger [i|Done.|]
         else do
             putStrLn [i|
 Before downloading and installing ARIN TAL, you must read
@@ -299,17 +306,15 @@ fsLayout :: CLIOptions Unwrapped
         -> AppLogger
         -> TALsHandle
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
-fsLayout cli logger talsHandle = do
-    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let root = getRootDirectory cli
-    let rootDir = root `orDefault` (home </> ".rpki")
+fsLayout cliOptions logger talsHandle = do    
+    (root, rootDir) <- getRoot cliOptions
 
     let message =
             case root of
                 Just d  -> [i|Root directory is set to #{d}.|]
                 Nothing -> [i|Root directory is not set, using defaul ${HOME}/.rpki|]
 
-    logInfoM logger message
+    logInfo logger message
 
     tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir talsHandle
     rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
@@ -317,6 +322,12 @@ fsLayout cli logger talsHandle = do
     cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir
     pure (rootDir, tald, rsyncd, tmpd, cached)
 
+
+getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Maybe FilePath, FilePath)
+getRoot cliOptions = do 
+    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
+    let root = getRootDirectory cliOptions
+    pure (root, root `orDefault` (home </> ".rpki"))
 
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
@@ -355,7 +366,7 @@ checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
     let subDirectory = root </> sub
     doesDirectoryExist subDirectory >>= \case
-        False -> pure $ Left [i| Directory #{subDirectory} doesn't exist.|]
+        False -> pure $ Left [i|Directory #{subDirectory} doesn't exist.|]
         True  -> pure $ Right subDirectory
 
 createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
@@ -393,31 +404,71 @@ executeWorker input appContext =
             ValidationParams {..} -> do 
                 (vs, z) <- runValidation appContext worldVersion tals                
                 resultHandler $ ValidationResult vs z
-   
 
-readWorkerContext :: WorkerInput -> AppLogger -> ValidatorT IO AppLmdbEnv
-readWorkerContext input logger = do    
-
+createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
+createWorkerAppContext config logger = do    
     lmdbEnv <- setupWorkerLmdbCache                     
                     logger
-                    (input ^. #config . #cacheDirectory)
-                    (input ^. #config . #lmdbSizeMb)
+                    (config ^. #cacheDirectory)
+                    (config ^. #lmdbSizeMb)
 
-    database <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
 
-    appState     <- liftIO newAppState
-    tvarDatabase <- liftIO $ newTVarIO database
+    appState <- liftIO newAppState
+    database <- liftIO $ newTVarIO db
 
-    pure AppContext {
-            appState = appState,
-            database = tvarDatabase,
-            logger = logger,        
-            config = input ^. #config
-        }       
+    pure AppContext {..}       
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath           
+
+
+-- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
+executeVerifier :: CLIOptions Unwrapped -> IO ()
+executeVerifier cliOptions@CLIOptions {..} = do 
+    withLogLevel cliOptions $ \logLevel1 ->        
+        withLogger MainLogger logLevel1 $ \logger ->             
+            withVerifier logger $ \verifyPath rscFile -> do               
+                logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]                                 
+                (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do 
+                                appContext <- createVerifierContext cliOptions logger
+                                rscVerify appContext rscFile verifyPath                                            
+                case ac of
+                    Left _ -> do
+                        let report = formatValidations $ vs ^. #validations
+                        logError logger [i|Verification failed: 
+#{report}|]
+                    Right _ -> 
+                        logInfo logger [i|Verification succeeded.|]
+  where 
+    withVerifier logger f = 
+        case signatureFile of 
+            Nothing      -> logError logger "RSC file is not set."
+            Just rscFile -> 
+                case (verifyDirectory, verifyFiles) of 
+                    (Nothing, [])  -> logError logger "Neither files nor directory for files to verify with RSC are not set."
+                    (Nothing, vfs) -> f (FileList vfs) rscFile
+                    (Just vd, [])  -> f (Directory vd) rscFile
+                    _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."                    
+
+
+createVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
+createVerifierContext cliOptions logger = do    
+
+    (_, rootDir) <- getRoot cliOptions
+    cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirN
+
+    let config = defaultConfig
+    lmdbEnv <- setupWorkerLmdbCache logger cached (config ^. #lmdbSizeMb)
+
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
+
+    appState <- liftIO newAppState
+    database <- liftIO $ newTVarIO db
+
+    pure AppContext {..}             
+
 
 -- CLI Options-related machinery
 data CLIOptions wrapped = CLIOptions {
@@ -435,6 +486,19 @@ data CLIOptions wrapped = CLIOptions {
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
+
+    verifySignature :: wrapped ::: Bool <?>
+        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++ 
+        "of validated RPKI objects and VRPs to exist and be poulateds. So executeVerifier can (and should) run next to " +++
+        "the running daemon instance of rpki-prover"),         
+
+    signatureFile :: wrapped ::: Maybe FilePath <?> ("Path to the RSC signature file."),
+
+    verifyDirectory :: wrapped ::: Maybe FilePath <?>
+        ("Path to the directory with the files to be verified using and RSC signaure file."),         
+
+    verifyFiles :: wrapped ::: [FilePath] <?>
+        ("Files to be verified using and RSC signaure file, may be multiple files."),         
 
     cpuCount :: wrapped ::: Maybe Natural <?>
         "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",

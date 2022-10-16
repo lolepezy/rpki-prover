@@ -56,11 +56,7 @@ parseSignedObject contentBinaryParse =
     parseVersion = getInteger (pure . CMSVersion . fromInteger) "Wrong version"
 
     parseDigestAlgorithms = onNextContainer Sequence $
-          DigestAlgorithmIdentifiers . catMaybes <$> getMany
-            (getNext >>= \case
-              OID oid -> pure $ Just  oid
-              Null    -> pure Nothing
-              s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s)
+          DigestAlgorithmIdentifiers . catMaybes <$> getMany getDigest
 
     parseEncapContentInfo = onNextContainer Sequence $ do
       contentType <- parseContentType            
@@ -71,14 +67,8 @@ parseSignedObject contentBinaryParse =
           eContent contentType = do 
             fullContent <- getMany getNext
             let bs = BS.concat [ os | OctetString os <- fullContent ]            
+            -- throwParseError $ "ASNs = " <> show (decodeASN1' BER bs)
             contentBinaryParse contentType bs
-            -- case decodeASN1' BER bs of
-            --   Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
-            --   Right asns ->  
-            --     case runParseASN1 eContentParse asns of
-            --       Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
-            --       Right a -> pure $ EncapsulatedContentInfo contentType a
-        
 
     parseEECertificate = onNextContainer (Container Context 0) $                  
       onNextContainer Sequence $ 
@@ -150,7 +140,10 @@ getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult Hash
 getMetaFromSigned _ bs = pure $ sha256s bs
 
 
-parseSignedContent :: ParseASN1 a -> ContentType -> BS.ByteString -> ParseASN1 (EncapsulatedContentInfo a)
+parseSignedContent :: ParseASN1 a 
+                    -> ContentType 
+                    -> BS.ByteString 
+                    -> ParseASN1 (EncapsulatedContentInfo a)
 parseSignedContent eContentParse contentType bs = 
     case decodeASN1' BER bs of
         Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e

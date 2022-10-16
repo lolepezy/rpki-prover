@@ -190,11 +190,11 @@ rrdpMetricsHtml rrdpMetricMap =
             th $ H.text "Save time"
             th $ H.text "Total time"                    
 
-        H.tbody $ do 
+        H.tbody $ 
             forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do 
-                    td $ toHtml repository                        
+                    td $ toHtml $ focusToText repository                        
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #rrdpSource                    
                     td $ toHtml $ show $ rm ^. #added
@@ -224,8 +224,8 @@ rsyncMetricsHtml rsyncMetricMap =
         H.tbody $
             forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
                 let repository = NonEmpty.head scope'
-                htmlRow index $ do 
-                    td $ toHtml repository                                                        
+                htmlRow index $ do
+                    td $ toHtml $ focusToText repository                                                        
                     td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
                     td $ toHtml $ show $ rm ^. #processed            
                     td $ toHtml $ rm ^. #totalTimeMs            
@@ -270,12 +270,12 @@ validaionDetailsHtml result =
                 td $ do
                     H.div ! class_ "flex short-link" $ do
                         H.div ! class_ "pointer-right" $ arrowRight >> space
-                        H.div ! class_ "full-path" $ objectLink objectUrl
+                        H.div ! class_ "full-path" $ focusLink objectUrl
                     H.div ! class_ "flex full-link" ! A.style "display: none;" $ do
                         H.div ! class_ "pointer-up" $ arrowUp >> space
                         H.div ! class_ "full-path" $ do
                             forM_ path $ \pathUrl -> do            
-                                H.div ! A.class_ "path-elem" $ objectLink pathUrl
+                                H.div ! A.class_ "path-elem" $ focusLink pathUrl
 
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
@@ -323,7 +323,7 @@ validationPathTootip = do
 groupByTa :: [FullVDto] -> Map Text [FullVDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
-    $ [ (ta, [vr]) 
+    $ [ (focusToText ta, [vr]) 
             | vr@FullVDto {..} <- vrs, 
               ta <- lastOne path ]    
   where
@@ -335,6 +335,17 @@ groupByTa vrs =
 objectLink :: Text -> Html
 objectLink url = 
     H.a ! A.href (textValue ("/api/object?uri=" <> url)) $ toHtml url
+
+focusLink :: Focus -> Html
+focusLink = \case 
+    TAFocus txt         -> toHtml txt
+    ObjectFocus txt     -> objectLink txt
+    PPFocus uri         -> directLink $ unURI $ getURL uri
+    RepositoryFocus uri -> directLink $ unURI $ getURL uri
+    TextFocus txt       -> toHtml txt
+  where
+    directLink u = 
+        H.a ! A.href (textValue u) $ toHtml u
 
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
@@ -368,6 +379,3 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
-
-instance ToMarkup Focus where 
-    toMarkup = toMarkup . focusToText

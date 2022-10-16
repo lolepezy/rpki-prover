@@ -46,6 +46,7 @@ createDatabase e = do
         uriKeyToUri <- SMap lmdb <$> createLmdbStore e
         urlKeyToObjectKey  <- SMultiMap lmdb <$> createLmdbMultiStore e
         objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
+        certBySKI <- SMap lmdb <$> createLmdbStore e
         pure RpkiObjectStore {..}
             
     createRepositoryStore = 

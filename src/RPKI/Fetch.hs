@@ -165,7 +165,7 @@ fetchPPWithFallback
                 let nextOne = head pps'
                 now' <- thisInstant
                 (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne now'
-                logWarn_ logger $ if nextOneNeedAFetch
+                logWarn logger $ if nextOneNeedAFetch
                     then [i|Failed to fetch #{getURL $ getRpkiURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL nextOne}.|]
                     else [i|Failed to fetch #{getURL $ getRpkiURL pp}, next one (#{getURL $ getRpkiURL nextOne}) is up-to-date.|]                
 
@@ -254,7 +254,7 @@ fetchRepository
     appContext@AppContext {..}
     worldVersion
     repo = do
-        logInfoM logger [i|Fetching #{getURL repoURL}.|]   
+        logInfo logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
             RsyncR r -> RsyncR <$> fetchRsyncRepository r
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
@@ -269,10 +269,10 @@ fetchRepository
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
                                     (runRsyncFetchWorker appContext worldVersion r)
-                logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+                logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
-                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
                 appError $ RsyncE $ RsyncDownloadTimeout maxDuration)        
     
     fetchRrdpRepository r = do 
@@ -283,10 +283,10 @@ fetchRepository
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
                                     (runRrdpFetchWorker appContext worldVersion r)
-                logInfoM logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+                logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
-                logErrorM logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
                 appError $ RrdpE $ RrdpDownloadTimeout maxDuration)                
 
 
@@ -318,12 +318,12 @@ fetchTACertificate appContext@AppContext {..} tal =
       where 
         goToNext e = do            
             let message = [i|Failed to fetch #{getURL u}: #{e}|]
-            logErrorM logger message
+            logError logger message
             validatorWarning $ VWarning e
             go uris
 
         fetchTaCert = do                     
-            logInfoM logger [i|Fetching TA certicate from #{getURL u}.|]
+            logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU

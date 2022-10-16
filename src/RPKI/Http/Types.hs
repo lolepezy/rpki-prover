@@ -54,8 +54,8 @@ data IssueDto = ErrorDto Text | WarningDto Text
 
 data FullVDto = FullVDto {
         issues  :: [IssueDto],
-        path    :: [Text],
-        url     :: Text
+        path    :: [Focus],
+        url     :: Focus
     } 
     deriving stock (Eq, Show, Generic)
 

@@ -46,6 +46,7 @@ dependencies:
 - conduit-extra
 - cryptonite
 - cryptohash-sha256
+- cryptohash-sha512
 - deepseq
 - deque
 - directory

@@ -44,7 +44,7 @@ parseMft bs = do
                         IntVal manifestNumber,
                         ASN1Time TimeGeneralized thisUpdateTime' _) -> do
                             when (version /= 1) $ 
-                                throwParseError $ "Unexpected ROA content: " ++ show version
+                                throwParseError $ "Unexpected manifest version: " ++ show version
                             nextUpdateTime' <- getTime "No NextUpdate time"
                             hashAlg'        <- getOID oid2Hash "Wrong hash algorithm OID"
                             entries         <- getEntries fileHashAlg
@@ -53,7 +53,7 @@ parseMft bs = do
                             pure $ Manifest mn hashAlg' 
                                 (Instant thisUpdateTime') (Instant nextUpdateTime') entries
 
-                    s -> throwParseError $ "Unexpected ROA content: " ++ show s
+                    s -> throwParseError $ "Unexpected manifest content: " ++ show s
 
         makeMftNumber n = 
             case makeSerial n of 

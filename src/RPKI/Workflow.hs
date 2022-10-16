@@ -35,11 +35,12 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Store.Database
-import           RPKI.TopDown
+import           RPKI.Validation.TopDown
 
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
@@ -135,7 +136,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
                         in \queue -> do 
                             let delaySeconds = initialDelay `div` 1_000_000
-                            logDebug_ logger [i|Scheduling job '#{job}' with initial delay #{delaySeconds}s and interval #{interval}.|] 
+                            logDebug logger [i|Scheduling job '#{job}' with initial delay #{delaySeconds}s and interval #{interval}.|] 
                             generatePeriodicJob initialDelay interval jobAction queue                        
     
         jobExecutor globalQueue = go
@@ -145,33 +146,48 @@ runWorkflow appContext@AppContext {..} tals = do
                 for_ z $ \job -> updateWorldVersion >>= job >> go
 
         validateAllTAs prometheusMetrics worldVersion = do
-            logInfo_ logger [i|Validating all TAs, world version #{worldVersion} |]
+            logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
             database' <- readTVarIO database
             executeOrDie
                 (processTALs database' `finally` cleanupAfterValidation)
                 (\(vrps, slurmedVrps) elapsed ->
-                    logInfoM logger $
+                    logInfo logger $
                         [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where
                 cleanupAfterValidation = do
                     let tmpDir = config ^. #tmpDirectory
-                    logDebugM logger [i|Cleaning up temporary directory #{tmpDir}.|]
+                    logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
 
                 processTALs db = do
-                    (topDownValidations, maybeSlurm) <- processTALsWorker worldVersion
-                    updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
+                    (z, vs) <- processTALsWorker worldVersion                    
+                    case z of 
+                        Left e -> do 
+                            logError logger [i|Validator process failed: #{e}.|]
+                            rwTx db $ \tx -> do
+                                putValidations tx db worldVersion (vs ^. typed)
+                                putMetrics tx db worldVersion (vs ^. typed)
+                                completeWorldVersion tx db worldVersion                            
+                            updatePrometheus (vs ^. typed) prometheusMetrics worldVersion
+                            pure (mempty, mempty)            
+                        Right (ValidationResult v s) -> do                             
+                            let (topDownValidations, maybeSlurm) = (vs <> v, s)
 
-                    roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
-                        Nothing -> do 
-                            logError_ logger [i|Something weird happened: .|]
-                            pure (mempty, mempty)
-                        Just vrps -> do                 
-                            slurmedVrps <- atomically $ do
-                                    setCurrentVersion appState worldVersion
-                                    completeVersion appState worldVersion vrps maybeSlurm
-                            pure (vrps, slurmedVrps)
+                            let tdValidations = topDownValidations ^. typed
+                            logDebug logger [i|Validation result: 
+#{formatValidations tdValidations}.|]
+                            updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
+
+                            roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
+                                Nothing -> do 
+                                    logError logger [i|Something weird happened: .|]
+                                    pure (mempty, mempty)
+                                Just vrps -> do                 
+                                    slurmedVrps <- atomically $ do
+                                            setCurrentVersion appState worldVersion
+                                            completeVersion appState worldVersion vrps maybeSlurm
+                                    pure (vrps, slurmedVrps)
 
 
         cacheGC sharedStuff worldVersion = do
@@ -181,7 +197,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (\CleanUpResult {..} elapsed -> do 
                     when (deletedObjects > 0) $ 
                         atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
-                    logInfo_ logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                    logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
 
         cleanOldVersions sharedStuff worldVersion = do
@@ -192,7 +208,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ 
                         atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
-                    logInfo_ logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
+                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
         compact sharedStuff worldVersion = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
@@ -200,9 +216,9 @@ runWorkflow appContext@AppContext {..} tals = do
             SharedStuff {..} <- readTVarIO sharedStuff
             if deletedAnythingFromDb then do 
                 (_, elapsed) <- timedMS $ runMaintenance appContext
-                logInfo_ logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
+                logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
             else 
-                logDebug_ logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
+                logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight =
@@ -212,7 +228,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     Handler $ \(_ :: AsyncCancelled) ->
                         die [i|Interrupted with Ctrl-C, exiting.|],
                     Handler $ \(weirdShit :: SomeException) ->
-                        logError_ logger [i|Something weird happened #{weirdShit}, exiting.|]
+                        logError logger [i|Something weird happened #{weirdShit}, exiting.|]
                 ]
             where
                 exec = do
@@ -232,7 +248,7 @@ runWorkflow appContext@AppContext {..} tals = do
         updateWorldVersion = do
             newVersion <- newWorldVersion
             existing <- getWorldVerionIO appState
-            logDebug_ logger $ case existing of
+            logDebug logger $ case existing of
                 Nothing ->
                     [i|Generated first world version #{newVersion}.|]
                 Just oldWorldVersion ->
@@ -242,7 +258,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
         writeQ globalQueue z = do
             isFull <- atomically $ ifFullCQueue globalQueue
-            when isFull $ logInfoM logger $
+            when isFull $ logInfo logger $
                                 [i|Job queue is full. Normally that means that revalidation interval |] <>
                                 [i|is too short for the time validation takes. It is recommended to restart |] <>
                                 [i|with a higher re-validation interval value.|]
@@ -266,7 +282,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         rtsAL "128m", 
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
             
-            (z, vs) <- runValidatorT 
+            runValidatorT 
                     (newScopes "validator") $ 
                         runWorker
                             logger
@@ -274,10 +290,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             workerId 
                             (ValidationParams worldVersion tals)                        
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                            arguments                            
-            pure $ case z of 
-                Left _                       -> (vs, Nothing)
-                Right (ValidationResult v s) -> (vs <> v, s)
+                            arguments                                        
 
 
 runValidation :: Storage s =>
@@ -296,11 +309,11 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         case appState ^. #readSlurm of
             Nothing       -> pure (mempty, Nothing)
             Just readFunc -> do
-                logInfoM logger [i|Re-reading and re-validating SLURM files.|]
+                logInfo logger [i|Re-reading and re-validating SLURM files.|]
                 (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
                 case z of
                     Left e -> do
-                        logErrorM logger [i|Failed to read apply SLURM files: #{e}|]
+                        logError logger [i|Failed to read apply SLURM files: #{e}|]
                         pure (vs, Nothing)
                     Right slurm ->
                         pure (vs, Just slurm)
@@ -330,7 +343,7 @@ loadStoredAppState AppContext {..} = do
 
             Just lastVersion
                 | versionIsOld now' revalidationInterval lastVersion -> do
-                    logInfo_ logger [i|Last cached version #{lastVersion} is too old to be used, will re-run validation.|]
+                    logInfo logger [i|Last cached version #{lastVersion} is too old to be used, will re-run validation.|]
                     pure Nothing
 
                 | otherwise -> do
@@ -345,7 +358,7 @@ loadStoredAppState AppContext {..} = do
                                     completeVersion appState lastVersion vrps' slurm
                         pure vrps
                     for_ vrps $ \v ->
-                        logInfo_ logger $ [i|Last cached version #{lastVersion} used to initialise |] <>
+                        logInfo logger $ [i|Last cached version #{lastVersion} used to initialise |] <>
                                         [i|current state (#{estimateVrpCount v} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
 

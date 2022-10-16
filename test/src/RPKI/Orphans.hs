@@ -233,6 +233,10 @@ instance Arbitrary Gbr where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RSC where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -347,6 +351,10 @@ instance Arbitrary a => Arbitrary (SignedData a) where
     shrink = genericShrink
 
 instance Arbitrary CMSVersion where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary DigestAlgorithmIdentifier where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

@@ -18,7 +18,7 @@ import Data.String.Interpolate.IsString
 import RPKI.Domain 
 import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
-import RPKI.Parse.Internal.SignedObject 
+import RPKI.Parse.Internal.SignedObject
 
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
@@ -31,13 +31,13 @@ parseRoa bs = do
     where     
         parseRoas' = onNextContainer Sequence $ do      
             -- TODO Fix it so that it would work with present attestation version
-            asId <- getInteger (pure . fromInteger) "Wrong ASID"
+            asId <- getInteger (pure . fromInteger) "Wrong ASid"
             mconcat <$> onNextContainer Sequence (getMany $
                 onNextContainer Sequence $ 
-                getAddressFamily "Expected an address family here" >>= \case 
-                    Right Ipv4F -> getRoa asId Ipv4F
-                    Right Ipv6F -> getRoa asId Ipv6F
-                    Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
+                    getAddressFamily "Expected an address family here" >>= \case 
+                        Right Ipv4F -> getRoa asId Ipv4F
+                        Right Ipv6F -> getRoa asId Ipv6F
+                        Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
         getRoa :: Int -> AddrFamily -> ParseASN1 [Vrp]
         getRoa asId addressFamily = onNextContainer Sequence $ getMany $
@@ -71,6 +71,6 @@ parseRoa bs = do
             where 
                 mkVrp :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> Vrp
                 mkVrp nz len mkIp = Vrp 
-                            (ASN (fromIntegral asId)) 
+                            (ASN $ fromIntegral asId)
                             (mkIp $ make bs' (fromIntegral nz)) 
                             (PrefixLength $ fromIntegral len)

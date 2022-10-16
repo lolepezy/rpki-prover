@@ -17,7 +17,6 @@ module RPKI.Domain where
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
-import qualified Data.String.Conversions     as SC
 
 import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
@@ -221,6 +220,7 @@ data CMSBasedObject a = CMSBasedObject {
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
+type RscObject = CMSBasedObject RSC
 
 data EECerObject = EECerObject {
         ski         :: {-# UNPACK #-} SKI,
@@ -235,6 +235,7 @@ data RpkiObject = CerRO CerObject
                 | MftRO MftObject
                 | RoaRO RoaObject
                 | GbrRO GbrObject
+                | RscRO RscObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -280,6 +281,7 @@ instance WithAKI RpkiObject where
     getAKI (RoaRO c) = getAKI c
     getAKI (GbrRO c) = getAKI c
     getAKI (CrlRO c) = getAKI c
+    getAKI (RscRO c) = getAKI c
 
 instance WithHash RpkiObject where
     getHash (CerRO c) = getHash c
@@ -287,10 +289,11 @@ instance WithHash RpkiObject where
     getHash (RoaRO c) = getHash c
     getHash (GbrRO c) = getHash c
     getHash (CrlRO c) = getHash c
+    getHash (RscRO c) = getHash c
 
 data Located a = Located { 
-        locations      :: Locations,
-        payload :: a
+        locations :: Locations,
+        payload   :: a
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -359,6 +362,13 @@ data Gbr = Gbr BSS.ShortByteString
     deriving anyclass Serialise
 
 
+data RSC = RSC {        
+        rscResources    :: PrefixesAndAsns,        
+        checkList       :: [T2 (Maybe Text) Hash],
+        digestAlgorithm :: DigestAlgorithmIdentifier
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
 
 -- | Types for the signed object template 
 -- https://tools.ietf.org/html/rfc5652
@@ -453,6 +463,10 @@ newtype CMSVersion = CMSVersion Int
     deriving anyclass Serialise
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass Serialise
+
+newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 

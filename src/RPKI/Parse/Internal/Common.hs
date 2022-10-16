@@ -4,12 +4,18 @@
 module RPKI.Parse.Internal.Common where
 
 import Data.Bifunctor
+import Control.Applicative
 import Control.Monad
+
+import Data.Bits
 
 import qualified Data.ByteString as BS  
 import qualified Data.Text as Text  
 import Data.Text.Encoding (decodeUtf8)
 
+import qualified Data.List as List
+
+import Data.Word
 import Data.Char (chr)
 import Data.Maybe
 
@@ -25,6 +31,8 @@ import Data.X509 as X509
 import RPKI.Resources.Types
 import RPKI.Domain
 import RPKI.Reporting (ParseError(..))
+
+import RPKI.Resources.Resources   as R
 
 type ParseResult a = Either (ParseError Text.Text) a
 
@@ -58,14 +66,18 @@ id_subjectKeyId   = [2, 5, 29, 14]
 id_authorityKeyId = [2, 5, 29, 35]
 id_crlNumber      = [2, 5, 29, 20]
 
-id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime, id_sha256 :: OID
+id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
+id_sha256, id_sha512, id_ct_signedChecklist :: OID
+
 id_pkcs9              = [1, 2, 840, 113549, 1, 9]
 id_contentType        = id_pkcs9 <> [3]
 id_messageDigest      = id_pkcs9 <> [4]
 id_signingTime        = id_pkcs9 <> [5]
 id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
-
+id_ct_signedChecklist = id_pkcs9 <> [16, 1, 48]
+                        
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
+id_sha512            = [2, 16, 840, 1, 101, 3, 4, 2, 3]
 
 id_ce_CRLDistributionPoints, id_ce_certificatePolicies, id_ce_basicConstraints ::OID 
 id_ce_keyUsage, id_ce_extKeyUsage :: OID 
@@ -127,11 +139,18 @@ getBitString f m = getNext >>= \case
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
 getAddressFamily m = getNext >>= \case 
     (OctetString familyType) -> 
-        case BS.take 2 familyType of 
-            "\NUL\SOH" -> pure $ Right Ipv4F
-            "\NUL\STX" -> pure $ Right Ipv6F
-            af         -> pure $ Left af 
+        pure $ case BS.take 2 familyType of 
+            "\NUL\SOH" -> Right Ipv4F
+            "\NUL\STX" -> Right Ipv6F
+            af         -> Left af 
     a              -> parseError m a      
+
+getDigest :: ParseASN1 (Maybe OID)
+getDigest = 
+    getNext >>= \case
+        OID oid -> pure $ Just oid
+        Null    -> pure Nothing
+        s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s
 
 -- Certificate utilities
 extVal :: [ExtensionRaw] -> OID -> Maybe BS.ByteString
@@ -144,11 +163,12 @@ getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
 getExtsSign = getExts . cwsX509certificate
 
 parseKI :: BS.ByteString -> ParseResult KI
-parseKI bs = case decodeASN1' BER bs of
-    Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
-    Right [OctetString bytes] -> makeKI bytes
-    Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
-    Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
+parseKI bs = 
+    case decodeASN1' BER bs of
+        Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
+        Right [OctetString bytes] -> makeKI bytes
+        Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
+        Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
   where
     makeKI bytes = 
         let len = BS.length bytes
@@ -216,3 +236,149 @@ getCrlDistributionPoint c = do
 
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just
+
+
+{-
+  Parse IP address extension.
+
+  https://tools.ietf.org/html/rfc3779#section-2.2.3
+
+   IPAddrBlocks        ::= SEQUENCE OF IPAddressFamily
+
+   IPAddressFamily     ::= SEQUENCE {    -- AFI & optional SAFI --
+      addressFamily        OCTET STRING (SIZE (2..3)),
+      ipAddressChoice      IPAddressChoice }
+
+   IPAddressChoice     ::= CHOICE {
+      inherit              NULL, -- inherit from issuer --
+      addressesOrRanges    SEQUENCE OF IPAddressOrRange }
+
+   IPAddressOrRange    ::= CHOICE {
+      addressPrefix        IPAddress,
+      addressRange         IPAddressRange }
+
+   IPAddressRange      ::= SEQUENCE {
+      min                  IPAddress,
+      max                  IPAddress }
+
+   IPAddress           ::= BIT STRING
+-}
+parseIpExt' :: ParseASN1 IpResources
+parseIpExt' = do
+    afs <- getMany addrFamily    
+    pure $ IpResources $ IpResourceSet
+      (rs [ af | Left  af <- afs ]) 
+      (rs [ af | Right af <- afs ])
+  where
+    rs []       = R.emptyRS
+    rs (af : _) = af
+    addrFamily = onNextContainer Sequence $
+        getAddressFamily "Expected an address family here" >>= \case
+            Right Ipv4F -> Left  <$> ipResourceSet ipv4Address
+            Right Ipv6F -> Right <$> ipResourceSet ipv6Address
+            Left af     -> throwParseError $ "Unsupported address family " <> show af
+      where
+        ipResourceSet address =
+            getNull_ (pure Inherit) <|>
+            onNextContainer Sequence (R.toRS . mconcat <$> getMany address)
+
+
+ipv4Address :: ParseASN1 [Ipv4Prefix]
+ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
+
+ipv6Address :: ParseASN1 [Ipv6Prefix]
+ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
+
+makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
+makeOneIP bs nz = [make bs (fromIntegral nz)]
+
+ipvVxAddress :: ([Word8] -> t)
+            -> Int
+            -> (BS.ByteString -> Word64 -> b)
+            -> (t -> t -> b)
+            -> ParseASN1 b
+ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =     
+    getNextContainerMaybe Sequence >>= \case
+        Nothing -> getNext >>= \case
+            (BitString (BitArray nzBits bs)) -> 
+                pure $ makePrefix bs nzBits
+            s -> 
+                throwParseError ("Unexpected prefix representation: " <> show s)
+
+        Just [BitString (BitArray nzBits bs)] ->                
+                pure $ makePrefix bs nzBits
+
+        Just [
+            BitString (BitArray _       bs1),
+            BitString (BitArray nzBits2 bs2)
+            ] ->
+                let w1 = wToAddr $ BS.unpack bs1
+                    w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
+                        (fromIntegral nzBits2) fullLength
+                in pure $ rangeToPrefixes w1 w2
+
+        s -> throwParseError $ "Unexpected address representation: " <> show s
+
+--
+-- Set all the bits to `1` starting from `setBitsNum`
+-- `allBitsNum` is the total number of bits.
+--
+setLowerBitsToOne :: (Bits a, Num a) => [a] -> Int -> Int -> [a]
+setLowerBitsToOne ws setBitsNum allBitsNum =
+    R.rightPad (allBitsNum `div` 8) 0xFF $
+        List.zipWith setBits ws (map (*8) [0..])
+    where
+        setBits w8 i | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
+                        | i < setBitsNum = w8
+                        | otherwise = 0xFF
+        extra lastBitsNum =
+            List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum - 1]
+
+
+parseIpExt :: [ASN1] -> ParseResult IpResources
+parseIpExt asns = mapParseErr $ runParseASN1 
+        (onNextContainer Sequence parseIpExt') asns
+
+
+{-
+  https://tools.ietf.org/html/rfc3779#section-3.2.3
+
+  id-pe-autonomousSysIds  OBJECT IDENTIFIER ::= { id-pe 8 }
+
+   ASIdentifiers       ::= SEQUENCE {
+       asnum               [0] EXPLICIT ASIdentifierChoice OPTIONAL,
+       rdi                 [1] EXPLICIT ASIdentifierChoice OPTIONAL}
+
+   ASIdentifierChoice  ::= CHOICE {
+      inherit              NULL, -- inherit from issuer --
+      asIdsOrRanges        SEQUENCE OF ASIdOrRange }
+
+   ASIdOrRange         ::= CHOICE {
+       id                  ASId,
+       range               ASRange }
+   ASRange             ::= SEQUENCE {
+       min                 ASId,
+       max                 ASId }
+
+   ASId                ::= INTEGER
+-}
+parseAsnExt :: [ASN1] -> ParseResult AsResources
+parseAsnExt asnBlocks = mapParseErr $ runParseASN1 
+        (onNextContainer Sequence parseAsnExt') asnBlocks 
+  where
+    parseAsnExt' = do     
+      -- we only want the first element of the sequence
+      AsResources <$> onNextContainer (Container Context 0)
+          (getNull_ (pure Inherit) <|>
+           R.toRS <$> onNextContainer Sequence (getMany asOrRange))
+
+asOrRange :: ParseASN1 AsResource
+asOrRange = 
+    getNextContainerMaybe Sequence >>= \case
+        Nothing -> getNext >>= \case
+            IntVal asn -> pure $ AS $ as' asn
+            something  -> throwParseError $ "Unknown ASN specification " <> show something
+        Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
+        Just something -> throwParseError $ "Unknown ASN specification " <> show something
+  where
+    as' = ASN . fromInteger

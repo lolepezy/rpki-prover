@@ -8,11 +8,15 @@
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE QuasiQuotes           #-}
 
-module RPKI.Http.Messages where
+module RPKI.Messages where
 
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import qualified Data.List                   as List
+import qualified Data.List.NonEmpty          as NonEmpty
+
+import qualified Data.Map.Strict             as Map
+import qualified Data.Set                    as Set
 
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
@@ -102,10 +106,10 @@ toRrdpMessage = \case
         [i|Snapshot hash is #{actualHash} but required hash is #{expectedHash}.|]  
 
     SnapshotSessionMismatch {..} -> 
-        [i|Snapshot session ID is #{actualSessionId} but required hash is #{expectedSessionId}.|]  
+        [i|Snapshot session ID is #{actualSessionId} but required session ID is #{expectedSessionId}.|]  
 
     SnapshotSerialMismatch {..} -> 
-        [i|Snapshot serial is #{actualSerial} but required hash is #{expectedSerial}.|]  
+        [i|Snapshot serial is #{actualSerial} but required serial is #{expectedSerial}.|]  
 
     DeltaHashMismatch {..} -> 
         [i|Delta #{serial} hash is #{actualHash} but required hash is #{expectedHash}.|]  
@@ -155,7 +159,18 @@ toValidationMessage = \case
       CMSSignatureAlgorithmMismatch sigEE sigAttr -> 
           [i|Signature algorithm on the EE certificate is #{sigEE} but the CSM attributes says #{sigAttr}.|]
 
+      NoValidatedVersion -> "No tree validations has been run, cannot validate the object"
+
+      NoAKI -> "NO AKI found"
+      ParentCertificateNotFound  -> "Could not find parent ceertificate for the object"
+      ObjectNotOnManifest        -> "Object is not listed on the parent manifest"
+
+      UnsupportedHashAlgorithm digest -> [i|Unsupported hashing algorithm #{digest}.|]
+      NotFoundOnChecklist hash file -> [i|File #{file} with hash #{hash} is not found on the checklist.|]
+      ChecklistFileNameMismatch hash f1 f2 -> [i|File with hash #{hash} has name #{f1} but marked as #{f2} on the checklist.|]
+
       TACertAKIIsNotEmpty u -> [i|TA certificate #{u} has an AKI.|]
+      
       TACertOlderThanPrevious {..} -> 
           [i|New TA certificate has validity period of #{before}-#{after}, previous one has #{prevBefore}-#{prevAfter}. |] <>
           [i|Will use previous TA certificate. NOTE: this means something really bad happened to the TA, consider stopping to use it at all.|]
@@ -187,6 +202,9 @@ toValidationMessage = \case
 
       BadFileNameOnMFT filename message -> 
             [i|File #{filename} is malformed #{message}.|]
+
+      ZeroManifestEntries -> 
+            [i|Manifest doesn't contain any entries.|]
 
       NonUniqueManifestEntries nonUniqueEntries -> 
             [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
@@ -291,3 +309,24 @@ toInternalErrorMessage = \case
 
 fmtOID :: OID -> Text
 fmtOID oid = Text.intercalate "." $ map (Text.pack . show) oid
+
+
+
+formatValidations :: Validations -> Text
+formatValidations (Validations vs) = 
+    mconcat 
+    $ List.intersperse "\n"  
+    [ formatForObject s issues | (Scope s, issues) <- Map.toList vs ]
+  where    
+    formatForObject s issues = 
+        [i|#{focusToText $ NonEmpty.head s}:
+#{issuesText}|]
+      where
+        issuesText :: Text = mconcat 
+            $ List.intersperse "\n" 
+            $ map (\is -> [i|    #{formatIssue is}|]) 
+            $ Set.toList issues
+
+formatIssue :: VIssue -> Text
+formatIssue (VErr e) = toMessage e
+formatIssue (VWarn (VWarning e)) = toMessage e

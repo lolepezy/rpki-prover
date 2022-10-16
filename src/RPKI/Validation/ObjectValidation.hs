@@ -71,7 +71,7 @@ validateResourceCertExtensions cert = do
             -- TODO Something else here?
             noBasicContraint extensions                        
 
-    -- Same (or almnost?) for all types
+    -- Same (or almost same?) for all types
     validateNoUnknownCriticalExtensions extensions            
     
     pure cert
@@ -167,20 +167,24 @@ validateResourceCertExtensions cert = do
 -- 
 validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CerObject
 validateTACert tal u (CerRO taCert) = do
-  let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
-  unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
-  case getAKI taCert of
-    Nothing -> continue
-    Just (AKI ki)
-      | SKI ki == getSKI taCert -> continue
-      | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
-  where
-    continue = do
-      -- It's self-signed, so use itself as a parent to check the signature
-      signatureCheck $ validateCertSignature taCert taCert
-      validateResourceCertExtensions taCert >> pure taCert
+    let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
+    unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
+    validateTaCertAKI taCert u
+    signatureCheck $ validateCertSignature taCert taCert
+    validateResourceCertExtensions taCert
+    pure taCert
       
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
+
+
+validateTaCertAKI :: (WithAKI taCert, WithSKI taCert) 
+                    => taCert -> RpkiURL -> PureValidatorT ()
+validateTaCertAKI taCert u = 
+    case getAKI taCert of
+        Nothing -> pure ()
+        Just (AKI ki)
+            | SKI ki == getSKI taCert -> pure ()
+            | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
 
 -- | Compare new certificate and the previous one
 -- If validaity period of the new certificate is somehow earlier than 
@@ -254,11 +258,11 @@ validateResources
     (getRC -> ResourceCertificate parentCert) =
         validateChildParentResources
             validationRFC
-            (withRFC cert resources)
-            (withRFC parentCert resources)
+            (withRFC cert (^. typed))
+            (withRFC parentCert (^. typed))
             verifiedResources
-      where
-        validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
+  where
+    validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
@@ -272,8 +276,8 @@ validateCrl now crlObject parentCert = do
     void $ validateThisUpdate now thisUpdateTime
     void $ validateNextUpdate now nextUpdateTime    
     pure $ Validated crlObject
-    where
-        SignCRL {..} = signCrl crlObject
+  where
+    SignCRL {..} = signCrl crlObject
 
 validateMft ::
   (WithResourceCertificate c, WithSKI c) =>
@@ -343,6 +347,24 @@ validateGbr now gbr parentCert crl verifiedResources = do
                 Left e -> vPureError $ InvalidVCardFormatInGbr e
                 Right _ -> pure ()
     pure $ Validated gbr
+
+validateRsc ::
+    (WithResourceCertificate c, WithSKI c) =>
+    Now ->
+    RscObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated RscObject)
+validateRsc now rsc parentCert crl verifiedResources = do
+    void $
+        validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
+            let rsc' = getCMSContent rscCms
+            let ResourceCertificate rc = getRC $ getEEResourceCert $ unCMS rscCms
+            let eeCert = toPrefixesAndAsns $ withRFC rc resources
+            validateNested (rsc' ^. #rscResources) eeCert            
+            
+    pure $ Validated rsc
 
 
 validateCms ::

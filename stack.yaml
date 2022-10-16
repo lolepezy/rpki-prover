@@ -60,7 +60,7 @@ extra-deps:
       - wai
 
   - git: https://github.com/lolepezy/hs-connection
-    commit: e8afc5bfeba8139b457fc46285328f1a685cb054    
+    commit: e3cf8623979f8687694280939349734868cd18ac    
 
   - git: https://github.com/lolepezy/http-client/
     commit: 769e4e536217916a1e577ad4b8bc94ab1ded8e50        

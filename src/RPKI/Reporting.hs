@@ -5,6 +5,7 @@
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 
 module RPKI.Reporting where
@@ -56,6 +57,13 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         InvalidSignature Text |  
                         InvalidKI Text |  
                         CMSSignatureAlgorithmMismatch Text Text |                      
+                        NoAKI |
+                        NoValidatedVersion |
+                        ParentCertificateNotFound |
+                        ObjectNotOnManifest |
+                        UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
+                        NotFoundOnChecklist Hash Text |
+                        ChecklistFileNameMismatch Hash Text Text |
                         TACertAKIIsNotEmpty URI |
                         TACertOlderThanPrevious { 
                                 before :: Instant,
@@ -75,6 +83,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |
+                        ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |
                         NoCRLExists AKI Locations |
                         CRLOnDifferentLocation URI Locations |
@@ -461,8 +470,8 @@ focusToText :: Focus -> Text
 focusToText = \case
     TAFocus txt         -> txt
     ObjectFocus txt     -> txt
-    PPFocus txt         -> unURI $ getURL txt
-    RepositoryFocus txt -> unURI $ getURL txt
+    PPFocus uri         -> unURI $ getURL uri
+    RepositoryFocus uri -> unURI $ getURL uri
     TextFocus txt       -> txt
 
 scopeList :: Scope a -> [Focus]

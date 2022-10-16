@@ -189,6 +189,7 @@ instance ToJSON PrefixLength
 instance ToJSON Gbr where
     toJSON (Gbr s) = toJSON $ show s
 
+instance ToJSON RSC
 instance ToJSON Vrp
 instance ToJSON Manifest
 instance ToJSON CertificateWithSignature
@@ -212,6 +213,7 @@ instance ToJSON SignatureValue
 instance ToJSON SignatureAlgorithmIdentifier
 instance ToJSON SignedAttributes
 instance ToJSON Attribute
+instance ToJSON DigestAlgorithmIdentifier
 instance ToJSON DigestAlgorithmIdentifiers
 instance ToJSON CMSVersion
 

@@ -212,7 +212,7 @@ runWorker logger config workerId params timeout extraCli = do
             setStdout byteStringOutput $
                 proc binaryToRun $ [ "--worker" ] <> extraCli
 
-    logDebugM logger [i|Running worker: #{trimmed worker}|]        
+    logDebug logger [i|Running worker: #{trimmed worker}|]        
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,
@@ -243,11 +243,11 @@ runWorker logger config workerId params timeout extraCli = do
             exit@(ExitFailure errorCode)
                 | exit == exitTimeout -> do                     
                     let message = [i|Worker #{workerId} execution timed out.|]
-                    logErrorM logger message
+                    logError logger message
                     appError $ InternalE $ WorkerTimeout message
                 | exit == exitOutOfMemory -> do                     
                     let message = [i|Worker #{workerId} ran out of memory.|]
-                    logErrorM logger message
+                    logError logger message
                     appError $ InternalE $ WorkerOutOfMemory message
                 | exit == exitKillByTypedProcess -> do
                     -- 
@@ -263,11 +263,11 @@ runWorker logger config workerId params timeout extraCli = do
                     -- was killed, but we also know that there was an asynchronous exception, which 
                     -- we retrow here to make sure "outer threads" know about it.
                     --
-                    logErrorM logger [i|Worker #{workerId} died/killed.|]
+                    logError logger [i|Worker #{workerId} died/killed.|]
                     throwIO AsyncCancelled                    
                 | otherwise ->     
                     complain [i|Worker #{workerId} exited with code = #{errorCode}|]
 
     complain message = do 
-        logErrorM logger message
+        logError logger message
         appError $ InternalE $ InternalError message
