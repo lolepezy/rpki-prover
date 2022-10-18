@@ -159,7 +159,7 @@ VIRT  RES    SHR
 ```
 Here `SHR` is largely dominated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `4463-3920=543M`. 
 
-Every validation or repository fetch runs as a separate process with it's own heap, with typical heap size for the validatro up to 600-700M and up to 100-200MB for a fetching process.
+Every validation or repository fetch runs as a separate process with its own heap, with typical heap size for the validator up to 600-700M and up to 100-200MB for a fetching process.
 
 Note that memory consumption is mostly determined by how big the biggest objects are and not that much by how many there are objects in total, so the growth of repositories is not such a big issue for rpki-prover. It it recommended to have 3GB of RAM available on the machine mostly to reduce the IOPS related to reading objects from the LMDB cache. Since every validation typically goes through 160K of objects (at the moment of writing), each of them being 3Kb in size on average, it would be benificial to have at least few hundred of megabytes in FS page cache.
 
