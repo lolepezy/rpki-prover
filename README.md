@@ -165,7 +165,7 @@ Disk space usage depends on the `--cache-lifetime-hours` parameter. The default 
  - From time to time a message 'rpki-prover: Thread killed by timeout manager' may be printed to `stderr`. It's the result of a bug in the HTTP server used for API and UI and is harmless. It will be fixed one way or the other in future versions.
  - As mentioned before, total RSS of the process can go up to several gigabytes even though most of it mapped to LMDB cache and not in RAM. It may, however, be that `rpki-prover` is killed by OOM and some configuration adjustments would be needed to prevent it.
 
-## Why Haskell? <a name="why-haskell"></a>
+# Why Haskell? <a name="why-haskell"></a>
 
 - Relatively small code-base. Currently the size of it is around 10KLOC, including a lot of functionality implemented from scratch, such as CMS-parsing.
 - Fast prototyping and smooth refactoring.
