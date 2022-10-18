@@ -133,12 +133,15 @@ In order to validate a set of files with an RSC object it is necessary to have a
 
 The following example validates two files `foo.txt` and `bar.bin` against the `checklist.sig` object:
 
-`rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-files foo.txt bar.bin`
+```
+rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-files foo.txt bar.bin
+```
 
 The following example validates all files in the `dir` directory against the `checklist.sig` object:
 
-`rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-directory ./dir`
-
+```
+rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-directory ./dir
+```
 
 
 # Resource consumption <a name="resource-consumption"></a>
