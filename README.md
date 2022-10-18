@@ -18,6 +18,8 @@ RPKI prover is an implementation of the [RPKI relying party software](https://rp
 
 Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any questions can be asked there as well. 
 
+This implementation seeks to address potential security vulnerabilites by utilising process isolation, memory and time constraints and other ways of preventing resource exhaustion attacks and make sure that "it keeps going" regardless of unstable or potentially maliciouly constructed RPKI repositories.
+
 Implemented features are
 
 - Fetching from both rsync and RRDP repositories
