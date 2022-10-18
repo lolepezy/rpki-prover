@@ -150,14 +150,16 @@ Cold start, i.e. the first start without cache takes at least 2 minutes and cons
 
 After initial warmup, it's not a very CPU-bound application. With default settings RPKI Prover consumes about 1 hour of CPU time every 18 hours on a typical modern CPU, creating load average of 5-10%. Smaller revalidation interval will increase the load.
 
-The amount of memory needed for a smooth run for the current state of the repositories (6 trust anchors, including [AS0 TA](https://www.apnic.net/community/security/resource-certification/tal-archive/) of APNIC with about 330K of VRPs in total) is somewhere around 1.5GB. Adding or removing TAs can increase or reduce this amount. What can be confusing about memory usage is the figures given by `top/htop`.
+The amount of memory needed for a smooth run for the current state of the repositories (6 trust anchors, including [AS0 TA](https://www.apnic.net/community/security/resource-certification/tal-archive/) of APNIC with about 330K of VRPs in total) is somewhere around 1.5-2GB for all processes in total. Adding or removing TAs can increase or reduce this amount. What can be confusing about memory usage is the figures given by `top/htop`.
 
 An example of a server, running for a few days:
 ```
 VIRT  RES    SHR
-1.0T  5383M  3843M
+1.0T  4463M  3920M
 ```
-Here `SHR` is largely dominated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `5383-3843=1540M`.
+Here `SHR` is largely dominated by the LMDB cache and other mmap-ed files (temporary files used to download RRDP repositories, etc.). That means that actual heap of the process is about `4463-3920=543M`. 
+
+Every validation or repository fetch runs as a separate process with it's own heap, with typical heap size for the validatro up to 600-700M and up to 100-200MB for a fetching process.
 
 Note that memory consumption is mostly determined by how big the biggest objects are and not that much by how many there are objects in total, so the growth of repositories is not such a big issue for rpki-prover. It it recommended to have 3GB of RAM available on the machine mostly to reduce the IOPS related to reading objects from the LMDB cache. Since every validation typically goes through 160K of objects (at the moment of writing), each of them being 3Kb in size on average, it would be benificial to have at least few hundred of megabytes in FS page cache.
 
