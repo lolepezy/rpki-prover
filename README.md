@@ -1,6 +1,20 @@
-# rpki-prover
+# Contents 
 
-Implementation of the [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
+* [Introduction](#introduction)
+* [Usage](#usage)    
+  - [Static Liinux binary](#static-linux-binary)
+  - [Docker image](#docker-image)
+  - [Building from sources](#building-from-sources)
+* [HTTP API](#http-api)
+    - [Prometheus metrics](#prometheus-metrics)
+* [Support of RSC](#support-of-rsc)
+* [Resource consumption](#resource-consumption)
+* [Why Haskell?](#why-haskell)
+
+
+# Introduction <a name="introduction"></a>
+
+RPKI prover is an implementation of the [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) with the focus on a reasonable compromise between resource utilisation and ease of introducing changes.
 
 Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any questions can be asked there as well. 
 
@@ -24,7 +38,7 @@ Current and future work
 - CPU and memory optimisations 
 
 
-# Using rpki-prover
+# Usage <a name="usage"></a>
 
 Running `rpki-prover --help` gives some reasonable help on CLI options.
 
@@ -40,11 +54,11 @@ There is no config file and all the configuration is provided with CLI (most of 
 
 There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. The awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
 
-## Static Linux binary
+## Static Linux binary <a name="static-linux-binary"></a>
 
 Every [release](https://github.com/lolepezy/rpki-prover/releases) includes statically linked Linux x64 executable, just download and run it. 
 
-## Docker image
+## Docker image <a name="docker-image"></a>
 
 It is possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub and it's about 80mb in size.
 
@@ -63,7 +77,7 @@ The important part here is `target=/rpki-data`, this directory is created by def
 docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
 ```
 
-## Building from sources
+## Building from sources <a name="building-from-sources"></a>
 
 The software is a daemon written in Haskell and can be built using [`stack`](https://docs.haskellstack.org/en/stable/README/).
 
@@ -89,7 +103,7 @@ Normally it prints quite a lot of logs about what it's doing to the stdout. Afte
 Main page http://localhost:9999 is the UI that reports some metrics about trust anchorts, repositories and the list of errors and warnings.
 
 
-## HTTP API
+# HTTP API <a name="http-api"></a>
 
 There are several API endpoints. Note that there is not much of design invested into the API, so more adjustments will come based on the feedback and feature requests.
 
@@ -106,11 +120,28 @@ There are several API endpoints. Note that there is not much of design invested 
     - http://localhost:9999/api/object?uri=rsync://rpki.apnic.net/member_repository/A917D135/19712F8613DD11EB8FFBED74C4F9AE02/0u36vBm4dKB-OdauyKaLMLuB2lw.crl
     - or http://localhost:9999/api/object?hash=a92126d3a58a0f6593702f36713521fcd581e0a9e38a146f7f762c7d7d48ed0a
 
-## Prometheus metrics 
+## Prometheus metrics <a name="prometheus-metrics"></a>
 
 Prometheus metrics are accessible via the standard `/metrics` path.
 
-## Resource consumption
+
+# Support of RSC <a name="support-of-rsc"></a>
+
+RPKI prover supports validating RPKI Signed Checklists (https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/).
+
+In order to validate a set of files with an RSC object it is necessary to have a running rpki-prover instance to be able to use its cache of validated object. In the examples below it is assumed that there's an instance of rpki-prover (the same version) running with `/var/prover` set as `--rpki-root-directory` option. It is also possible to skip `--rpki-root-directory` parameter assuming that the default (`~/.rpki`) with be used.
+
+The following example validates two files `foo.txt` and `bar.bin` against the `checklist.sig` object:
+
+`rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-files foo.txt bar.bin`
+
+The following example validates all files in the `dir` directory against the `checklist.sig` object:
+
+`rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-directory ./dir`
+
+
+
+# Resource consumption <a name="resource-consumption"></a>
 
 Cold start, i.e. the first start without cache takes at least 2 minutes and consumes around 3 minutes of CPU time. This time can be slightly reduced by setting higher `--cpu-count` value in case multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and cannot be reduced drastically. 
 
@@ -129,12 +160,12 @@ Note that memory consumption is mostly determined by how big the biggest objects
 
 Disk space usage depends on the `--cache-lifetime-hours` parameter. The default is 72 hours and it results in a cache size about 2Gb. 72 hours is a little bit on a big side, so lower values would reduce the amount of data stored. However, LMDB is not very good in reusing the free space in its file, so physical size of the `cache` directory can be 2 or more times bigger than the total size of data in it. There is a compaction procedure that kicks in when the LMDB file size is 2 or more times bigger than the total size of all data. So overall, in the worst case scenario, it would need approximately 1GB of disk space for every 10 hours of `--cache-lifetime-hours`.
 
-## Known issues
+# Known issues <a name="known-issues"></a>
 
  - From time to time a message 'rpki-prover: Thread killed by timeout manager' may be printed to `stderr`. It's the result of a bug in the HTTP server used for API and UI and is harmless. It will be fixed one way or the other in future versions.
  - As mentioned before, total RSS of the process can go up to several gigabytes even though most of it mapped to LMDB cache and not in RAM. It may, however, be that `rpki-prover` is killed by OOM and some configuration adjustments would be needed to prevent it.
 
- ## Why Haskell?
+## Why Haskell? <a name="why-haskell"></a>
 
 - Relatively small code-base. Currently the size of it is around 10KLOC, including a lot of functionality implemented from scratch, such as CMS-parsing.
 - Fast prototyping and smooth refactoring.
