@@ -1,4 +1,5 @@
-Setting up development environment is relatively simple. 
+
+## Setting up development environment
 
 - You need `stack` to start (https://docs.haskellstack.org/en/stable/README/)
 - Full build is done by `stack install rpki-prover:rpki-prover`, it should normally take 30-40 minutes on an average computer.
@@ -33,3 +34,17 @@ Building library for rpki-prover-0.1.0.0..
 It is related to the way orphan instances are derived for some library types. Something is probably wrong 
 in the way modules are organised, but it looks more like a compiler quirk. In some cases it helps to just rerun the `stack install (or test)...` command, 
 otherwise `stack clean` and full rebuild helps. It's annoying but I haven't found a way to fix it.
+
+
+## Docker build
+
+```
+docker build . --file Dockerfile.prover --tag rpki-prover 
+```
+
+## Building static Linux executable
+
+```
+docker build - < Dockerfile.static-builder --tag rpki-prover-builder
+stack install --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static
+```
