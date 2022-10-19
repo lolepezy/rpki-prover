@@ -14,8 +14,6 @@ import Data.ByteArray (convert)
 
 import Data.ASN1.Types
 
-import Data.These
-
 import Data.X509 as X509
 
 import Data.Hourglass
