@@ -109,9 +109,6 @@ deriving instance (Ord a, Serialise a) => Serialise (NESet a)
 
 deriving instance (Ord a, Serialise a, Serialise b) => Serialise (MonoidalMap a b)
 
-deriving instance (Serialise a, Serialise b) => Serialise (These a b)
-
-
 instance (Serialise CPid) where
     encode (CPid i) = encode i
     decode = CPid <$> decode
