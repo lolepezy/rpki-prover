@@ -48,3 +48,12 @@ docker build . --file Dockerfile.prover --tag rpki-prover
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 stack install --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static
 ```
+
+## Releasing
+
+Update version in the package.yaml file (TODO Make it automated?)
+```
+git tag -a vX.Y.Z -m "Release X.Y.Z"
+git push -f --tags
+```
+Github action will kick in and build the static binary and create Dockerhub image. Action usually creates ugly and fucked up releases, so manual involvment is necessary afterwards.
