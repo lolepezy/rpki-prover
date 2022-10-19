@@ -72,16 +72,25 @@ import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 
+import Data.Version
+import qualified Paths_rpki_prover as Autogen
+
 main :: IO ()
 main = do    
-    cliOptions@CLIOptions{..} <- unwrapRecord "RPKI prover, relying party software for RPKI"
-    case worker of 
-        Nothing -> 
-            if verifySignature 
-                then executeVerifier cliOptions
-                else executeMainProcess cliOptions                
-        Just _ -> 
-            executeWorkerProcess
+    cliOptions@CLIOptions{..} <- unwrapRecord $ convert $ 
+            "RPKI prover, relying party software for RPKI, version " <> showVersion Autogen.version
+
+    if version
+        then do 
+            putStrLn $ "RPKI prover " <> showVersion Autogen.version            
+        else do
+            case worker of 
+                Nothing -> 
+                    if verifySignature 
+                        then executeVerifier cliOptions
+                        else executeMainProcess cliOptions                
+                Just _ -> 
+                    executeWorkerProcess
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
@@ -477,7 +486,9 @@ data CLIOptions wrapped = CLIOptions {
     worker :: wrapped ::: Maybe String,
 
     initialise :: wrapped ::: Bool <?>
-        ("If set, the FS layout will be created and TAL files will be downloaded." ),
+        "If set, the FS layout will be created and TAL files will be downloaded.",
+
+    version :: wrapped ::: Bool <?> "Program version.",
 
     agreeWithArinRpa :: wrapped ::: Bool <?>
         ("This is to indicate that you do accept (and maybe even have read) ARIN Relying Party Agreement "
