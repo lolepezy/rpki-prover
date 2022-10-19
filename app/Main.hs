@@ -266,50 +266,37 @@ data TALsHandle = CreateTALs | CheckTALsExists
 
 initialiseFS :: CLIOptions Unwrapped -> AppLogger -> IO ()
 initialiseFS cliOptions logger = do
+    (r, _) <- runValidatorT
+        (newScopes "initialise")
+        $ do
+            logInfo logger [i|Initialising FS layout...|]
 
-    if cliOptions ^. #agreeWithArinRpa
-        then do
-            (r, _) <- runValidatorT
-                (newScopes "initialise")
-                $ do
-                    logInfo logger [i|Initialising FS layout...|]
+            -- this one checks that "tals" exists
+            (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
 
-                    -- this one checks that "tals" exists
-                    (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
+            -- TODO Change it to 
+            let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
+            let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
 
-                    let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
-                    let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
-
-                    logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
-                    fromTryM
-                        (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
-                        $ forM_ talNames
-                            $ \tal -> do
-                                let talUrl = Text.pack $ talsUrl <> tal
-                                logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
-                                httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
-                                unless (isHttpSuccess httpStatus) $ do
-                                    appError $ UnspecifiedE
-                                        [i|Error downloading TAL #{tal} from #{talUrl}|]
-                                        [i|Http status #{unHttpStatus httpStatus}|]
-            case r of
-                Left e -> do
-                    logError logger [i|Failed to initialise: #{e}.|]
-                    logError logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
-                Right _ ->
-                    logInfo logger [i|Done.|]
-        else do
-            putStrLn [i|
-Before downloading and installing ARIN TAL, you must read
-and agree to the ARIN Relying Party Agreement (RPA) available
-here:
-
-https://www.arin.net/resources/manage/rpki/rpa.pdf
-
-If you do agree with the RPA, re-run the same command
-adding --agree-with-arin-rpa option.
-|]
-
+            logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
+            fromTryM
+                (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
+                $ forM_ talNames
+                    $ \tal -> do
+                        let talUrl = Text.pack $ talsUrl <> tal
+                        logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
+                        httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
+                        unless (isHttpSuccess httpStatus) $ do
+                            appError $ UnspecifiedE
+                                [i|Error downloading TAL #{tal} from #{talUrl}|]
+                                [i|Http status #{unHttpStatus httpStatus}|]
+    case r of
+        Left e -> do
+            logError logger [i|Failed to initialise: #{e}.|]
+            logError logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
+        Right _ ->
+            logInfo logger [i|Done.|]        
+           
 
 fsLayout :: CLIOptions Unwrapped
         -> AppLogger
@@ -489,10 +476,6 @@ data CLIOptions wrapped = CLIOptions {
         "If set, the FS layout will be created and TAL files will be downloaded.",
 
     version :: wrapped ::: Bool <?> "Program version.",
-
-    agreeWithArinRpa :: wrapped ::: Bool <?>
-        ("This is to indicate that you do accept (and maybe even have read) ARIN Relying Party Agreement "
-        +++ "and would like ARIN TAL to be downloaded."),
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
