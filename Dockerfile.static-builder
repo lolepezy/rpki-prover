@@ -1,10 +1,11 @@
-FROM utdemir/ghc-musl:v20-ghc8104 as rpki-prover-builder
+# FROM utdemir/ghc-musl:v20-ghc8104 as rpki-prover-builder
+FROM utdemir/ghc-musl:v24-ghc8107 as rpki-prover-builder
 
 RUN apk add --update --no-cache expat-dev lmdb-dev lmdb expat-static lmdb
 
 # There's no statically linked version of LMDB, so we build it from the sources here
-RUN wget https://git.openldap.org/openldap/openldap/-/archive/LMDB_0.9.29/openldap-LMDB_0.9.29.tar.gz && \
-    tar xzf openldap-LMDB_0.9.29.tar.gz && \
-    cd openldap-LMDB_0.9.29/libraries/liblmdb && \
+RUN wget https://github.com/LMDB/lmdb/archive/refs/tags/LMDB_0.9.29.tar.gz && \
+    tar xzf LMDB_0.9.29.tar.gz && \
+    cd lmdb-LMDB_0.9.29/libraries/liblmdb && \
     make && cp liblmdb.a /usr/lib
    
