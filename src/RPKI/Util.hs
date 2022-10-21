@@ -132,6 +132,15 @@ parseRsyncURL t =
                     path = map (RsyncPathChunk . (^. unRText)) $ mu ^. uriPath
                     in Right $ RsyncURL host path
 
+getHostname :: Text -> Maybe Text
+getHostname t = 
+    case MURI.mkURI t of 
+        Nothing -> Nothing
+        Just mu -> 
+            case mu ^. uriAuthority of
+                Left _  -> Nothing
+                Right a -> Just $ a ^. authHost . unRText
+
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
 

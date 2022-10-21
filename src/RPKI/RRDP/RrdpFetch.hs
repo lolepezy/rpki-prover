@@ -14,6 +14,7 @@ import           Control.Lens
 import           Control.Monad.Except
 import           Data.Generics.Product.Typed
 
+import           Data.Foldable
 import           Data.Bifunctor                   (first)
 import           Data.Text                        (Text)
 import qualified Data.ByteString                  as BS
@@ -119,41 +120,58 @@ downloadAndUpdateRRDP
                 (\t -> (& #downloadTimeMs %~ (<> TimeMs t))) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)                         
                     $ downloadToBS (appContext ^. typed) (getURL repoUri)         
-
-    notification         <- hoistHere $ parseNotification notificationXml
-    nextStep             <- vHoist $ rrdpNextStep repo notification
+    
+    notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
+    nextStep     <- vHoist $ rrdpNextStep repo notification
 
     case nextStep of
         NothingToDo message -> do 
-            used RrdpNoUpdate
+            usedSource RrdpNoUpdate
             logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
             pure repo
 
         UseSnapshot snapshotInfo message -> do 
-            used RrdpSnapshot
+            usedSource RrdpSnapshot
             logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
             useSnapshot snapshotInfo notification
 
         UseDeltas sortedDeltas snapshotInfo message -> 
             (do 
-                used RrdpDelta
+                usedSource RrdpDelta
                 logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                 useDeltas sortedDeltas notification)
                 `catchError` 
             \e -> do         
                 -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
                 -- some of the deltas
-                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]
-                used RrdpSnapshot
+                usedSource RrdpSnapshot
+                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                 useSnapshot snapshotInfo notification            
   where
     
-    used z       = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)        
-    hoistHere    = vHoist . fromEither . first RrdpE        
+    usedSource z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)        
+    hoistHere    = vHoist . fromEither . first RrdpE
 
-    useSnapshot (SnapshotInfo uri hash) notification = 
-        inSubObjectVScope (U.convert uri) $ do
-            logInfo logger [i|#{uri}: downloading snapshot.|]
+    validatedNotification notification = do    
+        let repoU = unURI $ getURL repoUri             
+        for_ (U.getHostname repoU) $ \baseHostname -> do             
+            case U.getHostname $ unURI $ notification ^. #snapshotInfo . typed of 
+                Nothing               -> appWarn $ RrdpE $ BrokenSnapshotUri repoU
+                Just snapshotHostname -> do 
+                    when (snapshotHostname /= baseHostname) $ 
+                        appWarn $ RrdpE $ SnapshotUriHostname repoU snapshotHostname
+
+            for_ (notification ^. #deltas) $ \delta -> do 
+                case U.getHostname $ unURI $ delta ^. typed of 
+                    Nothing -> appWarn $ RrdpE $ BrokenDeltaUri $ unURI $ delta ^. typed
+                    Just deltaHostname -> do 
+                        when (deltaHostname /= baseHostname) $ 
+                            appWarn $ RrdpE $ DeltaUriHostname repoU deltaHostname
+        pure notification
+
+    useSnapshot (SnapshotInfo uri hash) notification = do         
+        inSubObjectVScope (U.convert uri) $ do            
+            logInfo logger [i|#{uri}: downloading snapshot.|] 
             
             (rawContent, _, httpStatus') <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
@@ -282,13 +300,13 @@ rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notificatio
                     pure $ UseSnapshot snapshotInfo 
                             [i|#{repoSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
                 
-            where
-                sortedSerials = map deltaSerial sortedDeltas
-                sortedDeltas = List.sortOn deltaSerial deltas
-                chosenDeltas = filter ((> repoSerial) . deltaSerial) sortedDeltas
+    where
+        sortedSerials = map deltaSerial sortedDeltas
+        sortedDeltas = List.sortOn deltaSerial deltas
+        chosenDeltas = filter ((> repoSerial) . deltaSerial) sortedDeltas
 
-                nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
-                    List.zip sortedSerials (tail sortedSerials)
+        nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
+            List.zip sortedSerials (tail sortedSerials)
 
 
 deltaSerial :: DeltaInfo -> RrdpSerial

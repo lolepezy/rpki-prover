@@ -72,9 +72,23 @@ toRrdpMessage = \case
     NoSerial       -> [i|Serial number is not set.|]
     NoSnapshotHash -> [i|Snapshot hash is not set.|]
     NoSnapshotURI  -> [i|Snapshot URL is not set.|]
+
+    BrokenSnapshotUri u -> 
+        [i|Snapshot URL in notification url is malformed #{u}.|]
+
+    SnapshotUriHostname repoHost snapshoHost -> 
+        [i|Snapshot URL hostname #{snapshoHost} is not the same as repository hostname #{repoHost}.|]
+
     NoDeltaSerial  -> [i|Delta serial is not set.|]
     NoDeltaURI     -> [i|Delta URL is not set.|]
     NoDeltaHash    -> [i|Delta hash is not set.|]
+
+    BrokenDeltaUri u -> 
+        [i|Delta URL in notification url is malformed #{u}.|]
+
+    DeltaUriHostname repoHost deltaHost -> 
+        [i|Delta URL hostname #{deltaHost} is not the same as repository hostname #{repoHost}.|]
+
     BadHash h      -> [i|String #{h} is not a valid SHA256 hash.|]
     NoVersion      -> [i|RRDP version is not set.|]  
     BadVersion v   -> [i|String #{v} is not a valid RRDP version.|]  
