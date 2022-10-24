@@ -29,6 +29,7 @@ import           Data.Text                (Text)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
+import           Data.Typeable
 
 import           GHC.Generics
 
@@ -85,7 +86,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey]
     } 
-    deriving stock (Generic)
+    deriving stock (Generic, Typeable)
 
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where

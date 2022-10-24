@@ -65,15 +65,14 @@ createDatabase e = do
     
 mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
 mkLmdb fileName maxSizeMb maxReaders = do 
-    nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
+    nativeEnv <- newNativeLmdb maxSizeMb
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         createSemaphoreIO maxReaders    
-
-newNativeLmdb :: FilePath -> Size -> Int -> IO (Environment 'ReadWrite)
-newNativeLmdb fileName (Size maxSizeMb) maxReaders = 
-    initializeReadWriteEnvironment (fromIntegral mapSize) maxReaders maxDatabases fileName        
-    where
+  where    
+    newNativeLmdb (Size maxSizeMb) =
+        initializeReadWriteEnvironment (fromIntegral mapSize) maxReaders maxDatabases fileName        
+      where
         mapSize = maxSizeMb * 1024 * 1024
         maxDatabases = 120
 

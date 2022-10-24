@@ -7,6 +7,7 @@ module RPKI.Store.Base.Map where
 import           Codec.Serialise
 
 import           GHC.TypeLits
+import           Data.Typeable
 
 import           Data.Maybe               (isJust)
 import           RPKI.Store.Base.Storable
@@ -18,6 +19,8 @@ data SMap (name :: Symbol) s k v where
 
 instance Storage s => WithStorage s (SMap name s k v) where
     storage (SMap s _) = s
+
+deriving instance (Typeable k, Typeable v) => Typeable (SMap name s k v)
 
 put :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMap name s k v -> k -> v -> IO ()
