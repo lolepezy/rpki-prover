@@ -730,9 +730,10 @@ totalStats DBStats {..} =
     <> versionStats 
     <> sequenceStats
 
-
+-- TODO This is a terribly slow implementation, use
+-- drop-based implemntation.
 emptyDBMaps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> m ()
+                Tx s 'RW -> DB s -> m ()
 emptyDBMaps tx DB {..} = liftIO $ do     
     emptyRepositoryStore repositoryStore    
     emptyObjectStore objectStore    
