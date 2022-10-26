@@ -43,8 +43,8 @@ delete tx (SMap _ s) k = S.delete tx s (storableKey k)
 fold :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> (a -> k -> v -> IO a) -> a -> IO a
 fold tx (SMap _ s) f = S.foldS tx s f'
-    where
-        f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
+  where
+    f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
 
 traverse :: (Serialise k, Serialise v) =>
             Tx s m -> SMap name s k v -> (k -> v -> IO ()) -> IO ()
@@ -53,17 +53,23 @@ traverse tx m f = fold tx m (\_ k v -> f k v) ()
 all :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> IO [(k, v)]
 all tx (SMap _ s) = S.foldS tx s f []
-    where
-        f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
+  where
+    f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
 keys :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> IO [k]
 keys tx (SMap _ s) = S.foldS tx s f []
-    where
-        f z (SKey sk) _ = pure $! fromStorable sk : z
+  where
+    f z (SKey sk) _ = pure $! fromStorable sk : z
 
 stats :: (Serialise k, Serialise v) =>
         Tx s m -> SMap name s k v -> IO SStats
 stats tx (SMap _ s) = S.foldS tx s f (SStats 0 0 0 0)
-    where
-        f stat skey svalue = pure $! incrementStats stat skey svalue
+  where
+    f stat skey svalue = pure $! incrementStats stat skey svalue
+
+erase :: (Serialise k, Serialise v) =>
+        Tx s 'RW -> SMap name s k v -> IO ()
+erase tx (SMap _ s) = S.foldS tx s f ()
+  where
+    f _ k _ = S.delete tx s (storableKey k)

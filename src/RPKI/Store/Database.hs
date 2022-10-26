@@ -1,5 +1,4 @@
 {-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -26,12 +25,14 @@ import qualified Data.List                as List
 import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
+import qualified Data.Text                as Text
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Typeable
 
 import           GHC.Generics
+import           Text.Read
 
 import           RPKI.Config              (Size)
 import           RPKI.Domain
@@ -56,6 +57,30 @@ import           RPKI.Util                (increment, ifJustM)
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Time
+
+-- This one is to be changed manually whenever 
+-- any of the serialisable/serialized types become incompatible.
+currentDatabaseVersion :: Integer
+currentDatabaseVersion = 3
+
+-- All of the stores of the application in one place
+data DB s = DB {
+    taStore          :: TAStore s, 
+    repositoryStore  :: RepositoryStore s, 
+    objectStore      :: RpkiObjectStore s,
+    validationsStore :: ValidationsStore s,    
+    vrpStore         :: VRPStore s,
+    versionStore     :: VersionStore s,
+    metricStore      :: MetricStore s,
+    slurmStore       :: SlurmStore s,
+    jobStore         :: JobStore s,
+    sequences        :: SequenceMap s,
+    metadataStore    :: MetadataStore s
+} deriving stock (Generic)
+
+instance Storage s => WithStorage s (DB s) where
+    storage DB {..} = storage taStore
+
 
 -- | RPKI objects store
 
@@ -125,7 +150,7 @@ instance Storage s => WithStorage s (VRPStore s) where
 
 -- Version store
 newtype VersionStore s = VersionStore {
-    vrps :: SMap "versions" s WorldVersion VersionState
+    versions :: SMap "versions" s WorldVersion VersionState
 }
 
 instance Storage s => WithStorage s (VersionStore s) where
@@ -142,12 +167,17 @@ data RepositoryStore s = RepositoryStore {
     lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
 }
 
+instance Storage s => WithStorage s (RepositoryStore s) where
+    storage (RepositoryStore s _ _) = storage s
+
 newtype JobStore s = JobStore {
     jobs :: SMap "jobs" s Text Instant
 }
 
-instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _) = storage s
+newtype MetadataStore s = MetadataStore {
+    metadata :: SMap "metadata" s Text Text
+}
+
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
@@ -246,7 +276,7 @@ hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
 deleteObject tx store@RpkiObjectStore {..} h = liftIO $
-    ifJustM (M.get tx hashToKey h) $ \objectKey -> do               
+    ifJustM (M.get tx hashToKey h) $ \objectKey ->             
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
             M.delete tx objects objectKey
             M.delete tx objectInsertedBy objectKey        
@@ -278,7 +308,7 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
                 Just (Located loc (MftRO mft)) -> Just $ Located loc mft
                 _                              -> Nothing
   where
-    chooseLatest latest _ (k, timingMark) = do 
+    chooseLatest latest _ (k, timingMark) = 
         pure $! case latest of 
             Nothing                       -> Just (k, timingMark)
             Just (_, latestMark) 
@@ -318,7 +348,7 @@ markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do
 
 getLatestValidMftByAKI :: (MonadIO m, Storage s) => 
                         Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe (Located MftObject))
-getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $ do
+getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $
     M.get tx lastValidMft aki >>= \case 
         Nothing -> pure Nothing 
         Just k -> do 
@@ -479,6 +509,22 @@ setJobCompletionTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s
 allJobs :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> m [(Text, Instant)]
 allJobs tx DB { jobStore = JobStore s } = liftIO $ M.all tx s
+
+
+databaseVersionKey :: Text
+databaseVersionKey = "database-version"
+
+getDatabaseVersion :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> m (Maybe Integer)
+getDatabaseVersion tx DB { metadataStore = MetadataStore s } = 
+    liftIO $ runMaybeT $ do 
+        v <- MaybeT $ M.get tx s databaseVersionKey
+        MaybeT $ pure $ readMaybe $ Text.unpack v        
+
+saveCurrentDatabaseVersion :: (MonadIO m, Storage s) => 
+                            Tx s 'RW -> DB s -> m ()
+saveCurrentDatabaseVersion tx DB { metadataStore = MetadataStore s } = 
+    liftIO $ M.put tx s databaseVersionKey (Text.pack $ show currentDatabaseVersion)
 
 -- More complicated operations
 
@@ -685,22 +731,36 @@ totalStats DBStats {..} =
     <> sequenceStats
 
 
--- All of the stores of the application in one place
-data DB s = DB {
-    taStore          :: TAStore s, 
-    repositoryStore  :: RepositoryStore s, 
-    objectStore      :: RpkiObjectStore s,
-    validationsStore :: ValidationsStore s,    
-    vrpStore         :: VRPStore s,
-    versionStore     :: VersionStore s,
-    metricStore      :: MetricStore s,
-    slurmStore       :: SlurmStore s,
-    jobStore         :: JobStore s,
-    sequences        :: SequenceMap s
-} deriving stock (Generic)
+emptyDBMaps :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> m ()
+emptyDBMaps tx DB {..} = liftIO $ do     
+    emptyRepositoryStore repositoryStore    
+    emptyObjectStore objectStore    
+    M.erase tx $ results validationsStore
+    M.erase tx $ vrps vrpStore
+    M.erase tx $ versions versionStore
+    M.erase tx $ metrics metricStore
+    M.erase tx $ slurms slurmStore
+    M.erase tx $ jobs jobStore    
+  where
+    emptyObjectStore RpkiObjectStore {..} = do   
+        M.erase tx objects
+        M.erase tx hashToKey
+        MM.erase tx mftByAKI
+        M.erase tx lastValidMft
+        M.erase tx certBySKI
+        M.erase tx objectInsertedBy
+        M.erase tx objectValidatedBy
+        M.erase tx uriToUriKey
+        M.erase tx uriKeyToUri
+        MM.erase tx urlKeyToObjectKey
+        M.erase tx objectKeyToUrlKeys
 
-instance Storage s => WithStorage s (DB s) where
-    storage DB {..} = storage taStore
+    emptyRepositoryStore RepositoryStore {..} = do   
+        M.erase tx rrdpS
+        M.erase tx rsyncS
+        M.erase tx lastS
+
 
 
 -- Utilities to have storage transaction in ValidatorT monad.

@@ -159,7 +159,7 @@ updateObjectForRsyncRepository
         (exitCode, out, err) <- fromTry 
                 (RsyncE . RsyncRunningError . U.fmtEx) $ 
                 readProcess rsync
-        logInfo logger [i|Finished rsynching #{destination}.|]
+        logInfo logger [i|Finished rsynching #{uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do 
                 -- Try to deallocate all the bytestrings created by mmaps right after they are used, 

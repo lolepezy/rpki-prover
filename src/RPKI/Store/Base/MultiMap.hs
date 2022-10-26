@@ -37,23 +37,29 @@ fold tx (SMultiMap _ s) f a = S.foldMu tx s f' a
 foldS :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> k -> (a -> k -> v -> IO a) -> a -> IO a
 foldS tx (SMultiMap _ s) k f a = S.foldMuForKey tx s (storableKey k) f' a
-    where
-        f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
+  where
+    f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
 
 allForKey :: (Serialise k, Serialise v) =>
             Tx s m -> SMultiMap name s k v -> k -> IO [v]
 allForKey tx (SMultiMap _ s) k = reverse <$> S.foldMuForKey tx s (storableKey k) f []
-    where
-        f z _ (SValue sv) = pure $! let !q = fromStorable sv in q : z
+  where
+    f z _ (SValue sv) = pure $! let !q = fromStorable sv in q : z
 
 all :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> IO [(k, v)]
 all tx (SMultiMap _ s) = reverse <$> S.foldMu tx s f []
-    where
-        f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
+  where
+    f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
 stats :: (Serialise k, Serialise v) =>
         Tx s m -> SMultiMap name s k v -> IO SStats
 stats tx (SMultiMap _ s) = S.foldMu tx s f (SStats 0 0 0 0)
-    where
-        f stat skey svalue = pure $! incrementStats stat skey svalue
+  where
+    f stat skey svalue = pure $! incrementStats stat skey svalue
+
+erase :: (Serialise k, Serialise v) =>
+        Tx s 'RW -> SMultiMap name s k v -> IO ()
+erase tx (SMultiMap _ s) = S.foldMu tx s f ()
+  where
+    f _ k _ = S.deleteAllMu tx s (storableKey k)

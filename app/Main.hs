@@ -184,7 +184,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     cached
                     lmdbRealSize
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd
@@ -408,7 +408,7 @@ createWorkerAppContext config logger = do
                     (config ^. #cacheDirectory)
                     (config ^. #lmdbSizeMb)
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion    
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
@@ -458,7 +458,7 @@ createVerifierContext cliOptions logger = do
     let config = defaultConfig
     lmdbEnv <- setupWorkerLmdbCache logger cached (config ^. #lmdbSizeMb)
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv    
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
