@@ -96,8 +96,7 @@ main = do
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions = 
     withLogLevel cliOptions $ \logLevel ->
-        withLogger MainLogger logLevel $ \logger -> do             
-            logDebug logger [i|Main process.|]
+        withLogger MainLogger logLevel $ \logger ->           
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
