@@ -40,6 +40,7 @@ import qualified Test.Tasty.QuickCheck             as QC
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Repository
@@ -417,7 +418,11 @@ generateSome :: Arbitrary a => IO [a]
 generateSome = replicateM 1000 $ QC.generate arbitrary      
 
 withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
-withDB = withResource (makeLmdbStuff Lmdb.createDatabase) releaseLmdb
+withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb
+  where
+    createLmdb lmdbEnv = 
+        withLogger MainLogger defaultsLogLevel $ \logger -> 
+            (Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion) 
 
 
 ioTestCase :: TestName -> (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion) -> TestTree

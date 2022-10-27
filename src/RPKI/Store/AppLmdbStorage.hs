@@ -196,7 +196,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             renamePath (cacheDir </> "current.new") currentCache
 
             newLmdb <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb) maxReadersDefault
-            newDB <- createDatabase newLmdb
+            newDB <- createDatabase newLmdb logger DontCheckVersion
             atomically $ do
                 newNative <- getNativeEnv newLmdb
                 writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  

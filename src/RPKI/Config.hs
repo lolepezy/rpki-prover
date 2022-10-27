@@ -66,7 +66,7 @@ data RsyncConf = RsyncConf {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
 
-newtype Size = Size Int64
+newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
     deriving anyclass (Serialise)

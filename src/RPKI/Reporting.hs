@@ -119,8 +119,12 @@ data RrdpError = BrokenXml Text |
                 NoSerial | 
                 NoSnapshotHash | 
                 NoSnapshotURI | 
+                BrokenSnapshotUri Text | 
+                SnapshotUriHostname Text Text | 
                 NoDeltaSerial | 
                 NoDeltaURI | 
+                BrokenDeltaUri Text | 
+                DeltaUriHostname Text Text | 
                 NoDeltaHash |
                 BadHash Text |
                 NoVersion | 

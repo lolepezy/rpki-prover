@@ -1,9 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.Store.MakeLmdb where
 
+import Control.Monad
 import Control.Concurrent.STM
+
+import           Data.String.Interpolate.IsString
 
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -14,12 +18,17 @@ import           Lmdb.Types hiding (Size)
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
 import           RPKI.Parallel
+import           RPKI.Logging
+import           RPKI.Time
+import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Store.Sequence
 
 
-createDatabase :: LmdbEnv -> IO (DB LmdbStorage)
-createDatabase e = do 
+data IncompatibleDbCheck = CheckVersion | DontCheckVersion
+
+createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage)
+createDatabase e logger checkAction = do 
     sequences <- SMap lmdb <$> createLmdbStore e
     taStore          <- createTAStore
     repositoryStore  <- createRepositoryStore
@@ -30,9 +39,37 @@ createDatabase e = do
     metricStore      <- createMetricsStore
     slurmStore       <- createSlurmStore
     jobStore         <- createJobStore        
-    pure DB {..}    
+    metadataStore    <- createMetadataStore
+    let db = DB {..}
+    case checkAction of     
+        CheckVersion -> do  
+            (_, ms) <- timedMS $ verifyDBVersion db
+            logDebug logger  [i|Checking cache took #{ms}ms.|]
+        DontCheckVersion -> 
+            pure ()
+    pure db 
   where
     lmdb = LmdbStorage e        
+
+    verifyDBVersion db@DB {..} =
+        rwTx db $ \tx -> do     
+            dbVersion <- getDatabaseVersion tx db            
+            case dbVersion of 
+                Nothing -> do
+                    logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}.|]    
+                    saveCurrentDatabaseVersion tx db
+                Just version -> 
+                    when (version /= currentDatabaseVersion) $ do
+                        -- We are seeing incompatible storage. The only option 
+                        -- now is to erase all the maps and start from scratch.
+                        --
+                        -- This is obviously far from optimal, so it would make
+                        -- sense to automate that part.
+                        logInfo logger [i|Cache version is #{version} and current version is #{currentDatabaseVersion}, dropping the cache.|]    
+                        emptyDBMaps tx db                           
+                        saveCurrentDatabaseVersion tx db
+                     
+
     createObjectStore seqMap = do 
         let keys = Sequence "object-key" seqMap
         objects  <- SMap lmdb <$> createLmdbStore e
@@ -62,20 +99,18 @@ createDatabase e = do
     createMetricsStore = MetricStore . SMap lmdb <$> createLmdbStore e    
     createSlurmStore = SlurmStore . SMap lmdb <$> createLmdbStore e    
     createJobStore = JobStore . SMap lmdb <$> createLmdbStore e    
+    createMetadataStore = MetadataStore . SMap lmdb <$> createLmdbStore e    
     
 mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
 mkLmdb fileName maxSizeMb maxReaders = do 
-    nativeEnv <- newNativeLmdb fileName maxSizeMb maxReaders
+    nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
+                    maxReaders maxDatabases fileName
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
-        createSemaphoreIO maxReaders    
-
-newNativeLmdb :: FilePath -> Size -> Int -> IO (Environment 'ReadWrite)
-newNativeLmdb fileName (Size maxSizeMb) maxReaders = 
-    initializeReadWriteEnvironment (fromIntegral mapSize) maxReaders maxDatabases fileName        
-    where
-        mapSize = maxSizeMb * 1024 * 1024
-        maxDatabases = 120
+        createSemaphoreIO maxReaders
+  where    
+    mapSize = unSize maxSizeMb * 1024 * 1024
+    maxDatabases = 120
 
 closeLmdb :: LmdbEnv -> IO ()
 closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)
