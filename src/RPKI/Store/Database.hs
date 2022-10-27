@@ -61,7 +61,7 @@ import           RPKI.Time
 -- This one is to be changed manually whenever 
 -- any of the serialisable/serialized types become incompatible.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 3
+currentDatabaseVersion = 1
 
 -- All of the stores of the application in one place
 data DB s = DB {
