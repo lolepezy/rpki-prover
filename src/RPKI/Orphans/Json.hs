@@ -132,6 +132,9 @@ instance ToJSON Ipv6Prefix where
 instance ToJSON AsResource where
     toJSON = toJSON . show
 
+instance ToJSON AddrFamily where
+    toJSON = toJSON . show
+
 instance ToJSON Size where 
     toJSON (Size s) = toJSON s
     

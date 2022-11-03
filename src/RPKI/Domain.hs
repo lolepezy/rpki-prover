@@ -375,6 +375,8 @@ data RSC = RSC {
     deriving anyclass Serialise
 
 data Aspa = Aspa {                
+        customerAsn  :: ASN,
+        providerAsns :: [(ASN, Maybe AddrFamily)]
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise

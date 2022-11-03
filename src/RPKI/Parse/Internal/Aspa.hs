@@ -35,4 +35,7 @@ parseAspa bs = do
     pure $ newCMSObject hash' (CMS signedAspa)
   where     
     parseAspa' = onNextContainer Sequence $ do        
-        pure Aspa {}
+        pure Aspa { 
+                customerAsn = ASN 0,  
+                providerAsns = []
+            }
