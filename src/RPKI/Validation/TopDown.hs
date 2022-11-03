@@ -661,6 +661,14 @@ validateCaCertificate
                             oneMoreGbr
                             pure mempty
 
+            AspaRO gbr -> do                
+                    validateObjectLocations child
+                    inSubObjectVScope (locationsToText locations) $ 
+                        allowRevoked $ do
+                            void $ vHoist $ validateAspa now gbr certificate validCrl verifiedResources
+                            oneMoreAspa
+                            pure mempty
+
             -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
             -- they will emit a warning.
             _somethingElse -> do 
@@ -729,12 +737,13 @@ addValidMft TopDownContext {..} aki mft =
     liftIO $ atomically $ modifyTVar' 
                 validManifests (<> Map.singleton aki (getHash mft))    
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
+oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))

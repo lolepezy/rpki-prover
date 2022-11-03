@@ -166,6 +166,6 @@ textual = decodeUtf8 . LBS.toStrict
 fmtLocations :: Locations -> Text
 fmtLocations = mconcat . 
                List.intersperse "," . 
-               map (Text.pack . show) . 
+               map (Text.pack . show . getURL) . 
                toList . 
                unLocations

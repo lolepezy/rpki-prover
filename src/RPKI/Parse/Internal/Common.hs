@@ -75,6 +75,8 @@ id_messageDigest      = id_pkcs9 <> [4]
 id_signingTime        = id_pkcs9 <> [5]
 id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 id_ct_signedChecklist = id_pkcs9 <> [16, 1, 48]
+id_ct_aspa            = id_pkcs9 <> [16, 1, 49]
+                       
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 id_sha512            = [2, 16, 840, 1, 101, 3, 4, 2, 3]

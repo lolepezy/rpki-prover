@@ -113,10 +113,12 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} (WorldVersion wv) = do
                          metric ^. #validRoaNumber +
                          metric ^. #validMftNumber +
                          metric ^. #validCrlNumber +
-                         metric ^. #validGbrNumber
+                         metric ^. #validGbrNumber +
+                         metric ^. #validAspaNumber
         setValidObjects prometheusVector url "cer" $ metric ^. #validCertNumber
         setValidObjects prometheusVector url "roa" $ metric ^. #validRoaNumber
         setValidObjects prometheusVector url "mft" $ metric ^. #validMftNumber
         setValidObjects prometheusVector url "crl" $ metric ^. #validCrlNumber
         setValidObjects prometheusVector url "grb" $ metric ^. #validGbrNumber
+        setValidObjects prometheusVector url "aspa" $ metric ^. #validAspaNumber
         setValidObjects prometheusVector url "allobjects" totalCount

@@ -29,6 +29,7 @@ import           RPKI.Parse.Internal.MFT
 import           RPKI.Parse.Internal.ROA
 import           RPKI.Parse.Internal.GBR
 import           RPKI.Parse.Internal.RSC
+import           RPKI.Parse.Internal.Aspa
 import           RPKI.Parse.Internal.SignedObject
 
 -- | 
@@ -39,7 +40,8 @@ supportedExtension filename =
         in dot == '.' && isSupportedExtension ext
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
-isSupportedExtension s = s `elem` ["cer", "mft", "crl", "roa", "gbr", "sig"]
+isSupportedExtension s = s `elem` 
+    ["cer", "mft", "crl", "roa", "gbr", "sig", "asa"]
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
@@ -54,6 +56,7 @@ readObject objectURL content = do
         ".crl" -> parse_ parseCrl CrlRO content            
         ".gbr" -> parse_ parseGbr GbrRO content            
         ".sig" -> parse_ parseRsc RscRO content            
+        ".asa" -> parse_ parseAspa AspaRO content            
         _      -> Left $ fmtErr $ "Unknown object type: " <> show u
         where
             parse_ parse constructor bs = 

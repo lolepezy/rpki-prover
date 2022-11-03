@@ -221,6 +221,7 @@ type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
 type RscObject = CMSBasedObject RSC
+type AspaObject = CMSBasedObject Aspa
 
 data EECerObject = EECerObject {
         ski         :: {-# UNPACK #-} SKI,
@@ -236,6 +237,7 @@ data RpkiObject = CerRO CerObject
                 | RoaRO RoaObject
                 | GbrRO GbrObject
                 | RscRO RscObject
+                | AspaRO AspaObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise
@@ -282,6 +284,7 @@ instance WithAKI RpkiObject where
     getAKI (GbrRO c) = getAKI c
     getAKI (CrlRO c) = getAKI c
     getAKI (RscRO c) = getAKI c
+    getAKI (AspaRO c) = getAKI c
 
 instance WithHash RpkiObject where
     getHash (CerRO c) = getHash c
@@ -290,6 +293,7 @@ instance WithHash RpkiObject where
     getHash (GbrRO c) = getHash c
     getHash (CrlRO c) = getHash c
     getHash (RscRO c) = getHash c
+    getHash (AspaRO c) = getHash c
 
 data Located a = Located { 
         locations :: Locations,
@@ -366,6 +370,11 @@ data RSC = RSC {
         rscResources    :: PrefixesAndAsns,        
         checkList       :: [T2 (Maybe Text) Hash],
         digestAlgorithm :: DigestAlgorithmIdentifier
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass Serialise
+
+data Aspa = Aspa {                
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass Serialise

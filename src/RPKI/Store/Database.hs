@@ -60,6 +60,9 @@ import           RPKI.Time
 
 -- This one is to be changed manually whenever 
 -- any of the serialisable/serialized types become incompatible.
+-- 
+-- It is brittle and inconvenient, but so far seems to be 
+-- the only realistic option.
 currentDatabaseVersion :: Integer
 currentDatabaseVersion = 1
 
