@@ -71,8 +71,3 @@ decodeBase64 (EncodedBase64 bs) context =
         (\e -> BadBase64 (e <> " for " <> Text.pack (show context)) $ convert bs)
         DecodedBase64
         $ B64.decodeBase64 bs
-
-
-toEither :: e -> Maybe v -> Either e v
-toEither e Nothing  = Left e
-toEither _ (Just v) = Right v

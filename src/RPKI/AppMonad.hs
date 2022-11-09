@@ -110,9 +110,6 @@ fromTryEither mapErr t = do
     z <- fromTry mapErr t
     fromEitherM $ pure z
 
-toEither :: r -> ReaderT r (ExceptT e m) a -> m (Either e a)
-toEither env f = runExceptT $ runReaderT f env
-
 runPureValidator :: Scopes -> PureValidatorT r -> (Either AppError r, ValidationState)
 runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 
