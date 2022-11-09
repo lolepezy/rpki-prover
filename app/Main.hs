@@ -82,12 +82,15 @@ main = do
 
     if version
         then do 
+            -- it is "--version" call, so print the version and exit
             putStrLn $ "RPKI prover " <> showVersion Autogen.version            
         else do
             case worker of 
                 Nothing -> 
                     if verifySignature 
+                        -- this is a call to RSC verification 
                         then executeVerifier cliOptions
+                        -- this is a normal validator daemon launch
                         else executeMainProcess cliOptions                
                 Just _ -> 
                     executeWorkerProcess
