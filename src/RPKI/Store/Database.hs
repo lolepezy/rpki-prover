@@ -122,7 +122,9 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 
 -- | TA Store 
-newtype TAStore s = TAStore (SMap "trust-anchors" s TaName StorableTA)
+newtype TAStore s = TAStore { 
+    tas :: SMap "trust-anchors" s TaName StorableTA
+}
 
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
@@ -743,6 +745,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
     M.erase tx $ results validationsStore
     M.erase tx $ vrps vrpStore
     M.erase tx $ versions versionStore
+    M.erase tx $ tas taStore
     M.erase tx $ metrics metricStore
     M.erase tx $ slurms slurmStore
     M.erase tx $ jobs jobStore    
