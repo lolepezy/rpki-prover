@@ -25,6 +25,8 @@ data API api = API {
         vrpsCsvFiltered  :: api :- "vrps-filtered.csv"  :> Get '[ManualCVS] RawCVS,        
         vrpsJsonFiltered :: api :- "vrps-filtered.json" :> Get '[JSON] [VrpDto],
 
+        aspas :: api :- "aspa.json" :> Get '[JSON] [AspaDto],
+
         slurm :: api :- "slurm.json" :> Get '[JSON] Slurm,
                 
         validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),

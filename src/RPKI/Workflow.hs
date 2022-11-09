@@ -342,7 +342,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     rwTx database' $ \tx -> do
         putValidations tx database' worldVersion (updatedValidation ^. typed)
         putMetrics tx database' worldVersion (topDownValidations ^. typed)
-        putVrps tx database' vrps worldVersion
+        putVrps tx database' (payloads ^. #vrps) worldVersion
+        putAspas tx database' (payloads ^. #aspas) worldVersion
         for_ maybeSlurm $ putSlurm tx database' worldVersion
         completeWorldVersion tx database' worldVersion
 

@@ -378,7 +378,7 @@ data Aspa = Aspa {
         customerAsn  :: ASN,
         providerAsns :: [(ASN, Maybe AddrFamily)]
     } 
-    deriving stock (Show, Eq, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass Serialise
 
 -- | Types for the signed object template 

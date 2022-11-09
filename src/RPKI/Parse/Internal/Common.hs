@@ -157,7 +157,6 @@ extractAddressaFamily familyBS =
         "\NUL\STX" -> Right Ipv6F
         af         -> Left af
 
-
 getDigest :: ParseASN1 (Maybe OID)
 getDigest = 
     getNext >>= \case

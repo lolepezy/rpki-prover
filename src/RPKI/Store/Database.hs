@@ -22,7 +22,7 @@ import           Data.Generics.Product.Typed
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes)
+import           Data.Maybe               (catMaybes, fromMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -73,6 +73,7 @@ data DB s = DB {
     objectStore      :: RpkiObjectStore s,
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
+    aspaStore        :: AspaStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
@@ -147,6 +148,11 @@ instance Storage s => WithStorage s (MetricStore s) where
 -- | VRP store
 newtype VRPStore s = VRPStore {    
     vrps :: SMap "vrps" s WorldVersion Vrps
+}
+
+-- | ASPA store
+newtype AspaStore s = AspaStore {    
+    aspas :: SMap "aspas" s WorldVersion (Set.Set Aspa)
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -396,12 +402,24 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
 
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
-getVrps tx DB { vrpStore = VRPStore vrpMap } wv = 
-    liftIO $ M.get tx vrpMap wv    
+getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ M.get tx m wv    
 
 deleteVRPs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap wv
+
+getAspas :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Set.Set Aspa)
+getAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ fromMaybe Set.empty <$> M.get tx m wv    
+
+deleteAspas :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
+
+putAspas :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
+putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
+    liftIO $ M.put tx m worldVersion aspas
 
 putVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
@@ -420,7 +438,6 @@ allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
 deleteVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
-
 
 completeWorldVersion :: Storage s => 
                         Tx s 'RW -> DB s -> WorldVersion -> IO ()
@@ -637,6 +654,7 @@ deleteOldVersions database tooOld =
             forM_ toDel $ \worldVersion -> do
                 deleteVersion tx database worldVersion
                 deleteValidations tx database worldVersion
+                deleteAspas tx database worldVersion            
                 deleteVRPs tx database worldVersion            
                 deleteMetrics tx database worldVersion
                 deleteSlurms tx database worldVersion
@@ -662,6 +680,13 @@ getLatestVRPs db =
             version <- MaybeT $ getLastCompletedVersion db tx
             MaybeT $ getVrps tx db version
 
+getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
+getLatestAspas db = 
+    roTx db $ \tx -> do
+        getLastCompletedVersion db tx >>= \case         
+            Nothing      -> pure Set.empty
+            Just version -> getAspas tx db version        
+
 
 getTotalDbStats :: (MonadIO m, Storage s) => 
                     DB s -> m TotalDBStats
@@ -679,6 +704,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     rpkiObjectStats <- rpkiObjectStats' tx
     vResultStats    <- vResultStats' tx
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
+    aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
     metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
     versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
     sequenceStats   <- M.stats tx sequences
@@ -744,6 +770,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
     emptyObjectStore objectStore    
     M.erase tx $ results validationsStore
     M.erase tx $ vrps vrpStore
+    M.erase tx $ aspas aspaStore
     M.erase tx $ versions versionStore
     M.erase tx $ tas taStore
     M.erase tx $ metrics metricStore
