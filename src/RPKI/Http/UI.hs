@@ -111,6 +111,7 @@ validationMetricsHtml grouped = do
             th $ H.text "Manifests"
             th $ H.text "CRLs"
             th $ H.text "GBRs"
+            th $ H.text "ASPAs"
         
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                

@@ -139,13 +139,24 @@ getBitString f m = getNext >>= \case
     a                         -> parseError m a
 
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
-getAddressFamily m = getNext >>= \case 
+getAddressFamily message = getNext >>= \case 
     (OctetString familyType) -> 
-        pure $ case BS.take 2 familyType of 
-            "\NUL\SOH" -> Right Ipv4F
-            "\NUL\STX" -> Right Ipv6F
-            af         -> Left af 
-    a              -> parseError m a      
+        pure $ extractAddressaFamily familyType
+    a -> parseError message a      
+
+getAddressFamilyMaybe :: ParseASN1 (Maybe AddrFamily)
+getAddressFamilyMaybe = getNext >>= \case 
+    (OctetString familyType) -> 
+        pure $ either (const Nothing) Just $ extractAddressaFamily familyType                
+    _ -> pure Nothing
+
+extractAddressaFamily :: BS.ByteString -> Either BS.ByteString AddrFamily
+extractAddressaFamily familyBS = 
+    case BS.take 2 familyBS of 
+        "\NUL\SOH" -> Right Ipv4F
+        "\NUL\STX" -> Right Ipv6F
+        af         -> Left af
+
 
 getDigest :: ParseASN1 (Maybe OID)
 getDigest = 
