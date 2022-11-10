@@ -24,7 +24,7 @@ import           GHC.Generics
 
 import           Prometheus
 import           Prometheus.Metric.GHC
-import RPKI.AppTypes
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting

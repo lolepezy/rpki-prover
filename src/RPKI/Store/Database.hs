@@ -682,7 +682,7 @@ getLatestVRPs db =
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
 getLatestAspas db = 
-    roTx db $ \tx -> do
+    roTx db $ \tx -> 
         getLastCompletedVersion db tx >>= \case         
             Nothing      -> pure Set.empty
             Just version -> getAspas tx db version        
