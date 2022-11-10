@@ -116,7 +116,7 @@ getASPAs AppContext {..} = do
     pure $ map (\aspa -> 
             AspaDto { 
                 customerAsn = aspa ^. #customerAsn,
-                providerAsns = map (\(asn, addressFamily) -> ProviderAsn {..}) $ aspa ^. #providerAsns
+                providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
             }) $ Set.toList aspas
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))

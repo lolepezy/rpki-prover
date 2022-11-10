@@ -71,8 +71,8 @@ data VrpDto = VrpDto {
     deriving stock (Eq, Show, Generic)
 
 data ProviderAsn = ProviderAsn {
-        asn           :: ASN, 
-        addressFamily :: Maybe AddrFamily
+        asn      :: ASN, 
+        afiLimit :: Maybe AddrFamily
     }
     deriving stock (Eq, Show, Generic)
 
