@@ -70,9 +70,15 @@ data VrpDto = VrpDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data ProviderAsn = ProviderAsn {
+        asn           :: ASN, 
+        addressFamily :: Maybe AddrFamily
+    }
+    deriving stock (Eq, Show, Generic)
+
 data AspaDto = AspaDto {
-        customerAsn :: ASN,
-        providerAsns :: [(ASN, Maybe AddrFamily)]        
+        customerAsn  :: ASN,
+        providerAsns :: [ProviderAsn]        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -110,7 +116,11 @@ instance MimeRender ManualCVS RawCVS where
 
 instance ToJSON RObject
 instance ToJSON VrpDto     
-instance ToJSON AspaDto     
+instance ToJSON AspaDto
+
+instance ToJSON ProviderAsn where
+    toJSON = genericToJSON $ defaultOptions { omitNothingFields = True } 
+
 instance ToJSON JobsDto     
 
 instance ToJSON a =>  ToJSON (ValidationsDto a)

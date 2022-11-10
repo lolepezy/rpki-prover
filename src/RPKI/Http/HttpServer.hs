@@ -113,7 +113,11 @@ getVRPs AppContext {..} func = do
 getASPAs :: Storage s => AppContext s -> IO [AspaDto] 
 getASPAs AppContext {..} = do 
     aspas <- getLatestAspas =<< readTVarIO database     
-    pure $ map (\Aspa{..} -> AspaDto {..}) $ Set.toList aspas
+    pure $ map (\aspa -> 
+            AspaDto { 
+                customerAsn = aspa ^. #customerAsn,
+                providerAsns = map (\(asn, addressFamily) -> ProviderAsn {..}) $ aspa ^. #providerAsns
+            }) $ Set.toList aspas
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do 

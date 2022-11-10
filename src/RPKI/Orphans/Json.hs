@@ -133,7 +133,9 @@ instance ToJSON AsResource where
     toJSON = toJSON . show
 
 instance ToJSON AddrFamily where
-    toJSON = toJSON . show
+    toJSON = \case 
+        Ipv4F -> toJSON ("ipv4" :: Text)
+        Ipv6F -> toJSON ("ipv6" :: Text)
 
 instance ToJSON Size where 
     toJSON (Size s) = toJSON s
