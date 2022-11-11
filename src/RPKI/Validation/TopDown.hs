@@ -79,8 +79,17 @@ data TopDownContext s = TopDownContext {
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
+
+data Payloads a = Payloads {
+        vrps  :: a,
+        aspas :: Set.Set Aspa        
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving Semigroup via GenericSemigroup (Payloads a)
+    deriving Monoid    via GenericMonoid (Payloads a)
+
 data TopDownResult = TopDownResult {
-        vrps               :: Vrps,
+        payloads           :: Payloads Vrps,        
         topDownValidations :: ValidationState
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -156,7 +165,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
      
         rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
-            (r@TopDownResult{..}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
+            (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
@@ -186,7 +195,11 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
     
-    pure $ TopDownResult (either (const mempty) (newVrps taName) r) vs
+    let payloads = case r of 
+                    Left _  -> mempty
+                    Right p -> p & #vrps %~ newVrps taName
+    
+    pure $ TopDownResult payloads vs
   where
     taName = getTaName tal
     taContext = newScopes' TAFocus $ unTaName taName
@@ -255,7 +268,7 @@ validateFromTACert :: Storage s =>
                     TopDownContext s ->                                        
                     PublicationPointAccess -> 
                     Located CerObject ->                     
-                    ValidatorT IO (Set Vrp)
+                    ValidatorT IO (Payloads (Set Vrp))
 validateFromTACert 
     appContext@AppContext {..}
     topDownContext@TopDownContext { .. } 
@@ -288,7 +301,7 @@ validateCA :: Storage s =>
             -> Scopes 
             -> TopDownContext s 
             -> Located CerObject 
-            -> IO (T2 (Set Vrp) ValidationState)
+            -> IO (T2 (Payloads (Set Vrp)) ValidationState)
 validateCA appContext scopes topDownContext certificate =
     validateCARecursively 
         `finally`  
@@ -304,7 +317,7 @@ validateCaCertificate :: Storage s =>
                         AppContext s ->
                         TopDownContext s ->
                         Located CerObject ->                
-                        ValidatorT IO (Set Vrp)
+                        ValidatorT IO (Payloads (Set Vrp))
 validateCaCertificate 
     appContext@AppContext {..} 
     topDownContext@TopDownContext {..} 
@@ -651,7 +664,7 @@ validateCaCertificate
                             let vrpList = getCMSContent $ cmsPayload roa                            
                             oneMoreRoa                            
                             moreVrps $ Count $ fromIntegral $ length vrpList
-                            pure $! Set.fromList vrpList
+                            pure $! Payloads (Set.fromList vrpList) mempty
 
             GbrRO gbr -> do                
                     validateObjectLocations child
@@ -660,6 +673,15 @@ validateCaCertificate
                             void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                             oneMoreGbr
                             pure mempty
+
+            AspaRO aspa -> do                
+                    validateObjectLocations child
+                    inSubObjectVScope (locationsToText locations) $ 
+                        allowRevoked $ do
+                            void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
+                            oneMoreAspa            
+                            let aspa' = getCMSContent $ cmsPayload aspa
+                            pure $! Payloads mempty (Set.singleton aspa')
 
             -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
             -- they will emit a warning.
@@ -729,12 +751,13 @@ addValidMft TopDownContext {..} aki mft =
     liftIO $ atomically $ modifyTVar' 
                 validManifests (<> Map.singleton aki (getHash mft))    
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
+oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
@@ -742,10 +765,10 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
 -- Number of unique VRPs requires explicit counting of the VRP set sizes, 
 -- so just counting the number of VRPs in ROAs in not enough
-addUniqueVRPCount :: (HasType ValidationState s, HasField' "vrps" s Vrps) => s -> s
+addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payloads Vrps)) => s -> s
 addUniqueVRPCount s = let 
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
     in s & vrpCountLens . #totalUnique .~ 
-                Count (fromIntegral $ uniqueVrpCount $ s ^. #vrps)
+                Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
          & vrpCountLens . #perTaUnique .~
-                MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ s ^. #vrps)    
+                MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)    

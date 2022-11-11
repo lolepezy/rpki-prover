@@ -237,6 +237,10 @@ instance Arbitrary RSC where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary Aspa where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -603,6 +607,11 @@ instance Arbitrary Ipv6Prefix where
 instance Arbitrary PrefixesAndAsns where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+instance Arbitrary AddrFamily where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 
 -- RTR
 

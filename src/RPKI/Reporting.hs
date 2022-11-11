@@ -400,6 +400,7 @@ data ValidationMetric = ValidationMetric {
         validMftNumber  :: Count,
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,
+        validAspaNumber :: Count,
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)

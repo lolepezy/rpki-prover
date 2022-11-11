@@ -59,6 +59,8 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         vrpsCsvFiltered  = liftIO (getVRPSlurmedRaw appContext),
         vrpsJsonFiltered = liftIO (getVRPSlurmed appContext),
 
+        aspas = liftIO (getASPAs appContext),
+
         slurm = getSlurm appContext,
                 
         fullValidationResults    = getValidationsDto appContext,
@@ -108,6 +110,14 @@ getVRPs AppContext {..} func = do
                             (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
                             Vrp a p len  <- Set.toList vrpSet ]       
 
+getASPAs :: Storage s => AppContext s -> IO [AspaDto] 
+getASPAs AppContext {..} = do 
+    aspas <- getLatestAspas =<< readTVarIO database     
+    pure $ map (\aspa -> 
+            AspaDto { 
+                customerAsn = aspa ^. #customerAsn,
+                providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
+            }) $ Set.toList aspas
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do 

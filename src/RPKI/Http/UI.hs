@@ -111,6 +111,7 @@ validationMetricsHtml grouped = do
             th $ H.text "Manifests"
             th $ H.text "CRLs"
             th $ H.text "GBRs"
+            th $ H.text "ASPAs"
         
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
@@ -140,6 +141,7 @@ validationMetricsHtml grouped = do
             th $ H.text "Manifests"
             th $ H.text "CRLs"
             th $ H.text "GBRs"                
+            th $ H.text "ASPAs"                
 
         H.tbody $ do 
             let sortedRepos = List.sortOn fst $ 
@@ -154,7 +156,8 @@ validationMetricsHtml grouped = do
                          vm ^. #validRoaNumber +
                          vm ^. #validMftNumber +
                          vm ^. #validCrlNumber +
-                         vm ^. #validGbrNumber
+                         vm ^. #validGbrNumber +
+                         vm ^. #validAspaNumber
         htmlRow index $ do 
             td $ toHtml ta                                    
             void $ validationTime vm
@@ -166,6 +169,7 @@ validationMetricsHtml grouped = do
             td $ toHtml $ show $ vm ^. #validMftNumber
             td $ toHtml $ show $ vm ^. #validCrlNumber
             td $ toHtml $ show $ vm ^. #validGbrNumber
+            td $ toHtml $ show $ vm ^. #validAspaNumber
 
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =

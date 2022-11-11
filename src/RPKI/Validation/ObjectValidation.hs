@@ -366,6 +366,20 @@ validateRsc now rsc parentCert crl verifiedResources = do
             
     pure $ Validated rsc
 
+validateAspa ::
+    (WithResourceCertificate c, WithSKI c) =>
+    Now ->
+    AspaObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated AspaObject)
+validateAspa now aspa parentCert crl verifiedResources = do
+    void $
+        validateCms now (cmsPayload aspa) parentCert crl verifiedResources $ \aspaCms -> do
+            let z = getCMSContent aspaCms
+            pure ()
+    pure $ Validated aspa
 
 validateCms ::
     (WithResourceCertificate c, WithSKI c) =>

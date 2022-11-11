@@ -76,11 +76,11 @@ runWorkflow appContext@AppContext {..} tals = do
     prometheusMetrics <- createPrometheusMetrics config
 
     -- Some shared state between the threads for simplicity.
-    sharedStuff <- newTVarIO newShared
+    sharedBetweenJobs <- newTVarIO newShared
 
     -- Threads that will run periodic jobs and persist timestaps of running them
     -- for consistent scheduling.
-    periodicJobs <- periodicJobThreads sharedStuff
+    periodicJobs <- periodicJobThreads sharedBetweenJobs
 
     let threads = [ 
                 -- thread that takes jobs from the queue and executes them sequentially
@@ -103,13 +103,13 @@ runWorkflow appContext@AppContext {..} tals = do
                 `finally`
                     atomically (closeCQueue globalQueue)        
 
-        periodicJobThreads sharedStuff = do 
+        periodicJobThreads sharedBetweenJobs = do 
             let availableJobs = [
                     -- These initial delay numbers are pretty arbitrary and chosen based 
                     -- on reasonable order of the jobs.
-                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC sharedStuff),
-                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions sharedStuff),
-                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedStuff),
+                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC sharedBetweenJobs),
+                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions sharedBetweenJobs),
+                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedBetweenJobs),
                     ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
                     ]  
             
@@ -192,30 +192,30 @@ runWorkflow appContext@AppContext {..} tals = do
                                     pure (vrps, slurmedVrps)
 
 
-        cacheGC sharedStuff worldVersion _ = do
+        cacheGC sharedBetweenJobs worldVersion _ = do
             database' <- readTVarIO database
             executeOrDie
                 (cleanObjectCache database' $ versionIsOld (versionToMoment worldVersion) (config ^. #cacheLifeTime))
                 (\CleanUpResult {..} elapsed -> do 
                     when (deletedObjects > 0) $ 
-                        atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
+                        atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)
                     logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
 
-        cleanOldVersions sharedStuff worldVersion _ = do
+        cleanOldVersions sharedBetweenJobs worldVersion _ = do
             let now = versionToMoment worldVersion
             database' <- readTVarIO database
             executeOrDie
                 (deleteOldVersions database' $ versionIsOld now (config ^. #oldVersionsLifetime))
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ 
-                        atomically $ modifyTVar' sharedStuff (#deletedAnythingFromDb .~ True)
+                        atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)
                     logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])                    
 
-        compact sharedStuff worldVersion _ = do
+        compact sharedBetweenJobs worldVersion _ = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
-            SharedStuff {..} <- readTVarIO sharedStuff
+            SharedBetweenJobs {..} <- readTVarIO sharedBetweenJobs
             if deletedAnythingFromDb then do 
                 (_, elapsed) <- timedMS $ runMaintenance appContext
                 logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
@@ -342,7 +342,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     rwTx database' $ \tx -> do
         putValidations tx database' worldVersion (updatedValidation ^. typed)
         putMetrics tx database' worldVersion (topDownValidations ^. typed)
-        putVrps tx database' vrps worldVersion
+        putVrps tx database' (payloads ^. #vrps) worldVersion
+        putAspas tx database' (payloads ^. #aspas) worldVersion
         for_ maybeSlurm $ putSlurm tx database' worldVersion
         completeWorldVersion tx database' worldVersion
 
@@ -413,7 +414,7 @@ leftToWait start end (Seconds interval) = let
 
 data NextStep = Repeat | Done
 
-data SharedStuff = SharedStuff { 
+data SharedBetweenJobs = SharedBetweenJobs { 
         deletedAnythingFromDb :: Bool
     }
     deriving (Show, Eq, Ord, Generic)
@@ -421,5 +422,5 @@ data SharedStuff = SharedStuff {
 data JobRun = FirstRun | RanBefore
     deriving (Show, Eq, Ord, Generic)  
 
-newShared :: SharedStuff
-newShared = SharedStuff False
+newShared :: SharedBetweenJobs
+newShared = SharedBetweenJobs False

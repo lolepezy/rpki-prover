@@ -56,4 +56,4 @@ Update version in the package.yaml file (TODO Make it automated?)
 git tag -a vX.Y.Z -m "Release X.Y.Z"
 git push -f --tags
 ```
-Github action will kick in and build the static binary and create Dockerhub image. Action usually creates ugly and fucked up releases, so manual involvment is necessary afterwards.
+Github action will kick in and build the static binary and create Dockerhub image. Action usually creates ugly and fucked up releases/release drafts, so manual involvement is necessary afterwards, but it's minimal and rare.

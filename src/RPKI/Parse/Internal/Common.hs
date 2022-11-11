@@ -75,6 +75,8 @@ id_messageDigest      = id_pkcs9 <> [4]
 id_signingTime        = id_pkcs9 <> [5]
 id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
 id_ct_signedChecklist = id_pkcs9 <> [16, 1, 48]
+id_ct_aspa            = id_pkcs9 <> [16, 1, 49]
+                       
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 id_sha512            = [2, 16, 840, 1, 101, 3, 4, 2, 3]
@@ -137,13 +139,23 @@ getBitString f m = getNext >>= \case
     a                         -> parseError m a
 
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
-getAddressFamily m = getNext >>= \case 
+getAddressFamily message = getNext >>= \case 
     (OctetString familyType) -> 
-        pure $ case BS.take 2 familyType of 
-            "\NUL\SOH" -> Right Ipv4F
-            "\NUL\STX" -> Right Ipv6F
-            af         -> Left af 
-    a              -> parseError m a      
+        pure $ extractAddressaFamily familyType
+    a -> parseError message a      
+
+getAddressFamilyMaybe :: ParseASN1 (Maybe AddrFamily)
+getAddressFamilyMaybe = getNext >>= \case 
+    (OctetString familyType) -> 
+        pure $ either (const Nothing) Just $ extractAddressaFamily familyType                
+    _ -> pure Nothing
+
+extractAddressaFamily :: BS.ByteString -> Either BS.ByteString AddrFamily
+extractAddressaFamily familyBS = 
+    case BS.take 2 familyBS of 
+        "\NUL\SOH" -> Right Ipv4F
+        "\NUL\STX" -> Right Ipv6F
+        af         -> Left af
 
 getDigest :: ParseASN1 (Maybe OID)
 getDigest = 

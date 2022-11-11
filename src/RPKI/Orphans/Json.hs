@@ -132,6 +132,11 @@ instance ToJSON Ipv6Prefix where
 instance ToJSON AsResource where
     toJSON = toJSON . show
 
+instance ToJSON AddrFamily where
+    toJSON = \case 
+        Ipv4F -> toJSON ("ipv4" :: Text)
+        Ipv6F -> toJSON ("ipv6" :: Text)
+
 instance ToJSON Size where 
     toJSON (Size s) = toJSON s
     
@@ -189,6 +194,7 @@ instance ToJSON PrefixLength
 instance ToJSON Gbr where
     toJSON (Gbr s) = toJSON $ show s
 
+instance ToJSON Aspa
 instance ToJSON RSC
 instance ToJSON Vrp
 instance ToJSON Manifest
