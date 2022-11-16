@@ -84,6 +84,9 @@ dependencies:
 - servant
 - servant-server
 - servant-blaze
+- servant-swagger-ui
+- servant-swagger
+- swagger2
 - shower
 - split
 - stm

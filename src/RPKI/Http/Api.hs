@@ -9,6 +9,7 @@ import           Data.Text                   (Text)
 
 import           Servant.API
 import           Servant.API.Generic
+import           Servant.Swagger.UI
 import           Servant.HTML.Blaze (HTML)
 import           Text.Blaze.Html5 (Html)
 
@@ -52,5 +53,6 @@ data HttpApi route = HttpApi {
         metrics :: route :- "metrics" :> Get '[PlainText] Text,
         staticContent :: route :- "static" :> Raw,
         ui            :: route :- Get '[HTML] Html
+        -- swagger       :: route :- "doc" :> SwaggerSchemaUI "swagger-ui" "swagger.json"
     }
     deriving (Generic)

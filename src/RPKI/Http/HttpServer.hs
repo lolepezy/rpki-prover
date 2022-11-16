@@ -6,7 +6,7 @@
 
 module RPKI.Http.HttpServer where
 
-import           Control.Lens                     ((^.))
+import           Control.Lens                    
 
 import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
@@ -17,6 +17,12 @@ import           FileEmbedLzma
 
 import           Servant hiding (URI)
 import           Servant.Server.Generic
+
+import Data.Swagger
+import Servant
+import Servant.Swagger
+import Servant.Swagger.UI
+-- import Servant.Swagger.UI.Core
 
 import qualified Data.ByteString.Builder          as BS
 
@@ -50,6 +56,7 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         metrics = convert <$> textualMetrics,        
         ui      = uiServer,
         staticContent = serveDirectoryEmbedded $(embedRecursiveDir "static")
+        -- swagger =  swaggerSchemaUIServer swaggerDoc
     }
   where
     apiServer = genericServer API {
@@ -78,6 +85,12 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         vResults     <- liftIO $ getValidations appContext
         metrics <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics    
+
+    -- swaggerDoc :: Swagger
+    -- swaggerDoc = toSwagger (Proxy :: Proxy API)
+    --     & info.title       .~ "Cats API"
+    --     & info.version     .~ "2016.8.7"
+    --     & info.description ?~ "This is an API that tests servant-swagger support"    
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]

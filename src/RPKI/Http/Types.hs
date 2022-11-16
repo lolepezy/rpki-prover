@@ -28,6 +28,9 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Servant.API
+import           Servant.Swagger
+import           Servant.Swagger.UI
+import           Data.Swagger
 import           Network.HTTP.Media ((//))
 
 import           RPKI.AppTypes
@@ -117,6 +120,9 @@ instance MimeRender ManualCVS RawCVS where
 instance ToJSON RObject
 instance ToJSON VrpDto     
 instance ToJSON AspaDto
+-- instance ToSchema RObject
+-- instance ToSchema VrpDto     
+-- instance ToSchema AspaDto
 
 instance ToJSON ProviderAsn where
     toJSON = genericToJSON $ defaultOptions { omitNothingFields = True } 
