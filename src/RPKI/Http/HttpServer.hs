@@ -15,8 +15,9 @@ import           Control.Monad.Error.Class
 
 import           FileEmbedLzma
 
-import           Servant hiding (URI)
+-- import           Servant hiding (URI)
 import           Servant.Server.Generic
+import           Servant.API.Generic
 
 import Data.Swagger
 import Servant
@@ -49,14 +50,17 @@ import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
 
+import Data.Version
+import qualified Paths_rpki_prover as Autogen
+
 
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext@AppContext {..} = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,        
         ui      = uiServer,
-        staticContent = serveDirectoryEmbedded $(embedRecursiveDir "static")
-        -- swagger =  swaggerSchemaUIServer swaggerDoc
+        staticContent = serveDirectoryEmbedded $(embedRecursiveDir "static"),
+        swagger = swaggerSchemaUIServer swaggerDoc
     }
   where
     apiServer = genericServer API {
@@ -86,11 +90,11 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         metrics <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics    
 
-    -- swaggerDoc :: Swagger
-    -- swaggerDoc = toSwagger (Proxy :: Proxy API)
-    --     & info.title       .~ "Cats API"
-    --     & info.version     .~ "2016.8.7"
-    --     & info.description ?~ "This is an API that tests servant-swagger support"    
+    swaggerDoc :: Swagger
+    swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
+        & info.title       .~ "RPKI Prover API"
+        & info.version     .~ convert (showVersion Autogen.version)
+        & info.description ?~ "This is an API that tests servant-swagger support"    
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
@@ -221,7 +225,7 @@ getRpkiObject AppContext {..} uri hash =
         (Nothing,  Nothing) -> 
             throwError $ err400 { errBody = "'uri' or 'hash' must be provided." }
 
-        (Just u, Nothing) -> do 
+        (Just u, Nothing) -> 
             case parseRpkiURL u of 
                 Left _ -> 
                     throwError $ err400 { errBody = "'uri' is not a valid object URL." }
