@@ -19,7 +19,7 @@ import           FileEmbedLzma
 import           Servant.Server.Generic
 import           Servant.API.Generic
 
-import Data.Swagger
+import Data.Swagger hiding (prefix)
 import Servant
 import Servant.Swagger
 import Servant.Swagger.UI
@@ -92,9 +92,9 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
 
     swaggerDoc :: Swagger
     swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
-        & info.title       .~ "RPKI Prover API"
-        & info.version     .~ convert (showVersion Autogen.version)
-        & info.description ?~ "This is an API that tests servant-swagger support"    
+        & info.title    .~ "RPKI Prover API"
+        & info.version  .~ convert (showVersion Autogen.version)
+        & basePath      ?~ "/api"
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]

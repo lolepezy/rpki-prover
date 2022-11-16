@@ -14,6 +14,7 @@ import           Data.Aeson                  hiding ((.=))
 import           Data.Proxy
 import           Data.Swagger hiding (ValidationError)
 
+import           Data.Map.Strict (Map)
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import           Data.Tuple.Strict
  
@@ -47,7 +48,8 @@ instance ToSchema URI where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema WorldVersion     
-instance ToSchema Instant     
+instance ToSchema Instant where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DateTime     
 instance ToSchema Date     
 instance ToSchema TimeOfDay     
@@ -71,7 +73,8 @@ instance ToSchema DecodedBase64 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance (ToSchema a, ToSchema b) => ToSchema (These a b)
-instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b)
+instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Map a b))
 
 instance ToSchema a => ToSchema (GroupedValidationMetric a)
 
@@ -91,9 +94,12 @@ instance ToSchema HttpStatus
 instance ToSchema RrdpSource
 
 instance ToSchema (Scope 'Metric)
-instance ToSchema Count
-instance ToSchema TimeMs
-instance ToSchema Size
+instance ToSchema Count where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema TimeMs where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema Size where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
 instance ToSchema TotalDBStats
 instance ToSchema DBStats
