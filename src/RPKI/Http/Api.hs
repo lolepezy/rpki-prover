@@ -52,7 +52,7 @@ data HttpApi route = HttpApi {
         api     :: route :- "api" :> ToServant API AsApi,
         metrics :: route :- "metrics" :> Get '[PlainText] Text,
         staticContent :: route :- "static" :> Raw,
-        ui            :: route :- Get '[HTML] Html
-        -- swagger       :: route :- "doc" :> SwaggerSchemaUI "swagger-ui" "swagger.json"
+        ui            :: route :- Get '[HTML] Html,
+        swagger       :: route :- SwaggerSchemaUI "swagger-ui" "swagger.json"
     }
     deriving (Generic)

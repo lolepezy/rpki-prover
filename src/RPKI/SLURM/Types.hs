@@ -12,12 +12,11 @@ module RPKI.SLURM.Types where
 
 import           Codec.Serialise
 
-import Data.Text (Text)
-
-import Data.These
-
+import           Data.Text (Text)
+import           Data.These
 import           Data.Aeson as Json
 import           Data.Aeson.Types
+import           Data.Swagger
 
 import qualified Data.HashMap.Strict as HM
 import           Data.String.Interpolate.IsString
@@ -31,6 +30,7 @@ import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Orphans.Json
+import           RPKI.Orphans.Swagger
 
 
 -- NOTE: All the data here is strict
@@ -129,7 +129,7 @@ instance FromJSON BgpsecAssertion where
     parseJSON = genericParseJSON opts
         where
             opts = defaultOptions { 
-                    fieldLabelModifier = \case
+                    Json.fieldLabelModifier = \case
                         "ski" -> "SKI"
                         f     -> f
                 }
@@ -151,6 +151,17 @@ instance ToJSON SlurmVersion
 instance ToJSON NumericASN
 instance ToJSON ValidationOutputFilters
 instance ToJSON LocallyAddedAssertions
+
+instance ToSchema Slurm
+instance ToSchema SlurmVersion
+instance ToSchema NumericASN
+instance ToSchema ValidationOutputFilters
+instance ToSchema LocallyAddedAssertions
+instance ToSchema PrefixAssertion
+instance ToSchema BgpsecAssertion
+instance ToSchema BgpsecFilter
+instance ToSchema PrefixFilter
+
 
 instance ToJSON PrefixAssertion where
     toJSON = genericToJSON defaultOptions { omitNothingFields = True }

@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE OverloadedLabels     #-}
@@ -18,6 +19,7 @@ import qualified Data.Text                   as Text
 import           Data.Text.Encoding          (encodeUtf8)
 
 import           Data.Aeson.Types
+import           Data.Proxy
 
 import           GHC.Generics                (Generic)
 import qualified Data.Vector                 as V
@@ -38,6 +40,7 @@ import           RPKI.Repository
 import           RPKI.Domain
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
+import           RPKI.Orphans.Swagger
 import           RPKI.Reporting
 
 import           RPKI.Resources.Types
@@ -54,6 +57,7 @@ data ValidationsDto a = ValidationsDto {
 
 data IssueDto = ErrorDto Text | WarningDto Text
     deriving stock (Eq, Show, Generic)
+    deriving anyclass (ToJSON, ToSchema)
 
 data FullVDto = FullVDto {
         issues  :: [IssueDto],
@@ -110,6 +114,7 @@ newtype JobsDto = JobsDto {
 data ManualCVS = ManualCVS
 
 newtype RawCVS = RawCVS { unRawCSV :: LBS.ByteString }
+    deriving stock (Eq, Show, Generic)
 
 instance Accept ManualCVS where
     contentType _ = "text" // "csv"
@@ -117,20 +122,27 @@ instance Accept ManualCVS where
 instance MimeRender ManualCVS RawCVS where
     mimeRender _ = unRawCSV    
 
+instance ToSchema RawCVS where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToJSON RObject
 instance ToJSON VrpDto     
 instance ToJSON AspaDto
--- instance ToSchema RObject
--- instance ToSchema VrpDto     
--- instance ToSchema AspaDto
+instance ToSchema RObject
+instance ToSchema VrpDto     
+instance ToSchema AspaDto
+instance ToSchema ProviderAsn
 
 instance ToJSON ProviderAsn where
     toJSON = genericToJSON $ defaultOptions { omitNothingFields = True } 
 
 instance ToJSON JobsDto     
+instance ToSchema JobsDto     
 
-instance ToJSON a =>  ToJSON (ValidationsDto a)
+instance ToJSON a => ToJSON (ValidationsDto a)
+instance ToSchema a => ToSchema (ValidationsDto a)
 
+instance ToSchema FullVDto
 instance ToJSON FullVDto where
     toJSON FullVDto {..} = object [         
             "url"       .= url,
@@ -138,6 +150,7 @@ instance ToJSON FullVDto where
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
+instance ToSchema MinimalVDto
 instance ToJSON MinimalVDto where
     toJSON (MinimalVDto FullVDto {..}) = object [         
             "url"       .= url,
@@ -159,12 +172,19 @@ instance ToJSON FetchStatus
 instance ToJSON RrdpRepository
 instance ToJSON PublicationPointDto
 
+instance ToSchema MetricsDto
+instance ToSchema FetchStatus where     
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema RrdpRepository
+instance ToSchema PublicationPointDto
+
 instance ToJSONKey (DtoScope s) where 
     toJSONKey = toJSONKeyText $ \(DtoScope (Scope s)) -> focusToText $ NonEmpty.head s    
 
 instance ToJSON (DtoScope s) where
     toJSON (DtoScope (Scope s)) = Array $ V.fromList $ map toJSON $ NonEmpty.toList s
 
+instance ToSchema (DtoScope 'Metric)
 
 toMinimalValidations :: ValidationsDto FullVDto -> ValidationsDto MinimalVDto
 toMinimalValidations = (& #validations %~ map MinimalVDto)

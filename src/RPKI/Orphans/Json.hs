@@ -7,11 +7,10 @@
 module RPKI.Orphans.Json where
 
 import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 
 import           Data.Text                   (Text)
-
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8)
 
@@ -115,7 +114,7 @@ instance ToJSON BS.ByteString where
 instance ToJSON BSS.ShortByteString where
     toJSON = toJSON . showHex . BSS.fromShort
 
-instance ToJSON BSL.ByteString where
+instance ToJSON LBS.ByteString where
     toJSON = toJSON . showHexL
 
 instance ToJSON a => ToJSON (IntervalSet a) where
@@ -292,8 +291,8 @@ shortBsJson = toJSON . showHex . BSS.fromShort
 showHex :: BS.ByteString -> Text
 showHex = decodeUtf8 . Hex.encode
 
-showHexL :: BSL.ByteString -> Text
-showHexL = decodeUtf8 . BSL.toStrict . HexLazy.encode
+showHexL :: LBS.ByteString -> Text
+showHexL = decodeUtf8 . LBS.toStrict . HexLazy.encode
 
 -- FromJSON
 instance FromJSON ASN
@@ -331,4 +330,3 @@ instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
-
