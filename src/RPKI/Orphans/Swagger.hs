@@ -63,8 +63,7 @@ instance ToSchema TimezoneOffset
 instance ToSchema ASN
 instance ToSchema IpPrefix
 instance ToSchema PrefixLength
-instance ToSchema AddrFamily where 
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema AddrFamily 
 instance ToSchema Ipv4Prefix where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema Ipv6Prefix where
