@@ -94,7 +94,9 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
     swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
         & info.title    .~ "RPKI Prover API"
         & info.version  .~ convert (showVersion Autogen.version)
-        & basePath      ?~ "/api"
+        & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
+                                "this UI is only good for documentation and examples." )
+        & basePath          ?~ "/api"
 
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
