@@ -29,6 +29,7 @@ Implemented features are
 - Basic UI for reporting metrics and found problems
 - Output of VRPs in CSV and JSON formats
 - Support of SLURM (RFC 8416)
+- Basic support of ASPA object validation and output.
 - Cache cleanup, scheduled revalidation, cache compaction, so it can run unlimited time without draining resources
 - Support for RTR protocol, both version 0 and 1
 - Static binaries for Linux
