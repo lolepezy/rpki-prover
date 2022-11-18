@@ -107,20 +107,16 @@ Main page http://localhost:9999 is the UI that reports some metrics about trust 
 
 # HTTP API <a name="http-api"></a>
 
-There are several API endpoints. Note that there is not much of design invested into the API, so more adjustments will come based on the feedback and feature requests.
+There are a bunch of API endpoints. The easiest way to find out what is available is to go to the `/swagger-ui` URL and explore the Swager UI. Some of the most useful end-points are
 
 - `/api/vrps.csv`  - CSV-formatted list of VRPs
 - `/api/vrps.json` - JSON-formatted list of VRPs
 - `/api/validation-result` - JSON-formatted latest validation results similar to what can be seen in the UI
 - `/api/app-metrics` - JSON-formatted latest metrics similar to what can be seen in the UI
 - `/api/lmdb-stat` - JSON-formatted statistics for LMDB cache. Normally it is not of a huge interest to anyone, mostly used for development and testing.
-- `/api/object` - JSON-formatted dump of the RPKI object. 
+- `/api/object` - JSON-formatted dump of the RPKI object(s). 
     - With the `hash` paramter the object will be picked by hash 
-    - With the `uri` paramter the object will be picked by its URL 
-    
-    For example 
-    - http://localhost:9999/api/object?uri=rsync://rpki.apnic.net/member_repository/A917D135/19712F8613DD11EB8FFBED74C4F9AE02/0u36vBm4dKB-OdauyKaLMLuB2lw.crl
-    - or http://localhost:9999/api/object?hash=a92126d3a58a0f6593702f36713521fcd581e0a9e38a146f7f762c7d7d48ed0a
+    - With the `uri` paramter the object will be picked by its URL  
 
 ## Prometheus metrics <a name="prometheus-metrics"></a>
 
