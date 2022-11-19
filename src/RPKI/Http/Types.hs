@@ -113,23 +113,25 @@ newtype JobsDto = JobsDto {
 
 data ManualCVS = ManualCVS
 
-newtype RawCVS = RawCVS { unRawCSV :: LBS.ByteString }
+newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
     deriving stock (Eq, Show, Generic)
 
 instance Accept ManualCVS where
     contentType _ = "text" // "csv"
 
-instance MimeRender ManualCVS RawCVS where
+instance MimeRender ManualCVS RawCSV where
     mimeRender _ = unRawCSV    
 
-instance ToSchema RawCVS where
+instance ToSchema RawCSV where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON RObject
 instance ToJSON VrpDto     
 instance ToJSON AspaDto
 instance ToSchema RObject
-instance ToSchema VrpDto     
+instance ToSchema VrpDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema AspaDto
 instance ToSchema ProviderAsn
 

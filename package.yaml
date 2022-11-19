@@ -63,6 +63,7 @@ dependencies:
 - http-types
 - hw-ip
 - interpolate
+- insert-ordered-containers
 - lens
 - lmdb-high-level
 - lifted-async

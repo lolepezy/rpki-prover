@@ -15,15 +15,9 @@ import           Control.Monad.Error.Class
 
 import           FileEmbedLzma
 
--- import           Servant hiding (URI)
 import           Servant.Server.Generic
-import           Servant.API.Generic
-
-import Data.Swagger hiding (prefix)
-import Servant
-import Servant.Swagger
-import Servant.Swagger.UI
--- import Servant.Swagger.UI.Core
+import           Servant
+import           Servant.Swagger.UI
 
 import qualified Data.ByteString.Builder          as BS
 
@@ -43,15 +37,12 @@ import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Http.Types
 import           RPKI.Http.UI
-import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storage hiding (get)
 import           RPKI.Store.Database
 import           RPKI.Resources.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
-
-import Data.Version
-import qualified Paths_rpki_prover as Autogen
 
 
 httpApi :: Storage s => AppContext s -> Application
@@ -90,14 +81,6 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         metrics <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics    
 
-    swaggerDoc :: Swagger
-    swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
-        & info.title    .~ "RPKI Prover API"
-        & info.version  .~ convert (showVersion Autogen.version)
-        & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
-                                "this UI is only good for documentation and examples." )
-        & basePath          ?~ "/api"
-
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
 getVRPValidated appContext = getVRPs appContext (readTVar . (^. #validatedVrps))
@@ -105,11 +88,11 @@ getVRPValidated appContext = getVRPs appContext (readTVar . (^. #validatedVrps))
 getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
 getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))         
 
-getVRPValidatedRaw :: Storage s => AppContext s -> IO RawCVS
+getVRPValidatedRaw :: Storage s => AppContext s -> IO RawCSV
 getVRPValidatedRaw appContext = 
     rawCSV <$> getVRPs appContext (readTVar . (^. #validatedVrps))    
 
-getVRPSlurmedRaw :: Storage s => AppContext s -> IO RawCVS
+getVRPSlurmedRaw :: Storage s => AppContext s -> IO RawCSV
 getVRPSlurmedRaw appContext =
     rawCSV <$> getVRPs appContext (readTVar . (^. #filteredVrps))
 
@@ -250,9 +233,9 @@ getRpkiObject AppContext {..} uri hash =
                 "Only 'uri' or 'hash' must be provided, not both." }
 
 
-rawCSV :: [VrpDto] -> RawCVS
+rawCSV :: [VrpDto] -> RawCSV
 rawCSV vrpDtos = 
-    RawCVS $ BS.toLazyByteString $ header <> body
+    RawCSV $ BS.toLazyByteString $ header <> body
   where
     header = str "ASN,IP Prefix,Max Length,Trust Anchor\n"    
     body = mconcat $ map toBS vrpDtos
