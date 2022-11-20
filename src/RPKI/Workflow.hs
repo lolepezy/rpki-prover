@@ -236,8 +236,11 @@ runWorkflow appContext@AppContext {..} tals = do
                         logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
                         listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
                 )
-                (\_ elapsed -> do                     
-                    logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
+                (\_ elapsed -> 
+                    case jobRun of 
+                        FirstRun -> pure ()  
+                        RanBefore ->                    
+                            logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
 
         executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
         executeOrDie f onRight =
