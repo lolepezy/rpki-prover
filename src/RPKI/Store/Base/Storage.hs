@@ -25,12 +25,14 @@ class WithTx s => Storage s where
     foldS :: Tx s m -> SMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     put :: Tx s 'RW -> SMapImpl s name -> SKey -> SValue -> IO ()
     delete :: Tx s 'RW -> SMapImpl s name -> SKey -> IO ()
+    clear :: Tx s 'RW -> SMapImpl s name -> IO ()
 
     putMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
     foldMuForKey :: Tx s m -> SMultiMapImpl s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     foldMu :: Tx s m -> SMultiMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     deleteMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> SValue -> IO ()
     deleteAllMu :: Tx s 'RW -> SMultiMapImpl s name -> SKey -> IO ()    
+    clearMu :: Tx s 'RW -> SMultiMapImpl s name -> IO ()
 
 
 class Storage s => WithStorage s ws where

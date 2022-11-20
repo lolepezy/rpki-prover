@@ -70,6 +70,4 @@ stats tx (SMap _ s) = S.foldS tx s f (SStats 0 0 0 0)
 
 erase :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMap name s k v -> IO ()
-erase tx (SMap _ s) = S.foldS tx s f ()
-  where
-    f _ k _ = S.delete tx s (storableKey k)
+erase tx (SMap _ s) = S.clear tx s

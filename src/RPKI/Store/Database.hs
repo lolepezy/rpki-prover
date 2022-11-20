@@ -766,13 +766,13 @@ totalStats DBStats {..} =
 emptyDBMaps :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> m ()
 emptyDBMaps tx DB {..} = liftIO $ do     
+    M.erase tx $ tas taStore
     emptyRepositoryStore repositoryStore    
     emptyObjectStore objectStore    
     M.erase tx $ results validationsStore
     M.erase tx $ vrps vrpStore
     M.erase tx $ aspas aspaStore
     M.erase tx $ versions versionStore
-    M.erase tx $ tas taStore
     M.erase tx $ metrics metricStore
     M.erase tx $ slurms slurmStore
     M.erase tx $ jobs jobStore    

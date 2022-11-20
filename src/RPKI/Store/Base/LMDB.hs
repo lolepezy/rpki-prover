@@ -105,6 +105,9 @@ instance Storage LmdbStorage where
     delete (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) = 
         LMap.delete' tx db ks
 
+    clear (LmdbTx tx) LmdbStore {..} = 
+        LMap.clear tx db
+
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
 
@@ -122,6 +125,9 @@ instance Storage LmdbStorage where
             LMMap.lookupFirstValue c ks >>= \case
                 Nothing -> pure ()
                 Just _  -> LMMap.deleteValues c
+
+    clearMu (LmdbTx tx) LmdbMultiStore {..} = 
+        LMMap.clear tx db                
 
     foldMuForKey (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f a0 =
         withMultiCursor tx db $ \c -> do

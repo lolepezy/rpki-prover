@@ -60,6 +60,4 @@ stats tx (SMultiMap _ s) = S.foldMu tx s f (SStats 0 0 0 0)
 
 erase :: (Serialise k, Serialise v) =>
         Tx s 'RW -> SMultiMap name s k v -> IO ()
-erase tx (SMultiMap _ s) = S.foldMu tx s f ()
-  where
-    f _ k _ = S.deleteAllMu tx s (storableKey k)
+erase tx (SMultiMap _ s) = S.clearMu tx s

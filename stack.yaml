@@ -44,7 +44,7 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps: 
   - git: https://github.com/lolepezy/lmdb-high-level.git
-    commit: 98630fb39ac34fe209ef03a3d6eb21c9a7a551cb
+    commit: 3aafa588330899d3e936caf04b3b95d671b57639
   - git: https://github.com/lolepezy/hs-certificate.git          
     commit: b416b13123eb7bac10a1e5b2c2925fb4d72c2e19    
     subdirs:
