@@ -43,11 +43,8 @@ createDatabase e logger checkAction = do
     metadataStore    <- createMetadataStore
     let db = DB {..}
     case checkAction of     
-        CheckVersion -> do  
-            (_, ms) <- timedMS $ verifyDBVersion db
-            logDebug logger  [i|Checking cache took #{ms}ms.|]
-        DontCheckVersion -> 
-            pure ()
+        CheckVersion     -> verifyDBVersion db
+        DontCheckVersion -> pure ()
     pure db 
   where
     lmdb = LmdbStorage e        
@@ -57,7 +54,9 @@ createDatabase e logger checkAction = do
             dbVersion <- getDatabaseVersion tx db            
             case dbVersion of 
                 Nothing -> do
-                    logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}.|]    
+                    logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}, dropping the cache.|]
+                    (_, ms) <- timedMS $ emptyDBMaps tx db
+                    logDebug logger  [i|Erasing cache took #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db
                 Just version -> 
                     when (version /= currentDatabaseVersion) $ do
@@ -67,7 +66,8 @@ createDatabase e logger checkAction = do
                         -- This is obviously far from optimal, so it would make
                         -- sense to automate that part.
                         logInfo logger [i|Cache version is #{version} and current version is #{currentDatabaseVersion}, dropping the cache.|]    
-                        emptyDBMaps tx db                           
+                        (_, ms) <- timedMS $ emptyDBMaps tx db
+                        logDebug logger  [i|Erasing cache took #{ms}ms.|]
                         saveCurrentDatabaseVersion tx db
                      
 
