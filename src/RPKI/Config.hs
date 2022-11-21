@@ -19,6 +19,7 @@ import Data.Hourglass
 import Data.Maybe (fromMaybe)
 import Data.Monoid
 
+import RPKI.Domain
 import RPKI.Logging
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
@@ -58,10 +59,11 @@ data Config = Config {
     deriving anyclass (Serialise)
 
 data RsyncConf = RsyncConf {
-        rsyncClientPath :: Maybe FilePath,
-        rsyncRoot       :: FilePath,
-        rsyncTimeout    :: Seconds,
-        enabled         :: Bool
+        rsyncClientPath   :: Maybe FilePath,
+        rsyncRoot         :: FilePath,
+        rsyncTimeout      :: Seconds,
+        enabled           :: Bool,
+        rsyncPrefetchUrls :: [RsyncURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
@@ -167,7 +169,8 @@ defaultConfig = Config {
         rsyncClientPath = Nothing,
         rsyncRoot    = "",
         rsyncTimeout = 7 * 60,
-        enabled = True
+        enabled = True,
+        rsyncPrefetchUrls = []
     },
     rrdpConf = RrdpConf {
         tmpRoot = "",

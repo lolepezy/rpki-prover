@@ -186,8 +186,10 @@ newRepositoryProcessing Config {..} = RepositoryProcessing <$>
         newTVar mempty <*> 
         newTVar mempty <*>          
         newTVar mempty <*>          
-        newTVar newPPs <*>
+        newTVar pps' <*>
         createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)
+  where
+    pps' = foldr (\u pps -> mergePP (rsyncPP u) pps) newPPs (rsyncConf ^. #rsyncPrefetchUrls)
 
 
 newRepositoryProcessingIO :: Config -> IO RepositoryProcessing

@@ -102,6 +102,9 @@ instance ToJSON KI where
 instance ToJSON Domain.URI where
     toJSON (Domain.URI u) = toJSON u
 
+instance ToJSON Domain.RsyncURL where
+    toJSON = toJSON . Domain.getURL
+
 instance ToJSON Domain.Serial where
     toJSON (Serial s) = toJSON s
 
