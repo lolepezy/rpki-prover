@@ -31,7 +31,6 @@ import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.Common
-import           RPKI.AppState
 
 {- 
     Given an object
