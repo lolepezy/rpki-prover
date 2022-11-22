@@ -110,7 +110,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                     & at 404 ?~ "SLURM is not set using --local-exceptions")),
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "Returns LMDB cache statistics"),
-            ("/jobs", mempty & get ?~ jsonOn200 "Returns list of scheduled jobs"),
+            ("/jobs", mempty & get ?~ jsonOn200 "Returns list of latest job runs"),
             ("/config", mempty & get ?~ jsonOn200 "Returns config that is used for the process")
         ] 
   where                

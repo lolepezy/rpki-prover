@@ -238,7 +238,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 )
                 (\_ elapsed -> 
                     case jobRun of 
-                        FirstRun -> pure ()  
+                        FirstRun  -> pure ()  
                         RanBefore ->                    
                             logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
 
