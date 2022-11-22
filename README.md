@@ -108,16 +108,7 @@ Main page http://localhost:9999 is the UI that reports some metrics about trust 
 
 # HTTP API <a name="http-api"></a>
 
-There are a bunch of API endpoints. The easiest way to find out what is available is to go to the `/swagger-ui` URL and explore the Swager UI. Some of the most useful end-points are
-
-- `/api/vrps.csv`  - CSV-formatted list of VRPs
-- `/api/vrps.json` - JSON-formatted list of VRPs
-- `/api/validation-result` - JSON-formatted latest validation results similar to what can be seen in the UI
-- `/api/app-metrics` - JSON-formatted latest metrics similar to what can be seen in the UI
-- `/api/lmdb-stat` - JSON-formatted statistics for LMDB cache. Normally it is not of a huge interest to anyone, mostly used for development and testing.
-- `/api/object` - JSON-formatted dump of the RPKI object(s). 
-    - With the `hash` paramter the object will be picked by hash 
-    - With the `uri` paramter the object will be picked by its URL  
+There are a bunch of API endpoints. The easiest way to find out what is available is to go to the `/swagger-ui` URL and explore the Swager UI. 
 
 ## Prometheus metrics <a name="prometheus-metrics"></a>
 
