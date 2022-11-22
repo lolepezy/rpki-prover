@@ -83,8 +83,10 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
     & basePath          ?~ "/api"
     & paths .~ IOMap.fromList 
         [ 
-            ("/vrps.csv", mempty & get ?~ csvOn200 "CSV-formatted list of VRPs without SLURM filtering applied"),
-            ("/vrps", mempty & get ?~ jsonOn200 "JSON-formatted list of VRPs without SLURM filtering applied"),
+            ("/vrps.csv", mempty & get ?~ csvOn200 
+                "CSV-formatted list of VRPs from the latest validation run without SLURM filtering applied"),
+            ("/vrps", mempty & get ?~ jsonOn200 
+                "List of VRPs from the latest validation run without SLURM filtering applied"),
             
             ("/vrps-filtered.csv", mempty & get ?~ csvOn200 
                 "CSV-formatted list of VRPs with SLURM filtering applied to it"),
@@ -94,24 +96,24 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/aspa", mempty & get ?~ jsonOn200 "List of all ASPA objects"),
 
             ("/validations", mempty & get ?~ jsonOn200 
-                "Returns validation result for the last validation run"),
+                "Validation results for the latest validation run"),
 
             ("/validations-full", mempty & get ?~ jsonOn200 
-                [i|Returns validation result for the last validation run, but every 
+                [i|Returns validation results for the last validation run, but every 
                 object represented with full URL path in the RPKI tree, starting from TA.|]),
 
             ("/metrics", mempty & get ?~ jsonOn200 
-                "Returns metrics for the latest validation run (object counts, repository statuses, etc.)"),
+                "Metrics for the latest validation run (object counts, repository statuses, etc.)"),
 
-            ("/repositories", mempty & get ?~ jsonOn200 "Returns statuses of the repositories"),
+            ("/repositories", mempty & get ?~ jsonOn200 "Statuses of the repositories"),
         
             ("/slurm", mempty & get ?~ (jsonOn200 
                         "Returns SLURM (RFC 8416) that is set using --local-exceptions option"
                     & at 404 ?~ "SLURM is not set using --local-exceptions")),
 
-            ("/lmdb-stats", mempty & get ?~ jsonOn200 "Returns LMDB cache statistics"),
-            ("/jobs", mempty & get ?~ jsonOn200 "Returns list of latest job runs"),
-            ("/config", mempty & get ?~ jsonOn200 "Returns config that is used for the process")
+            ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
+            ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
+            ("/config", mempty & get ?~ jsonOn200 "Configuration of the instance of RPKI prover")
         ] 
   where                
     jsonOn200 txt = mempty
