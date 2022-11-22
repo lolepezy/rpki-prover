@@ -88,7 +88,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             
             ("/vrps-filtered.csv", mempty & get ?~ csvOn200 
                 "CSV-formatted list of VRPs with SLURM filtering applied to it"),
-            ("/vrps-filtered.csv", mempty & get ?~ jsonOn200 
+            ("/vrps-filtered", mempty & get ?~ jsonOn200 
                 "List of VRPs with SLURM filtering applied to it"),
 
             ("/aspa", mempty & get ?~ jsonOn200 "List of all ASPA objects"),
