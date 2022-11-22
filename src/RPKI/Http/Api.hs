@@ -70,7 +70,9 @@ data HttpApi route = HttpApi {
     }
     deriving (Generic)
 
--- It is located here to have documentation for the API in the same module.
+
+-- It is located in this module to have API documentation 
+-- in the same place as the definition.
 -- 
 swaggerDoc :: Swagger
 swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
@@ -81,8 +83,8 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
     & basePath          ?~ "/api"
     & paths .~ IOMap.fromList 
         [ 
-            ("/vrps.csv", mempty & get ?~ csvOn200 "CSV-formatted list of VRPs"),
-            ("/vrps", mempty & get ?~ jsonOn200 "JSON-formatted list of VRPs"),
+            ("/vrps.csv", mempty & get ?~ csvOn200 "CSV-formatted list of VRPs with filtering applied"),
+            ("/vrps", mempty & get ?~ jsonOn200 "JSON-formatted list of VRPs with filtering applied"),
             
             ("/vrps-filtered.csv", mempty & get ?~ csvOn200 
                 "CSV-formatted list of VRPs with SLURM filtering applied to it"),
@@ -103,14 +105,15 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
 
             ("/repositories", mempty & get ?~ jsonOn200 "Returns statuses of the repositories"),
         
-            ("/slurm", mempty & get ?~ jsonOn200 
-                "Returns SLURM (RFC 8416) that is set using --local-exceptions option"),
+            ("/slurm", mempty & get ?~ (jsonOn200 
+                        "Returns SLURM (RFC 8416) that is set using --local-exceptions option"
+                    & at 404 ?~ "SLURM is not set using --local-exceptions")),
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "Returns LMDB cache statistics"),
             ("/jobs", mempty & get ?~ jsonOn200 "Returns list of scheduled jobs"),
             ("/config", mempty & get ?~ jsonOn200 "Returns config that is used for the process")
         ] 
-    where                
+  where                
     jsonOn200 txt = mempty
                     & produces ?~ MimeList ["application/json"]
                     & at 200 ?~ txt

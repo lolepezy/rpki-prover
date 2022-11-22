@@ -67,7 +67,7 @@ import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Rsync
 import           RPKI.TAL
-import           RPKI.Util               (convert, fmtEx)
+import           RPKI.Util               (convert, fmtEx, parseRsyncURL)
 import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
@@ -221,6 +221,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 []         -> appState1
                 slurmFiles -> appState1 & #readSlurm ?~ readSlurms slurmFiles
 
+    rsyncPrefetchUrls <- rsyncPrefetches cliOptions
+
     let config = defaults               
                 & #programBinaryPath .~ programPath
                 & #rootDirectory .~ root                
@@ -231,6 +233,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #rsyncConf . #rsyncRoot .~ rsyncd
                 & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
                 & #rsyncConf . #enabled .~ not noRsync
+                & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
                 & #rrdpConf . #enabled .~ not noRrdp
@@ -256,7 +259,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet #metricsPrefix (convert <$> metricsPrefix)
                 & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
                 & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory                
 
     let appContext = AppContext {..}
     logInfo logger [i|Created application context with configuration: 
@@ -380,6 +383,19 @@ getRootDirectory CLIOptions{..} =
         [] -> Nothing
         s  -> Just $ Prelude.last s
         
+-- Set rsync prefetch URLs
+rsyncPrefetches :: CLIOptions Unwrapped -> ValidatorT IO [RsyncURL]
+rsyncPrefetches CLIOptions {..} = do 
+    let urlsToParse = 
+            case rsyncPrefetchUrl of 
+                [] -> defaulPrefetchURLs
+                _  -> rsyncPrefetchUrl
+        
+    forM urlsToParse $ \u -> 
+        case parseRsyncURL (convert u) of
+            Left e         -> appError $ UnspecifiedE [i|Rsync URL #{u} is invalid|] (convert $ show e)
+            Right rsyncURL -> pure rsyncURL
+    
 
 -- This is for worker processes.
 executeWorker :: WorkerInput 
@@ -582,6 +598,12 @@ data CLIOptions wrapped = CLIOptions {
 
     noRrdp :: wrapped ::: Bool <?> "Do not fetch RRDP repositories (default is false)",
     noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)",
+
+    rsyncPrefetchUrl :: wrapped ::: [String] <?>
+        ("Rsync repositories that will be fetched instead of their children (defaults are " +++ 
+         "'rsync://rpki.afrinic.net/repository/member_repository' and" +++ 
+         "'rsync://rpki.apnic.net/member_repository'). " +++
+         "It is an optimisation and in absolute majority the default is working fine."),    
 
     metricsPrefix :: wrapped ::: Maybe String <?> 
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
