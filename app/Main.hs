@@ -395,11 +395,6 @@ rsyncPrefetches CLIOptions {..} = do
         case parseRsyncURL (convert u) of
             Left e         -> appError $ UnspecifiedE [i|Rsync URL #{u} is invalid|] (convert $ show e)
             Right rsyncURL -> pure rsyncURL
-  where
-    defaulPrefetchURLs = [
-            "rsync://rpki.afrinic.net/repository/member_repository",
-            "rsync://rpki.apnic.net/member_repository"
-        ]
     
 
 -- This is for worker processes.

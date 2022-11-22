@@ -208,9 +208,9 @@ runWorkflow appContext@AppContext {..} tals = do
             executeOrDie
                 (deleteOldVersions database' $ versionIsOld now (config ^. #oldVersionsLifetime))
                 (\deleted elapsed -> do 
-                    when (deleted > 0) $ 
-                        atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)
-                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])                    
+                    when (deleted > 0) $ do
+                        atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)                        
+                        logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
         compact sharedBetweenJobs worldVersion _ = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:

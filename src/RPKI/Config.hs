@@ -218,3 +218,11 @@ defaultRtrConfig = RtrConfig {
         rtrPort    = 8283
     }
     
+defaulPrefetchURLs :: [String]
+defaulPrefetchURLs = [
+        "rsync://rpki.afrinic.net/repository/member_repository",
+        "rsync://rpki.apnic.net/member_repository",
+        "rsync://rpki-repo.registro.br/repo/",
+        "rsync://repo-rpki.idnic.net/repo/",
+        "rsync://0.sb/repo/"
+    ]    
