@@ -45,9 +45,7 @@ import           RPKI.Domain
 import           RPKI.Fetch
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
@@ -150,7 +148,7 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                                     
     database' <- readTVarIO database 
 
-    repositoryProcessing <- newRepositoryProcessingIO config
+    repositoryProcessing <- newRepositoryProcessingIO config    
 
     validateThem database' repositoryProcessing 
         `finally` 
@@ -162,7 +160,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         -- set initial publication point state
         mapException (AppException . storageError) $ do             
             pps <- roTx database' $ \tx -> getPublicationPoints tx database'
-            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps
+            let pps' = addRsyncPrefetchUrls config pps
+            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps'
      
         rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $ validateTA appContext tal worldVersion repositoryProcessing

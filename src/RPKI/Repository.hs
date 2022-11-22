@@ -186,11 +186,12 @@ newRepositoryProcessing Config {..} = RepositoryProcessing <$>
         newTVar mempty <*> 
         newTVar mempty <*>          
         newTVar mempty <*>          
-        newTVar pps' <*>
-        createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)
-  where
-    pps' = foldr (\u pps -> mergePP (rsyncPP u) pps) newPPs (rsyncConf ^. #rsyncPrefetchUrls)
+        newTVar newPPs <*>
+        createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
 
+addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
+addRsyncPrefetchUrls Config {..} pps =     
+    foldr (\u pps' -> mergePP (rsyncPP u) pps') pps (rsyncConf ^. #rsyncPrefetchUrls)
 
 newRepositoryProcessingIO :: Config -> IO RepositoryProcessing
 newRepositoryProcessingIO = atomically . newRepositoryProcessing
