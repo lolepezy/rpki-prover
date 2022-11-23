@@ -11,8 +11,10 @@ module RPKI.Resources.Types where
 
 import Prelude hiding (subtract)
 
-import           Codec.Serialise
+import           Data.Store
 import           Control.DeepSeq
+
+import           Data.Store
 
 import qualified Data.ByteString                       as BS
 
@@ -27,36 +29,38 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.SafeEnum
 import           HaskellWorks.Data.Network.Ip.Validity
 
+import           RPKI.Orphans.Store
+
 
 data AddrFamily = Ipv4F | Ipv6F
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype ASN = ASN Word32
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (NFData, Serialise)  
+    deriving anyclass (NFData, Store)  
     deriving newtype Enum
 
 newtype PrefixLength = PrefixLength Word8
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data AsResource = AS ASN
                 | ASRange ASN ASN
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 
 class WithSetOps p where
@@ -77,35 +81,35 @@ data ValidationRFC = Strict_ | Reconsidered_
 
 data RSet r = RS r | Inherit
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data IpResourceSet = IpResourceSet
         (RSet (IntervalSet Ipv4Prefix))
         (RSet (IntervalSet Ipv6Prefix))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype IpResources = IpResources IpResourceSet
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype AsResources = AsResources (RSet (IntervalSet AsResource))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data AllResources = AllResources 
         (RSet (IntervalSet Ipv4Prefix))
         (RSet (IntervalSet Ipv6Prefix))
         (RSet (IntervalSet AsResource))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data PrefixesAndAsns = PrefixesAndAsns 
         (IntervalSet Ipv4Prefix)
         (IntervalSet Ipv6Prefix)
         (IntervalSet AsResource)
     deriving stock (Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype Nested a = Nested a
     deriving stock (Show, Eq, Ord, Generic) 
@@ -115,7 +119,7 @@ newtype Overclaiming a = Overclaiming a
 
 newtype VerifiedRS a = VerifiedRS a
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
     type Point p :: Type
@@ -124,18 +128,8 @@ class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
 -- | Representation of the resource set
 newtype IntervalSet a = IntervalSet (Vector a) 
     deriving stock (Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
-
--- Serialise instances
-instance Serialise (V4.IpBlock Canonical)
-instance Serialise (V6.IpBlock Canonical)
-instance Serialise (Range V4.IpAddress)
-instance Serialise (Range V6.IpAddress)
-instance Serialise V4.IpAddress
-instance Serialise V6.IpAddress
-instance Serialise V4.IpNetMask
-instance Serialise V6.IpNetMask
 
 instance Show PrefixesAndAsns where
     show (PrefixesAndAsns v4 v6 asn) = 
@@ -145,3 +139,12 @@ instance Show PrefixesAndAsns where
 
 instance Show a => Show (IntervalSet a) where
     show (IntervalSet is) = show is        
+
+instance Store (V4.IpBlock Canonical)
+instance Store (V6.IpBlock Canonical)
+instance Store (Range V4.IpAddress)
+instance Store (Range V6.IpAddress)
+instance Store V4.IpAddress
+instance Store V6.IpAddress
+instance Store V4.IpNetMask
+instance Store V6.IpNetMask    

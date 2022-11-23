@@ -10,7 +10,7 @@
 
 module RPKI.Worker where
 
-import           Codec.Serialise
+import           Data.Store
 
 import           Control.Exception.Lifted
 import           Control.Monad (void)
@@ -24,6 +24,7 @@ import           Control.Lens ((^.))
 import           Conduit
 import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as BS
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
 import           Data.Conduit.Process.Typed
@@ -65,7 +66,7 @@ Some of the machinery is also in Main.
     
 newtype WorkerId = WorkerId Text
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 instance Show WorkerId where
     show (WorkerId w) = show w
@@ -88,11 +89,11 @@ data WorkerParams = RrdpFetchParams {
                 tals         :: [TAL]
             } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype Timebox = Timebox Seconds
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 data WorkerInput = WorkerInput {
         params          :: WorkerParams,
@@ -101,33 +102,33 @@ data WorkerInput = WorkerInput {
         workerTimeout    :: Timebox
     } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError RrdpRepository, ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype RsyncFetchResult = RsyncFetchResult 
                             (Either AppError RsyncRepository, ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype CompactionResult = CompactionResult ()                             
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 
 -- Entry point for a worker. It is supposed to run withing a worker process 
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (WorkerInput -> (forall a . Serialise a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
+            -> (WorkerInput -> (forall a . Store a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
 executeWork input actualWork = do 
     exitCode <- newTVarIO Nothing
@@ -164,10 +165,10 @@ executeWork input actualWork = do
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
-readWorkerInput = liftIO $ deserialise <$> LBS.hGetContents stdin        
+readWorkerInput = liftIO $ decodeEx <$> BS.hGetContents stdin        
 
-writeWorkerOutput :: Serialise a => a -> IO ()
-writeWorkerOutput = LBS.hPut stdout . serialise
+writeWorkerOutput :: Store a => a -> IO ()
+writeWorkerOutput = BS.hPut stdout . encode
 
 rtsArguments :: [String] -> [String]
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
@@ -192,7 +193,7 @@ exitKillByTypedProcess = ExitFailure (-2)
 worderIdS :: WorkerId -> String
 worderIdS (WorkerId w) = unpack w
 
-runWorker :: (Serialise r, Show r) => 
+runWorker :: (Store r, Show r) => 
             AppLogger 
             -> Config            
             -> WorkerId
@@ -204,10 +205,10 @@ runWorker logger config workerId params timeout extraCli = do
     thisProcessId <- liftIO getProcessID
 
     let binaryToRun = config ^. #programBinaryPath    
-    let workerStdin = serialise $ WorkerInput params config thisProcessId timeout
+    let workerStdin = encode $ WorkerInput params config thisProcessId timeout
 
     let worker = 
-            setStdin (byteStringInput workerStdin) $             
+            setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
             setStderr createSource $
             setStdout byteStringOutput $
                 proc binaryToRun $ [ "--worker" ] <> extraCli
@@ -235,7 +236,7 @@ runWorker logger config workerId params timeout extraCli = do
 
         case exitCode of  
             ExitSuccess -> 
-                case deserialiseOrFail workerStdout of 
+                case decode $ LBS.toStrict workerStdout of 
                     Left e -> 
                         complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
                     Right r -> 

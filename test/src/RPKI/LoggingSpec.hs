@@ -4,7 +4,7 @@
 
 module RPKI.LoggingSpec where
 
-import Codec.Serialise
+import Data.Store
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS

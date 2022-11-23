@@ -10,7 +10,8 @@
 
 module RPKI.Reporting where
 
-import           Codec.Serialise
+import           Data.Store
+import           Data.Store
     
 import           Control.Exception.Lifted
 import           Control.Lens                (Lens', (%~), (&))
@@ -48,7 +49,7 @@ import           RPKI.Time
 
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         UnknownObjectAsTACert |
@@ -111,7 +112,7 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     
 data RrdpError = BrokenXml Text | 
                 BrokenSerial Text |
@@ -154,7 +155,7 @@ data RrdpError = BrokenXml Text |
                 RrdpDownloadTimeout Int64 | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
@@ -162,32 +163,32 @@ data RsyncError = RsyncProcessError Int Text |
                     RsyncDownloadTimeout Int64 | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data StorageError = StorageError Text |
                     DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype TALError = TALError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype InitError = InitError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data InternalError = WorkerTimeout Text 
                    | WorkerOutOfMemory Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data SlurmError = SlurmFileError Text Text |
                   SlurmParseError Text Text |
                   SlurmValidationError Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 
@@ -200,15 +201,15 @@ data AppError = ParseE (ParseError Text) |
                 InternalE InternalError |
                 UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype VWarning = VWarning AppError
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data VIssue = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
@@ -217,7 +218,7 @@ instance Exception AppException
 
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving newtype Monoid
 
 instance Semigroup Validations where
@@ -230,15 +231,15 @@ data Focus = TAFocus Text
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass (Store)    
 
 newtype Scope t = Scope (NonEmpty Focus)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass (Store)    
 
 type VScope      = Scope 'Validation    
 type MetricScope = Scope 'Metric
@@ -248,7 +249,7 @@ data Scopes = Scopes {
         metricScope     :: MetricScope
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 newScope :: Text -> Scope c
 newScope = newScope' TextFocus
@@ -316,7 +317,7 @@ class Monoid metric => MetricC metric where
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise   
+    deriving anyclass (Store)   
     deriving newtype (Num)
     deriving Semigroup via Sum Count
     deriving Monoid via Sum Count
@@ -326,7 +327,7 @@ instance Show Count where
 
 newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass (Store)    
     deriving newtype (Num)
     deriving Semigroup via Sum TimeMs
     deriving Monoid via Sum TimeMs
@@ -336,7 +337,7 @@ instance Show TimeMs where
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass (Store)    
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200
@@ -346,7 +347,7 @@ instance Semigroup HttpStatus where
 
 data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise        
+    deriving anyclass (Store)        
 
 instance Monoid RrdpSource where
     mempty = RrdpNoUpdate
@@ -359,7 +360,7 @@ instance Semigroup RrdpSource where
 
 data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise        
+    deriving anyclass (Store)        
 
 instance Monoid FetchFreshness where
     mempty = UpToDate
@@ -378,7 +379,7 @@ data RrdpMetric = RrdpMetric {
         fetchFreshness  :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving Semigroup via GenericSemigroup RrdpMetric   
     deriving Monoid    via GenericMonoid RrdpMetric
 
@@ -388,7 +389,7 @@ data RsyncMetric = RsyncMetric {
         fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving Semigroup via GenericSemigroup RsyncMetric   
     deriving Monoid    via GenericMonoid RsyncMetric
 
@@ -404,7 +405,7 @@ data ValidationMetric = ValidationMetric {
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving Semigroup via GenericSemigroup ValidationMetric   
     deriving Monoid    via GenericMonoid ValidationMetric
 
@@ -420,7 +421,7 @@ instance MetricC ValidationMetric where
 
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass (Store)    
     deriving newtype Monoid    
     deriving newtype Semigroup
 
@@ -429,7 +430,7 @@ data VrpCounts = VrpCounts {
         perTaUnique :: MonoidalMap TaName Count
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
@@ -440,7 +441,7 @@ data RawMetric = RawMetric {
         vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving Semigroup via GenericSemigroup RawMetric   
     deriving Monoid    via GenericMonoid RawMetric
 
@@ -449,7 +450,7 @@ data ValidationState = ValidationState {
         topDownMetric :: RawMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 

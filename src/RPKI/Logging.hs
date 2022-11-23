@@ -7,7 +7,7 @@
 
 module RPKI.Logging where
 
-import Codec.Serialise
+import Data.Store
 
 import           Conduit
 import           Control.Exception
@@ -41,7 +41,7 @@ import RPKI.Parallel
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
    
 instance Show LogLevel where
     show = \case 
@@ -83,7 +83,7 @@ data LogMessage = LogMessage {
         timestamp :: Instant
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 data QElem = BinQE BS.ByteString | MsgQE LogMessage
     deriving stock (Show, Eq, Ord, Generic)
@@ -191,8 +191,8 @@ gatherMsgs accum bs =
 
 msgToBs :: LogMessage -> BS.ByteString
 msgToBs msg = let 
-    s = serialise msg
-    EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ LBS.toStrict s
+    s = encode msg
+    EncodedBase64 bs = encodeBase64 $ DecodedBase64 s
     in bs
 
 bsToMsg :: BS.ByteString -> Either Text LogMessage
@@ -200,5 +200,5 @@ bsToMsg bs =
     case decodeBase64 (EncodedBase64 bs) ("Broken base64 input" :: Text) of 
         Left e -> Left $ fmtGen e
         Right (DecodedBase64 decoded) -> 
-            first fmtGen $ deserialiseOrFail $ LBS.fromStrict decoded    
+            first fmtGen $ decode decoded    
 

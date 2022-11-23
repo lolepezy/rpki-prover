@@ -5,7 +5,7 @@
 
 module RPKI.Store.Sequence where
 
-import           Codec.Serialise
+import           Data.Store
 import           Data.Text               (Text)
 import           GHC.Generics
 
@@ -17,7 +17,7 @@ import qualified RPKI.Store.Base.Map     as M
 import           RPKI.Store.Base.Storage
 
 newtype SequenceValue = SequenceValue Int64
-    deriving (Show, Eq, Generic, Serialise)
+    deriving (Show, Eq, Generic, Store)
 
 type SequenceMap s = SMap "sequences" s Text SequenceValue
 

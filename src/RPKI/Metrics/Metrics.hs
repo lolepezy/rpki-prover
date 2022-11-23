@@ -7,7 +7,8 @@
 
 module RPKI.Metrics.Metrics where
 
-import           Codec.Serialise
+import           Data.Store
+import           Data.Store
 import           Control.Lens
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           GHC.Generics
@@ -22,7 +23,7 @@ data GroupedValidationMetric a = GroupedValidationMetric {
         total        :: a
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass (Store)    
 
 groupedValidationMetric :: RawMetric -> GroupedValidationMetric ValidationMetric
 groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}

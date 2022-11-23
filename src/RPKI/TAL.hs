@@ -13,7 +13,7 @@ import Data.Bifunctor (first, bimap)
 import           Control.Lens                     ((^.))
 import           Control.Monad
 
-import           Codec.Serialise
+import           Data.Store
 
 import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty(..))
@@ -51,7 +51,7 @@ data TAL = PropertiesTAL {
         taName               :: TaName
     } 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 talCertLocations :: TAL -> Locations
 talCertLocations PropertiesTAL {..} = certificateLocation

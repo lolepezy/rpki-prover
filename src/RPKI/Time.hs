@@ -3,20 +3,22 @@
 
 module RPKI.Time where
 
+import Data.Store
+
 import Data.Int
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
 
-import           RPKI.Orphans.Serialise
+import           RPKI.Orphans.Store
 
 import GHC.Generics (Generic)
-import Codec.Serialise (Serialise)
+import Data.Store
 
 
 newtype Instant = Instant DateTime
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass (Store)
 
 instance Show Instant where
     show (Instant d) = timePrint ISO8601_DateAndTime d

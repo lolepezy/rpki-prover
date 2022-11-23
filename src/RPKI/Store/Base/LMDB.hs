@@ -10,7 +10,7 @@
 
 module RPKI.Store.Base.LMDB where
 
-import Codec.Serialise
+import Data.Store
 
 import Control.Monad (forM, forever)
 import Control.Concurrent.STM
@@ -199,7 +199,7 @@ data CopyStat = CopyStat {
         maxKVPairSize :: Int
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 
 -- | Copy all databases from the from LMDB environment to the other

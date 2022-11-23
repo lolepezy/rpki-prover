@@ -8,7 +8,8 @@
 
 module RPKI.Store.Types where
 
-import           Codec.Serialise
+import           Data.Store
+import           Data.Store
 import           Data.Int
 import qualified Data.ByteString.Short    as BSS
 
@@ -28,34 +29,34 @@ data StorableTA = StorableTA {
     taCert              :: CerObject,
     fetchStatus         :: FetchStatus,
     initialRepositories :: PublicationPointAccess
-} deriving (Show, Eq, Generic, Serialise)
+} deriving (Show, Eq, Generic, Store)
 
 data ROMeta = ROMeta {
         insertedBy :: WorldVersion,
         validatedBy :: Maybe WorldVersion
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 data MftTimingMark = MftTimingMark Instant Instant 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)        
+    deriving anyclass (Store)        
 
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,

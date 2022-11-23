@@ -4,7 +4,7 @@
 
 module RPKI.AppTypes where
     
-import           Codec.Serialise
+import           Data.Store
 import           Data.Int
 import           Data.Text (Text)
 import           GHC.Generics
@@ -13,10 +13,10 @@ import           GHC.Generics
 -- clock timestamp in nanoseconds.
 newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)
 
 -- Keep it just text for now since we don't
 -- know what may be needed there in the future.
 data VersionState = VersionState Text
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (Store)

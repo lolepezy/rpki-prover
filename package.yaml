@@ -92,6 +92,7 @@ dependencies:
 - split
 - stm
 - streaming
+- store
 - strict-tuple
 - string-conversions
 - text
