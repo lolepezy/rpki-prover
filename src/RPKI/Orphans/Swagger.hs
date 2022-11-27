@@ -85,6 +85,7 @@ instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidationMetric
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
+instance ToSchema InternalMetric
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
 instance ToSchema HttpStatus
@@ -94,6 +95,8 @@ instance ToSchema (Scope 'Metric)
 instance ToSchema Count where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema TimeMs where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema CPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)

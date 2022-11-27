@@ -173,15 +173,26 @@ runWorkflow appContext@AppContext {..} tals = do
                                 completeWorldVersion tx db worldVersion                            
                             updatePrometheus (vs ^. typed) prometheusMetrics worldVersion
                             pure (mempty, mempty)            
-                        Right (ValidationResult v s) -> do                             
-                            let (topDownValidations, maybeSlurm) = (vs <> v, s)
+                        Right wr@WorkerResult {..} -> do                             
+                            let ValidationResult v maybeSlurm = payload
+                            logDebug logger [i|Worker result = #{wr}|]
+                            let vsWithCpuTime = v & typed @RawMetric . #internalMetrics %~ updateMetricInMap 
+                                                (newScope "validation") (& #cpuTime %~ (<> cpuTime))
+
+                            let topDownValidations = vs <> vsWithCpuTime
+                            logDebug logger [i|topDownValidations = #{topDownValidations}|]
 
                             let tdValidations = topDownValidations ^. typed
                             logDebug logger [i|Validation result: 
 #{formatValidations tdValidations}.|]
                             updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
-
-                            roTx db (\tx -> getVrps tx db worldVersion) >>= \case 
+                            
+                            vrps' <- rwTx db $ \tx -> do
+                                        -- Update metrics. It's a hack, because validation worker 
+                                        -- saves metrics that doesn't contain WorkerResults fields.
+                                        putMetrics tx db worldVersion (topDownValidations ^. typed)
+                                        getVrps tx db worldVersion
+                            case vrps' of                             
                                 Nothing -> do 
                                     logError logger [i|Something weird happened: .|]
                                     pure (mempty, mempty)
@@ -242,7 +253,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         RanBefore ->                    
                             logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
 
-        executeOrDie :: IO a -> (a -> Int64 -> IO ()) -> IO ()
+        executeOrDie :: IO a -> (a -> TimeMs -> IO ()) -> IO ()
         executeOrDie f onRight =
             exec `catches` [
                     Handler $ \(AppException seriousProblem) ->

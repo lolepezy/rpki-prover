@@ -159,6 +159,7 @@ instance ToJSON ValidationMetric
 instance ToJSON a => ToJSON (GroupedValidationMetric a)
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
+instance ToJSON InternalMetric
 instance ToJSON ScopeKind
 instance ToJSON FetchFreshness
 instance ToJSON HttpStatus where
@@ -176,6 +177,8 @@ instance ToJSONKey RpkiURL where
 instance ToJSON (Scope 'Metric)
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON s
+instance ToJSON CPUTime where 
+    toJSON (CPUTime s) = toJSON s
 
 instance ToJSON Count where
     toJSON (Count s) = toJSON s
