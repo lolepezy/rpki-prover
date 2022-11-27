@@ -141,7 +141,7 @@ fetchPPWithFallback
                 rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoScope ^. typed) f
                 -- this is also a hack to make sure time is updated if the fetch has failed 
                 -- and we probably don't have time at all if the worker timed out                                       
-                updateTime t = if t == mempty then TimeMs elapsed else t
+                updateTime t = if t == mempty then elapsed else t
             in case repoUrl of 
                 RrdpU _ -> let 
                         updatedFreshness = rrdpMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            

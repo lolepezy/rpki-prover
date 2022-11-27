@@ -25,6 +25,7 @@ import           Conduit
 import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString as BS
+
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
 import           Data.Conduit.Process.Typed
@@ -43,6 +44,7 @@ import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.TAL
 import           RPKI.Logging
+import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 
@@ -124,7 +126,15 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving anyclass (Store)
 
 
--- Entry point for a worker. It is supposed to run withing a worker process 
+data WorkerResult r = WorkerResult {
+        payload :: r,
+        cpuTime :: CPUTime,
+        clockTime :: TimeMs
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Store)    
+
+-- Entry point for a worker. It is supposed to run within a worker process 
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
@@ -169,6 +179,12 @@ readWorkerInput = liftIO $ decodeEx <$> BS.hGetContents stdin
 
 writeWorkerOutput :: Store a => a -> IO ()
 writeWorkerOutput = BS.hPut stdout . encode
+
+execWithTiming :: MonadIO m => m r -> m (WorkerResult r)
+execWithTiming f = do        
+    (payload, clockTime) <- timedMS f
+    cpuTime <- processCpuTime    
+    pure WorkerResult {..}
 
 rtsArguments :: [String] -> [String]
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]

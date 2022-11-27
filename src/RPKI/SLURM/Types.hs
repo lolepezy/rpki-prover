@@ -11,7 +11,6 @@ module RPKI.SLURM.Types where
 
 
 import           Data.Store
-import           Data.Store
 
 import           Data.Text (Text)
 import           Data.These

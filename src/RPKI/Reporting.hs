@@ -11,7 +11,6 @@
 module RPKI.Reporting where
 
 import           Data.Store
-import           Data.Store
     
 import           Control.Exception.Lifted
 import           Control.Lens                (Lens', (%~), (&))
@@ -325,16 +324,6 @@ newtype Count = Count { unCount :: Int64 }
 instance Show Count where 
     show (Count c) = show c
 
-newtype TimeMs = TimeMs { unTimeMs :: Int64 }
-    deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Store)    
-    deriving newtype (Num)
-    deriving Semigroup via Sum TimeMs
-    deriving Monoid via Sum TimeMs
-
-instance Show TimeMs where 
-    show (TimeMs ms) = show ms
-
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Store)    
@@ -409,6 +398,15 @@ data ValidationMetric = ValidationMetric {
     deriving Semigroup via GenericSemigroup ValidationMetric   
     deriving Monoid    via GenericMonoid ValidationMetric
 
+data InternalMetric = InternalMetric {        
+        clockTimeMs :: TimeMs,
+        cpuTime :: CPUTime
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Store)
+    deriving Semigroup via GenericSemigroup InternalMetric   
+    deriving Monoid    via GenericMonoid InternalMetric
+
 instance MetricC RrdpMetric where
     metricLens = #rrdpMetrics
 
@@ -417,6 +415,9 @@ instance MetricC RsyncMetric where
 
 instance MetricC ValidationMetric where 
     metricLens = #validationMetrics
+
+instance MetricC InternalMetric where 
+    metricLens = #internalMetrics
 
 
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
@@ -438,7 +439,8 @@ data RawMetric = RawMetric {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
-        vrpCounts         :: VrpCounts
+        vrpCounts         :: VrpCounts,
+        internalMetrics   :: MetricMap InternalMetric
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Store)

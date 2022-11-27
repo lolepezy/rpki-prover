@@ -523,7 +523,11 @@ instance Arbitrary RsyncMetric where
 instance Arbitrary RrdpMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
-    
+
+instance Arbitrary InternalMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary VrpCounts where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -550,6 +554,10 @@ generateMap constructor = do
     pure $ constructor $ Map.fromList validations
 
 instance Arbitrary TimeMs where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary CPUTime where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
