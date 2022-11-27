@@ -75,39 +75,40 @@ import           RPKI.RSC.Verifier
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 
+
 main :: IO ()
-main = do    
-    cliOptions@CLIOptions{..} <- unwrapRecord $ convert $ 
+main = do
+    cliOptions@CLIOptions{..} <- unwrapRecord $ convert $
             "RPKI prover, relying party software for RPKI, version " <> showVersion Autogen.version
 
     if version
-        then do 
+        then do
             -- it is "--version" call, so print the version and exit
-            putStrLn $ "RPKI prover " <> showVersion Autogen.version            
+            putStrLn $ "RPKI prover " <> showVersion Autogen.version
         else do
-            case worker of 
-                Nothing -> 
-                    if verifySignature 
+            case worker of
+                Nothing ->
+                    if verifySignature
                         -- this is a call to RSC verification 
                         then executeVerifier cliOptions
                         -- this is a normal validator daemon launch
-                        else executeMainProcess cliOptions                
-                Just _ -> 
+                        else executeMainProcess cliOptions
+                Just _ ->
                     executeWorkerProcess
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
-executeMainProcess cliOptions = 
+executeMainProcess cliOptions =
     withLogLevel cliOptions $ \logLevel ->
-        withLogger MainLogger logLevel $ \logger ->           
+        withLogger MainLogger logLevel $ \logger ->
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
                     void $ liftIO $ initialiseFS cliOptions logger
-                else do                                                                                
+                else do
                     -- run the validator
                     (appContext, validations) <- do
-                                runValidatorT (newScopes "initialise") $ do 
+                                runValidatorT (newScopes "initialise") $ do
                                     checkPreconditions cliOptions
                                     createAppContext cliOptions logger logLevel
                     case appContext of
@@ -124,14 +125,14 @@ executeWorkerProcess = do
     let config = input ^. typed @Config
     let logLevel' = config ^. #logLevel
     withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
-        (z, validations) <- runValidatorT 
+        (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
                                 (createWorkerAppContext config logger)
         case z of
-            Left e ->                        
+            Left e ->
                 logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-            Right appContext -> 
-                executeWorker input appContext     
+            Right appContext ->
+                executeWorker input appContext
 
 
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
@@ -142,7 +143,7 @@ runValidatorServer appContext@AppContext {..} = do
     let validationContext = newScopes "validation-root"
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVScope' TAFocus (convert taName) $ 
+            inSubVScope' TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)
 
     logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
@@ -180,7 +181,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     let defaults = defaultConfig
 
     let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
-    lmdbEnv <- setupLmdbCache 
+    lmdbEnv <- setupLmdbCache
                     (if resetCache then Reset else UseExisting)
                     logger
                     cached
@@ -207,13 +208,13 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     appState1 <- liftIO newAppState
     database  <- liftIO $ newTVarIO db
 
-    let readSlurms files = do 
+    let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
             readSlurmFiles files
 
     -- Read the files first to fail fast
-    unless (null localExceptions) $ do 
-        void $ readSlurms localExceptions        
+    unless (null localExceptions) $ do
+        void $ readSlurms localExceptions
 
     -- Set the function that re-reads SLURM files with every re-validation.
     let appState =
@@ -223,12 +224,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions
 
-    let config = defaults               
+    let config = defaults
                 & #programBinaryPath .~ programPath
-                & #rootDirectory .~ root                
-                & #talDirectory .~ tald 
-                & #tmpDirectory .~ tmpd 
-                & #cacheDirectory .~ cached 
+                & #rootDirectory .~ root
+                & #talDirectory .~ tald
+                & #tmpDirectory .~ tmpd
+                & #cacheDirectory .~ cached
                 & #parallelism .~ parallelism
                 & #rsyncConf . #rsyncRoot .~ rsyncd
                 & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
@@ -241,8 +242,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-                & #validationConfig . #manifestProcessing .~                
-                        (if strictManifestValidation then RFC6486_Strict else RFC6486)                
+                & #validationConfig . #manifestProcessing .~
+                        (if strictManifestValidation then RFC6486_Strict else RFC6486)
                 & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
                 & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
@@ -253,17 +254,17 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
                 & maybeSet #oldVersionsLifetime ((\hours -> Seconds (hours * 60 * 60)) <$> oldVersionsLifeTimeHours)
-                & #lmdbSizeMb .~ lmdbRealSize            
-                & #localExceptions .~ localExceptions    
-                & #logLevel .~ derivedLogLevel                
+                & #lmdbSizeMb .~ lmdbRealSize
+                & #localExceptions .~ localExceptions
+                & #logLevel .~ derivedLogLevel
                 & maybeSet #metricsPrefix (convert <$> metricsPrefix)
                 & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
                 & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory                
+                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
 
     let appContext = AppContext {..}
     logInfo logger [i|Created application context with configuration: 
-#{shower (appContext ^. typed @Config)}|]    
+#{shower (appContext ^. typed @Config)}|]
     pure appContext
 
 
@@ -300,14 +301,14 @@ initialiseFS cliOptions logger = do
             logError logger [i|Failed to initialise: #{e}.|]
             logError logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
         Right _ ->
-            logInfo logger [i|Done.|]        
-           
+            logInfo logger [i|Done.|]
+
 
 fsLayout :: CLIOptions Unwrapped
         -> AppLogger
         -> TALsHandle
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
-fsLayout cliOptions logger talsHandle = do    
+fsLayout cliOptions logger talsHandle = do
     (root, rootDir) <- getRoot cliOptions
 
     let message =
@@ -325,7 +326,7 @@ fsLayout cliOptions logger talsHandle = do
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Maybe FilePath, FilePath)
-getRoot cliOptions = do 
+getRoot cliOptions = do
     home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
     let root = getRootDirectory cliOptions
     pure (root, root `orDefault` (home </> ".rpki"))
@@ -382,93 +383,92 @@ getRootDirectory CLIOptions{..} =
     case rpkiRootDirectory of
         [] -> Nothing
         s  -> Just $ Prelude.last s
-        
+
 -- Set rsync prefetch URLs
 rsyncPrefetches :: CLIOptions Unwrapped -> ValidatorT IO [RsyncURL]
-rsyncPrefetches CLIOptions {..} = do 
-    let urlsToParse = 
-            case rsyncPrefetchUrl of 
+rsyncPrefetches CLIOptions {..} = do
+    let urlsToParse =
+            case rsyncPrefetchUrl of
                 [] -> defaulPrefetchURLs
                 _  -> rsyncPrefetchUrl
-        
-    forM urlsToParse $ \u -> 
+
+    forM urlsToParse $ \u ->
         case parseRsyncURL (convert u) of
             Left e         -> appError $ UnspecifiedE [i|Rsync URL #{u} is invalid|] (convert $ show e)
             Right rsyncURL -> pure rsyncURL
-    
+
 
 -- This is for worker processes.
-executeWorker :: WorkerInput 
-            -> AppLmdbEnv 
+executeWorker :: WorkerInput
+            -> AppLmdbEnv
             -> IO ()
-executeWorker input appContext = 
-    executeWork input $ \_ resultHandler ->   
+executeWorker input appContext =
+    executeWork input $ \_ resultHandler -> do
         case input ^. #params of
-            RrdpFetchParams {..} -> do
-                z <- runValidatorT scopes $ 
-                            updateObjectForRrdpRepository appContext worldVersion rrdpRepository                            
-                resultHandler $ RrdpFetchResult z
-            RsyncFetchParams {..} -> do
-                z <- runValidatorT scopes $ 
-                            updateObjectForRsyncRepository appContext worldVersion rsyncRepository                            
-                resultHandler $ RsyncFetchResult z
-            CompactionParams {..} -> do 
-                z <- copyLmdbEnvironment appContext targetLmdbEnv                
-                resultHandler $ CompactionResult z
-            ValidationParams {..} -> do 
-                (vs, z) <- runValidation appContext worldVersion tals                
-                resultHandler $ ValidationResult vs z
+            RrdpFetchParams {..} -> exec resultHandler $
+                fmap RrdpFetchResult $ runValidatorT scopes $ updateObjectForRrdpRepository
+                    appContext worldVersion rrdpRepository
+            RsyncFetchParams {..} -> exec resultHandler $
+                fmap RsyncFetchResult $ runValidatorT scopes $ updateObjectForRsyncRepository
+                    appContext worldVersion rsyncRepository
+            CompactionParams {..} -> exec resultHandler $
+                CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+            ValidationParams {..} -> exec resultHandler $
+                uncurry ValidationResult <$> runValidation appContext worldVersion tals
+  where
+    exec resultHandler f = resultHandler =<< execWithTiming f
+
 
 createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
-createWorkerAppContext config logger = do    
-    lmdbEnv <- setupWorkerLmdbCache                     
+createWorkerAppContext config logger = do
+    lmdbEnv <- setupWorkerLmdbCache
                     logger
                     (config ^. #cacheDirectory)
                     (config ^. #lmdbSizeMb)
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion    
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
 
-    pure AppContext {..}       
+    pure AppContext {..}
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath           
+checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
-executeVerifier cliOptions@CLIOptions {..} = do 
-    withLogLevel cliOptions $ \logLevel1 ->        
-        withLogger MainLogger logLevel1 $ \logger ->             
-            withVerifier logger $ \verifyPath rscFile -> do               
-                logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]                                 
-                (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do 
+executeVerifier cliOptions@CLIOptions {..} = do
+    withLogLevel cliOptions $ \logLevel1 ->
+        withLogger MainLogger logLevel1 $ \logger ->
+            withVerifier logger $ \verifyPath rscFile -> do
+                logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
+                (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do
                                 appContext <- createVerifierContext cliOptions logger
-                                rscVerify appContext rscFile verifyPath                                            
+                                rscVerify appContext rscFile verifyPath
                 case ac of
                     Left _ -> do
                         let report = formatValidations $ vs ^. #validations
                         logError logger [i|Verification failed: 
 #{report}|]
-                    Right _ -> 
+                    Right _ ->
                         logInfo logger [i|Verification succeeded.|]
-  where 
-    withVerifier logger f = 
-        case signatureFile of 
+  where
+    withVerifier logger f =
+        case signatureFile of
             Nothing      -> logError logger "RSC file is not set."
-            Just rscFile -> 
-                case (verifyDirectory, verifyFiles) of 
+            Just rscFile ->
+                case (verifyDirectory, verifyFiles) of
                     (Nothing, [])  -> logError logger "Neither files nor directory for files to verify with RSC are not set."
                     (Nothing, vfs) -> f (FileList vfs) rscFile
                     (Just vd, [])  -> f (Directory vd) rscFile
-                    _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."                    
+                    _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."
 
 
 createVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
-createVerifierContext cliOptions logger = do    
+createVerifierContext cliOptions logger = do
 
     (_, rootDir) <- getRoot cliOptions
     cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirN
@@ -481,7 +481,7 @@ createVerifierContext cliOptions logger = do
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
 
-    pure AppContext {..}             
+    pure AppContext {..}
 
 
 -- CLI Options-related machinery
@@ -500,17 +500,17 @@ data CLIOptions wrapped = CLIOptions {
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     verifySignature :: wrapped ::: Bool <?>
-        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++ 
+        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++
         "of validated RPKI objects and VRPs to exist and be poulateds. So executeVerifier can (and should) run next to " +++
-        "the running daemon instance of rpki-prover"),         
+        "the running daemon instance of rpki-prover"),
 
     signatureFile :: wrapped ::: Maybe FilePath <?> ("Path to the RSC signature file."),
 
     verifyDirectory :: wrapped ::: Maybe FilePath <?>
-        ("Path to the directory with the files to be verified using and RSC signaure file."),         
+        ("Path to the directory with the files to be verified using and RSC signaure file."),
 
     verifyFiles :: wrapped ::: [FilePath] <?>
-        ("Files to be verified using and RSC signaure file, may be multiple files."),         
+        ("Files to be verified using and RSC signaure file, may be multiple files."),
 
     cpuCount :: wrapped ::: Maybe Natural <?>
         "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",
@@ -527,8 +527,8 @@ data CLIOptions wrapped = CLIOptions {
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
     oldVersionsLifeTimeHours :: wrapped ::: Maybe Int64 <?>
-        ("Lifetime of versions in the local cache, in hours (default is 24 hours). " +++ 
-         "Every re-validation creates a new version and associates resulting data " +++ 
+        ("Lifetime of versions in the local cache, in hours (default is 24 hours). " +++
+         "Every re-validation creates a new version and associates resulting data " +++
          "(validation results, metrics, VRPs, etc.) with it."),
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
@@ -554,7 +554,7 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " 
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that "
        +++ "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. "
        +++ "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
 
@@ -583,11 +583,11 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal depth of the certificate path from the TA certificate to the RPKI tree (default is 32).",
 
     maxTotalTreeSize :: wrapped ::: Maybe Int <?>
-        ("Maximal total size of the object tree for one TA including all currently supported types of " +++ 
+        ("Maximal total size of the object tree for one TA including all currently supported types of " +++
          "objects (default is 5000000)."),
 
     maxObjectSize :: wrapped ::: Maybe Integer <?>
-        ("Maximal size of an object of any type (certificate, CRL, MFT, GRB, ROA, ASPA) " +++ 
+        ("Maximal size of an object of any type (certificate, CRL, MFT, GRB, ROA, ASPA) " +++
          "in bytes (default is 32mb, i.e. 33554432 bytes)."),
 
     minObjectSize :: wrapped ::: Maybe Integer <?>
@@ -600,19 +600,19 @@ data CLIOptions wrapped = CLIOptions {
     noRsync :: wrapped ::: Bool <?> "Do not fetch rsync repositories (default is false)",
 
     rsyncPrefetchUrl :: wrapped ::: [String] <?>
-        ("Rsync repositories that will be fetched instead of their children (defaults are " +++ 
-         "'rsync://rpki.afrinic.net/repository/member_repository' and" +++ 
+        ("Rsync repositories that will be fetched instead of their children (defaults are " +++
+         "'rsync://rpki.afrinic.net/repository/member_repository' and" +++
          "'rsync://rpki.apnic.net/member_repository'). " +++
-         "It is an optimisation and in absolute majority the default is working fine."),    
+         "It is an optimisation and in absolute majority the default is working fine."),
 
-    metricsPrefix :: wrapped ::: Maybe String <?> 
+    metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
 
     maxRrdpFetchMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for RRDP fetcher process (default is 1024).",        
+        "Maximal allowed memory allocation (in megabytes) for RRDP fetcher process (default is 1024).",
 
     maxRsyncFetchMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",        
+        "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",
 
     maxValidationMemory :: wrapped ::: Maybe Int <?>
         "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."

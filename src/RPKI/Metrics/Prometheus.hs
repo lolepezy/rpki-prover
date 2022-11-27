@@ -27,6 +27,7 @@ import           Prometheus.Metric.GHC
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
 

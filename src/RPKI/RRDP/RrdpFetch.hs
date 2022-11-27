@@ -67,13 +67,17 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                 rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ]
 
     vp <- askScopes
-    RrdpFetchResult (z, vs) <- runWorker
-                                    logger
-                                    config
-                                    workerId 
-                                    (RrdpFetchParams vp repository worldVersion)                        
-                                    (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
-                                    arguments                        
+
+    WorkerResult {..} <- runWorker
+                            logger
+                            config
+                            workerId 
+                            (RrdpFetchParams vp repository worldVersion)                        
+                            (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
+                            arguments  
+    
+    let RrdpFetchResult (z, vs) = payload
+    updateMetricOverideScope @InternalMetric @_ (newScope "fetch") (& #cpuTime %~ (<> cpuTime))    
     embedState vs    
     either appError pure z    
 
@@ -117,7 +121,7 @@ downloadAndUpdateRRDP
   do                                
     (notificationXml, _, _) <- 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> (& #downloadTimeMs %~ (<> TimeMs t))) $
+                (\t -> (& #downloadTimeMs %~ (<> t))) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)                         
                     $ downloadToBS (appContext ^. typed) (getURL repoUri)         
     
@@ -175,7 +179,7 @@ downloadAndUpdateRRDP
             
             (rawContent, _, httpStatus') <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #downloadTimeMs %~ (<> TimeMs t))) $ do     
+                    (\t -> (& #downloadTimeMs %~ (<> t))) $ do     
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                         downloadHashedBS (appContext ^. typed @Config) uri hash                                    
                             (\actualHash -> 
@@ -187,7 +191,7 @@ downloadAndUpdateRRDP
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #saveTimeMs %~ (<> TimeMs t)))
+                    (\t -> (& #saveTimeMs %~ (<> t)))
                     (handleSnapshotBS repoUri notification rawContent)
 
             pure $ repo { rrdpMeta = rrdpMeta' }
@@ -209,7 +213,7 @@ downloadAndUpdateRRDP
         let maxDeltaDownloadSimultaneously = 8                        
 
         void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> (& #saveTimeMs %~ (<> TimeMs t))) $ 
+                (\t -> (& #saveTimeMs %~ (<> t))) $ 
                 foldPipeline
                         maxDeltaDownloadSimultaneously
                         (S.each sortedDeltas)

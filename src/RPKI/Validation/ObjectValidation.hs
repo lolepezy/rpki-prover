@@ -377,7 +377,7 @@ validateAspa ::
 validateAspa now aspa parentCert crl verifiedResources = do
     void $
         validateCms now (cmsPayload aspa) parentCert crl verifiedResources $ \aspaCms -> do
-            let z = getCMSContent aspaCms
+            let z = getCMSContent aspaCms            
             pure ()
     pure $ Validated aspa
 

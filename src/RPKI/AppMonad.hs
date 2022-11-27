@@ -18,7 +18,6 @@ import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
 import           Data.Hourglass
-import           Data.Int                    (Int64)
 import           Data.Proxy
 import           Data.Text                   (Text)
 
@@ -192,13 +191,15 @@ inSubMetricScope' c t = local (& typed @MetricScope %~ subScope' c t)
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
                 (metric -> metric) -> ValidatorT m ()
-updateMetric = vHoist . updatePureMetric
-
-updatePureMetric :: forall metric . MetricC metric => 
-                    (metric -> metric) -> PureValidatorT ()
-updatePureMetric f = do 
+updateMetric f = vHoist $ do 
     mp <- asks (^. typed)
     modify' (& typed . metricLens %~ updateMetricInMap mp f)    
+
+updateMetricOverideScope :: forall metric m . 
+                (Monad m, MetricC metric) => 
+                Scope 'Metric -> (metric -> metric) -> ValidatorT m ()
+updateMetricOverideScope s f = vHoist $ do     
+    modify' (& typed . metricLens %~ updateMetricInMap s f)    
 
 
 timedMetric :: forall m metric r . 
@@ -206,14 +207,14 @@ timedMetric :: forall m metric r .
                  MetricC metric, 
                  HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
                 Proxy metric -> ValidatorT m r -> ValidatorT m r
-timedMetric p = timedMetric' p (\elapsed -> (& #totalTimeMs .~ TimeMs elapsed))
+timedMetric p = timedMetric' p (\elapsed -> (& #totalTimeMs .~ elapsed))
 
 timedMetric' :: forall m metric r . 
                 (MonadIO m, 
                  MetricC metric, 
                  HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
                 Proxy metric 
-            -> (Int64 -> metric -> metric)                 
+            -> (TimeMs -> metric -> metric)                 
             -> ValidatorT m r 
             -> ValidatorT m r
 timedMetric' _ f v = do

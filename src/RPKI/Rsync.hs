@@ -101,13 +101,15 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                 rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
 
     vp <- askScopes
-    RsyncFetchResult (z, vs) <- runWorker 
-                                    logger
-                                    config
-                                    workerId 
-                                    (RsyncFetchParams vp rsyncRepo worldVersion)                        
-                                    (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
-                                    arguments                        
+    WorkerResult {..} <- runWorker 
+                            logger
+                            config
+                            workerId 
+                            (RsyncFetchParams vp rsyncRepo worldVersion)                        
+                            (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
+                            arguments                        
+    let RsyncFetchResult (z, vs) = payload
+    updateMetricOverideScope @InternalMetric @_ (newScope "fetch") (& #cpuTime %~ (<> cpuTime))
     embedState vs
     either appError pure z    
     

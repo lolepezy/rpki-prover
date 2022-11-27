@@ -9,7 +9,6 @@
 
 module RPKI.SLURM.Types where
 
-
 import           Codec.Serialise
 
 import           Data.Text (Text)

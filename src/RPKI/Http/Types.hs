@@ -30,8 +30,6 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Servant.API
-import           Servant.Swagger
-import           Servant.Swagger.UI
 import           Data.Swagger
 import           Network.HTTP.Media ((//))
 
@@ -95,7 +93,8 @@ newtype RObject = RObject (Located RpkiObject)
 data MetricsDto = MetricsDto {
         groupedValidations :: GroupedValidationMetric ValidationMetric,      
         rsync              :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
-        rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric
+        rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric,
+        internal           :: MonoidalMap (DtoScope 'Metric) InternalMetric
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -194,8 +193,9 @@ toMinimalValidations = (& #validations %~ map MinimalVDto)
 toMetricsDto :: RawMetric -> MetricsDto
 toMetricsDto rawMetrics = MetricsDto {
         groupedValidations = groupedValidationMetric rawMetrics,
-        rsync   = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rsyncMetrics,
-        rrdp    = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics
+        rsync    = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rsyncMetrics,
+        rrdp     = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics,
+        internal = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #internalMetrics
     }
 
 toPublicationPointDto :: PublicationPoints -> PublicationPointDto

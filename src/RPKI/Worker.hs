@@ -24,6 +24,8 @@ import           Control.Lens ((^.))
 import           Conduit
 import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as BS
+
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
 import           Data.Conduit.Process.Typed
@@ -42,6 +44,7 @@ import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.TAL
 import           RPKI.Logging
+import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 
@@ -123,7 +126,15 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving anyclass (Serialise)
 
 
--- Entry point for a worker. It is supposed to run withing a worker process 
+data WorkerResult r = WorkerResult {
+        payload :: r,
+        cpuTime :: CPUTime,
+        clockTime :: TimeMs
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (Serialise)    
+
+-- Entry point for a worker. It is supposed to run within a worker process 
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
@@ -165,6 +176,13 @@ executeWork input actualWork = do
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
 readWorkerInput = liftIO $ deserialise <$> LBS.hGetContents stdin        
+
+execWithTiming :: MonadIO m => m r -> m (WorkerResult r)
+execWithTiming f = do        
+    (payload, clockTime) <- timedMS f
+    cpuTime <- processCpuTime    
+    pure WorkerResult {..}
+  
 
 writeWorkerOutput :: Serialise a => a -> IO ()
 writeWorkerOutput = LBS.hPut stdout . serialise

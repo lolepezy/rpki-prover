@@ -1,12 +1,16 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.Time where
 
-import Data.Int
+import           Data.Int
+import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
+import           System.CPUTime
 
 import           RPKI.Orphans.Serialise
 
@@ -25,9 +29,33 @@ instance Show Instant where
 newtype Now = Now { unNow :: Instant }
     deriving stock (Show, Eq, Ord)
 
+newtype TimeMs = TimeMs { unTimeMs :: Int64 }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Serialise)    
+    deriving newtype (Num)
+    deriving Semigroup via Sum TimeMs
+    deriving Monoid via Sum TimeMs
+
+newtype CPUTime = CPUTime { unCPUTime :: Integer }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Serialise)    
+    deriving newtype (Num)
+    deriving Semigroup via Sum CPUTime
+    deriving Monoid via Sum CPUTime
+
+instance Show TimeMs where 
+    show (TimeMs ms) = show ms
+
+instance Show CPUTime where 
+    show (CPUTime ms) = show ms
+
 thisInstant :: MonadIO m => m Now
 thisInstant = Now . Instant <$> liftIO dateCurrent
 
+processCpuTime :: MonadIO m => m CPUTime
+processCpuTime = do 
+    picos <- liftIO getCPUTime
+    pure $ CPUTime $ picos `div` 1000_000_000
 
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
@@ -37,10 +65,12 @@ timed action = do
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
     pure (z, s * nanosPerSecond + ns)
 
-timedMS :: MonadIO m => m a -> m (a, Int64)
+timedMS :: MonadIO m => m a -> m (a, TimeMs)
 timedMS action = do 
     (!z, ns) <- timed action   
     pure (z, fromIntegral $! ns `div` microsecondsPerSecond)
+
+-- cpuTime :: 
 
 nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
