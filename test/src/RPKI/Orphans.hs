@@ -523,10 +523,6 @@ instance Arbitrary RsyncMetric where
 instance Arbitrary RrdpMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
-
-instance Arbitrary InternalMetric where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
     
 instance Arbitrary VrpCounts where
     arbitrary = genericArbitrary
