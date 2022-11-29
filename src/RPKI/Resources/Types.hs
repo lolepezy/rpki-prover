@@ -11,7 +11,7 @@ module RPKI.Resources.Types where
 
 import Prelude hiding (subtract)
 
-import           Codec.Serialise
+import           Data.Store
 import           Control.DeepSeq
 
 import qualified Data.ByteString                       as BS
@@ -129,15 +129,15 @@ newtype IntervalSet a = IntervalSet (Vector a)
     deriving anyclass TheBinary
 
 
--- Serialise instances
-instance Serialise (V4.IpBlock Canonical)
-instance Serialise (V6.IpBlock Canonical)
-instance Serialise (Range V4.IpAddress)
-instance Serialise (Range V6.IpAddress)
-instance Serialise V4.IpAddress
-instance Serialise V6.IpAddress
-instance Serialise V4.IpNetMask
-instance Serialise V6.IpNetMask
+-- Store instances
+instance Store (V4.IpBlock Canonical)
+instance Store (V6.IpBlock Canonical)
+instance Store (Range V4.IpAddress)
+instance Store (Range V6.IpAddress)
+instance Store V4.IpAddress
+instance Store V6.IpAddress
+instance Store V4.IpNetMask
+instance Store V6.IpNetMask
 
 instance Show PrefixesAndAsns where
     show (PrefixesAndAsns v4 v6 asn) = 

@@ -10,8 +10,6 @@
 
 module RPKI.Worker where
 
-import           Codec.Serialise
-
 import           Control.Exception.Lifted
 import           Control.Monad (void)
 import           Control.Monad.IO.Class
@@ -175,7 +173,7 @@ executeWork input actualWork = do
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
-readWorkerInput = liftIO $ deserialise <$> LBS.hGetContents stdin        
+readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdin
 
 execWithTiming :: MonadIO m => m r -> m (WorkerResult r)
 execWithTiming f = do        
@@ -185,7 +183,7 @@ execWithTiming f = do
   
 
 writeWorkerOutput :: TheBinary a => a -> IO ()
-writeWorkerOutput = LBS.hPut stdout . serialise
+writeWorkerOutput = LBS.hPut stdout . LBS.fromStrict . serialise_
 
 rtsArguments :: [String] -> [String]
 rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
@@ -222,10 +220,10 @@ runWorker logger config workerId params timeout extraCli = do
     thisProcessId <- liftIO getProcessID
 
     let binaryToRun = config ^. #programBinaryPath    
-    let workerStdin = serialise $ WorkerInput params config thisProcessId timeout
+    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout
 
     let worker = 
-            setStdin (byteStringInput workerStdin) $             
+            setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
             setStderr createSource $
             setStdout byteStringOutput $
                 proc binaryToRun $ [ "--worker" ] <> extraCli
@@ -253,7 +251,7 @@ runWorker logger config workerId params timeout extraCli = do
 
         case exitCode of  
             ExitSuccess -> 
-                case deserialiseOrFail workerStdout of 
+                case deserialiseOrFail_ $ LBS.toStrict workerStdout of 
                     Left e -> 
                         complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
                     Right r -> 

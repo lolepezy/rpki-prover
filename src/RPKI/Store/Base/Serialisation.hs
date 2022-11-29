@@ -1,7 +1,7 @@
 
 module RPKI.Store.Base.Serialisation where
 
-import Codec.Serialise
+import Data.Store
 
 import Data.Text (Text)
 import qualified  Data.Text as Text
@@ -9,16 +9,14 @@ import qualified  Data.Text as Text
 import Data.Bifunctor
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
 
-
-type TheBinary = Serialise
+type TheBinary = Store
 
 serialise_ :: forall a. TheBinary a => a -> BS.ByteString
-serialise_ = LBS.toStrict . serialise
+serialise_ = encode
 
 deserialise_ :: forall a. TheBinary a => BS.ByteString -> a
-deserialise_ = deserialise . LBS.fromStrict
+deserialise_ = decodeEx
 
 deserialiseOrFail_ :: forall a. TheBinary a => BS.ByteString -> Either Text a
-deserialiseOrFail_ bs = first (Text.pack . show) <$> deserialiseOrFail $ LBS.fromStrict bs
+deserialiseOrFail_ bs = first (Text.pack . show) $ decode bs

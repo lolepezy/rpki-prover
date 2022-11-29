@@ -8,7 +8,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 
 import Control.DeepSeq
-import Codec.Serialise
 import GHC.Generics
 
 import Data.Bifunctor (first)
