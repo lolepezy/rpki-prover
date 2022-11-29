@@ -5,15 +5,15 @@
 module RPKI.RRDP.Types where
 
 import           GHC.Generics
-import           Codec.Serialise
 import           RPKI.Domain
+import           RPKI.Store.Base.Serialisation
 
 
 -- NOTE: All the data here is strict
 
 newtype RrdpSerial = RrdpSerial Integer
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 instance Show RrdpSerial where
     show (RrdpSerial s) = show s

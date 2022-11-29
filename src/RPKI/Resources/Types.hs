@@ -27,36 +27,38 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.SafeEnum
 import           HaskellWorks.Data.Network.Ip.Validity
 
+import           RPKI.Store.Base.Serialisation
+
 
 data AddrFamily = Ipv4F | Ipv6F
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype ASN = ASN Word32
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (NFData, Serialise)  
+    deriving anyclass (NFData, TheBinary)  
     deriving newtype Enum
 
 newtype PrefixLength = PrefixLength Word8
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data AsResource = AS ASN
                 | ASRange ASN ASN
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 class WithSetOps p where
@@ -77,35 +79,35 @@ data ValidationRFC = Strict_ | Reconsidered_
 
 data RSet r = RS r | Inherit
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data IpResourceSet = IpResourceSet
         (RSet (IntervalSet Ipv4Prefix))
         (RSet (IntervalSet Ipv6Prefix))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype IpResources = IpResources IpResourceSet
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype AsResources = AsResources (RSet (IntervalSet AsResource))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data AllResources = AllResources 
         (RSet (IntervalSet Ipv4Prefix))
         (RSet (IntervalSet Ipv6Prefix))
         (RSet (IntervalSet AsResource))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data PrefixesAndAsns = PrefixesAndAsns 
         (IntervalSet Ipv4Prefix)
         (IntervalSet Ipv6Prefix)
         (IntervalSet AsResource)
     deriving stock (Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype Nested a = Nested a
     deriving stock (Show, Eq, Ord, Generic) 
@@ -115,7 +117,7 @@ newtype Overclaiming a = Overclaiming a
 
 newtype VerifiedRS a = VerifiedRS a
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
     type Point p :: Type
@@ -124,7 +126,7 @@ class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
 -- | Representation of the resource set
 newtype IntervalSet a = IntervalSet (Vector a) 
     deriving stock (Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 -- Serialise instances

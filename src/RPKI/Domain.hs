@@ -18,7 +18,6 @@ import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 
-import           Codec.Serialise
 import           Data.ByteString.Base16   as Hex
 
 import           Data.Hourglass
@@ -48,16 +47,19 @@ import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
 import           RPKI.Time
 
+import           RPKI.Store.Base.Serialisation
+
+
 newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
 
 data WithRFC_ s r = WithStrict_       s 
                   | WithReconsidered_ r
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
 withRFC (WithStrict_ (WithRFC a)) f = f a
@@ -69,33 +71,33 @@ forRFC (WithReconsidered_ (WithRFC a)) _ g = g a
 
 newtype Hash = Hash BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype RsyncHost = RsyncHost { unRsyncHost :: Text }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving newtype Monoid    
     deriving newtype Semigroup
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype RrdpURL = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving  (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 class WithURL a where
     getURL :: a -> URI
@@ -129,31 +131,31 @@ toText = unURI . getURL
 
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype SKI  = SKI KI 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype AKI  = AKI KI   
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype SessionId = SessionId Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype Serial = Serial Integer 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype Version = Version Integer 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype Locations = Locations { unLocations :: NESet RpkiURL } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving newtype (Semigroup)
 
 instance Show URI where
@@ -175,7 +177,7 @@ hexShow = show . Hex.encode . BSS.fromShort
 
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 class WithAKI a where
     getAKI :: a -> Maybe AKI
@@ -199,7 +201,7 @@ data CrlObject = CrlObject {
         signCrl   :: SignCRL
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data CerObject = CerObject {
         hash      :: {-# UNPACK #-} Hash,
@@ -208,14 +210,14 @@ data CerObject = CerObject {
         certificate :: ResourceCertificate
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data CMSBasedObject a = CMSBasedObject {
         hash       :: {-# UNPACK #-} Hash,
         cmsPayload :: CMS a
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
@@ -229,7 +231,7 @@ data EECerObject = EECerObject {
         certificate :: ResourceCertificate
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise   
+    deriving anyclass TheBinary   
 
     
 data RpkiObject = CerRO CerObject 
@@ -240,7 +242,7 @@ data RpkiObject = CerRO CerObject
                 | AspaRO AspaObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 instance WithAKI CrlObject where
@@ -300,7 +302,7 @@ data Located a = Located {
         payload   :: a
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 instance WithLocations (Located a) where
@@ -325,18 +327,18 @@ data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
         resources :: AllResources
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data Vrp = Vrp 
     {-# UNPACK #-} !ASN 
     !IpPrefix 
     {-# UNPACK #-} !PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data Manifest = Manifest {
         mftNumber   :: Serial, 
@@ -346,7 +348,7 @@ data Manifest = Manifest {
         mftEntries  :: [T2 Text Hash]
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
@@ -358,12 +360,12 @@ data SignCRL = SignCRL {
         revokenSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 data Gbr = Gbr BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 data RSC = RSC {        
@@ -372,14 +374,14 @@ data RSC = RSC {
         digestAlgorithm :: DigestAlgorithmIdentifier
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data Aspa = Aspa {                
         customerAsn  :: ASN,
         providerAsns :: [(ASN, Maybe AddrFamily)]
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 -- | Types for the signed object template 
 -- https://tools.ietf.org/html/rfc5652
@@ -389,7 +391,7 @@ data SignedObject a = SignedObject {
         soContent     :: SignedData a
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 data CertificateWithSignature = CertificateWithSignature {
@@ -399,7 +401,7 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsEncoded            :: BSS.ShortByteString
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 {- 
     SignedData ::= SEQUENCE {
@@ -422,7 +424,7 @@ data SignedData a = SignedData {
         scSignerInfos      :: SignerInfos
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 {- 
     EncapsulatedContentInfo ::= SEQUENCE {
@@ -434,7 +436,7 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
         cContent     :: a    
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 {-
     SignerInfo ::= SEQUENCE {
@@ -455,46 +457,46 @@ data SignerInfos = SignerInfos {
         signature          :: SignatureValue
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] BSS.ShortByteString
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest BSS.ShortByteString
@@ -502,34 +504,34 @@ data Attribute = ContentTypeAttr ContentType
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 
 -- Subject Public Key Info
 newtype SPKI = SPKI EncodedBase64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype EncodedBase64 = EncodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving newtype (Monoid, Semigroup)
 
 newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 instance Show TaName where
     show = show . unTaName
 
 newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
@@ -540,7 +542,7 @@ data TA = TA {
         taSpki        :: SPKI
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
   
 
 -- Small utility functions that don't have anywhere else to go

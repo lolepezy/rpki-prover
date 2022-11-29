@@ -4,8 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Store.Sequence where
-
-import           Codec.Serialise
+    
 import           Data.Text               (Text)
 import           GHC.Generics
 
@@ -15,9 +14,10 @@ import           RPKI.Store.Base.Map     (SMap (..))
 
 import qualified RPKI.Store.Base.Map     as M
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Serialisation
 
 newtype SequenceValue = SequenceValue Int64
-    deriving (Show, Eq, Generic, Serialise)
+    deriving (Show, Eq, Generic, TheBinary)
 
 type SequenceMap s = SMap "sequences" s Text SequenceValue
 

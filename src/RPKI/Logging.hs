@@ -8,8 +8,6 @@
 
 module RPKI.Logging where
 
-import Codec.Serialise
-
 import           Conduit
 import           Control.Exception
 

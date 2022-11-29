@@ -7,13 +7,13 @@
 
 module RPKI.Metrics.Metrics where
 
-import           Codec.Serialise
 import           Control.Lens
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           GHC.Generics
 import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
 import           RPKI.Reporting
+import           RPKI.Store.Base.Serialisation
 
 
 data GroupedValidationMetric a = GroupedValidationMetric {
@@ -22,7 +22,7 @@ data GroupedValidationMetric a = GroupedValidationMetric {
         total        :: a
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise    
+    deriving anyclass TheBinary    
 
 groupedValidationMetric :: RawMetric -> GroupedValidationMetric ValidationMetric
 groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}

@@ -7,8 +7,6 @@
 
 module RPKI.Config where
 
-import Codec.Serialise
-
 import GHC.Conc
 import Numeric.Natural
 import Data.Int

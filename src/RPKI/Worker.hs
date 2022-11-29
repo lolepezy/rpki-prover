@@ -138,7 +138,7 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (WorkerInput -> (forall a . Serialise a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
+            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
 executeWork input actualWork = do 
     exitCode <- newTVarIO Nothing
@@ -184,7 +184,7 @@ execWithTiming f = do
     pure WorkerResult {..}
   
 
-writeWorkerOutput :: Serialise a => a -> IO ()
+writeWorkerOutput :: TheBinary a => a -> IO ()
 writeWorkerOutput = LBS.hPut stdout . serialise
 
 rtsArguments :: [String] -> [String]
@@ -210,7 +210,7 @@ exitKillByTypedProcess = ExitFailure (-2)
 worderIdS :: WorkerId -> String
 worderIdS (WorkerId w) = unpack w
 
-runWorker :: (Serialise r, Show r) => 
+runWorker :: (TheBinary r, Show r) => 
             AppLogger 
             -> Config            
             -> WorkerId

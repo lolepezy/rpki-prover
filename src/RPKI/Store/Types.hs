@@ -7,8 +7,6 @@
 {-# LANGUAGE OverloadedStrings     #-}
 
 module RPKI.Store.Types where
-
-import           Codec.Serialise
 import           Data.Int
 import qualified Data.ByteString.Short    as BSS
 
@@ -29,7 +27,7 @@ data StorableTA = StorableTA {
     taCert              :: CerObject,
     fetchStatus         :: FetchStatus,
     initialRepositories :: PublicationPointAccess
-} deriving (Show, Eq, Generic, Serialise)
+} deriving (Show, Eq, Generic, TheBinary)
 
 data ROMeta = ROMeta {
         insertedBy :: WorldVersion,

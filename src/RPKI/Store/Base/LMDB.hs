@@ -9,8 +9,6 @@
 
 module RPKI.Store.Base.LMDB where
 
-import Codec.Serialise
-
 import Control.Monad (forM, forever)
 import Control.Concurrent.STM
 

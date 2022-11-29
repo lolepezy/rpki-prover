@@ -7,7 +7,6 @@
 
 module RPKI.Repository where
 
-import           Codec.Serialise
 import           Control.Lens
 
 import           Control.Concurrent.STM
@@ -35,11 +34,12 @@ import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Parallel
 import           RPKI.Util
+import           RPKI.Store.Base.Serialisation
 
 
 data FetchEverSucceeded = Never | AtLeastOnce
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass Serialise        
+    deriving anyclass TheBinary        
 
 instance Monoid FetchEverSucceeded where
     mempty = Never
@@ -54,11 +54,11 @@ data FetchStatus
   | FetchedAt Instant
   | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data RrdpRepository = RrdpRepository {
         uri         :: RrdpURL,
@@ -66,36 +66,36 @@ data RrdpRepository = RrdpRepository {
         status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data PublicationPoint = RrdpPP  RrdpRepository | 
                         RsyncPP RsyncPublicationPoint
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newtype RepositoryAccess = RepositoryAccess {
         unRepositoryAccess :: NonEmpty Repository
     }
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise        
+    deriving anyclass TheBinary        
 
 newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise        
+    deriving anyclass TheBinary        
 
 data Repository = RrdpR RrdpRepository | 
                   RsyncR RsyncRepository
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data RsyncRepository = RsyncRepository {
         repoPP      :: RsyncPublicationPoint,
         status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
@@ -106,12 +106,12 @@ data PublicationPoints = PublicationPoints {
 
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving newtype (Monoid)
 
 newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
     deriving newtype (Monoid)
 
 data FetchResult = 
@@ -422,13 +422,13 @@ filterPPAccess Config {..} ppAccess =
 
 data Downloadable = NotDownloadable | WorthTrying
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 type RsyncNodeNormal = RsyncNode FetchStatus Downloadable
 
 newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNodeNormal)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 data RsyncNode a b = Leaf a
                | SubTree { 
@@ -436,7 +436,7 @@ data RsyncNode a b = Leaf a
                    nodePayload :: b
                } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 newRsyncTree :: RsyncTree
 newRsyncTree = RsyncTree Map.empty

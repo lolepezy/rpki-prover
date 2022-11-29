@@ -4,8 +4,6 @@
 
 module RPKI.LoggingSpec where
 
-import Codec.Serialise
-
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Builder as BB
