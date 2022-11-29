@@ -207,8 +207,8 @@ gatherMsgs accum bs =
 
 msgToBs :: BusMessage -> BS.ByteString
 msgToBs msg = let 
-    s = serialise msg
-    EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ LBS.toStrict s
+    s = serialise_ msg
+    EncodedBase64 bs = encodeBase64 $ DecodedBase64 s
     in bs
 
 bsToMsg :: BS.ByteString -> Either Text BusMessage
@@ -216,5 +216,5 @@ bsToMsg bs =
     case decodeBase64 (EncodedBase64 bs) ("Broken base64 input" :: Text) of 
         Left e -> Left $ fmtGen e
         Right (DecodedBase64 decoded) -> 
-            first fmtGen $ deserialiseOrFail $ LBS.fromStrict decoded    
+            first fmtGen $ deserialiseOrFail_ decoded    
 

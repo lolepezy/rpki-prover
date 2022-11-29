@@ -17,18 +17,19 @@ import Data.Monoid.Generic
 import RPKI.Config
 import RPKI.Reporting
 import RPKI.Util (fmtGen)
+import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (NFData, Serialise)
+    deriving anyclass (NFData, TheBinary)
 
 newtype SValue = SValue { unSValue :: Storable }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (NFData, Serialise)
+    deriving anyclass (NFData, TheBinary)
 
 newtype SKey = SKey { unSKey :: Storable }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (NFData, Serialise)
+    deriving anyclass (NFData, TheBinary)
 
 -- Strictness here is important
 data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
@@ -36,29 +37,28 @@ data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
 data StorableObject a = StorableObject { object :: a, storable :: SValue }
     deriving (Show, Eq, Generic)
 
-toStorableObject :: Serialise a => a -> StorableObject a
+toStorableObject :: TheBinary a => a -> StorableObject a
 toStorableObject a = StorableObject a (force (storableValue a))
 
-toStorable :: Serialise v => v -> Storable
-toStorable = Storable . LBS.toStrict . serialise
+toStorable :: TheBinary v => v -> Storable
+toStorable = Storable . serialise_
 
-storableValue :: Serialise v => v -> SValue
+storableValue :: TheBinary v => v -> SValue
 storableValue = SValue . toStorable
 
-storableKey :: Serialise v => v -> SKey
+storableKey :: TheBinary v => v -> SKey
 storableKey = SKey . toStorable
 
-fromStorable :: Serialise t => Storable -> t
-fromStorable (Storable b) = deserialise $ LBS.fromStrict b
+fromStorable :: TheBinary t => Storable -> t
+fromStorable (Storable b) = deserialise_ b
 
-fromSValue :: Serialise t => SValue -> t
+fromSValue :: TheBinary t => SValue -> t
 fromSValue (SValue b) = fromStorable b
 
-fromStorable' :: Serialise t => Storable -> Either StorageError t
-fromStorable' (Storable b) = first (DeserialisationError . fmtGen) $ 
-    deserialiseOrFail $ LBS.fromStrict b
+fromStorable' :: TheBinary t => Storable -> Either StorageError t
+fromStorable' (Storable b) = first DeserialisationError $ deserialiseOrFail_ b
 
-fromSValue' :: Serialise t => SValue -> Either StorageError t
+fromSValue' :: TheBinary t => SValue -> Either StorageError t
 fromSValue' (SValue b) = fromStorable' b
 
 
