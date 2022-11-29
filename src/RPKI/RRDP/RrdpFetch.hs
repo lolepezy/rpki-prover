@@ -28,12 +28,12 @@ import qualified Streaming.Prelude                as S
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
-import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Metrics.System
 import           RPKI.Worker
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -78,7 +78,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                             arguments  
     
     let RrdpFetchResult (z, vs) = payload
-    bumpCpuTimeIO appState "fetch" cpuTime    
+    pushSystem logger $ cpuMetric "fetch" cpuTime    
     embedState vs    
     either appError pure z    
 

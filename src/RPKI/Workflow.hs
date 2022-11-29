@@ -38,6 +38,7 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Store.Database
 import           RPKI.Validation.TopDown
@@ -176,7 +177,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         Right WorkerResult {..} -> do                             
                             let ValidationResult vs maybeSlurm = payload
                             
-                            bumpCpuTimeIO appState "validation" cpuTime                            
+                            pushSystem logger $ cpuMetric "validation" cpuTime                                
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 

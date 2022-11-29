@@ -8,19 +8,21 @@ module RPKI.Time where
 import           Data.Int
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
+
+import           GHC.Generics (Generic)
+
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
 import           System.CPUTime
 
+import           RPKI.Store.Base.Serialisation
 import           RPKI.Orphans.Serialise
 
-import GHC.Generics (Generic)
-import Codec.Serialise (Serialise)
 
 
 newtype Instant = Instant DateTime
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass Serialise
+    deriving anyclass TheBinary
 
 instance Show Instant where
     show (Instant d) = timePrint ISO8601_DateAndTime d
@@ -31,14 +33,14 @@ newtype Now = Now { unNow :: Instant }
 
 newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Serialise)    
+    deriving anyclass (TheBinary)    
     deriving newtype (Num)
     deriving Semigroup via Sum TimeMs
     deriving Monoid via Sum TimeMs
 
 newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Serialise)    
+    deriving anyclass (TheBinary)    
     deriving newtype (Num)
     deriving Semigroup via Sum CPUTime
     deriving Monoid via Sum CPUTime

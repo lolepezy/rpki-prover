@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.Logging where
 
@@ -37,11 +38,14 @@ import RPKI.Domain
 import RPKI.Util
 import RPKI.Time
 import RPKI.Parallel
+import RPKI.Metrics.System
+
+import RPKI.Store.Base.Serialisation
 
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
    
 instance Show LogLevel where
     show = \case 
@@ -49,9 +53,6 @@ instance Show LogLevel where
         WarnL  -> "Warn"
         InfoL  -> "Info"
         DebugL -> "Debug"
-
-defaultsLogLevel :: LogLevel
-defaultsLogLevel = InfoL
 
 data AppLogger = AppLogger {
         logLevel :: LogLevel,
@@ -76,6 +77,14 @@ mkLogMessage logLevel message = do
     processId <- getProcessID
     pure LogMessage {..}
 
+pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
+pushSystem AppLogger {..} sm = 
+    liftIO $ atomically $ writeCQueue (getQueue actualLogger) $ MsgQE $ SystemM sm  
+
+data BusMessage = LogM LogMessage | SystemM SystemMetrics
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 data LogMessage = LogMessage { 
         logLevel  :: LogLevel,
         message   :: Text,
@@ -83,9 +92,9 @@ data LogMessage = LogMessage {
         timestamp :: Instant
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
-data QElem = BinQE BS.ByteString | MsgQE LogMessage
+data QElem = BinQE BS.ByteString | MsgQE BusMessage
     deriving stock (Show, Eq, Ord, Generic)
 
 data ProcessLogger = MainLogger (ClosableQueue QElem) 
@@ -94,7 +103,7 @@ data ProcessLogger = MainLogger (ClosableQueue QElem)
 
 logWLevel :: ProcessLogger -> LogMessage -> IO ()
 logWLevel logger msg = 
-    atomically $ writeCQueue (getQueue logger) $ MsgQE msg  
+    atomically $ writeCQueue (getQueue logger) $ MsgQE $ LogM msg  
 
 logBytes :: ProcessLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
@@ -113,8 +122,12 @@ forLogger1 logger f = forLogger logger f f
 getQueue :: ProcessLogger -> ClosableQueue QElem
 getQueue logger = forLogger1 logger id
 
-withLogger :: (ClosableQueue a -> ProcessLogger) -> LogLevel -> (AppLogger -> IO b) -> IO b
-withLogger mkLogger maxLogLevel f = do 
+withLogger :: (ClosableQueue a -> ProcessLogger) 
+            -> LogLevel 
+            -> (SystemMetrics -> IO ()) 
+            -> (AppLogger -> IO b) 
+            -> IO b
+withLogger mkLogger maxLogLevel sysMetricCallback f = do 
     q <- newCQueueIO 1000
     let logger = mkLogger q    
     let appLogger = AppLogger maxLogLevel logger
@@ -148,10 +161,15 @@ withLogger mkLogger maxLogLevel f = do
                 case bsToMsg b of 
                     Left e ->                                     
                         mainLogWithLevel =<< mkLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
-                    Right logMessage -> 
+                    Right (LogM logMessage) -> 
                         mainLogWithLevel logMessage
-            MsgQE logMessage -> 
+                    Right (SystemM sm) -> 
+                        sysMetricCallback sm
+                                                  
+            MsgQE (LogM logMessage) -> 
                 mainLogWithLevel logMessage
+            MsgQE (SystemM sm) -> 
+                sysMetricCallback sm
 
         loopWorker = loop $ logRaw . \case 
                                 BinQE b   -> b
@@ -189,13 +207,13 @@ gatherMsgs accum bs =
         | otherwise = (acc <> BB.char8 c, chunks)
 
 
-msgToBs :: LogMessage -> BS.ByteString
+msgToBs :: BusMessage -> BS.ByteString
 msgToBs msg = let 
     s = serialise msg
     EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ LBS.toStrict s
     in bs
 
-bsToMsg :: BS.ByteString -> Either Text LogMessage
+bsToMsg :: BS.ByteString -> Either Text BusMessage
 bsToMsg bs = 
     case decodeBase64 (EncodedBase64 bs) ("Broken base64 input" :: Text) of 
         Left e -> Left $ fmtGen e

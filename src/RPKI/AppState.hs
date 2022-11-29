@@ -10,6 +10,8 @@ import           Control.Lens
 
 import           Control.Monad (join)
 import           Control.Concurrent.STM
+
+import           Data.Text (Text)
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -19,8 +21,7 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
-import Data.Text (Text)
-import Control.Monad.IO.Class
+import           Control.Monad.IO.Class
 
 
 data AppState = AppState {
@@ -92,3 +93,7 @@ bumpCpuTime AppState {..} scope cpuTime = do
         (& #cpus %~ updateMetricInMap 
             (newScope scope) 
             (& #aggregatedCpuTime %~ (<> cpuTime)))
+
+mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
+mergeSystemMetrics sm AppState {..} = 
+    liftIO $ atomically $ modifyTVar' system (<> sm)

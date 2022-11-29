@@ -24,6 +24,8 @@ import RPKI.Logging
 import RPKI.Util (toNatural, convert)
 import GHC.Generics (Generic)
 
+import RPKI.Store.Base.Serialisation
+
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 
@@ -36,7 +38,7 @@ data Parallelism = Parallelism {
         fetchParallelism :: Natural
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data Config = Config {        
         programBinaryPath         :: FilePath,
@@ -62,7 +64,7 @@ data Config = Config {
         metricsPrefix             :: Text
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data RsyncConf = RsyncConf {
         rsyncClientPath   :: Maybe FilePath,
@@ -72,12 +74,12 @@ data RsyncConf = RsyncConf {
         rsyncPrefetchUrls :: [RsyncURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
 
@@ -88,11 +90,11 @@ data RrdpConf = RrdpConf {
         enabled     :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data ManifestProcessing = RFC6486_Strict | RFC6486
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data ValidationConfig = ValidationConfig {    
         revalidationInterval           :: Seconds,
@@ -123,20 +125,20 @@ data ValidationConfig = ValidationConfig {
         minObjectSize                  :: Integer
     } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data HttpApiConfig = HttpApiConfig {
         port :: Word16    
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data RtrConfig = RtrConfig {
         rtrAddress :: String,
         rtrPort    :: Int16            
     } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
@@ -144,7 +146,7 @@ data SystemConfig = SystemConfig {
         validationWorkerMemoryMb :: Int
     } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 getRtsCpuCount :: Natural 
 getRtsCpuCount = fromMaybe 1 $ toNatural numCapabilities
@@ -217,6 +219,9 @@ defaultConfig = Config {
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_"
 }
+
+defaultsLogLevel :: LogLevel
+defaultsLogLevel = InfoL
 
 defaultRtrConfig :: RtrConfig
 defaultRtrConfig = RtrConfig { 

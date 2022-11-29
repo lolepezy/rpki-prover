@@ -21,6 +21,7 @@ import           RPKI.Time                (Instant)
 import           RPKI.Repository
 import           RPKI.AppTypes
 import           RPKI.Store.Base.Storable
+import           RPKI.Store.Base.Serialisation
 
 
 data StorableTA = StorableTA {
@@ -35,27 +36,27 @@ data ROMeta = ROMeta {
         validatedBy :: Maybe WorldVersion
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data MftTimingMark = MftTimingMark Instant Instant 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)        
+    deriving anyclass (TheBinary)        
 
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,

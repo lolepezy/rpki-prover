@@ -18,6 +18,7 @@ import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.IO.Class
 
+import           Data.Foldable
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -95,9 +96,18 @@ main = do
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
-executeMainProcess cliOptions =
-    withLogLevel cliOptions $ \logLevel ->
-        withLogger MainLogger logLevel $ \logger ->
+executeMainProcess cliOptions = do 
+    -- TODO This doesn't look preetty, come up with someething better.
+    appState' <- newTVarIO Nothing
+
+    withLogLevel cliOptions $ \logLevel -> do
+        -- This one modifyies system meetrics in AppState
+        -- if appState is actually initialised
+        let bumpSysMetric = \sm -> do 
+                z <- readTVarIO appState'
+                for_ z $ mergeSystemMetrics sm
+
+        withLogger MainLogger logLevel bumpSysMetric $ \logger ->
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -111,7 +121,9 @@ executeMainProcess cliOptions =
                     case appContext of
                         Left _ ->
                             logError logger [i|Couldn't initialise, problems: #{validations}.|]
-                        Right appContext' ->
+                        Right appContext' -> do 
+                            -- now we havee the appState, set appState'
+                            atomically $ writeTVar appState' $ Just $ appContext' ^. #appState
                             void $ race
                                 (runHttpApi appContext')
                                 (runValidatorServer appContext')
@@ -121,7 +133,7 @@ executeWorkerProcess = do
     input <- readWorkerInput
     let config = input ^. typed @Config
     let logLevel' = config ^. #logLevel
-    withLogger WorkerLogger logLevel' $ \logger -> liftIO $ do
+    withLogger WorkerLogger logLevel' (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
                                 (createWorkerAppContext config logger)
@@ -439,7 +451,7 @@ checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do
     withLogLevel cliOptions $ \logLevel1 ->
-        withLogger MainLogger logLevel1 $ \logger ->
+        withLogger MainLogger logLevel1 (\_ -> pure ()) $ \logger ->
             withVerifier logger $ \verifyPath rscFile -> do
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
                 (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do

@@ -13,8 +13,6 @@ import Data.Bifunctor (first, bimap)
 import           Control.Lens                     ((^.))
 import           Control.Monad
 
-import           Codec.Serialise
-
 import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -29,7 +27,8 @@ import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Reporting
 
-import           RPKI.Util                        
+import           RPKI.Util                 
+import           RPKI.Store.Base.Serialisation       
 
 
 
@@ -51,7 +50,7 @@ data TAL = PropertiesTAL {
         taName               :: TaName
     } 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 talCertLocations :: TAL -> Locations
 talCertLocations PropertiesTAL {..} = certificateLocation

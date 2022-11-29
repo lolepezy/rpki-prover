@@ -422,7 +422,7 @@ withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb
   where
     createLmdb lmdbEnv = 
         withLogger MainLogger defaultsLogLevel $ \logger -> 
-            (Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion) 
+            Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
 
 ioTestCase :: TestName -> (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion) -> TestTree

@@ -24,8 +24,8 @@ import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
-
 import           RPKI.Logging
+
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System

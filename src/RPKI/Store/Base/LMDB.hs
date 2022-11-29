@@ -2,10 +2,9 @@
 {-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE OverloadedStrings     #-}
 
 
 module RPKI.Store.Base.LMDB where
@@ -20,6 +19,7 @@ import Data.Coerce (coerce)
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
+import RPKI.Store.Base.Serialisation
 import RPKI.Parallel
 import RPKI.Util
 
@@ -199,7 +199,7 @@ data CopyStat = CopyStat {
         maxKVPairSize :: Int
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 
 -- | Copy all databases from the from LMDB environment to the other

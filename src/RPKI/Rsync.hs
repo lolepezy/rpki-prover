@@ -32,11 +32,11 @@ import Data.Hourglass
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
-import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
@@ -109,8 +109,8 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                             (RsyncFetchParams vp rsyncRepo worldVersion)                        
                             (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
                             arguments                        
-    let RsyncFetchResult (z, vs) = payload
-    bumpCpuTimeIO appState "fetch" cpuTime    
+    let RsyncFetchResult (z, vs) = payload    
+    pushSystem logger $ cpuMetric "fetch" cpuTime    
     embedState vs
     either appError pure z    
     

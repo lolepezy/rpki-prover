@@ -53,8 +53,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Types
 import           RPKI.Time
 import qualified RPKI.Util                   as U
-import RPKI.Metrics.System (SystemMetrics)
-
 
 instance ToJSON ASN where
     toJSON (ASN as) = toJSON $ "AS" <> show as
