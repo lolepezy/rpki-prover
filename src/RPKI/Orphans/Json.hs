@@ -45,6 +45,7 @@ import           RPKI.Config
 import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
+import           RPKI.Metrics.System
 import           RPKI.Resources.IntervalSet
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable
@@ -52,7 +53,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Types
 import           RPKI.Time
 import qualified RPKI.Util                   as U
-
 
 instance ToJSON ASN where
     toJSON (ASN as) = toJSON $ "AS" <> show as
@@ -159,7 +159,8 @@ instance ToJSON ValidationMetric
 instance ToJSON a => ToJSON (GroupedValidationMetric a)
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
-instance ToJSON InternalMetric
+instance ToJSON SystemMetrics
+instance ToJSON CpuMetrics
 instance ToJSON ScopeKind
 instance ToJSON FetchFreshness
 instance ToJSON HttpStatus where

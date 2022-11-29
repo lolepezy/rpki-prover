@@ -33,6 +33,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Metrics.System
 import           RPKI.Worker
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -77,7 +78,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                             arguments  
     
     let RrdpFetchResult (z, vs) = payload
-    updateMetricOverideScope @InternalMetric @_ (newScope "fetch") (& #cpuTime %~ (<> cpuTime))    
+    pushSystem logger $ cpuMetric "fetch" cpuTime    
     embedState vs    
     either appError pure z    
 

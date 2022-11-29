@@ -214,7 +214,7 @@ parseDelta bs = catchExceptions $ runST $ do
 
 
 
--- | Generic convenience function to parse dimple versionRef of XML used in RRDP by Xeno parser.
+-- | Generic convenience function to parse XML used in RRDP by Xeno parser.
 -- 
 -- We only care about tags, attributes and character data without taking into account nested 
 -- structure or anything of that sort.

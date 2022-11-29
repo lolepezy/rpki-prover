@@ -134,13 +134,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                             (newVersion, newVrps_) <- waitForNewVersion appState knownVersion
                             pure (rtrState', knownVersion, newVersion, newVrps_)
                 
-            database' <- readTVarIO database
+            db <- readTVarIO database
 
-            previousVrps <- roTx database' $ \tx -> 
-                                getVrps tx database' previousVersion >>= \case 
+            previousVrps <- roTx db $ \tx -> 
+                                getVrps tx db previousVersion >>= \case 
                                     Nothing   -> pure Set.empty 
                                     Just vrps1 -> do  
-                                        slurm <- slurmForVersion tx database' previousVersion
+                                        slurm <- slurmForVersion tx db previousVersion
                                         pure $ allVrps $ maybe vrps1 (`applySlurm` vrps1) slurm
 
             let newVrpsFlattened = allVrps newVrps'
@@ -232,15 +232,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                     readCQueue outboxQueue 
                                 <|> (Just <$> readTChan stateUpdateChan)
 
-                        case r of
-                            Nothing   -> pure ()
-                            Just pdus -> do 
-                                for_ (chunksOf 1000 pdus) $ \chunk -> 
-                                    sendMany connection 
-                                        $ map (\pdu -> BSL.toStrict $ 
-                                                pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
+                        for_ r $ \pdus -> do 
+                            for_ (chunksOf 1000 pdus) $ \chunk -> 
+                                sendMany connection 
+                                    $ map (\pdu -> BSL.toStrict $ 
+                                            pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
 
-                                loop stateUpdateChan
+                            loop stateUpdateChan
 
             -- Main loop of the client-server interaction: wait for a PDU from the client, 
             -- 
@@ -462,7 +460,7 @@ currentCachePayloadPdus vrps =
     map (toPdu Announcement) $ sortVrps $ Set.toList $ allVrps vrps  
     
 
--- Sort VRPs to before sending them to routers
+-- Sort VRPs before sending them to routers
 -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-02#section-11
 -- 
 sortVrps :: [Vrp] -> [Vrp] 

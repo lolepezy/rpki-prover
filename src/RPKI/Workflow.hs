@@ -38,6 +38,7 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Store.Database
 import           RPKI.Validation.TopDown
@@ -80,7 +81,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Threads that will run periodic jobs and persist timestaps of running them
     -- for consistent scheduling.
-    periodicJobs <- periodicJobThreads sharedBetweenJobs
+    periodicJobs <- periodicJobExecutors sharedBetweenJobs
 
     let threads = [ 
                 -- thread that takes jobs from the queue and executes them sequentially
@@ -103,7 +104,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 `finally`
                     atomically (closeCQueue globalQueue)        
 
-        periodicJobThreads sharedBetweenJobs = do 
+        periodicJobExecutors sharedBetweenJobs = do 
             let availableJobs = [
                     -- These initial delay numbers are pretty arbitrary and chosen based 
                     -- on reasonable order of the jobs.
@@ -163,46 +164,42 @@ runWorkflow appContext@AppContext {..} tals = do
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
 
                 processTALs db = do
-                    (z, vs) <- runProcessTALsWorker worldVersion                    
+                    (z, workerVS) <- runProcessTALsWorker worldVersion                    
                     case z of 
                         Left e -> do 
                             logError logger [i|Validator process failed: #{e}.|]
                             rwTx db $ \tx -> do
-                                putValidations tx db worldVersion (vs ^. typed)
-                                putMetrics tx db worldVersion (vs ^. typed)
+                                putValidations tx db worldVersion (workerVS ^. typed)
+                                putMetrics tx db worldVersion (workerVS ^. typed)
                                 completeWorldVersion tx db worldVersion                            
-                            updatePrometheus (vs ^. typed) prometheusMetrics worldVersion
+                            updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                             pure (mempty, mempty)            
-                        Right wr@WorkerResult {..} -> do                             
-                            let ValidationResult v maybeSlurm = payload
-                            logDebug logger [i|Worker result = #{wr}|]
-                            let vsWithCpuTime = v & typed @RawMetric . #internalMetrics %~ updateMetricInMap 
-                                                (newScope "validation") (& #cpuTime %~ (<> cpuTime))
-
-                            let topDownValidations = vs <> vsWithCpuTime
-                            logDebug logger [i|topDownValidations = #{topDownValidations}|]
-
-                            let tdValidations = topDownValidations ^. typed
-                            logDebug logger [i|Validation result: 
-#{formatValidations tdValidations}.|]
-                            updatePrometheus (topDownValidations ^. typed) prometheusMetrics worldVersion
+                        Right WorkerResult {..} -> do                             
+                            let ValidationResult vs maybeSlurm = payload
                             
-                            vrps' <- rwTx db $ \tx -> do
-                                        -- Update metrics. It's a hack, because validation worker 
-                                        -- saves metrics that doesn't contain WorkerResults fields.
-                                        putMetrics tx db worldVersion (topDownValidations ^. typed)
-                                        getVrps tx db worldVersion
-                            case vrps' of                             
-                                Nothing -> do 
-                                    logError logger [i|Something weird happened: .|]
-                                    pure (mempty, mempty)
-                                Just vrps -> do                 
-                                    slurmedVrps <- atomically $ do
-                                            setCurrentVersion appState worldVersion
-                                            completeVersion appState worldVersion vrps maybeSlurm
-                                    pure (vrps, slurmedVrps)
+                            pushSystem logger $ cpuMetric "validation" cpuTime                                
+                        
+                            let topDownState = workerVS <> vs
+                            logDebug logger [i|Validation result: 
+#{formatValidations (topDownState ^. typed)}.|]
+                            updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
+                            
+                            rereadAndupdateVrps maybeSlurm
+                  where
 
+                    rereadAndupdateVrps maybeSlurm = do 
+                        roTx db (\tx -> getVrps tx db worldVersion) >>= \case                            
+                            Nothing -> do 
+                                logError logger [i|Something weird happened, could not re-read VRPs.|]
+                                pure (mempty, mempty)
+                            Just vrps -> do                 
+                                slurmedVrps <- atomically $ do
+                                        setCurrentVersion appState worldVersion
+                                        completeVersion appState worldVersion vrps maybeSlurm
+                                pure (vrps, slurmedVrps)                        
 
+        -- Delete objects in the store that were read by top-down validation 
+        -- longer than `cacheLifeTime` hours ago.
         cacheGC sharedBetweenJobs worldVersion _ = do
             database' <- readTVarIO database
             executeOrDie
@@ -213,6 +210,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
 
+        -- Delete oldest world versions and all the data related to them.
         cleanOldVersions sharedBetweenJobs worldVersion _ = do
             let now = versionToMoment worldVersion
             database' <- readTVarIO database
@@ -223,6 +221,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)                        
                         logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
+        -- Do the custom LMDB compaction
         compact sharedBetweenJobs worldVersion _ = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
@@ -233,6 +232,7 @@ runWorkflow appContext@AppContext {..} tals = do
             else 
                 logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
 
+        -- Delete local rsync mirror
         rsyncCleanup _ jobRun =
             executeOrDie
                 (case jobRun of 

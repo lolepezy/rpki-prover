@@ -31,6 +31,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Config
 import           RPKI.Messages
 import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
@@ -46,7 +47,7 @@ import           RPKI.Util
 
 
 httpApi :: Storage s => AppContext s -> Application
-httpApi appContext@AppContext {..} = genericServe HttpApi {
+httpApi appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,        
         ui      = uiServer,
@@ -72,7 +73,7 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
-        config = pure config
+        system = liftIO $ getSystem appContext
     }
 
     uiServer = do 
@@ -80,7 +81,6 @@ httpApi appContext@AppContext {..} = genericServe HttpApi {
         vResults     <- liftIO $ getValidations appContext
         metrics <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics    
-
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
 getVRPValidated appContext = getVRPs appContext (readTVar . (^. #validatedVrps))
@@ -149,11 +149,11 @@ getLastVersion AppContext {..} = do
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) => 
             AppContext s -> m (RawMetric, MetricsDto)
 getMetrics AppContext {..} = do
-    db@DB {..} <- liftIO $ readTVarIO database 
+    db <- liftIO $ readTVarIO database 
     metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
             lastVersion <- MaybeT $ getLastCompletedVersion db tx
-            rawMetrics  <- MaybeT $ metricsForVersion tx metricStore lastVersion
+            rawMetrics  <- MaybeT $ metricsForVersion tx db lastVersion
             pure (rawMetrics, toMetricsDto rawMetrics)
     maybe notFoundException pure metrics
 
@@ -231,6 +231,12 @@ getRpkiObject AppContext {..} uri hash =
         (Just _, Just _) -> 
             throwError $ err400 { errBody = 
                 "Only 'uri' or 'hash' must be provided, not both." }
+
+getSystem :: Storage s =>  AppContext s -> IO SystemDto
+getSystem AppContext {..} = do 
+    systemMetrics <- readTVarIO $ appState ^. #system
+    let proverVersion = getVersion
+    pure SystemDto {..}
 
 
 rawCSV :: [VrpDto] -> RawCSV

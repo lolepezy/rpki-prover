@@ -24,7 +24,6 @@ import           Control.Lens ((^.))
 import           Conduit
 import           Data.Text
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString as BS
 
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
@@ -47,6 +46,7 @@ import           RPKI.Logging
 import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
+import           RPKI.Store.Base.Serialisation
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -68,7 +68,7 @@ Some of the machinery is also in Main.
     
 newtype WorkerId = WorkerId Text
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 instance Show WorkerId where
     show (WorkerId w) = show w
@@ -91,11 +91,11 @@ data WorkerParams = RrdpFetchParams {
                 tals         :: [TAL]
             } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype Timebox = Timebox Seconds
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data WorkerInput = WorkerInput {
         params          :: WorkerParams,
@@ -104,26 +104,26 @@ data WorkerInput = WorkerInput {
         workerTimeout    :: Timebox
     } 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError RrdpRepository, ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype RsyncFetchResult = RsyncFetchResult 
                             (Either AppError RsyncRepository, ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 newtype CompactionResult = CompactionResult ()                             
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)
+    deriving anyclass (TheBinary)
 
 
 data WorkerResult r = WorkerResult {
@@ -132,7 +132,7 @@ data WorkerResult r = WorkerResult {
         clockTime :: TimeMs
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (Serialise)    
+    deriving anyclass (TheBinary)    
 
 -- Entry point for a worker. It is supposed to run within a worker process 
 -- and do the actual work.

@@ -36,6 +36,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
@@ -108,8 +109,8 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                             (RsyncFetchParams vp rsyncRepo worldVersion)                        
                             (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
                             arguments                        
-    let RsyncFetchResult (z, vs) = payload
-    updateMetricOverideScope @InternalMetric @_ (newScope "fetch") (& #cpuTime %~ (<> cpuTime))
+    let RsyncFetchResult (z, vs) = payload    
+    pushSystem logger $ cpuMetric "fetch" cpuTime    
     embedState vs
     either appError pure z    
     
