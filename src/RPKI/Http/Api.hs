@@ -21,9 +21,6 @@ import           Servant
 import           Servant.Swagger
 import           Servant.Swagger.UI
 
-import           Data.Version
-import qualified Paths_rpki_prover as Autogen
-
 import qualified Data.HashMap.Strict.InsOrd as IOMap
 
 import           RPKI.Config
@@ -51,7 +48,7 @@ data API api = API {
 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,
-        config :: api    :- "config" :> Get '[JSON] Config,
+        system :: api    :- "system" :> Get '[JSON] SystemDto,
 
         publicationsPoints :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
 
@@ -77,7 +74,7 @@ data HttpApi route = HttpApi {
 swaggerDoc :: Swagger
 swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
     & info.title    .~ "RPKI Prover API"
-    & info.version  .~ convert (showVersion Autogen.version)
+    & info.version  .~ convert getVersion
     & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
                             "this UI is only good for documentation and examples." )
     & basePath          ?~ "/api"
@@ -113,7 +110,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
-            ("/config", mempty & get ?~ jsonOn200 "Configuration of the instance of RPKI prover")
+            ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config")
         ] 
   where                
     jsonOn200 txt = mempty

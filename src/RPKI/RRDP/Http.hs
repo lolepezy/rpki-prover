@@ -45,9 +45,6 @@ import System.IO.Temp (withTempFile)
 
 import System.IO.Posix.MMap (unsafeMMapFile)
 
-import Data.Version
-import qualified Paths_rpki_prover as Autogen
-
 
 class Blob bs where    
     readB :: FilePath -> Size -> IO bs
@@ -194,7 +191,7 @@ downloadConduit (URI u) fileHandle extraSink = do
     (z,) <$> liftIO (readIORef status)
 
 userAgent :: BS.ByteString
-userAgent = U.convert $ "rpki-prover-" <> showVersion Autogen.version
+userAgent = U.convert getVersion
 
 -- | Calculate size and extra arbitrary function of the sinked stream
 -- | and throw and exception is the size gets too big.

@@ -451,8 +451,8 @@ putMetrics tx DB { metricStore = MetricStore s } wv appMetric =
     liftIO $ M.put tx s wv appMetric
 
 metricsForVersion :: (MonadIO m, Storage s) => 
-                    Tx s mode -> MetricStore s -> WorldVersion -> m (Maybe RawMetric)
-metricsForVersion tx MetricStore {..} wv = liftIO $ M.get tx metrics wv    
+                    Tx s mode -> DB s  -> WorldVersion -> m (Maybe RawMetric)
+metricsForVersion tx DB { metricStore = MetricStore {..} } wv = liftIO $ M.get tx metrics wv    
 
 deleteMetrics :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()

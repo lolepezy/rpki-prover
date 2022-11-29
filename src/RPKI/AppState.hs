@@ -2,25 +2,33 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE OverloadedLabels   #-}
 
 module RPKI.AppState where
     
+import           Control.Lens
+
 import           Control.Monad (join)
 import           Control.Concurrent.STM
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
+import           RPKI.Reporting
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
+import           RPKI.Metrics.System
+import Data.Text (Text)
+import Control.Monad.IO.Class
 
 
 data AppState = AppState {
         world         :: TVar (Maybe WorldVersion),
         validatedVrps :: TVar Vrps,
         filteredVrps  :: TVar Vrps,
-        readSlurm     :: Maybe (ValidatorT IO Slurm)
+        readSlurm     :: Maybe (ValidatorT IO Slurm),
+        system        :: TVar SystemMetrics
     } deriving stock (Generic)
 
 -- 
@@ -30,7 +38,8 @@ newAppState = do
                     newTVar Nothing <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
-                    pure Nothing
+                    pure Nothing <*>
+                    newTVar mempty
 
 setCurrentVersion :: AppState -> WorldVersion -> STM ()
 setCurrentVersion AppState {..} = writeTVar world . Just
@@ -73,3 +82,13 @@ waitForNewVersion AppState {..} knownWorldVersion = do
 waitForVersion :: AppState -> STM WorldVersion
 waitForVersion AppState {..} =
     maybe retry pure =<< readTVar world
+
+bumpCpuTimeIO :: MonadIO m => AppState -> Text -> CPUTime -> m ()
+bumpCpuTimeIO appState scope cpuTime = liftIO $ atomically $ bumpCpuTime appState scope cpuTime
+
+bumpCpuTime :: AppState -> Text -> CPUTime -> STM ()
+bumpCpuTime AppState {..} scope cpuTime = do 
+    modifyTVar system 
+        (& #cpus %~ updateMetricInMap 
+            (newScope scope) 
+            (& #aggregatedCpuTime %~ (<> cpuTime)))

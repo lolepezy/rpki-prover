@@ -72,19 +72,16 @@ import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 
-import Data.Version
-import qualified Paths_rpki_prover as Autogen
-
 
 main :: IO ()
 main = do
-    cliOptions@CLIOptions{..} <- unwrapRecord $ convert $
-            "RPKI prover, relying party software for RPKI, version " <> showVersion Autogen.version
+    cliOptions@CLIOptions{..} <- unwrapRecord $ 
+            "RPKI prover, relying party software for RPKI, version " <> getVersion
 
     if version
         then do
             -- it is "--version" call, so print the version and exit
-            putStrLn $ "RPKI prover " <> showVersion Autogen.version
+            putStrLn $ convert getVersion
         else do
             case worker of
                 Nothing ->

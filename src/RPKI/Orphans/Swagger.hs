@@ -28,6 +28,7 @@ import           RPKI.Config
 import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
+import           RPKI.Metrics.System
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable
 
@@ -85,7 +86,8 @@ instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidationMetric
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
-instance ToSchema InternalMetric
+instance ToSchema CpuMetrics
+instance ToSchema SystemMetrics
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
 instance ToSchema HttpStatus

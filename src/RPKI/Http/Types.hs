@@ -33,6 +33,8 @@ import           Servant.API
 import           Data.Swagger
 import           Network.HTTP.Media ((//))
 
+import           RPKI.Config
+import           RPKI.Metrics.System
 import           RPKI.AppTypes
 import           RPKI.Repository
 import           RPKI.Domain
@@ -93,8 +95,7 @@ newtype RObject = RObject (Located RpkiObject)
 data MetricsDto = MetricsDto {
         groupedValidations :: GroupedValidationMetric ValidationMetric,      
         rsync              :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
-        rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric,
-        internal           :: MonoidalMap (DtoScope 'Metric) InternalMetric
+        rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -108,7 +109,14 @@ newtype JobsDto = JobsDto {
         jobs :: [(Text, Instant)]
     } 
     deriving stock (Eq, Show, Generic)
-            
+
+
+data SystemDto = SystemDto {
+        proverVersion :: Text,
+        config        :: Config,
+        systemMetrics :: SystemMetrics
+    }
+    deriving stock (Eq, Show, Generic)
 
 data ManualCVS = ManualCVS
 
@@ -138,7 +146,9 @@ instance ToJSON ProviderAsn where
     toJSON = genericToJSON $ defaultOptions { omitNothingFields = True } 
 
 instance ToJSON JobsDto     
-instance ToSchema JobsDto     
+instance ToSchema JobsDto   
+instance ToJSON SystemDto  
+instance ToSchema SystemDto     
 
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
@@ -194,8 +204,7 @@ toMetricsDto :: RawMetric -> MetricsDto
 toMetricsDto rawMetrics = MetricsDto {
         groupedValidations = groupedValidationMetric rawMetrics,
         rsync    = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rsyncMetrics,
-        rrdp     = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics,
-        internal = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #internalMetrics
+        rrdp     = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics
     }
 
 toPublicationPointDto :: PublicationPoints -> PublicationPointDto

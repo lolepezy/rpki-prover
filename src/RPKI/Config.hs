@@ -21,8 +21,14 @@ import Data.Monoid
 
 import RPKI.Domain
 import RPKI.Logging
-import RPKI.Util (toNatural)
+import RPKI.Util (toNatural, convert)
 import GHC.Generics (Generic)
+
+import Data.Version
+import qualified Paths_rpki_prover as Autogen
+
+getVersion :: Text
+getVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 
 data Parallelism = Parallelism {
         cpuCount         :: Natural,
@@ -226,3 +232,4 @@ defaulPrefetchURLs = [
         "rsync://repo-rpki.idnic.net/repo/",
         "rsync://0.sb/repo/"
     ]    
+    

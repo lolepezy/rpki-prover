@@ -6,6 +6,7 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards #-}
 
 
 module RPKI.Reporting where
@@ -13,7 +14,7 @@ module RPKI.Reporting where
 import           Codec.Serialise
     
 import           Control.Exception.Lifted
-import           Control.Lens                (Lens', (%~), (&))
+import           Control.Lens
 
 import           Data.Generics.Labels
 import           Data.Generics.Product.Typed
@@ -23,7 +24,7 @@ import           Data.Int                    (Int64)
 import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Monoid
 
-import          Data.Text                   as Text
+import           Data.Text                   as Text
 import           Data.Tuple.Strict
 
 import qualified Data.List                   as List
@@ -39,7 +40,8 @@ import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
 
-import           Data.Map.Monoidal.Strict
+import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
@@ -398,15 +400,6 @@ data ValidationMetric = ValidationMetric {
     deriving Semigroup via GenericSemigroup ValidationMetric   
     deriving Monoid    via GenericMonoid ValidationMetric
 
-data InternalMetric = InternalMetric {        
-        clockTimeMs :: TimeMs,
-        cpuTime :: CPUTime
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Serialise)
-    deriving Semigroup via GenericSemigroup InternalMetric   
-    deriving Monoid    via GenericMonoid InternalMetric
-
 instance MetricC RrdpMetric where
     metricLens = #rrdpMetrics
 
@@ -415,10 +408,6 @@ instance MetricC RsyncMetric where
 
 instance MetricC ValidationMetric where 
     metricLens = #validationMetrics
-
-instance MetricC InternalMetric where 
-    metricLens = #internalMetrics
-
 
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
@@ -439,8 +428,7 @@ data RawMetric = RawMetric {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
-        vrpCounts         :: VrpCounts,
-        internalMetrics   :: MetricMap InternalMetric
+        vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (Serialise)
