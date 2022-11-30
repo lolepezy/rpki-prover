@@ -11,11 +11,13 @@ import           GHC.Generics
 import           Data.Monoid.Generic
 import           Data.Text
 import           RPKI.Time
+import           RPKI.AppTypes
 import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
 
 data CpuMetrics = CpuMetrics {
-        aggregatedCpuTime :: CPUTime
+        aggregatedCpuTime :: CPUTime,
+        maxMemory         :: MaxMemory
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
@@ -24,16 +26,17 @@ data CpuMetrics = CpuMetrics {
 
 
 data SystemMetrics = SystemMetrics {
-        cpus :: MetricMap CpuMetrics        
+        resources :: MetricMap CpuMetrics
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup SystemMetrics   
     deriving Monoid    via GenericMonoid SystemMetrics    
 
-cpuMetric :: Text -> CPUTime -> SystemMetrics
-cpuMetric scope cpuTime = SystemMetrics {
-        cpus = updateMetricInMap 
-                    (newScope scope) 
-                    (& #aggregatedCpuTime %~ (<> cpuTime)) mempty
+cpuMemMetric :: Text -> CPUTime -> MaxMemory -> SystemMetrics
+cpuMemMetric scope cpuTime maxMemory = SystemMetrics {
+        resources = updateMetricInMap 
+                        (newScope scope) 
+                        ((& #aggregatedCpuTime %~ (<> cpuTime)) . (& #maxMemory %~ (<> maxMemory)))
+                        mempty
     }

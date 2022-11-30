@@ -54,8 +54,8 @@ instance Show CPUTime where
 thisInstant :: MonadIO m => m Now
 thisInstant = Now . Instant <$> liftIO dateCurrent
 
-processCpuTime :: MonadIO m => m CPUTime
-processCpuTime = do 
+getCpuTime :: MonadIO m => m CPUTime
+getCpuTime = do 
     picos <- liftIO getCPUTime
     pure $ CPUTime $ picos `div` 1000_000_000
 
