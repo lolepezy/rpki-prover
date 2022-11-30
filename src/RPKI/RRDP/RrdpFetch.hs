@@ -78,7 +78,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                             arguments  
     
     let RrdpFetchResult (z, vs) = payload
-    pushSystem logger $ cpuMetric "fetch" cpuTime    
+    pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
     embedState vs    
     either appError pure z    
 

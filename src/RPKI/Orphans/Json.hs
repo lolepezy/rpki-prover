@@ -178,8 +178,12 @@ instance ToJSONKey RpkiURL where
 instance ToJSON (Scope 'Metric)
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON s
+    
 instance ToJSON CPUTime where 
     toJSON (CPUTime s) = toJSON s
+
+instance ToJSON MaxMemory where 
+    toJSON (MaxMemory s) = toJSON s
 
 instance ToJSON Count where
     toJSON (Count s) = toJSON s

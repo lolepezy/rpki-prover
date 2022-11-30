@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -28,6 +27,7 @@ import           Data.Hourglass
 import           Data.Conduit.Process.Typed
 
 import           GHC.Generics
+import           GHC.Stats
 
 import           System.Exit
 import           System.IO (stdin, stdout)
@@ -125,9 +125,10 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
 
 
 data WorkerResult r = WorkerResult {
-        payload :: r,
-        cpuTime :: CPUTime,
-        clockTime :: TimeMs
+        payload   :: r,
+        cpuTime   :: CPUTime,
+        clockTime :: TimeMs,
+        maxMemory :: MaxMemory
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
@@ -178,7 +179,9 @@ readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdi
 execWithTiming :: MonadIO m => m r -> m (WorkerResult r)
 execWithTiming f = do        
     (payload, clockTime) <- timedMS f
-    cpuTime <- processCpuTime    
+    cpuTime <- getCpuTime    
+    RTSStats {..} <- liftIO getRTSStats
+    let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
     pure WorkerResult {..}
   
 

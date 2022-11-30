@@ -177,7 +177,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         Right WorkerResult {..} -> do                             
                             let ValidationResult vs maybeSlurm = payload
                             
-                            pushSystem logger $ cpuMetric "validation" cpuTime                                
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory                            
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 

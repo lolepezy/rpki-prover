@@ -110,7 +110,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                             (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
                             arguments                        
     let RsyncFetchResult (z, vs) = payload    
-    pushSystem logger $ cpuMetric "fetch" cpuTime    
+    pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
     embedState vs
     either appError pure z    
     
