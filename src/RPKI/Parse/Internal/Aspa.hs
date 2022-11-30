@@ -16,16 +16,10 @@ import Data.ASN1.Parse
 
 import Data.Bifunctor
 
-import Data.Tuple.Strict
-
 import RPKI.Domain 
 import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
-
-import RPKI.Util
-import RPKI.Resources.IntervalSet as IS
-import Data.Either
 
 
 -- | Parse ASPA, https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
@@ -41,7 +35,7 @@ parseAspa bs = do
         getAspaWithExplicitversion <|> getAspa
     
     getAspaWithExplicitversion = do 
-        v <- getVersion
+        v :: Int <- getVersion
         when (v /= 0) $ throwParseError $ "Version must be 0 but was " <> show v
         getAspa        
 
