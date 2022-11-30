@@ -296,6 +296,9 @@ toValidationMessage = \case
 
       RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp _ prefix maxLength) -> 
           [i|VRP is malformed, length of the prefix #{prefix} is bigger than #{maxLength}.|]
+
+      AspaOverlappingCustomerProvider customerAsn providerAsns -> 
+        [i|ASPA contains customer ASN #{customerAsn} in the list of provider ASNs #{providerAsns}.|]
   where
     fmtUrlList = mconcat . 
                  List.intersperse "," . map show  

@@ -111,7 +111,8 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
-                        RoaPrefixLenghtsIsBiggerThanMaxLength Vrp
+                        RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
+                        AspaOverlappingCustomerProvider ASN [ASN]
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     

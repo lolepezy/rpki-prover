@@ -377,8 +377,10 @@ validateAspa ::
 validateAspa now aspa parentCert crl verifiedResources = do
     void $
         validateCms now (cmsPayload aspa) parentCert crl verifiedResources $ \aspaCms -> do
-            let z = getCMSContent aspaCms            
-            pure ()
+            let Aspa {..} = getCMSContent aspaCms            
+            case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
+                []      -> pure ()
+                overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
     pure $ Validated aspa
 
 validateCms ::
