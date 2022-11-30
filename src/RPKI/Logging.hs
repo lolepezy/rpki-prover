@@ -79,6 +79,26 @@ pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
 pushSystem AppLogger {..} sm = 
     liftIO $ atomically $ writeCQueue (getQueue actualLogger) $ MsgQE $ SystemM sm  
 
+{- 
+Every process the main one or a worker has it's own queue of messages.
+
+These messages are 
+ - sent to the parent process (if current process is a worker) 
+ - interpreted, e.g. printed to the stdout/file/whatnot (if current process is the main one)
+
+At the moment there are 2 kinds of messages, logging messages and system metrics upadates.
+
+In order to sent a message to the parent process the following should happen
+ - messsage gets serialised to a bytestring
+ - this bytestring get converted to base64
+ - it is printed to stderr (at the moment) with '\n' after it.
+ That's the way the parent knows where one message ends and the other one begins.
+
+If the parent accepting a message is not the main one, it just passes the bytes
+without any interpretation further to it's parent until the main one is reached.
+-}
+
+-- Messages in the queue 
 data BusMessage = LogM LogMessage | SystemM SystemMetrics
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
