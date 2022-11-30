@@ -171,8 +171,7 @@ validateTACert tal u (CerRO taCert) = do
     unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
     validateTaCertAKI taCert u
     signatureCheck $ validateCertSignature taCert taCert
-    validateResourceCertExtensions taCert
-    pure taCert
+    validateResourceCertExtensions taCert    
       
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
@@ -198,7 +197,7 @@ validateTACertWithPreviousCert cert previousCert = do
     let (prevBefore, prevAfter) = validities previousCert
     if before < prevBefore || after < prevAfter 
         then do
-            vPureWarning $ TACertOlderThanPrevious {..}
+            void $ vPureWarning $ TACertOlderThanPrevious {..}
             pure previousCert 
         else 
             pure cert
@@ -379,8 +378,8 @@ validateAspa now aspa parentCert crl verifiedResources = do
         validateCms now (cmsPayload aspa) parentCert crl verifiedResources $ \aspaCms -> do
             let Aspa {..} = getCMSContent aspaCms            
             case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
-                []      -> pure ()
-                overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
+                []       -> pure ()
+                _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
     pure $ Validated aspa
 
 validateCms ::

@@ -193,9 +193,9 @@ withLogger mkLogger maxLogLevel sysMetricCallback f = do
                                 BinQE b   -> b
                                 MsgQE msg -> msgToBs msg
 
-        loop g queue = do 
+        loop ff queue = do 
                 z <- atomically $ readCQueue queue        
-                for_ z $ \m -> g m >> loop g queue            
+                for_ z $ \m -> ff m >> loop ff queue            
 
         mainLogWithLevel LogMessage {..} = do
             let level = justifyLeft 6 ' ' [i|#{logLevel}|]

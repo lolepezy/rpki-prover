@@ -49,7 +49,7 @@ createDatabase e logger checkAction = do
   where
     lmdb = LmdbStorage e        
 
-    verifyDBVersion db@DB {..} =
+    verifyDBVersion db =
         rwTx db $ \tx -> do     
             dbVersion <- getDatabaseVersion tx db            
             case dbVersion of 

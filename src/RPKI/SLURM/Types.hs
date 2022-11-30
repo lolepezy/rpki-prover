@@ -1,10 +1,9 @@
 {-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.SLURM.Types where

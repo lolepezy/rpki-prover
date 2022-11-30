@@ -5,10 +5,8 @@
 module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
 
 import Control.DeepSeq
-import Codec.Serialise
 import GHC.Generics
 
 import Data.Bifunctor (first)
@@ -16,7 +14,6 @@ import Data.Monoid.Generic
 
 import RPKI.Config
 import RPKI.Reporting
-import RPKI.Util (fmtGen)
 import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    

@@ -170,7 +170,7 @@ validateBottomUp
                 Nothing -> 
                     vError $ NoCRLExists childrenAki certLocations    
 
-                Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
+                Just foundCrl@(Located _ (CrlRO crl)) -> do      
                     validateObjectLocations foundCrl           
                     let mftEECert = getEECert $ unCMS $ cmsPayload mft
                     checkCrlLocation foundCrl mftEECert

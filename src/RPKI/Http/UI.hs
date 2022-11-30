@@ -348,8 +348,8 @@ focusLink = \case
     RepositoryFocus uri -> directLink $ unURI $ getURL uri
     TextFocus txt       -> toHtml txt
   where
-    directLink u = 
-        H.a ! A.href (textValue u) $ toHtml u
+    directLink url = 
+        H.a ! A.href (textValue url) $ toHtml url
 
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
