@@ -34,7 +34,7 @@ data AppState = AppState {
 
 -- 
 newAppState :: IO AppState
-newAppState = do        
+newAppState = 
     atomically $ AppState <$> 
                     newTVar Nothing <*>
                     newTVar mempty <*>

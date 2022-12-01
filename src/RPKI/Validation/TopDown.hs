@@ -79,8 +79,9 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
 
 
 data Payloads a = Payloads {
-        vrps  :: a,
-        aspas :: Set.Set Aspa        
+        vrps     :: a,
+        aspas    :: Set.Set Aspa,
+        bgpCerts :: Set.Set BGPCertPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup (Payloads a)
@@ -662,8 +663,8 @@ validateCaCertificate
                             void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
                             let vrpList = getCMSContent $ cmsPayload roa                            
                             oneMoreRoa                            
-                            moreVrps $ Count $ fromIntegral $ length vrpList
-                            pure $! Payloads (Set.fromList vrpList) mempty
+                            moreVrps $ Count $ fromIntegral $ length vrpList                            
+                            pure $! (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
 
             GbrRO gbr -> do                
                     validateObjectLocations child
@@ -680,7 +681,7 @@ validateCaCertificate
                             void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
                             oneMoreAspa            
                             let aspa' = getCMSContent $ cmsPayload aspa
-                            pure $! Payloads mempty (Set.singleton aspa')
+                            pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
 
             -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
             -- they will emit a warning.

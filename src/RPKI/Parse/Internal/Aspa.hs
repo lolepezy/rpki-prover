@@ -31,7 +31,7 @@ parseAspa bs = do
     hash' <- getMetaFromSigned signedAspa bs
     pure $ newCMSObject hash' (CMS signedAspa)
   where     
-    parseAspa' = onNextContainer Sequence $ do
+    parseAspa' = onNextContainer Sequence $
         getAspaWithExplicitversion <|> getAspa
     
     getAspaWithExplicitversion = do 

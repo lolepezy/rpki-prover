@@ -376,9 +376,18 @@ data RSC = RSC {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 data Aspa = Aspa {                
         customerAsn  :: ASN,
         providerAsns :: [(ASN, Maybe AddrFamily)]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+data BGPCertPayload = BGPCertPayload {
+        ski  :: SKI,
+        asn  :: ASN,
+        spki :: SPKI
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
