@@ -100,6 +100,8 @@ instance ToSchema TimeMs where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema CPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema MaxMemory where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 

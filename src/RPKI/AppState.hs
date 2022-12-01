@@ -6,17 +6,12 @@
 
 module RPKI.AppState where
     
-import           Control.Lens
-
 import           Control.Monad (join)
 import           Control.Concurrent.STM
-
-import           Data.Text (Text)
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
-import           RPKI.Reporting
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
@@ -84,15 +79,6 @@ waitForVersion :: AppState -> STM WorldVersion
 waitForVersion AppState {..} =
     maybe retry pure =<< readTVar world
 
-bumpCpuTimeIO :: MonadIO m => AppState -> Text -> CPUTime -> m ()
-bumpCpuTimeIO appState scope cpuTime = liftIO $ atomically $ bumpCpuTime appState scope cpuTime
-
-bumpCpuTime :: AppState -> Text -> CPUTime -> STM ()
-bumpCpuTime AppState {..} scope cpuTime = do 
-    modifyTVar system 
-        (& #cpus %~ updateMetricInMap 
-            (newScope scope) 
-            (& #aggregatedCpuTime %~ (<> cpuTime)))
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 

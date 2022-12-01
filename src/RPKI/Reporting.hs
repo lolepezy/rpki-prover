@@ -6,7 +6,6 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RecordWildCards #-}
 
 
 module RPKI.Reporting where
