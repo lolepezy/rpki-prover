@@ -53,10 +53,10 @@ parseResources x509cert = do
           ext' id_pe_autonomousSysIds,
           ext' id_pe_autonomousSysIds_v2) 
       of
-        (Just _, Just _, _, _) -> broken "Both IP extensions"
-        (_, _, Just _, Just _) -> broken "Both ASN extensions"
-        (Just _, _, _, Just _) -> broken "There is both IP V1 and ASN V2 extensions"
-        (_, Just _, Just _, _) -> broken "There is both IP V2 and ASN V1 extensions"
+        (Just _, Just _, _, _) -> broken "Both versions of IP extensions"
+        (_, _, Just _, Just _) -> broken "Both versions of ASN extensions"
+        (Just _, _, _, Just _) -> broken "There are IP V1 and ASN V2 extensions"
+        (_, Just _, Just _, _) -> broken "There are IP V2 and ASN V1 extensions"
         (ips, Nothing, asns, Nothing) -> strictCert <$> cert' x509cert ips asns
         (Nothing, ips, Nothing, asns) -> reconsideredCert <$> cert' x509cert ips asns
   where 

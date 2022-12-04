@@ -43,24 +43,19 @@ import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
 
 
-data CertType = BGPCert | CACert | EECert 
-
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
 
 -- TODO That one needs to be refactored in such a way that certificate type is 
 -- known after parsing the certificate on the type level.
-validateResourceCertExtensions ::
-    WithResourceCertificate c =>
-    c ->
-    PureValidatorT c
+validateResourceCertExtensions :: WithResourceCertificate c => c -> PureValidatorT c
 validateResourceCertExtensions cert = do     
     let extensions = getExts $ cwsX509certificate $ getCertWithSignature cert
 
     -- Do not check for SKI, AKI and resource extensions -- they 
     -- are validated when parsing certificates and are crucial for 
     -- the whole tree validation.
-    certType extensions >>= \case                        
+    getCertificateType extensions >>= \case                        
         CACert -> do             
             validateCaBasicConstraint extensions
             validatePolicyExtension extensions                        
@@ -75,92 +70,102 @@ validateResourceCertExtensions cert = do
     validateNoUnknownCriticalExtensions extensions            
     
     pure cert
-  where
-    certType extensions =
-        withExtension extensions id_ce_keyUsage $ \bs parsed ->             
+
+
+getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType
+getCertificateType extensions =
+    withExtension extensions id_ce_keyUsage $ \bs parsed ->             
+        case parsed of 
+            -- Bits position are from
+            -- https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3
+            -- 
+            -- Which bits needs to set and where
+            -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.4
+            [BitString ba@(BitArray 7 _)] -> do 
+                unless (bitArrayGetBit ba 5) $ vPureError $ BrokenKeyUsage "keyCertSign bit is not set"
+                unless (bitArrayGetBit ba 6) $ vPureError $ BrokenKeyUsage "cRLSign bit is not set"
+                for_ [0..4] $ \bit -> 
+                    when (bitArrayGetBit ba bit) $ vPureError $ BrokenKeyUsage 
+                        [i|Bit #{bit} is set, only keyCertSign and cRLSign must be set.|]
+
+                pure CACert            
+
+            -- There must be only the `digitalSignature` bit 
+            [BitString ba@(BitArray 1 _)] ->                     
+                let badExtKU = vPureError $ CertBrokenExtension id_ce_extKeyUsage bs
+                in case extVal extensions id_ce_extKeyUsage of
+                    Nothing -> do                             
+                        unless (bitArrayGetBit ba 0) $ vPureError $ BrokenKeyUsage "digitalSignature bit is not set"
+                        pure EECert
+                    Just bs1 
+                        | BS.null bs1 -> badExtKU
+                        | otherwise ->
+                            case decodeASN1 DER (LBS.fromStrict bs1) of
+                                Left _  -> badExtKU
+                                Right [Start Sequence, OID oid, End Sequence]
+                                    | oid == id_kp_bgpsecRouter -> pure BGPCert
+                                    | otherwise -> badExtKU                                            
+                                _ -> badExtKU
+                
+            _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
+
+-- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
+validateCaBasicConstraint :: [ExtensionRaw] -> PureValidatorT ()
+validateCaBasicConstraint extensions = 
+    withExtension extensions id_ce_basicConstraints $ \bs parsed ->
             case parsed of 
-                -- Bits position are from
-                -- https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3
-                -- 
-                -- Which bits needs to set and where
-                -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.4
-                [BitString ba@(BitArray 7 _)] -> do 
-                    unless (bitArrayGetBit ba 5) $ vPureError $ BrokenKeyUsage "keyCertSign bit is not set"
-                    unless (bitArrayGetBit ba 6) $ vPureError $ BrokenKeyUsage "cRLSign bit is not set"
-                    for_ [0..4] $ \bit -> 
-                        when (bitArrayGetBit ba bit) $ vPureError $ BrokenKeyUsage 
-                            [i|Bit #{bit} is set, only keyCertSign and cRLSign must be set.|]
+                [Start Sequence, Boolean _, End Sequence] -> pure ()                
+                _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
 
-                    pure CACert            
+noBasicContraint :: [ExtensionRaw] -> PureValidatorT ()
+noBasicContraint extensions = 
+    for_ (extVal extensions id_ce_basicConstraints) $ \bs -> 
+        vPureError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
 
-                -- There must be only the `digitalSignature` bit 
-                [BitString ba@(BitArray 1 _)] ->                     
-                    let badExtKU = vPureError $ CertBrokenExtension id_ce_extKeyUsage bs
-                    in case extVal extensions id_ce_extKeyUsage of
-                        Nothing -> do                             
-                            unless (bitArrayGetBit ba 0) $ vPureError $ BrokenKeyUsage "digitalSignature bit is not set"                            
-                            pure EECert
-                        Just bs1 
-                            | BS.null bs1 -> badExtKU
-                            | otherwise ->
-                                case decodeASN1 DER (LBS.fromStrict bs1) of
-                                    Left _  -> badExtKU
-                                    Right [Start Sequence, OID oid, End Sequence]
-                                        | oid == id_kp_bgpsecRouter -> pure BGPCert
-                                        | otherwise -> badExtKU                                            
-                                    _ -> badExtKU
-                    
-                _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
+validatePolicyExtension :: [ExtensionRaw] -> PureValidatorT ()
+validatePolicyExtension extensions = 
+    withExtension extensions id_ce_certificatePolicies $ \bs parsed ->
+        case parsed of 
+            [ Start Sequence
+                , Start Sequence
+                , OID oid
+                , End Sequence
+                , End Sequence
+                ] | oid == id_cp_ipAddr_asNumber -> pure ()        
+            [ Start Sequence
+                , Start Sequence
+                , OID oid
+                , Start Sequence
+                , Start Sequence
+                , OID oidCps
+                , ASN1String _
+                , End Sequence
+                , End Sequence
+                , End Sequence
+                , End Sequence
+                ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure ()   
 
-    -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
-    validateCaBasicConstraint extensions = 
-        withExtension extensions id_ce_basicConstraints $ \bs parsed ->
-                case parsed of 
-                    [Start Sequence, Boolean _, End Sequence] -> pure ()                
-                    _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
+            _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
+                
+validateNoUnknownCriticalExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateNoUnknownCriticalExtensions extensions = do                        
+    for_ extensions $ \ExtensionRaw {..} -> do 
+        when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
+            vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
 
-    noBasicContraint extensions = 
-        for_ (extVal extensions id_ce_basicConstraints) $ \bs -> 
-            vPureError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
-
-    validatePolicyExtension extensions = 
-        withExtension extensions id_ce_certificatePolicies $ \bs parsed ->
-            case parsed of 
-                [ Start Sequence
-                    , Start Sequence
-                    , OID oid
-                    , End Sequence
-                    , End Sequence
-                    ] | oid == id_cp_ipAddr_asNumber -> pure ()        
-                [ Start Sequence
-                    , Start Sequence
-                    , OID oid
-                    , Start Sequence
-                    , Start Sequence
-                    , OID oidCps
-                    , ASN1String _
-                    , End Sequence
-                    , End Sequence
-                    , End Sequence
-                    , End Sequence
-                    ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure ()   
-
-                _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
-                 
-    validateNoUnknownCriticalExtensions extensions = do                        
-        for_ extensions $ \ExtensionRaw {..} -> do 
-            when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
-                vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
-
-    withExtension extensions oid f = do 
-        case extVal extensions oid of
-            Nothing -> vPureError $ MissingCriticalExtension oid
-            Just bs 
-                | BS.null bs -> vPureError $ MissingCriticalExtension oid
-                | otherwise -> do 
-                    case decodeASN1 DER (LBS.fromStrict bs) of
-                        Left _  -> vPureError $ CertBrokenExtension oid bs        
-                        Right z -> f bs z
+withExtension :: [ExtensionRaw]
+            -> OID
+            -> (BS.ByteString -> [ASN1] -> PureValidatorT r)
+            -> PureValidatorT r
+withExtension extensions oid f = do 
+    case extVal extensions oid of
+        Nothing -> vPureError $ MissingCriticalExtension oid
+        Just bs 
+            | BS.null bs -> vPureError $ MissingCriticalExtension oid
+            | otherwise -> do 
+                case decodeASN1 DER (LBS.fromStrict bs) of
+                    Left _  -> vPureError $ CertBrokenExtension oid bs        
+                    Right z -> f bs z
         
 
 -- | Validated specifically the TA's self-signed certificate

@@ -68,6 +68,10 @@ forRFC :: AnRFC r -> (r 'Strict_ -> a) -> (r 'Reconsidered_ -> a) -> a
 forRFC (WithStrict_ (WithRFC a))       f _ = f a
 forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
+data CertType = BGPCert | CACert | EECert 
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
 newtype Hash = Hash BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -195,17 +199,17 @@ class WithResourceCertificate a where
 
 
 data CrlObject = CrlObject {
-        hash      :: {-# UNPACK #-} Hash,
-        aki       :: {-# UNPACK #-} AKI,
-        signCrl   :: SignCRL
+        hash    :: {-# UNPACK #-} Hash,
+        aki     :: {-# UNPACK #-} AKI,
+        signCrl :: SignCRL
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
 data CerObject = CerObject {
-        hash      :: {-# UNPACK #-} Hash,
-        ski       :: SKI,
-        aki       :: Maybe AKI,
+        hash        :: {-# UNPACK #-} Hash,
+        ski         :: {-# UNPACK #-} SKI,
+        aki         :: Maybe AKI,
         certificate :: ResourceCertificate
     }
     deriving stock (Show, Eq, Generic)
@@ -340,7 +344,7 @@ data Vrp = Vrp
     deriving anyclass TheBinary
 
 data Manifest = Manifest {
-        mftNumber   :: Serial, 
+        mftNumber   :: {-# UNPACK #-} Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: Instant, 
         nextTime    :: Instant, 
