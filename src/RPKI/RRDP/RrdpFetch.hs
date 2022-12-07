@@ -377,6 +377,7 @@ saveSnapshot
             else
                 pure $ Left (RrdpE (UnsupportedObjectType (U.convert uri)), uri)
       where 
+        readBlob :: ValidatorT IO RrdpObjectProcessingResult
         readBlob = case U.parseRpkiURL $ unURI uri of
             Left e -> 
                 pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
@@ -398,10 +399,10 @@ saveSnapshot
                                         -- an object and delete-insert race will never happen in practice
                                         -- since deletion is never concurrent with insertion.
                                         then HashExists rpkiURL hash
-                                        else
-                                            case first ParseE $ readObject rpkiURL decoded of 
-                                                Left e   -> ObjectParsingProblem rpkiURL (VErr e)
-                                                Right ro -> Success rpkiURL (toStorableObject ro)
+                                        else 
+                                            case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL decoded) of 
+                                                (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e)
+                                                (Right ro, _) -> Success rpkiURL (toStorableObject ro)
                                     
     saveStorable _ _ (Left (e, uri)) = 
         inSubObjectVScope (unURI uri) $ appWarn e             
@@ -511,10 +512,10 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
                         Right (DecodedBase64 decoded) -> do 
                             case validateSizeOfBS validationConfig decoded of 
                                 Left e  -> ObjectParsingProblem rpkiURL (VErr $ ValidationE e)
-                                Right _ ->                                 
-                                    case readObject rpkiURL decoded of 
-                                        Left e   -> ObjectParsingProblem rpkiURL (VErr $ ParseE e)
-                                        Right ro -> Success rpkiURL (toStorableObject ro)                     
+                                Right _ ->                                                                     
+                                    case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL decoded) of 
+                                        (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e)
+                                        (Right ro, _) -> Success rpkiURL (toStorableObject ro)                     
 
     saveStorable objectStore tx r = 
         case r of 

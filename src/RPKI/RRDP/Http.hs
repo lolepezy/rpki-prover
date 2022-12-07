@@ -129,7 +129,7 @@ fetchRpkiObject appContext uri = do
                             (appContext ^. typed @Config) 
                             (getURL uri) 
                         
-    fromEitherM $ pure $ first ParseE $ readObject (RrdpU uri) content
+    vHoist $ readObject (RrdpU uri) content
 
 
 downloadToFile :: MonadIO m => 

@@ -29,12 +29,12 @@ import Data.ASN1.BinaryEncoding
 import Data.X509 as X509
 
 import RPKI.Resources.Types
+import RPKI.AppMonad
+import RPKI.Reporting
 import RPKI.Domain
 import RPKI.Reporting (ParseError(..))
 
 import RPKI.Resources.Resources   as R
-
-type ParseResult a = Either (ParseError Text.Text) a
 
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
@@ -102,8 +102,11 @@ allowedCriticalOIDs = [
 fmtErr :: String -> ParseError Text.Text
 fmtErr = ParseError . Text.pack
 
-mapParseErr :: Either String a -> ParseResult a       
-mapParseErr = first fmtErr
+parseErr :: Text.Text -> AppError
+parseErr = ParseE . ParseError
+
+mapParseErr :: Either String a -> PureValidatorT a       
+mapParseErr =  fromEither . first (ParseE . fmtErr)
 
 parseError :: String -> ASN1 -> ParseASN1 a
 parseError m a = throwParseError $ case m of 
@@ -174,19 +177,19 @@ getExts (certExtensions -> Extensions extensions) = fromMaybe [] extensions
 getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
 getExtsSign = getExts . cwsX509certificate
 
-parseKI :: BS.ByteString -> ParseResult KI
+parseKI :: BS.ByteString -> PureValidatorT KI
 parseKI bs = 
     case decodeASN1' BER bs of
-        Left e -> Left $ fmtErr $ "Error decoding key identifier: " <> show e
+        Left e -> pureError $ parseErr $ "Error decoding key identifier: " <> Text.pack (show e)
         Right [OctetString bytes] -> makeKI bytes
         Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
-        Right s -> Left $ fmtErr $ "Unknown key identifier " <> show s
+        Right s -> pureError $ parseErr $ "Unknown key identifier " <> Text.pack (show s)
   where
     makeKI bytes = 
         let len = BS.length bytes
         in if len == 20
-            then Right $ mkKI bytes
-            else Left $ fmtErr $ "KI has wrong length, must be 160 bits, but it is " <> show len
+            then pure $ mkKI bytes
+            else pureError $ parseErr $ "KI has wrong length, must be 160 bits, but it is " <> Text.pack (show len)
 
 oid2Hash :: OID -> ParseASN1 HashALG
 oid2Hash = \case
@@ -347,7 +350,7 @@ setLowerBitsToOne ws setBitsNum allBitsNum =
             List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum - 1]
 
 
-parseIpExt :: [ASN1] -> ParseResult IpResources
+parseIpExt :: [ASN1] -> PureValidatorT IpResources
 parseIpExt asns = mapParseErr $ runParseASN1 
         (onNextContainer Sequence parseIpExt') asns
 
@@ -374,7 +377,7 @@ parseIpExt asns = mapParseErr $ runParseASN1
 
    ASId                ::= INTEGER
 -}
-parseAsnExt :: [ASN1] -> ParseResult AsResources
+parseAsnExt :: [ASN1] -> PureValidatorT AsResources
 parseAsnExt asnBlocks = mapParseErr $ runParseASN1 
         (onNextContainer Sequence parseAsnExt') asnBlocks 
   where

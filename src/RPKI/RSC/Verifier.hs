@@ -26,7 +26,6 @@ import qualified Data.ByteString as BS
 
 import           GHC.Generics (Generic)
 
-import           Data.Bifunctor
 import           Data.Maybe
 import           Data.Foldable (for_)
 import qualified Data.Text                        as Text
@@ -71,7 +70,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
     
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
-    parsedRsc <- vHoist $ fromEither $ first ParseE $ parseRsc bs    
+    parsedRsc <- vHoist $ parseRsc bs    
 
     now <- thisInstant
     void $ validateBottomUp appContext (RscRO parsedRsc) now

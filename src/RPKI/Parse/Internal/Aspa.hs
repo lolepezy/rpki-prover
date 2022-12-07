@@ -15,18 +15,22 @@ import Data.ASN1.Parse
 
 import Data.Bifunctor
 
+import RPKI.AppMonad
 import RPKI.Domain 
 import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
+import qualified RPKI.Util as U
+
 
 -- | Parse ASPA, https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 -- 
-parseAspa :: BS.ByteString -> ParseResult AspaObject
+parseAspa :: BS.ByteString -> PureValidatorT AspaObject
 parseAspa bs = do    
-    asns      <- first (fmtErr . show) $ decodeASN1' BER bs      
-    signedAspa <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseAspa') asns
+    asns       <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    signedAspa <- fromEither $ first (parseErr . U.fmtGen) $ 
+                    runParseASN1 (parseSignedObject $ parseSignedContent parseAspa') asns
     hash' <- getMetaFromSigned signedAspa bs
     pure $ newCMSObject hash' (CMS signedAspa)
   where     

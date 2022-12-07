@@ -444,7 +444,7 @@ releaseLmdb ((dir, e), _) = do
     Lmdb.closeLmdb e
     removeDirectoryRecursive dir
 
-readObjectFromFile :: FilePath -> IO (RpkiURL, ParseResult RpkiObject)
+readObjectFromFile :: FilePath -> IO (RpkiURL, PureValidatorT RpkiObject)
 readObjectFromFile path = do 
     bs <- BS.readFile path
     let url = let Right u = parseRpkiURL ("rsync://host/" <> Text.pack path) in u

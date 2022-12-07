@@ -5,14 +5,13 @@ module RPKI.Parse.Internal.Cert where
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Base64     as B64
 
-import           Data.Bifunctor
-
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 
 import           Data.X509
 
+import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Resources.Resources   as R
 import qualified RPKI.Util                  as U
@@ -23,15 +22,17 @@ import           RPKI.Parse.Internal.Common
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseResourceCertificate :: BS.ByteString ->
-                            ParseResult CerObject
+parseResourceCertificate :: BS.ByteString 
+                            -> PureValidatorT (CerObject, CertType)
 parseResourceCertificate bs = do
     cert <- mapParseErr $ decodeSignedObject bs      
     (rc, ski_, aki_) <- toResourceCert $ unifyCert cert
-    pure $! newCert aki_ ski_ (U.sha256s bs) rc
+    -- let t = getCertificateType rc 
+    pure (newCert aki_ ski_ (U.sha256s bs) rc, CACert)
 
 
-toResourceCert :: CertificateWithSignature -> ParseResult (ResourceCertificate, SKI, Maybe AKI)
+toResourceCert :: CertificateWithSignature 
+                -> PureValidatorT (ResourceCertificate, SKI, Maybe AKI)
 toResourceCert cert = do  
     let exts = getExtsSign cert
     case extVal exts id_subjectKeyId of 
@@ -42,10 +43,10 @@ toResourceCert cert = do
                             Nothing -> pure Nothing
                             Just a  -> Just . AKI <$> parseKI a                      
             pure (rc, SKI ki, aki')
-        Nothing -> Left $ fmtErr "No SKI extension"
+        Nothing -> pureError $ parseErr "No SKI extension"
 
 
-parseResources :: CertificateWithSignature -> ParseResult ResourceCertificate
+parseResources :: CertificateWithSignature -> PureValidatorT ResourceCertificate
 parseResources x509cert = do    
     let ext' = extVal $ getExtsSign x509cert
     case (ext' id_pe_ipAddrBlocks,
@@ -60,16 +61,17 @@ parseResources x509cert = do
         (ips, Nothing, asns, Nothing) -> strictCert <$> cert' x509cert ips asns
         (Nothing, ips, Nothing, asns) -> reconsideredCert <$> cert' x509cert ips asns
   where 
-    broken = Left . fmtErr    
+    broken = pureError . parseErr
     cert' x509c ips asns = do 
         ips'  <- maybe (pure emptyIpResources) (parseR parseIpExt) ips
         asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) asns
         pure $ ResourceCert x509c $ allResources ips' asns'
 
-    parseR :: ([ASN1] -> ParseResult a) -> BS.ByteString -> ParseResult a
-    parseR f bs = f =<< first fmt (decodeASN1' BER bs)
-      where 
-        fmt err = fmtErr $ "Couldn't parse IP address extension: " <> show err
+    parseR :: ([ASN1] -> PureValidatorT a) -> BS.ByteString -> PureValidatorT a
+    parseR f bs = 
+        case decodeASN1' BER bs of 
+            Left e     -> pureError $ parseErr $ "Couldn't parse IP address extension: " <> U.fmtGen e
+            Right asns -> f asns                  
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
 --

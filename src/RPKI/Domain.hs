@@ -243,6 +243,7 @@ data RpkiObject = CerRO CerObject
                 | GbrRO GbrObject
                 | RscRO RscObject
                 | AspaRO AspaObject
+                | BgpRO CerObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -290,6 +291,7 @@ instance WithAKI RpkiObject where
     getAKI (CrlRO c) = getAKI c
     getAKI (RscRO c) = getAKI c
     getAKI (AspaRO c) = getAKI c
+    getAKI (BgpRO c) = getAKI c
 
 instance WithHash RpkiObject where
     getHash (CerRO c) = getHash c
@@ -299,6 +301,7 @@ instance WithHash RpkiObject where
     getHash (CrlRO c) = getHash c
     getHash (RscRO c) = getHash c
     getHash (AspaRO c) = getHash c
+    getHash (BgpRO c) = getHash c
 
 data Located a = Located { 
         locations :: Locations,

@@ -137,7 +137,7 @@ rsyncRpkiObject AppContext{..} uri = do
             fileSize <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
             void $ vHoist $ validateSizeM (config ^. typed) fileSize
             bs       <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileContent destination
-            fromEitherM $ pure $ first ParseE $ readObject (RsyncU uri) bs
+            vHoist $ readObject (RsyncU uri) bs
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
@@ -228,16 +228,17 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                         exists <- DB.hashExists tx objectStore hash
                         pure $! if exists 
                             then HashExists rpkiURL hash
-                            else 
-                                case first ParseE $ readObject rpkiURL bs of
-                                    Left e  -> ObjectParsingProblem rpkiURL (VErr e)
+                            else let 
+                                scope = newScopes $ unURI $ getURL rpkiURL
+                                in case runPureValidator scope (readObject rpkiURL bs) of 
+                                    (Left e, _)  -> ObjectParsingProblem rpkiURL (VErr e)
                                     -- All these bangs here make sense because
                                     -- 
                                     -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
                                     -- force computation of the serialised object and gain some parallelism
                                     -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
                                     -- a slow CPU-intensive transaction (verify that it's the case)                                    
-                                    Right ro -> Success rpkiURL (toStorableObject ro)
+                                    (Right ro, _) -> Success rpkiURL (toStorableObject ro)
             
 
     saveStorable tx a = do 

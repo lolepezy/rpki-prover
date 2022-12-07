@@ -12,7 +12,9 @@ import Data.ASN1.Parse
 import Data.ASN1.Encoding
 import Data.ASN1.BinaryEncoding
 
+import RPKI.AppMonad
 import RPKI.Domain
+import RPKI.Reporting
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.Cert
 
@@ -82,10 +84,10 @@ parseSignedObject contentBinaryParse =
                   signature'   <- parseSignature
                   let certWithSig = CertificateWithSignature 
                         eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
-                  case toResourceCert certWithSig of
-                    Left e                      -> throwParseError $ "EE certificate is broken " <> show e
-                    Right (_,   _,  Nothing)    -> throwParseError "EE certificate doesn't have an AKI"
-                    Right (rc, ski', Just aki') -> pure $ newEECert aki' ski' rc
+                  case runPureValidator (newScopes "parseEE") (toResourceCert certWithSig) of
+                    (Left e, _)                      -> throwParseError $ "EE certificate is broken " <> show e
+                    (Right (_,   _,  Nothing), _)    -> throwParseError "EE certificate doesn't have an AKI"
+                    (Right (rc, ski', Just aki'), _) -> pure $ newEECert aki' ski' rc
                   where 
                     encodedCert = encodeASN1' DER $ 
                       [Start Sequence] <> asns <> [End Sequence]                                
@@ -136,7 +138,7 @@ parseSignedObject contentBinaryParse =
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
 
-getMetaFromSigned :: SignedObject a -> BS.ByteString -> ParseResult Hash
+getMetaFromSigned :: SignedObject a -> BS.ByteString -> PureValidatorT Hash
 getMetaFromSigned _ bs = pure $ sha256s bs
 
 
