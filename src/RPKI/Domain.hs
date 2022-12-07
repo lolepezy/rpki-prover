@@ -347,7 +347,7 @@ data Vrp = Vrp
     deriving anyclass TheBinary
 
 data Manifest = Manifest {
-        mftNumber   :: {-# UNPACK #-} Serial, 
+        mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: Instant, 
         nextTime    :: Instant, 
