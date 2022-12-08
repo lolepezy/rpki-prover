@@ -39,7 +39,7 @@ import           RPKI.Util                        (fmtLocations)
 
 createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources (getRC -> ResourceCertificate certificate) = 
-    VerifiedRS $ toPrefixesAndAsns $ withRFC certificate (^. typed)
+    VerifiedRS $ toPrefixesAndAsns $ polyRFC certificate ^. typed
 
 allowedMftFileNameCharacters :: [Char]
 allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"

@@ -261,12 +261,10 @@ validateResources
     (getRC -> ResourceCertificate cert)
     (getRC -> ResourceCertificate parentCert) =
         validateChildParentResources
-            validationRFC
-            (withRFC cert (^. typed))
-            (withRFC parentCert (^. typed))
+            (validationRFC cert)
+            ((polyRFC cert) ^. typed)
+            ((polyRFC parentCert) ^. typed)
             verifiedResources
-  where
-    validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
@@ -365,7 +363,7 @@ validateRsc now rsc parentCert crl verifiedResources = do
         validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
             let rsc' = getCMSContent rscCms
             let ResourceCertificate rc = getRC $ getEEResourceCert $ unCMS rscCms
-            let eeCert = toPrefixesAndAsns $ withRFC rc resources
+            let eeCert = toPrefixesAndAsns $ resources $ polyRFC rc 
             validateNested (rsc' ^. #rscResources) eeCert            
             
     pure $ Validated rsc

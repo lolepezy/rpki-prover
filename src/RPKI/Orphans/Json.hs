@@ -210,11 +210,9 @@ instance ToJSON Vrp
 instance ToJSON Manifest
 instance ToJSON CertificateWithSignature
 instance ToJSON ResourceCertificate
-instance ToJSON (ResourceCert 'Strict_)     
-instance ToJSON (ResourceCert 'Reconsidered_)
-instance ToJSON (WithRFC 'Strict_ ResourceCert)
-instance ToJSON (WithRFC 'Reconsidered_ ResourceCert)
-instance (ToJSON s, ToJSON r) => ToJSON (WithRFC_ s r)
+instance ToJSON ResourceCert
+instance ToJSON r => ToJSON (PolyRFC r rfc)
+instance ToJSON r => ToJSON (SomeRFC r)
 
 instance ToJSON AsResources
 instance ToJSON IpResources

@@ -48,25 +48,23 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
 
+validationRFC :: SomeRFC r -> ValidationRFC
+validationRFC (StrictRFC _)       = Strict_ 
+validationRFC (ReconsideredRFC _) = Reconsidered_
 
-newtype WithRFC (rfc :: ValidationRFC) (r :: ValidationRFC -> Type) = WithRFC (r rfc)
+newtype PolyRFC r (rfc :: ValidationRFC) = PolyRFC r
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-type AnRFC r = WithRFC_ (WithRFC 'Strict_ r) (WithRFC 'Reconsidered_ r)
-
-data WithRFC_ s r = WithStrict_       s 
-                  | WithReconsidered_ r
+data SomeRFC r = StrictRFC (PolyRFC r 'Strict_) 
+               | ReconsideredRFC (PolyRFC r 'Reconsidered_) 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass TheBinary               
 
-withRFC :: AnRFC r -> (forall rfc . r rfc -> a) -> a
-withRFC (WithStrict_ (WithRFC a)) f = f a
-withRFC (WithReconsidered_ (WithRFC a)) f = f a  
+polyRFC :: SomeRFC p -> p
+polyRFC (StrictRFC (PolyRFC r)) = r
+polyRFC (ReconsideredRFC (PolyRFC r)) = r
 
-forRFC :: AnRFC r -> (r 'Strict_ -> a) -> (r 'Reconsidered_ -> a) -> a
-forRFC (WithStrict_ (WithRFC a))       f _ = f a
-forRFC (WithReconsidered_ (WithRFC a)) _ g = g a  
 
 data CertType = BGPCert | CACert | EECert 
     deriving stock (Eq, Ord, Generic)
@@ -328,14 +326,14 @@ instance WithResourceCertificate a => WithResourceCertificate (Located a) where
 
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
-data ResourceCert (rfc :: ValidationRFC) = ResourceCert {
+data ResourceCert = ResourceCert {
         certX509  :: CertificateWithSignature, 
         resources :: AllResources
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
-newtype ResourceCertificate = ResourceCertificate (AnRFC ResourceCert)
+newtype ResourceCertificate = ResourceCertificate (SomeRFC ResourceCert)
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
@@ -564,7 +562,7 @@ data TA = TA {
 
 getSerial :: WithResourceCertificate a => a -> Serial
 getSerial (getRC -> ResourceCertificate rc) = 
-    Serial $ X509.certSerial $ cwsX509certificate $ withRFC rc certX509 
+    Serial $ X509.certSerial $ cwsX509certificate $ certX509 $ polyRFC rc 
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
@@ -582,16 +580,16 @@ getEEResourceCert :: SignedObject a -> EECerObject
 getEEResourceCert = scCertificate . soContent
 
 getCertWithSignature :: WithResourceCertificate a => a -> CertificateWithSignature
-getCertWithSignature (getRC -> ResourceCertificate rc) = withRFC rc certX509     
+getCertWithSignature (getRC -> ResourceCertificate rc) = certX509 $ polyRFC rc 
 
 getEECert :: SignedObject a -> CertificateWithSignature
-getEECert (getRC . scCertificate . soContent -> ResourceCertificate rc) = withRFC rc certX509     
+getEECert (getRC . scCertificate . soContent -> ResourceCertificate rc) = certX509 $ polyRFC rc      
 
-strictCert :: ResourceCert 'Strict_ -> ResourceCertificate
-strictCert = ResourceCertificate . WithStrict_ . WithRFC
+strictCert :: ResourceCert -> ResourceCertificate
+strictCert = ResourceCertificate . StrictRFC . PolyRFC
 
-reconsideredCert :: ResourceCert 'Reconsidered_ -> ResourceCertificate
-reconsideredCert = ResourceCertificate . WithReconsidered_ . WithRFC
+reconsideredCert :: ResourceCert -> ResourceCertificate
+reconsideredCert = ResourceCertificate . ReconsideredRFC . PolyRFC
 
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 

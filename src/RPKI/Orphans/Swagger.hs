@@ -149,11 +149,9 @@ instance ToSchema Manifest
 instance ToSchema CertificateWithSignature  where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ResourceCertificate
-instance ToSchema (ResourceCert 'Strict_)     
-instance ToSchema (ResourceCert 'Reconsidered_)
-instance ToSchema (WithRFC 'Strict_ ResourceCert)
-instance ToSchema (WithRFC 'Reconsidered_ ResourceCert)
-instance (ToSchema s, ToSchema r) => ToSchema (WithRFC_ s r)
+instance ToSchema ResourceCert
+instance ToSchema r => ToSchema (PolyRFC r rfc)
+instance ToSchema r => ToSchema (SomeRFC r)
 
 instance ToSchema Hash where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
