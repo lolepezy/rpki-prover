@@ -277,6 +277,10 @@ instance Arbitrary EECerObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
 
+instance Arbitrary BgpCerObject where
+    arbitrary = genericArbitrary    
+    shrink = genericShrink
+
 instance Arbitrary CrlObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
@@ -285,23 +289,31 @@ instance Arbitrary a => Arbitrary (CMSBasedObject a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance (Arbitrary s, Arbitrary r) => Arbitrary (WithRFC_ s r) where
+instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (WithRFC 'Strict_ RawResourceCertificate) where
+instance Arbitrary r => Arbitrary (SomeRFC r) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (RawResourceCertificate 'Strict_) where
+instance Arbitrary r => Arbitrary (PolyRFC r 'Strict_) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (RawResourceCertificate 'Reconsidered_) where
+instance Arbitrary r => Arbitrary (PolyRFC r 'Reconsidered_) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (WithRFC 'Reconsidered_ RawResourceCertificate) where
+instance Arbitrary r => Arbitrary (TypedCert r 'CACert) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary r => Arbitrary (TypedCert r 'EECert) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary r => Arbitrary (TypedCert r 'BGPCert) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
