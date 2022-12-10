@@ -190,9 +190,11 @@ instance ToJSON Count where
 
 -- RPKI Object
 instance ToJSON EECerObject
-instance ToJSON CerObject
+instance ToJSON CaCerObject
+instance ToJSON BgpCerObject
 instance ToJSON CrlObject
 instance ToJSON RpkiObject
+instance ToJSON a => ToJSON (TypedCert a t)
 instance ToJSON a => ToJSON (Located a)
 instance ToJSON a => ToJSON (CMSBasedObject a)
 instance ToJSON a => ToJSON (CMS a)
@@ -210,7 +212,7 @@ instance ToJSON Vrp
 instance ToJSON Manifest
 instance ToJSON CertificateWithSignature
 instance ToJSON ResourceCertificate
-instance ToJSON ResourceCert
+instance ToJSON RawResourceCertificate
 instance ToJSON r => ToJSON (PolyRFC r rfc)
 instance ToJSON r => ToJSON (SomeRFC r)
 

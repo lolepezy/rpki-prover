@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Parse.Internal.SignedObject where
 
@@ -85,9 +86,13 @@ parseSignedObject contentBinaryParse =
                   let certWithSig = CertificateWithSignature 
                         eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
                   case runPureValidator (newScopes "parseEE") (toResourceCert certWithSig) of
-                    (Left e, _)                      -> throwParseError $ "EE certificate is broken " <> show e
-                    (Right (_,   _,  Nothing), _)    -> throwParseError "EE certificate doesn't have an AKI"
-                    (Right (rc, ski', Just aki'), _) -> pure $ newEECert aki' ski' rc
+                    (Left e, _) -> 
+                        throwParseError $ "EE certificate is broken " <> show e
+                    (Right (_,   _,  Nothing, _), _) -> 
+                        throwParseError "EE certificate doesn't have an AKI"
+                    (Right (rc, ski, Just aki, rfc), _) -> do 
+                        let certificate = TypedCert $ ResourceCertificate $ mkPolyRFC rfc rc
+                        pure $ EECerObject {..}
                   where 
                     encodedCert = encodeASN1' DER $ 
                       [Start Sequence] <> asns <> [End Sequence]                                

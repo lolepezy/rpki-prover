@@ -48,7 +48,7 @@ newtype Validated a = Validated a
 
 -- TODO That one needs to be refactored in such a way that certificate type is 
 -- known after parsing the certificate on the type level.
-validateResourceCertExtensions :: WithResourceCertificate c => c -> PureValidatorT c
+validateResourceCertExtensions :: WithRawResourceCertificate c => c -> PureValidatorT c
 validateResourceCertExtensions cert = do     
     let extensions = getExts $ cwsX509certificate $ getCertWithSignature cert
 
@@ -71,43 +71,6 @@ validateResourceCertExtensions cert = do
     
     pure cert
 
-
-getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType
-getCertificateType extensions =
-    withExtension extensions id_ce_keyUsage $ \bs parsed ->             
-        case parsed of 
-            -- Bits position are from
-            -- https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3
-            -- 
-            -- Which bits needs to set and where
-            -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.4
-            [BitString ba@(BitArray 7 _)] -> do 
-                unless (bitArrayGetBit ba 5) $ vPureError $ BrokenKeyUsage "keyCertSign bit is not set"
-                unless (bitArrayGetBit ba 6) $ vPureError $ BrokenKeyUsage "cRLSign bit is not set"
-                for_ [0..4] $ \bit -> 
-                    when (bitArrayGetBit ba bit) $ vPureError $ BrokenKeyUsage 
-                        [i|Bit #{bit} is set, only keyCertSign and cRLSign must be set.|]
-
-                pure CACert            
-
-            -- There must be only the `digitalSignature` bit 
-            [BitString ba@(BitArray 1 _)] ->                     
-                let badExtKU = vPureError $ CertBrokenExtension id_ce_extKeyUsage bs
-                in case extVal extensions id_ce_extKeyUsage of
-                    Nothing -> do                             
-                        unless (bitArrayGetBit ba 0) $ vPureError $ BrokenKeyUsage "digitalSignature bit is not set"
-                        pure EECert
-                    Just bs1 
-                        | BS.null bs1 -> badExtKU
-                        | otherwise ->
-                            case decodeASN1 DER (LBS.fromStrict bs1) of
-                                Left _  -> badExtKU
-                                Right [Start Sequence, OID oid, End Sequence]
-                                    | oid == id_kp_bgpsecRouter -> pure BGPCert
-                                    | otherwise -> badExtKU                                            
-                                _ -> badExtKU
-                
-            _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
 
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
 validateCaBasicConstraint :: [ExtensionRaw] -> PureValidatorT ()
@@ -152,25 +115,11 @@ validateNoUnknownCriticalExtensions extensions = do
     for_ extensions $ \ExtensionRaw {..} -> do 
         when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
             vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
-
-withExtension :: [ExtensionRaw]
-            -> OID
-            -> (BS.ByteString -> [ASN1] -> PureValidatorT r)
-            -> PureValidatorT r
-withExtension extensions oid f = do 
-    case extVal extensions oid of
-        Nothing -> vPureError $ MissingCriticalExtension oid
-        Just bs 
-            | BS.null bs -> vPureError $ MissingCriticalExtension oid
-            | otherwise -> do 
-                case decodeASN1 DER (LBS.fromStrict bs) of
-                    Left _  -> vPureError $ CertBrokenExtension oid bs        
-                    Right z -> f bs z
         
 
 -- | Validated specifically the TA's self-signed certificate
 -- 
-validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CerObject
+validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CaCerObject
 validateTACert tal u (CerRO taCert) = do
     let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
     unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
@@ -195,7 +144,7 @@ validateTaCertAKI taCert u =
 -- the one of the previoius certificate, emit a warning and use
 -- the previous certificate.
 --
-validateTACertWithPreviousCert :: CerObject -> CerObject -> PureValidatorT CerObject
+validateTACertWithPreviousCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 validateTACertWithPreviousCert cert previousCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
     let (before, after) = validities cert
@@ -217,8 +166,8 @@ validateTACertWithPreviousCert cert previousCert = do
 --    - check it's not revoked (needs CRL)
 -- 
 validateResourceCert ::
-    ( WithResourceCertificate c
-    , WithResourceCertificate parent
+    ( WithRawResourceCertificate c
+    , WithRawResourceCertificate parent
     , WithSKI parent
     , WithAKI c
     ) =>
@@ -251,24 +200,24 @@ validateResourceCert (Now now) cert parentCert vcrl = do
 
 
 validateResources ::
-    (WithResourceCertificate c, WithResourceCertificate parent) =>
+    (WithRawResourceCertificate c, 
+     WithRawResourceCertificate parent,
+     WithRFC c,
+     OfCertType parent 'CACert) =>
     Maybe (VerifiedRS PrefixesAndAsns) ->
     c ->
     parent ->
     PureValidatorT (VerifiedRS PrefixesAndAsns)
-validateResources
-    verifiedResources
-    (getRC -> ResourceCertificate cert)
-    (getRC -> ResourceCertificate parentCert) =
+validateResources verifiedResources cert parentCert =
         validateChildParentResources
-            (validationRFC cert)
-            ((polyRFC cert) ^. typed)
-            ((polyRFC parentCert) ^. typed)
+            (getRFC cert)
+            ((getRawCert cert) ^. typed)
+            ((getRawCert parentCert) ^. typed)
             verifiedResources
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
-    WithResourceCertificate c =>
+    WithRawResourceCertificate c =>
     Now ->
     CrlObject ->
     c ->
@@ -282,7 +231,7 @@ validateCrl now crlObject parentCert = do
     SignCRL {..} = signCrl crlObject
 
 validateMft ::
-  (WithResourceCertificate c, WithSKI c) =>
+  (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
   Now ->
   MftObject ->
   c ->
@@ -298,7 +247,7 @@ validateMft now mft parentCert crl verifiedResources = do
 
 
 validateRoa ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     RoaObject ->
     c ->
@@ -334,7 +283,7 @@ validateRoa now roa parentCert crl verifiedResources = do
                     vPureError $ errorReport vrs
 
 validateGbr ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     GbrObject ->
     c ->
@@ -351,7 +300,7 @@ validateGbr now gbr parentCert crl verifiedResources = do
     pure $ Validated gbr
 
 validateRsc ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     RscObject ->
     c ->
@@ -362,14 +311,14 @@ validateRsc now rsc parentCert crl verifiedResources = do
     void $
         validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
             let rsc' = getCMSContent rscCms
-            let ResourceCertificate rc = getRC $ getEEResourceCert $ unCMS rscCms
-            let eeCert = toPrefixesAndAsns $ resources $ polyRFC rc 
+            let rc = getRawCert $ getEEResourceCert $ unCMS rscCms
+            let eeCert = toPrefixesAndAsns $ resources rc 
             validateNested (rsc' ^. #rscResources) eeCert            
             
     pure $ Validated rsc
 
 validateAspa ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     AspaObject ->
     c ->
@@ -386,7 +335,7 @@ validateAspa now aspa parentCert crl verifiedResources = do
     pure $ Validated aspa
 
 validateCms ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     CMS a ->
     c ->
@@ -432,7 +381,7 @@ validateThisUpdate (Now now) thisUpdateTime
     | otherwise = pure thisUpdateTime
 
 -- | Check if CMS is on the revocation list
-isRevoked :: WithResourceCertificate c => c -> Validated CrlObject -> Bool
+isRevoked :: WithRawResourceCertificate c => c -> Validated CrlObject -> Bool
 isRevoked cert (Validated crlObject) =
     Set.member serial revokenSerials
   where

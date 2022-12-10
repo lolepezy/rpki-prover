@@ -8,10 +8,14 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE OverloadedLabels           #-}
 
 
 module RPKI.Domain where
+
+import           Control.Lens 
+import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
@@ -21,7 +25,6 @@ import           Data.ByteString.Base16   as Hex
 
 import           Data.Hourglass
 import           Data.Foldable            as F
-import           Data.Kind                (Type)
 import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
@@ -61,12 +64,22 @@ data SomeRFC r = StrictRFC (PolyRFC r 'Strict_)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary               
 
-polyRFC :: SomeRFC p -> p
-polyRFC (StrictRFC (PolyRFC r)) = r
+polyRFC :: SomeRFC r -> r
+polyRFC (StrictRFC (PolyRFC r))      = r
 polyRFC (ReconsideredRFC (PolyRFC r)) = r
 
+mkPolyRFC :: ValidationRFC -> r -> SomeRFC r
+mkPolyRFC Strict_ r       = StrictRFC (PolyRFC r) 
+mkPolyRFC Reconsidered_ r = ReconsideredRFC (PolyRFC r) 
 
-data CertType = BGPCert | CACert | EECert 
+newtype TypedCert c (t :: CertType) = TypedCert c
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+    deriving newtype (WithSKI, WithRFC, WithRawResourceCertificate, WithAKI)
+
+class OfCertType c t 
+
+data CertType = CACert | EECert | BGPCert
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -105,6 +118,25 @@ class WithURL a where
 
 class WithRpkiURL a where
     getRpkiURL :: a -> RpkiURL
+
+class WithAKI a where
+    getAKI :: a -> Maybe AKI
+
+class WithLocations a where
+    getLocations :: a -> Locations 
+
+class WithHash a where
+    getHash :: a -> Hash
+
+class WithSKI a where
+    getSKI :: a -> SKI
+
+class WithRawResourceCertificate a where
+    getRawCert :: a -> RawResourceCertificate
+
+class WithRFC a where
+    getRFC :: a -> ValidationRFC
+
 
 instance WithURL URI where
     getURL = id
@@ -180,22 +212,6 @@ newtype CMS a = CMS { unCMS :: SignedObject a }
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
-class WithAKI a where
-    getAKI :: a -> Maybe AKI
-
-class WithLocations a where
-    getLocations :: a -> Locations 
-
-class WithHash a where
-    getHash :: a -> Hash
-
-class WithSKI a where
-    getSKI :: a -> SKI
-
-class WithResourceCertificate a where
-    getRC :: a -> ResourceCertificate
-
-
 data CrlObject = CrlObject {
         hash    :: {-# UNPACK #-} Hash,
         aki     :: {-# UNPACK #-} AKI,
@@ -204,11 +220,20 @@ data CrlObject = CrlObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
-data CerObject = CerObject {
+data CaCerObject = CaCerObject {
         hash        :: {-# UNPACK #-} Hash,
         ski         :: {-# UNPACK #-} SKI,
         aki         :: Maybe AKI,
-        certificate :: ResourceCertificate
+        certificate :: TypedCert ResourceCertificate 'CACert
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass TheBinary
+
+data BgpCerObject = BgpCerObject {
+        hash        :: {-# UNPACK #-} Hash,
+        ski         :: {-# UNPACK #-} SKI,
+        aki         :: Maybe AKI,
+        certificate :: TypedCert RawResourceCertificate 'BGPCert
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -229,19 +254,19 @@ type AspaObject = CMSBasedObject Aspa
 data EECerObject = EECerObject {
         ski         :: {-# UNPACK #-} SKI,
         aki         :: {-# UNPACK #-} AKI,
-        certificate :: ResourceCertificate
+        certificate :: TypedCert ResourceCertificate 'EECert
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary   
 
     
-data RpkiObject = CerRO CerObject 
+data RpkiObject = CerRO CaCerObject 
                 | MftRO MftObject
                 | RoaRO RoaObject
                 | GbrRO GbrObject
                 | RscRO RscObject
                 | AspaRO AspaObject
-                | BgpRO CerObject
+                | BgpRO BgpCerObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -253,14 +278,14 @@ instance WithAKI CrlObject where
 instance WithHash CrlObject where
     getHash CrlObject {..} = hash
 
-instance WithAKI CerObject where
-    getAKI CerObject {..} = aki
+instance WithAKI CaCerObject where
+    getAKI CaCerObject {..} = aki
 
-instance WithHash CerObject where
-    getHash CerObject {..} = hash
+instance WithHash CaCerObject where
+    getHash CaCerObject {..} = hash
 
-instance WithSKI CerObject where
-    getSKI CerObject {..} = ski
+instance WithSKI CaCerObject where
+    getSKI CaCerObject {..} = ski
     
 instance WithAKI (CMSBasedObject a) where
     getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
@@ -274,11 +299,41 @@ instance WithAKI EECerObject where
 instance WithSKI EECerObject where
     getSKI EECerObject {..} = ski
 
-instance WithResourceCertificate CerObject where
-    getRC = certificate
+instance WithHash BgpCerObject where
+    getHash BgpCerObject {..} = hash
 
-instance WithResourceCertificate EECerObject where
-    getRC = certificate
+instance WithSKI BgpCerObject where
+    getSKI BgpCerObject {..} = ski    
+
+instance WithAKI BgpCerObject where
+    getAKI BgpCerObject {..} = aki
+
+instance WithRawResourceCertificate CaCerObject where
+    getRawCert CaCerObject {..} = getRawCert certificate
+
+instance WithRawResourceCertificate EECerObject where
+    getRawCert EECerObject {..} = getRawCert certificate
+
+instance WithRawResourceCertificate c => WithRawResourceCertificate (SomeRFC c) where
+    getRawCert = getRawCert . polyRFC
+
+instance WithRawResourceCertificate ResourceCertificate where
+    getRawCert (ResourceCertificate s) = polyRFC s
+
+instance WithRFC (SomeRFC a) where
+    getRFC (StrictRFC _)       = Strict_ 
+    getRFC (ReconsideredRFC _) = Reconsidered_
+
+instance WithRFC EECerObject where
+    getRFC EECerObject {..} = getRFC certificate
+
+instance WithRFC CaCerObject where
+    getRFC CaCerObject {..} = getRFC certificate
+
+instance OfCertType (TypedCert c t) t
+instance OfCertType CaCerObject 'CACert
+instance OfCertType EECerObject 'EECert
+instance OfCertType BgpCerObject 'BGPCert
 
 
 instance WithAKI RpkiObject where
@@ -321,21 +376,27 @@ instance WithHash a => WithHash (Located a) where
 instance WithSKI a => WithSKI (Located a) where
     getSKI (Located _ o) = getSKI o
 
-instance WithResourceCertificate a => WithResourceCertificate (Located a) where    
-    getRC (Located _ o) = getRC o
+instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) where    
+    getRawCert (Located _ o) = getRawCert o
+
+instance WithRFC a => WithRFC (Located a) where    
+    getRFC (Located _ o) = getRFC o
+
+instance OfCertType c t => OfCertType (Located c) t
 
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
-data ResourceCert = ResourceCert {
+data RawResourceCertificate = RawResourceCertificate {
         certX509  :: CertificateWithSignature, 
         resources :: AllResources
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
-newtype ResourceCertificate = ResourceCertificate (SomeRFC ResourceCert)
+newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificate)
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
+    deriving newtype (WithRFC)
 
 data Vrp = Vrp 
     {-# UNPACK #-} !ASN 
@@ -560,9 +621,9 @@ data TA = TA {
 
 -- Small utility functions that don't have anywhere else to go
 
-getSerial :: WithResourceCertificate a => a -> Serial
-getSerial (getRC -> ResourceCertificate rc) = 
-    Serial $ X509.certSerial $ cwsX509certificate $ certX509 $ polyRFC rc 
+getSerial :: WithRawResourceCertificate a => a -> Serial
+getSerial c = 
+    Serial $ X509.certSerial $ cwsX509certificate $ certX509 $ getRawCert c
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
@@ -579,16 +640,16 @@ getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so
 getEEResourceCert :: SignedObject a -> EECerObject
 getEEResourceCert = scCertificate . soContent
 
-getCertWithSignature :: WithResourceCertificate a => a -> CertificateWithSignature
-getCertWithSignature (getRC -> ResourceCertificate rc) = certX509 $ polyRFC rc 
+getCertWithSignature :: WithRawResourceCertificate a => a -> CertificateWithSignature
+getCertWithSignature c = certX509 $ getRawCert c 
 
 getEECert :: SignedObject a -> CertificateWithSignature
-getEECert (getRC . scCertificate . soContent -> ResourceCertificate rc) = certX509 $ polyRFC rc      
+getEECert = certX509 . getRawCert . scCertificate . soContent
 
-strictCert :: ResourceCert -> ResourceCertificate
+strictCert :: RawResourceCertificate -> ResourceCertificate
 strictCert = ResourceCertificate . StrictRFC . PolyRFC
 
-reconsideredCert :: ResourceCert -> ResourceCertificate
+reconsideredCert :: RawResourceCertificate -> ResourceCertificate
 reconsideredCert = ResourceCertificate . ReconsideredRFC . PolyRFC
 
 emptyIpResources :: IpResources
@@ -604,20 +665,20 @@ newCrl a h sc = CrlObject {
         signCrl = sc
     } 
 
-newCert :: Maybe AKI -> SKI -> Hash -> ResourceCertificate -> CerObject
-newCert a s h rc = CerObject {
-        hash = h,    
-        ski = s,
-        aki = a,
-        certificate = rc
-    } 
+-- newCaCert :: Maybe AKI -> SKI -> Hash -> RawResourceCertificate -> CaCerObject
+-- newCaCert a s h rc = CaCerObject {
+--         hash = h,    
+--         ski = s,
+--         aki = a,
+--         certificate = rc
+--     } 
 
-newEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
-newEECert a s rc = EECerObject {
-        ski = s,
-        aki = a,
-        certificate = rc
-    }
+-- newEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
+-- newEECert a s rc = EECerObject {
+--         ski = s,
+--         aki = a,
+--         certificate = rc
+--     }
 
 newCMSObject :: Hash -> CMS a -> CMSBasedObject a
 newCMSObject h cms = CMSBasedObject {

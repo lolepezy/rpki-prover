@@ -24,7 +24,7 @@ import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
     tal                 :: TAL,
-    taCert              :: CerObject,
+    taCert              :: CaCerObject,
     fetchStatus         :: FetchStatus,
     initialRepositories :: PublicationPointAccess
 } deriving (Show, Eq, Generic, TheBinary)

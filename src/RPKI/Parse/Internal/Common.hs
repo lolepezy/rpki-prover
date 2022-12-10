@@ -99,14 +99,11 @@ allowedCriticalOIDs = [
         id_pe_autonomousSysIds 
     ]
 
-fmtErr :: String -> ParseError Text.Text
-fmtErr = ParseError . Text.pack
-
 parseErr :: Text.Text -> AppError
 parseErr = ParseE . ParseError
 
 mapParseErr :: Either String a -> PureValidatorT a       
-mapParseErr =  fromEither . first (ParseE . fmtErr)
+mapParseErr =  fromEither . first (ParseE . ParseError . Text.pack)
 
 parseError :: String -> ASN1 -> ParseASN1 a
 parseError m a = throwParseError $ case m of 

@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.Common,
@@ -53,7 +54,18 @@ readObject objectURL content = do
     let URI u = getURL objectURL
     let ext = map toLower $ Text.unpack $ Text.drop (Text.length u - 4) u
     case ext of
-        ".cer" -> parse_ parseResourceCertificate (CerRO . fst) content            
+        ".cer" -> do 
+            (rc, certType, rfc, ski, aki, hash) <- parseResourceCertificate content
+            case certType of 
+                CACert -> do 
+                    let certificate = TypedCert $ ResourceCertificate $ mkPolyRFC rfc rc
+                    pure $ CerRO $ CaCerObject {..}
+                BGPCert -> do 
+                    let certificate = TypedCert rc
+                    pure $ BgpRO $ BgpCerObject {..}
+                EECert -> 
+                    pureError $ parseErr "Cannot have EE certificate as a separate object."
+
         ".mft" -> parse_ parseMft MftRO content
         ".roa" -> parse_ parseRoa RoaRO content                    
         ".crl" -> parse_ parseCrl CrlRO content            

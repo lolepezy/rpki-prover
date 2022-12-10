@@ -250,7 +250,7 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Prefer RRDP to rsync for everything.
 -- | URI of the repository is supposed to be a "real" one, i.e. where
 -- | repository can actually be downloaded from.
-publicationPointsFromTAL :: TAL -> CerObject -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
 publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
     case tal of 
         PropertiesTAL {..} -> do 
@@ -290,13 +290,13 @@ publicationPointsFromCert cert =
             | otherwise                -> Left $ UnknownUriType repositoryUri
         (Nothing, Nothing)             -> Left CertificateDoesntHaveSIA 
 
-publicationPointsFromCertObject :: CerObject -> Either ValidationError (RpkiURL, PublicationPoint)
+publicationPointsFromCertObject :: CaCerObject -> Either ValidationError (RpkiURL, PublicationPoint)
 publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
 
 -- | Get publication points of the certificate.
 -- 
-getPublicationPointsFromCertObject :: CerObject -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
 getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess

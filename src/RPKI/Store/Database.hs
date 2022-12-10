@@ -369,7 +369,7 @@ getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $
                 _                              -> Nothing
 
 
-getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CerObject))
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
 getBySKI tx DB { objectStore = store@RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx certBySKI ski
     located   <- MaybeT $ getLocatedByKey tx store objectKey

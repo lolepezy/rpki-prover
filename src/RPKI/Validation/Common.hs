@@ -37,9 +37,9 @@ import           RPKI.Store.Database
 import           RPKI.Util                        (fmtLocations)
 
 
-createVerifiedResources :: CerObject -> VerifiedRS PrefixesAndAsns
-createVerifiedResources (getRC -> ResourceCertificate certificate) = 
-    VerifiedRS $ toPrefixesAndAsns $ polyRFC certificate ^. typed
+createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
+createVerifiedResources certificate = 
+    VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
 
 allowedMftFileNameCharacters :: [Char]
 allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
@@ -122,7 +122,7 @@ findCrlOnMft mft = filter (\(T2 name _) -> ".crl" `Text.isSuffixOf` name) $
 
 -- | Check that manifest URL in the certificate is the same as the one 
 -- the manifest was actually fetched from.
-validateMftLocation :: (WithResourceCertificate c, Monad m, WithLocations c, WithLocations mft) =>
+validateMftLocation :: (WithRawResourceCertificate c, Monad m, WithLocations c, WithLocations mft) =>
                         mft -> c -> ValidatorT m ()
 validateMftLocation mft certficate = 
     case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of

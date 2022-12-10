@@ -104,7 +104,7 @@ newTopDownContext :: MonadIO m =>
                     WorldVersion 
                     -> TaName                     
                     -> Now 
-                    -> CerObject 
+                    -> CaCerObject 
                     -> RepositoryProcessing
                     -> m (TopDownContext s)
 newTopDownContext worldVersion taName now certificate repositoryProcessing = 
@@ -227,7 +227,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 AppContext s 
                                 -> TAL 
                                 -> WorldVersion 
-                                -> ValidatorT IO (Located CerObject, PublicationPointAccess, TACertStatus)
+                                -> ValidatorT IO (Located CaCerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
     let validationConfig = config ^. typed @ValidationConfig    
@@ -267,7 +267,7 @@ validateFromTACert :: Storage s =>
                     AppContext s -> 
                     TopDownContext s ->                                        
                     PublicationPointAccess -> 
-                    Located CerObject ->                     
+                    Located CaCerObject ->                     
                     ValidatorT IO (Payloads (Set Vrp))
 validateFromTACert 
     appContext@AppContext {..}
@@ -300,7 +300,7 @@ validateCA :: Storage s =>
             AppContext s 
             -> Scopes 
             -> TopDownContext s 
-            -> Located CerObject 
+            -> Located CaCerObject 
             -> IO (T2 (Payloads (Set Vrp)) ValidationState)
 validateCA appContext scopes topDownContext certificate =
     validateCARecursively 
@@ -316,7 +316,7 @@ validateCA appContext scopes topDownContext certificate =
 validateCaCertificate :: Storage s =>
                         AppContext s ->
                         TopDownContext s ->
-                        Located CerObject ->                
+                        Located CaCerObject ->                
                         ValidatorT IO (Payloads (Set Vrp))
 validateCaCertificate 
     appContext@AppContext {..} 

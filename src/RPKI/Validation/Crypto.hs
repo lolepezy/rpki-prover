@@ -9,7 +9,7 @@ import           RPKI.Domain
 
 
 -- | Validate the signature of an certificate-holding object
-validateCertSignature :: (WithResourceCertificate c, WithResourceCertificate parent) => 
+validateCertSignature :: (WithRawResourceCertificate c, WithRawResourceCertificate parent) => 
                         c -> parent -> SignatureVerification                
 validateCertSignature cert parentCert = 
     verifySignature algorithm pubKey (toNormalBS signedData) (toNormalBS signature1)
@@ -23,7 +23,7 @@ validateCertSignature cert parentCert =
 
 
 -- | Validate the signature of a CRL object
-validateCRLSignature :: WithResourceCertificate c => CrlObject -> c -> SignatureVerification                
+validateCRLSignature :: WithRawResourceCertificate c => CrlObject -> c -> SignatureVerification                
 validateCRLSignature crl parentCert = 
     verifySignature signAlgorithm pubKey (toNormalBS encoded) (toNormalBS signature')
     where

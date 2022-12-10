@@ -269,7 +269,7 @@ instance Arbitrary Locations where
     arbitrary = Locations . NESet.fromList <$> arbitrary        
     shrink = genericShrink
 
-instance Arbitrary CerObject where
+instance Arbitrary CaCerObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
 
@@ -289,19 +289,19 @@ instance (Arbitrary s, Arbitrary r) => Arbitrary (WithRFC_ s r) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (WithRFC 'Strict_ ResourceCert) where
+instance Arbitrary (WithRFC 'Strict_ RawResourceCertificate) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (ResourceCert 'Strict_) where
+instance Arbitrary (RawResourceCertificate 'Strict_) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (ResourceCert 'Reconsidered_) where
+instance Arbitrary (RawResourceCertificate 'Reconsidered_) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (WithRFC 'Reconsidered_ ResourceCert) where
+instance Arbitrary (WithRFC 'Reconsidered_ RawResourceCertificate) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

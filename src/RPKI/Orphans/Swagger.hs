@@ -130,7 +130,8 @@ instance ToSchema Locations where
 
 
 instance ToSchema RpkiObject
-instance ToSchema CerObject
+instance ToSchema CaCerObject
+instance ToSchema BgpCerObject
 instance ToSchema CrlObject
 instance ToSchema EECerObject
 
@@ -149,9 +150,10 @@ instance ToSchema Manifest
 instance ToSchema CertificateWithSignature  where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ResourceCertificate
-instance ToSchema ResourceCert
+instance ToSchema RawResourceCertificate
 instance ToSchema r => ToSchema (PolyRFC r rfc)
 instance ToSchema r => ToSchema (SomeRFC r)
+instance ToSchema r => ToSchema (TypedCert r t)
 
 instance ToSchema Hash where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
