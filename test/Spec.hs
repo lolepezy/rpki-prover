@@ -2,6 +2,7 @@
 
 import Test.Tasty
 
+import RPKI.Parse.ObjectParseSpec
 import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
@@ -15,6 +16,7 @@ import RPKI.SLURM.SlurmSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
+        objectParseSpec,
         appMonadSpec,        
         rrdpXmlLazyParsingGroup,
         rrdpUpdateSpec,

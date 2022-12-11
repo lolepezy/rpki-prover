@@ -21,8 +21,8 @@ import qualified Test.Tasty.HUnit        as HU
 -- so far all the testing is happening on the level of comparing VRP lists.
 
 
-httpSpec :: TestTree
-httpSpec = testGroup "Unit tests for object parsing" [
+objectParseSpec :: TestTree
+objectParseSpec = testGroup "Unit tests for object parsing" [
     HU.testCase "Should parse a BGPSec certificate" $ do        
 
         bs <- BS.readFile "test/data/bgp_router_cert.cer"
@@ -31,5 +31,8 @@ httpSpec = testGroup "Unit tests for object parsing" [
         
         HU.assertEqual "It is a BGPSec certificate" ct  BGPCert
         HU.assertEqual "It is has strict validation RFC" rfc  StrictRFC                
-        HU.assertBool "It has AKI" (isJust aki)
+        HU.assertEqual "SPKI is right" 
+            (subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature rc)  
+            (SPKI $ EncodedBase64 "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAET10FMBxP6P3r6aG/ICpfsktp7X6ylJIY8Kye6zkQhNOt0y+cRzYngH8MGzY3cXNvZ64z4CpZ22gf4teybGq8ow==")
+        HU.assertBool "It has AKI" (isJust aki)        
   ]

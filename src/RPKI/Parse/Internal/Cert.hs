@@ -94,8 +94,8 @@ parseResources x509cert = do
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
 --
-subjectPublicKeyInfo :: Certificate -> EncodedBase64
-subjectPublicKeyInfo cert = EncodedBase64 $ B64.encodeBase64' $ 
+subjectPublicKeyInfo :: Certificate -> SPKI
+subjectPublicKeyInfo cert = SPKI $ EncodedBase64 $ B64.encodeBase64' $ 
   encodeASN1' DER $ (toASN1 $ certPubKey cert) []
 
 

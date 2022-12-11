@@ -41,7 +41,6 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
-import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
@@ -143,6 +142,10 @@ instance Arbitrary EncodedBase64 where
     arbitrary = do 
         DecodedBase64 bs <- arbitrary
         pure $ EncodedBase64 $ B64.encodeBase64' bs
+
+instance Arbitrary SPKI where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SnapshotInfo where
     arbitrary = genericArbitrary

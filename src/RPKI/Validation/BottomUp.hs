@@ -87,7 +87,7 @@ validateBottomUp
                 (mft, crl) <- validateManifest db cert            
                 let childCert = head certs                
                 validateOnMft mft childCert                            
-                Validated validCert    <- vHoist $ validateResourceCert @(Located CaCerObject) @CaCerObject @'CACert 
+                Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
                                                     now childCert (cert ^. #payload) crl
                 childVerifiedResources <- vHoist $ validateResources (Just verifiedResources) childCert validCert            
                 go childVerifiedResources certs
@@ -103,7 +103,7 @@ validateBottomUp
         inSubObjectVScope "rpki-object" $ 
             case object of 
                 CerRO child ->
-                    void $ vHoist $ validateResourceCert @CaCerObject @CaCerObject @'CACert 
+                    void $ vHoist $ validateResourceCert @_ @_ @'CACert 
                                         now child (bottomCert ^. #payload) crl                
                 RoaRO roa -> 
                     void $ vHoist $ validateRoa now roa bottomCert crl (Just verifiedResources)

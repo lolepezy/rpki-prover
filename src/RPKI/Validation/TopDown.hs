@@ -644,7 +644,7 @@ validateCaCertificate
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
                         inSubObjectVScope (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 
-                                    Validated validCert <- validateResourceCert @CaCerObject @CaCerObject @'CACert 
+                                    Validated validCert <- validateResourceCert @_ @_ @'CACert 
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
                             let childTopDownContext = topDownContext 
@@ -656,48 +656,42 @@ validateCaCertificate
                 pure $ fromRight mempty r                
 
             RoaRO roa -> do 
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
-                            let vrpList = getCMSContent $ cmsPayload roa                            
-                            oneMoreRoa                            
-                            moreVrps $ Count $ fromIntegral $ length vrpList                            
-                            pure $! (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
+                        let vrpList = getCMSContent $ cmsPayload roa                            
+                        oneMoreRoa                            
+                        moreVrps $ Count $ fromIntegral $ length vrpList                            
+                        pure $! (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
 
             GbrRO gbr -> do                
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
-                            oneMoreGbr
-                            pure mempty
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
+                        oneMoreGbr
+                        pure mempty
 
             AspaRO aspa -> do                
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
-                            oneMoreAspa            
-                            let aspa' = getCMSContent $ cmsPayload aspa
-                            pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
+                        oneMoreAspa            
+                        let aspa' = getCMSContent $ cmsPayload aspa
+                        pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
 
             BgpRO bgpCert -> do                
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            -- void $ vHoist $ validateBgpCert now bgpCert certificate validCrl verifiedResources
-                            oneMoreBgp
-                            -- let ski = getSKI bgpCert
-                            -- let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
-                            -- let bgpPayload = BGPCertPayload {..}                            
-                            pure $! (mempty :: Payloads (Set Vrp)) 
-                                        -- {  
-                                        --     bgpCerts = Set.singleton bgpPayload 
-                                        -- }
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl verifiedResources                                                        
+                        oneMoreBgp
+                        pure $! (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
                             
 
-            -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
+            -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
             _somethingElse -> do 
                 logWarn logger [i|Unsupported type of object: #{locations}.|]

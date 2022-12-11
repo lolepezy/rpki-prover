@@ -225,6 +225,14 @@ data CaCerObject = CaCerObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+data EECerObject = EECerObject {
+        ski         :: {-# UNPACK #-} SKI,
+        aki         :: {-# UNPACK #-} AKI,
+        certificate :: TypedCert ResourceCertificate 'EECert
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass TheBinary   
+
 data BgpCerObject = BgpCerObject {
         hash        :: {-# UNPACK #-} Hash,
         ski         :: {-# UNPACK #-} SKI,
@@ -246,14 +254,6 @@ type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
 type RscObject = CMSBasedObject RSC
 type AspaObject = CMSBasedObject Aspa
-
-data EECerObject = EECerObject {
-        ski         :: {-# UNPACK #-} SKI,
-        aki         :: {-# UNPACK #-} AKI,
-        certificate :: TypedCert ResourceCertificate 'EECert
-    }
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary   
 
     
 data RpkiObject = CerRO CaCerObject 
@@ -307,8 +307,14 @@ instance WithRawResourceCertificate CaCerObject where
 instance WithRawResourceCertificate EECerObject where
     getRawCert EECerObject {..} = getRawCert certificate
 
+instance WithRawResourceCertificate BgpCerObject where
+    getRawCert BgpCerObject {..} = getRawCert certificate
+
 instance WithRawResourceCertificate c => WithRawResourceCertificate (SomeRFC c) where
     getRawCert = getRawCert . polyRFC
+
+instance WithRawResourceCertificate RawResourceCertificate where
+    getRawCert = id
 
 instance WithRawResourceCertificate ResourceCertificate where
     getRawCert (ResourceCertificate s) = polyRFC s
@@ -445,7 +451,7 @@ data Aspa = Aspa {
 
 data BGPCertPayload = BGPCertPayload {
         ski  :: SKI,
-        asn  :: [ASN],
+        asns :: [ASN],
         spki :: SPKI
         -- TODO Possible store the hash of the original BGP certificate?
     } 

@@ -70,6 +70,7 @@ instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON ValidationError
+instance ToJSON SPKI
 instance ToJSON Locations
 instance ToJSON StorageError
 instance ToJSON RsyncError

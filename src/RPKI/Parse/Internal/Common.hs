@@ -212,7 +212,7 @@ unifyCert signedExact = CertificateWithSignature {
 
 getSiaValue :: Certificate -> OID -> Maybe BS.ByteString
 getSiaValue c oid = do
-    sia  <- extVal (getExts c) id_pe_sia
+    sia  <- getSiaExt c
     asns <- toMaybe $ decodeASN1' BER sia
     join $ toMaybe $ flip runParseASN1 asns $ 
             listToMaybe . catMaybes <$> 
@@ -224,6 +224,9 @@ getSiaValue c oid = do
                 | oid' == oid -> pure $ Just value
                 | otherwise   -> pure Nothing
             _ -> pure Nothing        
+
+getSiaExt :: Certificate -> Maybe BS.ByteString
+getSiaExt c = extVal (getExts c) id_pe_sia
 
 getRrdpNotifyUri :: Certificate -> Maybe URI
 getRrdpNotifyUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpki_notify

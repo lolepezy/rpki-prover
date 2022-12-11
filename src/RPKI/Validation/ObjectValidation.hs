@@ -40,7 +40,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
-import           RPKI.Resources.IntervalSet
+import           RPKI.Resources.IntervalSet as IS
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                          (convert)
@@ -130,7 +130,8 @@ validateNoUnknownCriticalExtensions extensions =
 validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CaCerObject
 validateTACert tal u (CerRO taCert) = do
     let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
-    unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
+    let talSPKI = SPKI $ publicKeyInfo tal
+    unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
     signatureCheck $ validateCertSignature taCert taCert
     validateResourceCertExtensions @CaCerObject @'CACert taCert
@@ -168,26 +169,25 @@ validateTACertWithPreviousCert cert previousCert = do
 -- | In general, resource certifcate validation is:
 --
 --    - check the signature (with the parent)
---    - check if it's not revoked
 --    - check all the needed extensions
 --    - check expiration times
 --    - check the resource set (needs the parent as well)
 --    - check it's not revoked (needs CRL)
 -- 
-validateResourceCert :: forall c parent (t :: CertType) .
-    ( WithRawResourceCertificate c
+validateResourceCert :: forall child parent (t :: CertType) .
+    ( WithRawResourceCertificate child
     , WithRawResourceCertificate parent
     , WithSKI parent
-    , WithAKI c
+    , WithAKI child
     , OfCertType parent 'CACert
-    , OfCertType c t
+    , OfCertType child t
     , ExtensionValidator t
     ) =>
     Now ->
-    c ->    
+    child ->    
     parent ->
     Validated CrlObject ->    
-    PureValidatorT (Validated c)
+    PureValidatorT (Validated child)
 validateResourceCert (Now now) cert parentCert vcrl = do
     let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
     signatureCheck $ validateCertSignature cert parentCert
@@ -204,8 +204,7 @@ validateResourceCert (Now now) cert parentCert vcrl = do
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
 
-    void $ validateResourceCertExtensions @c @t cert
-    pure $ Validated cert
+    Validated <$> validateResourceCertExtensions @_ @t cert    
   where
     correctSkiAki c (getSKI -> SKI s) =
         maybe False (\(AKI a) -> a == s) $ getAKI c
@@ -229,21 +228,56 @@ validateResources verifiedResources cert parentCert =
 
 
 validateBgpCert ::
+    forall c parent.
     ( WithRawResourceCertificate c
     , WithRawResourceCertificate parent
     , WithSKI parent
     , WithAKI c
+    , WithSKI c
+    , OfCertType c 'BGPCert
     , OfCertType parent 'CACert
     ) =>
     Now ->
     c ->
     parent ->
     Validated CrlObject ->
-    p ->
-    PureValidatorT ()
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT BGPCertPayload
 validateBgpCert now bgpCert parentCert validCrl verifiedResources = do
-    -- validateResourceCert now bgpCert parentCert validCrl
-    pure ()
+    -- Validate BGP certificate according to 
+    -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
+
+    -- Validate resource set
+    validateResourceCert @_ @_ @ 'BGPCert now bgpCert parentCert validCrl
+
+    let cwsX509 = cwsX509certificate $ getCertWithSignature bgpCert
+
+    -- No SIA
+    for_ (getSiaExt cwsX509) $ \sia -> 
+        vError $ BGPCertSIAPresent sia
+
+    -- No IP resources
+    let AllResources ipv4 ipv6 asns = getRawCert bgpCert ^. #resources
+    ipMustBeEmpty ipv4 BGPCertIPv4Present
+    ipMustBeEmpty ipv6 BGPCertIPv6Present    
+    
+    -- Must be some ASNs
+    asns <- case asns of 
+                Inherit -> vError BGPCertBrokenASNs
+                RS i
+                    | IS.null i -> vError BGPCertBrokenASNs                
+                    | otherwise -> pure $ unwrapAsns $ IS.toList i
+
+    let ski = getSKI bgpCert
+
+    -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
+    let spki = subjectPublicKeyInfo cwsX509
+    pure BGPCertPayload {..}
+  where 
+    ipMustBeEmpty ips errConstructor = 
+        case ips of 
+            Inherit -> vError errConstructor
+            RS i    -> unless (IS.null i) $ vError errConstructor
 
 
 -- | Validate CRL object with the parent certificate
@@ -365,6 +399,7 @@ validateAspa now aspa parentCert crl verifiedResources = do
                 _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
     pure $ Validated aspa
 
+
 validateCms :: forall a c .
     (WithRawResourceCertificate c, 
     WithSKI c, 
@@ -394,7 +429,7 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
                 (Text.pack $ show attributeSigAlg)
 
     signatureCheck $ validateCMSSignature cms
-    void $ validateResourceCert @EECerObject @c @'EECert now eeCert parentCert crl
+    void $ validateResourceCert @_ @_ @'EECert now eeCert parentCert crl
     void $ validateResources verifiedResources eeCert parentCert
     extraValidation cms
 
