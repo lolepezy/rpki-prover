@@ -20,7 +20,7 @@ import           Data.Generics.Product.Typed
 import           Data.Foldable                    (for_, toList)
 
 import qualified Data.ByteString                  as BS
-import qualified Data.ByteString.Lazy             as BSL
+import qualified Data.ByteString.Lazy             as LBS
 
 import           Data.List.Split                  (chunksOf)
 
@@ -107,7 +107,8 @@ runRtrServer AppContext {..} RtrConfig {..} = do
     listenToAppStateUpdates rtrState updateBroadcastChan = do        
 
         -- If a version is recovered from the storage after the start, 
-        -- use it, otherwise wait until some complete version is generated        
+        -- use it, otherwise wait until some complete version is generated       
+        -- by a validation process 
         logInfo logger [i|RTR server: waiting for the first complete world version.|] 
         worldVersion <- atomically $ waitForVersion appState                
     
@@ -191,13 +192,13 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     readTVar (filteredVrps appState) <*>
                     newCQueue 10
 
-        let firstPduLazy = BSL.fromStrict firstPdu
+        let firstPduLazy = LBS.fromStrict firstPdu
 
         let (errorPdu, message, versionedPdu) = 
                 analyzePdu peer firstPduLazy $ bytesToVersionedPdu firstPduLazy        
 
         for_ errorPdu $ \errorPdu' -> 
-            sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
+            sendAll connection $ LBS.toStrict $ pduToBytes errorPdu' V0
 
         for_ message $ logError logger
 
@@ -207,7 +208,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     let errorBytes = pduToBytes errorPdu' V0
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
                                        [i|error PDU: #{errorPdu'}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu' V0}|]
-                    sendAll connection $ BSL.toStrict $ pduToBytes errorPdu' V0
+                    sendAll connection $ LBS.toStrict $ pduToBytes errorPdu' V0
 
                 Right (responsePdus, session, warning) -> do
                     for_ warning $ logWarn logger
@@ -235,7 +236,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                         for_ r $ \pdus -> do 
                             for_ (chunksOf 1000 pdus) $ \chunk -> 
                                 sendMany connection 
-                                    $ map (\pdu -> BSL.toStrict $ 
+                                    $ map (\pdu -> LBS.toStrict $ 
                                             pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
 
                             loop stateUpdateChan
@@ -278,7 +279,7 @@ responseAction :: Show peer =>
                 -> Either ([Pdu], IO ()) ([Pdu], IO ())
 responseAction logger peer session rtrState vrps pduBytes = 
     let 
-        pduBytesLazy = BSL.fromStrict pduBytes
+        pduBytesLazy = LBS.fromStrict pduBytes
 
         (errorPdu, message, versionedPdu) = 
                 analyzePdu peer pduBytesLazy $ bytesToVersionedPdu pduBytesLazy
@@ -316,7 +317,7 @@ responseAction logger peer session rtrState vrps pduBytes =
 -- 
 analyzePdu :: Show peer => 
                peer 
-            -> BSL.ByteString 
+            -> LBS.ByteString 
             -> Either PduParseError VersionedPdu 
             -> (Maybe Pdu, Maybe Text, Maybe VersionedPdu)
 analyzePdu peer pduBytes = \case
@@ -348,7 +349,7 @@ analyzePdu peer pduBytes = \case
 processFirstPdu :: Maybe RtrState 
                 -> Vrps
                 -> VersionedPdu
-                -> BSL.ByteString 
+                -> LBS.ByteString 
                 -> Either (Pdu, Text) ([Pdu], Session, Maybe Text)
 processFirstPdu 
     rtrState 
@@ -377,7 +378,7 @@ processFirstPdu
 respondToPdu :: Maybe RtrState
                 -> Vrps
                 -> VersionedPdu 
-                -> BSL.ByteString 
+                -> LBS.ByteString 
                 -> Session
                 -> Either (Pdu, Text) ([Pdu], Maybe Text)
 respondToPdu 

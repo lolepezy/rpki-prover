@@ -37,7 +37,7 @@ data API api = API {
         vrpsCsvFiltered  :: api :- "vrps-filtered.csv"  :> Get '[ManualCVS] RawCSV,        
         vrpsJsonFiltered :: api :- "vrps-filtered" :> Get '[JSON] [VrpDto],
 
-        aspas :: api :- "aspa" :> Get '[JSON] [AspaDto],
+        aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
         bgpCerts :: api :- "bgp-certificates" :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,

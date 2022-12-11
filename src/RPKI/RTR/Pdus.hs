@@ -5,7 +5,7 @@
 module RPKI.RTR.Pdus where
 
 import qualified Data.ByteString          as BS
-import qualified Data.ByteString.Lazy     as BSL
+import qualified Data.ByteString.Lazy     as LBS
 import qualified Data.Text                as Text
 
 import           Data.Binary
@@ -51,17 +51,17 @@ pduLength EndOfDataPdu {} V1    = 24
 pduLength CacheResetPdu _       = 8
 
 pduLength (RouterKeyPdu _ _ ski bs2) _ = 
-    fromIntegral $ 12 + (fromIntegral (skiLen ski) :: Int64) + BSL.length bs2
+    fromIntegral $ 12 + (fromIntegral (skiLen ski) :: Int64) + LBS.length bs2
 
 pduLength (ErrorPdu _ pduBytes errorMessage) _ = 
     fromIntegral $ 16 + 
-                    maybe 0 BSL.length pduBytes + 
+                    maybe 0 LBS.length pduBytes + 
                     maybe 0 (fromIntegral . BS.length . encodeUtf8) errorMessage
 
 -- 
 -- | Serialise PDU into bytes according to the RTR protocal 
 -- 
-pduToBytes :: Pdu -> ProtocolVersion -> BSL.ByteString
+pduToBytes :: Pdu -> ProtocolVersion -> LBS.ByteString
 pduToBytes pdu protocolVersion = 
     runPut $ pduHeader >> pduContent
     where
@@ -126,7 +126,7 @@ pduToBytes pdu protocolVersion =
                 case causingPdu of
                     Nothing          -> put (0 :: Word32)
                     Just causingPdu' -> do 
-                        put (fromIntegral (BSL.length causingPdu') :: Word32)
+                        put (fromIntegral (LBS.length causingPdu') :: Word32)
                         putLazyByteString causingPdu' 
                 case errorText of
                     Nothing         -> put (0 :: Word32)
@@ -141,7 +141,7 @@ pduToBytes pdu protocolVersion =
 -- 
 -- | Parse PDUs from bytestrings according to the RTR protocal 
 -- 
-bytesToVersionedPdu :: BSL.ByteString -> Either PduParseError VersionedPdu
+bytesToVersionedPdu :: LBS.ByteString -> Either PduParseError VersionedPdu
 bytesToVersionedPdu bs = 
     case runGetOrFail parsePduHeader bs of
         Left (_, _, errorMessage) -> 
@@ -259,7 +259,7 @@ parseVersionedPdu protocolVersion pduType =
              
             pure $ RouterKeyPdu asn' flags 
                     (SKI (KI $ toShortBS ski)) 
-                    (BSL.fromStrict spki)
+                    (LBS.fromStrict spki)
 
         PduCode 10 -> do 
             errorCode                    <- get
@@ -278,7 +278,7 @@ parseVersionedPdu protocolVersion pduType =
             assertLength fullLength $ 16 + textLen + encapsulatedPduLen                    
 
             pure $ ErrorPdu errorCode 
-                    (BSL.fromStrict <$> encapsulatedPdu) 
+                    (LBS.fromStrict <$> encapsulatedPdu) 
                     (decodeUtf8 <$> encodedMessage)
 
         PduCode n  -> fail $ "Invalid PDU type " <> show n

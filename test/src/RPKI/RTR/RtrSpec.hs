@@ -7,7 +7,7 @@ module RPKI.RTR.RtrSpec where
 
 import           Control.Monad
 
-import qualified Data.ByteString.Lazy     as BSL
+import qualified Data.ByteString.Lazy     as LBS
 
 import qualified Data.List                         as List
 import           Data.Set                          (Set)

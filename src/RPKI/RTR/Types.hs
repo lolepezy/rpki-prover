@@ -5,7 +5,7 @@
 
 module RPKI.RTR.Types where
 
-import qualified Data.ByteString.Lazy     as BSL
+import qualified Data.ByteString.Lazy     as LBS
 
 import           Data.Binary
 import           Data.Int
@@ -33,8 +33,8 @@ data Pdu = NotifyPdu RtrSessionId SerialNumber
         | IPv6PrefixPdu Flags Ipv6Prefix ASN PrefixLength    
         | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
-        | RouterKeyPdu ASN Flags SKI BSL.ByteString
-        | ErrorPdu ErrorCode (Maybe BSL.ByteString) (Maybe Text)
+        | RouterKeyPdu ASN Flags SKI LBS.ByteString
+        | ErrorPdu ErrorCode (Maybe LBS.ByteString) (Maybe Text)
     deriving stock (Show, Eq, Ord, Generic)
 
 newtype PduCode = PduCode Word8 
