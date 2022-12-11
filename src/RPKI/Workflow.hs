@@ -174,7 +174,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                 completeWorldVersion tx db worldVersion                            
                             updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                             pure (mempty, mempty)            
-                        Right WorkerResult {..} -> do                             
+                        Right WorkerResult {..} -> do                              
                             let ValidationResult vs maybeSlurm = payload
                             
                             pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory                            
@@ -358,6 +358,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         putMetrics tx database' worldVersion (topDownValidations ^. typed)
         putVrps tx database' (payloads ^. #vrps) worldVersion
         putAspas tx database' (payloads ^. #aspas) worldVersion
+        putBgps tx database' (payloads ^. #bgpCerts) worldVersion
         for_ maybeSlurm $ putSlurm tx database' worldVersion
         completeWorldVersion tx database' worldVersion
 

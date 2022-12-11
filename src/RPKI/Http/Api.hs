@@ -38,6 +38,7 @@ data API api = API {
         vrpsJsonFiltered :: api :- "vrps-filtered" :> Get '[JSON] [VrpDto],
 
         aspas :: api :- "aspa" :> Get '[JSON] [AspaDto],
+        bgpCerts :: api :- "bgp-certificates" :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
                 
@@ -90,7 +91,8 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/vrps-filtered", mempty & get ?~ jsonOn200 
                 "List of VRPs with SLURM filtering applied to it"),
 
-            ("/aspa", mempty & get ?~ jsonOn200 "List of all ASPA objects"),
+            ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
+            ("/bgp-certificates", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
 
             ("/validations", mempty & get ?~ jsonOn200 
                 "Validation results for the latest validation run"),

@@ -242,7 +242,7 @@ validateBgpCert ::
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT BGPCertPayload
+    PureValidatorT BgpCertPayload
 validateBgpCert now bgpCert parentCert validCrl verifiedResources = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
@@ -272,7 +272,7 @@ validateBgpCert now bgpCert parentCert validCrl verifiedResources = do
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
     let spki = subjectPublicKeyInfo cwsX509
-    pure BGPCertPayload {..}
+    pure BgpCertPayload {..}
   where 
     ipMustBeEmpty ips errConstructor = 
         case ips of 

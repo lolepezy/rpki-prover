@@ -63,6 +63,7 @@ httpApi appContext = genericServe HttpApi {
         vrpsJsonFiltered = liftIO (getVRPSlurmed appContext),
 
         aspas = liftIO (getASPAs appContext),
+        bgpCerts = liftIO (getBGPCerts appContext),
 
         slurm = getSlurm appContext,
                 
@@ -115,11 +116,20 @@ getVRPs AppContext {..} func = do
 getASPAs :: Storage s => AppContext s -> IO [AspaDto] 
 getASPAs AppContext {..} = do 
     aspas <- getLatestAspas =<< readTVarIO database     
-    pure $ map (\aspa -> 
-            AspaDto { 
-                customerAsn = aspa ^. #customerAsn,
-                providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
-            }) $ Set.toList aspas
+    pure $ map toDto $ Set.toList aspas
+  where
+    toDto aspa = 
+        AspaDto { 
+            customerAsn = aspa ^. #customerAsn,
+            providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
+        }
+
+getBGPCerts :: Storage s => AppContext s -> IO [BgpCertDto] 
+getBGPCerts AppContext {..} = do 
+    bgps <- getLatestBgps =<< readTVarIO database     
+    pure $ map toDto $ Set.toList bgps
+  where
+    toDto BgpCertPayload {..} = BgpCertDto { subjectPublicKeyInfo = spki, ..}
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do 

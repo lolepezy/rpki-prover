@@ -89,6 +89,14 @@ data AspaDto = AspaDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+
+data BgpCertDto = BgpCertDto {
+        ski  :: SKI,
+        asns :: [ASN],
+        subjectPublicKeyInfo :: SPKI
+    } 
+    deriving stock (Eq, Show, Generic)
+
 newtype RObject = RObject (Located RpkiObject)
     deriving stock (Eq, Show, Generic)
 
@@ -135,11 +143,13 @@ instance ToSchema RawCSV where
 instance ToJSON RObject
 instance ToJSON VrpDto     
 instance ToJSON AspaDto
+instance ToJSON BgpCertDto
 instance ToSchema RObject
 instance ToSchema VrpDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema AspaDto
+instance ToSchema BgpCertDto
 instance ToSchema ProviderAsn
 
 instance ToJSON ProviderAsn where

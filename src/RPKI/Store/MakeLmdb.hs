@@ -34,13 +34,15 @@ createDatabase e logger checkAction = do
     repositoryStore  <- createRepositoryStore
     objectStore      <- createObjectStore sequences
     validationsStore <- createValidationsStore
-    vrpStore         <- createVRPStore
+    vrpStore         <- createVRPStore    
     aspaStore        <- createAspaStore
+    bgpStore         <- createBgpStore
     versionStore     <- createVersionStore
     metricStore      <- createMetricsStore
     slurmStore       <- createSlurmStore
     jobStore         <- createJobStore        
     metadataStore    <- createMetadataStore
+    
     let db = DB {..}
     case checkAction of     
         CheckVersion     -> verifyDBVersion db
@@ -96,6 +98,7 @@ createDatabase e logger checkAction = do
     createValidationsStore = ValidationsStore . SMap lmdb <$> createLmdbStore e
     createVRPStore = VRPStore . SMap lmdb <$> createLmdbStore e    
     createAspaStore = AspaStore . SMap lmdb <$> createLmdbStore e    
+    createBgpStore = BgpStore . SMap lmdb <$> createLmdbStore e    
     createTAStore = TAStore . SMap lmdb <$> createLmdbStore e    
     createVersionStore = VersionStore . SMap lmdb <$> createLmdbStore e    
     createMetricsStore = MetricStore . SMap lmdb <$> createLmdbStore e    

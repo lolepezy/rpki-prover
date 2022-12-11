@@ -449,7 +449,7 @@ data Aspa = Aspa {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-data BGPCertPayload = BGPCertPayload {
+data BgpCertPayload = BgpCertPayload {
         ski  :: SKI,
         asns :: [ASN],
         spki :: SPKI

@@ -82,7 +82,7 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
 data Payloads a = Payloads {
         vrps     :: a,
         aspas    :: Set.Set Aspa,
-        bgpCerts :: Set.Set BGPCertPayload  
+        bgpCerts :: Set.Set BgpCertPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup (Payloads a)

@@ -74,6 +74,7 @@ data DB s = DB {
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
+    bgpStore         :: BgpStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
@@ -153,6 +154,11 @@ newtype VRPStore s = VRPStore {
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
     aspas :: SMap "aspas" s WorldVersion (Set.Set Aspa)
+}
+
+-- | BGP certificate store
+newtype BgpStore s = BgpStore {    
+    bgps :: SMap "bgps" s WorldVersion (Set.Set BgpCertPayload)
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -426,6 +432,19 @@ putVrps :: (MonadIO m, Storage s) =>
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
     liftIO $ M.put tx vrpMap worldVersion vrps    
 
+putBgps :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set BgpCertPayload -> WorldVersion -> m ()
+putBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion = 
+    liftIO $ M.put tx bgpMap worldVersion bgps 
+
+deleteBgps :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteBgps tx DB { bgpStore = BgpStore m } wv = liftIO $ M.delete tx m wv
+
+getBgps :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Set.Set BgpCertPayload)
+getBgps tx DB { bgpStore = BgpStore m } wv = liftIO $ fromMaybe Set.empty <$> M.get tx m wv    
+
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
 putVersion tx DB { versionStore = VersionStore s } wv versionState = 
@@ -655,6 +674,7 @@ deleteOldVersions database tooOld =
                 deleteVersion tx database worldVersion
                 deleteValidations tx database worldVersion
                 deleteAspas tx database worldVersion            
+                deleteBgps tx database worldVersion            
                 deleteVRPs tx database worldVersion            
                 deleteMetrics tx database worldVersion
                 deleteSlurms tx database worldVersion
@@ -681,11 +701,20 @@ getLatestVRPs db =
             MaybeT $ getVrps tx db version
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
-getLatestAspas db = 
+getLatestAspas db = getLatestSetOfSmth db getAspas
+
+getLatestBgps :: Storage s => DB s -> IO (Set.Set BgpCertPayload)
+getLatestBgps db = getLatestSetOfSmth db getBgps
+
+getLatestSetOfSmth :: Storage s =>
+                    DB s 
+                    -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Set.Set a))
+                    -> IO (Set.Set a)
+getLatestSetOfSmth db f = 
     roTx db $ \tx -> 
         getLastCompletedVersion db tx >>= \case         
             Nothing      -> pure Set.empty
-            Just version -> getAspas tx db version        
+            Just version -> f tx db version        
 
 
 getTotalDbStats :: (MonadIO m, Storage s) => 
@@ -705,6 +734,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     vResultStats    <- vResultStats' tx
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
     aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
+    bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
     metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
     versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
     sequenceStats   <- M.stats tx sequences

@@ -69,6 +69,8 @@ instance ToSchema Ipv6Prefix where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DecodedBase64 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema SPKI where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance (ToSchema a, ToSchema b) => ToSchema (These a b)
 instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) where
