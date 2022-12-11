@@ -45,6 +45,7 @@ import           RPKI.Domain
 import           RPKI.Fetch
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storage
@@ -606,19 +607,6 @@ validateCaCertificate
             longerThanOne []  = False
             longerThanOne _   = True
 
-
-    validateMftObject ro filename validCrl = do
-        -- warn about names on the manifest mismatching names in the object URLs
-        let objectLocations = getLocations ro
-        let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
-        when (null nameMatches) $ 
-            vWarn $ ManifestLocationMismatch filename objectLocations
-
-        -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
-        -- or recursively validate CA if the child is a certificate.                           
-        validateChild validCrl ro
-
-    
     findManifestEntryObject filename hash' = do                    
         validateMftFileName filename                         
         ro <- liftIO $ do 
@@ -628,24 +616,35 @@ validateCaCertificate
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
             Just ro' -> pure ro'
 
+    validateMftObject ro filename validCrl = do
+        -- warn about names on the manifest mismatching names in the object URLs
+        let objectLocations = getLocations ro
+        let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
+        when (null nameMatches) $ 
+            vWarn $ ManifestLocationMismatch filename objectLocations
+
+        -- Validate the MFT entry, i.e. validate a ROA/GBR/ASPA/BGP certificate/etc.
+        -- or recursively validate CA if the child is a certificate.                           
+        validateMftChild validCrl ro
     
-    validateChild validCrl child@(Located locations ro) = do
-        -- At the moment of writing RFC 6486-bis 
-        -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#page-12) 
-        -- prescribes to consider the manifest invalid if any of the objects 
-        -- referred by the manifest is invalid. 
-        -- 
-        -- That's why _only_ recursive validation of the child CA happens in the separate   
-        -- runValidatorT (...) call, but all the other objects are validated within the 
-        -- same context of ValidatorT, i.e. have short-circuit logic implemented by ExceptT.        
-        --
+
+    validateMftChild validCrl child@(Located locations ro) = do
+        {- 
+        Validate manifest children according to 
+            https://datatracker.ietf.org/doc/rfc9286/
+
+        Note that recursive validation of the child CA happens in the separate   
+        runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
+        It is done to 
+        -}
+        
         parentContext <- ask        
         case ro of
             CerRO childCert -> do 
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
                         inSubObjectVScope (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 
-                                    Validated validCert <- validateResourceCert 
+                                    Validated validCert <- validateResourceCert @CaCerObject @CaCerObject @'CACert 
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
                             let childTopDownContext = topDownContext 
@@ -682,6 +681,21 @@ validateCaCertificate
                             oneMoreAspa            
                             let aspa' = getCMSContent $ cmsPayload aspa
                             pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+
+            BgpRO bgpCert -> do                
+                    validateObjectLocations child
+                    inSubObjectVScope (locationsToText locations) $ 
+                        allowRevoked $ do
+                            -- void $ vHoist $ validateBgpCert now bgpCert certificate validCrl verifiedResources
+                            oneMoreBgp
+                            -- let ski = getSKI bgpCert
+                            -- let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
+                            -- let bgpPayload = BGPCertPayload {..}                            
+                            pure $! (mempty :: Payloads (Set Vrp)) 
+                                        -- {  
+                                        --     bgpCerts = Set.singleton bgpPayload 
+                                        -- }
+                            
 
             -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
             -- they will emit a warning.
@@ -751,13 +765,14 @@ addValidMft TopDownContext {..} aki mft =
     liftIO $ atomically $ modifyTVar' 
                 validManifests (<> Map.singleton aki (getHash mft))    
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa, oneMoreBgp :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
+oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))

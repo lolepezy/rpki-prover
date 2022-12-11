@@ -393,6 +393,7 @@ data ValidationMetric = ValidationMetric {
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,
         validAspaNumber :: Count,
+        validBgpNumber  :: Count,
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)

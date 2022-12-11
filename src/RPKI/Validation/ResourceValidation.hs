@@ -22,8 +22,8 @@ validateChildParentResources :: ValidationRFC
                             -> PureValidatorT (VerifiedRS PrefixesAndAsns)
 validateChildParentResources validationRFC childResources parentResources verifiedResources =                                 
   case validationRFC of 
-    Strict_       -> verify strict
-    Reconsidered_ -> verify reconsidered
+    StrictRFC       -> verify strict
+    ReconsideredRFC -> verify reconsidered
   where    
     verify f = do 
       c4 <- check childIpv4s parentIpv4s (\(VerifiedRS (PrefixesAndAsns r _ _)) -> r)

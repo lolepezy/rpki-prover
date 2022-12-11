@@ -9,7 +9,7 @@
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE InstanceSigs #-}
 
 
 module RPKI.Domain where
@@ -50,37 +50,34 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-
-validationRFC :: SomeRFC r -> ValidationRFC
-validationRFC (StrictRFC _)       = Strict_ 
-validationRFC (ReconsideredRFC _) = Reconsidered_
+import Data.Kind (Type)
 
 newtype PolyRFC r (rfc :: ValidationRFC) = PolyRFC r
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-data SomeRFC r = StrictRFC (PolyRFC r 'Strict_) 
-               | ReconsideredRFC (PolyRFC r 'Reconsidered_) 
+data SomeRFC r = StrictRFC_ (PolyRFC r 'StrictRFC) 
+               | ReconsideredRFC_ (PolyRFC r 'ReconsideredRFC) 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary               
 
 polyRFC :: SomeRFC r -> r
-polyRFC (StrictRFC (PolyRFC r))      = r
-polyRFC (ReconsideredRFC (PolyRFC r)) = r
+polyRFC (StrictRFC_ (PolyRFC r))      = r
+polyRFC (ReconsideredRFC_ (PolyRFC r)) = r
 
 mkPolyRFC :: ValidationRFC -> r -> SomeRFC r
-mkPolyRFC Strict_ r       = StrictRFC (PolyRFC r) 
-mkPolyRFC Reconsidered_ r = ReconsideredRFC (PolyRFC r) 
+mkPolyRFC StrictRFC r       = StrictRFC_ (PolyRFC r) 
+mkPolyRFC ReconsideredRFC r = ReconsideredRFC_ (PolyRFC r) 
 
 newtype TypedCert c (t :: CertType) = TypedCert c
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving newtype (WithSKI, WithRFC, WithRawResourceCertificate, WithAKI)
 
-class OfCertType c t 
+class OfCertType c (t :: CertType)    
 
 data CertType = CACert | EECert | BGPCert
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 newtype Hash = Hash BSS.ShortByteString 
@@ -137,7 +134,6 @@ class WithRawResourceCertificate a where
 class WithRFC a where
     getRFC :: a -> ValidationRFC
 
-
 instance WithURL URI where
     getURL = id
 
@@ -166,11 +162,11 @@ newtype KI = KI BSS.ShortByteString
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newtype SKI  = SKI KI 
+newtype SKI  = SKI { unSKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newtype AKI  = AKI KI   
+newtype AKI  = AKI { unAKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -296,9 +292,6 @@ instance WithHash (CMSBasedObject a) where
 instance WithAKI EECerObject where
     getAKI EECerObject {..} = Just aki
 
-instance WithSKI EECerObject where
-    getSKI EECerObject {..} = ski
-
 instance WithHash BgpCerObject where
     getHash BgpCerObject {..} = hash
 
@@ -321,16 +314,17 @@ instance WithRawResourceCertificate ResourceCertificate where
     getRawCert (ResourceCertificate s) = polyRFC s
 
 instance WithRFC (SomeRFC a) where
-    getRFC (StrictRFC _)       = Strict_ 
-    getRFC (ReconsideredRFC _) = Reconsidered_
+    getRFC (StrictRFC_ _)       = StrictRFC 
+    getRFC (ReconsideredRFC_ _) = ReconsideredRFC
 
 instance WithRFC EECerObject where
     getRFC EECerObject {..} = getRFC certificate
 
 instance WithRFC CaCerObject where
+    getRFC :: CaCerObject -> ValidationRFC
     getRFC CaCerObject {..} = getRFC certificate
 
-instance OfCertType (TypedCert c t) t
+instance OfCertType (TypedCert c (t :: CertType)) t
 instance OfCertType CaCerObject 'CACert
 instance OfCertType EECerObject 'EECert
 instance OfCertType BgpCerObject 'BGPCert
@@ -451,8 +445,9 @@ data Aspa = Aspa {
 
 data BGPCertPayload = BGPCertPayload {
         ski  :: SKI,
-        asn  :: ASN,
+        asn  :: [ASN],
         spki :: SPKI
+        -- TODO Possible store the hash of the original BGP certificate?
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -647,10 +642,10 @@ getEECert :: SignedObject a -> CertificateWithSignature
 getEECert = certX509 . getRawCert . scCertificate . soContent
 
 strictCert :: RawResourceCertificate -> ResourceCertificate
-strictCert = ResourceCertificate . StrictRFC . PolyRFC
+strictCert = ResourceCertificate . StrictRFC_ . PolyRFC
 
 reconsideredCert :: RawResourceCertificate -> ResourceCertificate
-reconsideredCert = ResourceCertificate . ReconsideredRFC . PolyRFC
+reconsideredCert = ResourceCertificate . ReconsideredRFC_ . PolyRFC
 
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 

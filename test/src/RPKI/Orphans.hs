@@ -297,11 +297,11 @@ instance Arbitrary r => Arbitrary (SomeRFC r) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (PolyRFC r 'Strict_) where
+instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (PolyRFC r 'Reconsidered_) where
+instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

@@ -4,6 +4,10 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE QuasiQuotes         #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -19,6 +23,8 @@ import           Data.Foldable (for_)
 import           Data.String.Interpolate.IsString
 
 import qualified Data.Set                           as Set
+
+import           Data.Proxy
 
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
@@ -46,27 +52,29 @@ import           RPKI.Resources.Resources
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
 
--- TODO That one needs to be refactored in such a way that certificate type is 
--- known after parsing the certificate on the type level.
-validateResourceCertExtensions :: WithRawResourceCertificate c => c -> PureValidatorT c
+
+class ExtensionValidator (t :: CertType) where
+    validateResourceCertExtensions_ :: Proxy t -> [ExtensionRaw] -> PureValidatorT ()
+
+instance ExtensionValidator 'CACert where
+    validateResourceCertExtensions_ _ extensions = do             
+        validateCaBasicConstraint extensions
+        validatePolicyExtension extensions                        
+
+instance ExtensionValidator 'BGPCert where
+    -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
+    validateResourceCertExtensions_ _ = noBasicContraint
+
+instance ExtensionValidator 'EECert where
+    validateResourceCertExtensions_ _ = noBasicContraint
+
+validateResourceCertExtensions :: forall c (t :: CertType) .
+    (WithRawResourceCertificate c, OfCertType c t, ExtensionValidator t) => 
+    c -> PureValidatorT c
 validateResourceCertExtensions cert = do     
     let extensions = getExts $ cwsX509certificate $ getCertWithSignature cert
 
-    -- Do not check for SKI, AKI and resource extensions -- they 
-    -- are validated when parsing certificates and are crucial for 
-    -- the whole tree validation.
-    getCertificateType extensions >>= \case                        
-        CACert -> do             
-            validateCaBasicConstraint extensions
-            validatePolicyExtension extensions                        
-        BGPCert -> do             
-            -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
-            noBasicContraint extensions            
-        EECert  -> do 
-            -- TODO Something else here?
-            noBasicContraint extensions                        
-
-    -- Same (or almost same?) for all types
+    validateResourceCertExtensions_ (Proxy :: Proxy t) extensions
     validateNoUnknownCriticalExtensions extensions            
     
     pure cert
@@ -75,10 +83,10 @@ validateResourceCertExtensions cert = do
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
 validateCaBasicConstraint :: [ExtensionRaw] -> PureValidatorT ()
 validateCaBasicConstraint extensions = 
-    withExtension extensions id_ce_basicConstraints $ \bs parsed ->
-            case parsed of 
-                [Start Sequence, Boolean _, End Sequence] -> pure ()                
-                _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
+    withCriticalExtension extensions id_ce_basicConstraints $ \bs parsed ->
+        case parsed of 
+            [Start Sequence, Boolean _, End Sequence] -> pure ()                
+            _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
 
 noBasicContraint :: [ExtensionRaw] -> PureValidatorT ()
 noBasicContraint extensions = 
@@ -87,7 +95,7 @@ noBasicContraint extensions =
 
 validatePolicyExtension :: [ExtensionRaw] -> PureValidatorT ()
 validatePolicyExtension extensions = 
-    withExtension extensions id_ce_certificatePolicies $ \bs parsed ->
+    withCriticalExtension extensions id_ce_certificatePolicies $ \bs parsed ->
         case parsed of 
             [ Start Sequence
                 , Start Sequence
@@ -111,7 +119,7 @@ validatePolicyExtension extensions =
             _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
                 
 validateNoUnknownCriticalExtensions :: [ExtensionRaw] -> PureValidatorT ()
-validateNoUnknownCriticalExtensions extensions = do                        
+validateNoUnknownCriticalExtensions extensions =
     for_ extensions $ \ExtensionRaw {..} -> do 
         when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
             vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
@@ -125,14 +133,16 @@ validateTACert tal u (CerRO taCert) = do
     unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
     validateTaCertAKI taCert u
     signatureCheck $ validateCertSignature taCert taCert
-    validateResourceCertExtensions taCert    
-      
+    validateResourceCertExtensions @CaCerObject @'CACert taCert
+
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
-
-validateTaCertAKI :: (WithAKI taCert, WithSKI taCert) 
-                    => taCert -> RpkiURL -> PureValidatorT ()
-validateTaCertAKI taCert u = 
+validateTaCertAKI ::
+    (WithAKI taCert, WithSKI taCert) =>
+    taCert ->
+    RpkiURL ->
+    PureValidatorT ()
+validateTaCertAKI taCert u =
     case getAKI taCert of
         Nothing -> pure ()
         Just (AKI ki)
@@ -149,12 +159,11 @@ validateTACertWithPreviousCert cert previousCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
     let (before, after) = validities cert
     let (prevBefore, prevAfter) = validities previousCert
-    if before < prevBefore || after < prevAfter 
+    if before < prevBefore || after < prevAfter
         then do
-            void $ vPureWarning $ TACertOlderThanPrevious {..}
-            pure previousCert 
-        else 
-            pure cert
+            void $ vPureWarning $ TACertOlderThanPrevious{..}
+            pure previousCert
+        else pure cert
 
 -- | In general, resource certifcate validation is:
 --
@@ -165,11 +174,14 @@ validateTACertWithPreviousCert cert previousCert = do
 --    - check the resource set (needs the parent as well)
 --    - check it's not revoked (needs CRL)
 -- 
-validateResourceCert ::
+validateResourceCert :: forall c parent (t :: CertType) .
     ( WithRawResourceCertificate c
     , WithRawResourceCertificate parent
     , WithSKI parent
     , WithAKI c
+    , OfCertType parent 'CACert
+    , OfCertType c t
+    , ExtensionValidator t
     ) =>
     Now ->
     c ->    
@@ -192,7 +204,7 @@ validateResourceCert (Now now) cert parentCert vcrl = do
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
 
-    void $ validateResourceCertExtensions cert
+    void $ validateResourceCertExtensions @c @t cert
     pure $ Validated cert
   where
     correctSkiAki c (getSKI -> SKI s) =
@@ -209,11 +221,30 @@ validateResources ::
     parent ->
     PureValidatorT (VerifiedRS PrefixesAndAsns)
 validateResources verifiedResources cert parentCert =
-        validateChildParentResources
-            (getRFC cert)
-            ((getRawCert cert) ^. typed)
-            ((getRawCert parentCert) ^. typed)
-            verifiedResources
+    validateChildParentResources
+        (getRFC cert)
+        (getRawCert cert ^. typed)
+        (getRawCert parentCert ^. typed)
+        verifiedResources
+
+
+validateBgpCert ::
+    ( WithRawResourceCertificate c
+    , WithRawResourceCertificate parent
+    , WithSKI parent
+    , WithAKI c
+    , OfCertType parent 'CACert
+    ) =>
+    Now ->
+    c ->
+    parent ->
+    Validated CrlObject ->
+    p ->
+    PureValidatorT ()
+validateBgpCert now bgpCert parentCert validCrl verifiedResources = do
+    -- validateResourceCert now bgpCert parentCert validCrl
+    pure ()
+
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
@@ -318,10 +349,10 @@ validateRsc now rsc parentCert crl verifiedResources = do
     pure $ Validated rsc
 
 validateAspa ::
-    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    (WithRawResourceCertificate parent, WithSKI parent, OfCertType parent 'CACert) =>
     Now ->
     AspaObject ->
-    c ->
+    parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated AspaObject)
@@ -334,8 +365,10 @@ validateAspa now aspa parentCert crl verifiedResources = do
                 _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
     pure $ Validated aspa
 
-validateCms ::
-    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+validateCms :: forall a c .
+    (WithRawResourceCertificate c, 
+    WithSKI c, 
+    OfCertType c 'CACert) =>
     Now ->
     CMS a ->
     c ->
@@ -361,7 +394,7 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
                 (Text.pack $ show attributeSigAlg)
 
     signatureCheck $ validateCMSSignature cms
-    void $ validateResourceCert now eeCert parentCert crl
+    void $ validateResourceCert @EECerObject @c @'EECert now eeCert parentCert crl
     void $ validateResources verifiedResources eeCert parentCert
     extraValidation cms
 
@@ -406,3 +439,20 @@ validateSize vc s =
             | s < vc ^. #minObjectSize -> Left $ ObjectIsTooSmall s
             | s > vc ^. #maxObjectSize -> Left $ ObjectIsTooBig s
             | otherwise                -> pure s
+
+
+
+{- 
+еще один вопрос вдогонку
+вот есть у меня 
+```
+data X = A | B
+
+class Bla (t :: X)
+
+instance Bla 'A
+instance Bla 'B
+```
+есть ли какой-то способ сказать ghc, что раз не писать `Bla t` а качестве констрейнта, зная, что
+
+-}

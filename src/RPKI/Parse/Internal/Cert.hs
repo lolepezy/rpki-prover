@@ -77,8 +77,8 @@ parseResources x509cert = do
         (_, _, Just _, Just _) -> broken "Both versions of ASN extensions"
         (Just _, _, _, Just _) -> broken "There are IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _) -> broken "There are IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns, Nothing) -> (, Strict_)       <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> (, Reconsidered_) <$> cert' x509cert ips asns
+        (ips, Nothing, asns, Nothing) -> (, StrictRFC)       <$> cert' x509cert ips asns
+        (Nothing, ips, Nothing, asns) -> (, ReconsideredRFC) <$> cert' x509cert ips asns
   where 
     broken = pureError . parseErr
     cert' x509c ips asns = do 
@@ -101,7 +101,7 @@ subjectPublicKeyInfo cert = EncodedBase64 $ B64.encodeBase64' $
 
 getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType
 getCertificateType extensions =
-    withExtension extensions id_ce_keyUsage $ \bs parsed ->             
+    withCriticalExtension extensions id_ce_keyUsage $ \bs parsed ->             
         case parsed of 
             -- Bits position are from
             -- https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3
@@ -137,11 +137,11 @@ getCertificateType extensions =
             _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
 
 
-withExtension :: [ExtensionRaw]
-            -> OID
-            -> (BS.ByteString -> [ASN1] -> PureValidatorT r)
-            -> PureValidatorT r
-withExtension extensions oid f = do 
+withCriticalExtension :: [ExtensionRaw]
+                    -> OID
+                    -> (BS.ByteString -> [ASN1] -> PureValidatorT r)
+                    -> PureValidatorT r
+withCriticalExtension extensions oid f = do 
     case extVal extensions oid of
         Nothing -> vPureError $ MissingCriticalExtension oid
         Just bs 
