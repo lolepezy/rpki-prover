@@ -99,7 +99,7 @@ instance Storage s => WithStorage s (DB s) where
 -- 
 data RpkiObjectStore s = RpkiObjectStore {
         keys           :: Sequence s,
-        objects        :: SMap "objects" s ObjectKey SValue,
+        objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
         lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
@@ -147,7 +147,7 @@ instance Storage s => WithStorage s (MetricStore s) where
 
 -- | VRP store
 newtype VRPStore s = VRPStore {    
-    vrps :: SMap "vrps" s WorldVersion Vrps
+    vrps :: SMap "vrps" s WorldVersion (Compressed Vrps)
 }
 
 -- | ASPA store
@@ -214,8 +214,8 @@ getByUri tx store@RpkiObjectStore {..} uri = liftIO $
 
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe RpkiObject)
-getObjectByKey tx RpkiObjectStore {..} k = liftIO $    
-    (fromSValue <$>) <$> M.get tx objects k             
+getObjectByKey tx RpkiObjectStore {..} k = liftIO $ do 
+    fmap (\(Compressed StorableObject{..}) -> object) <$> M.get tx objects k    
 
 getLocatedByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
@@ -233,14 +233,14 @@ putObject :: (MonadIO m, Storage s) =>
             -> RpkiObjectStore s 
             -> StorableObject RpkiObject
             -> WorldVersion -> m ()
-putObject tx RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
+putObject tx RpkiObjectStore {..} so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
         SequenceValue k <- nextValue tx keys
         let objectKey = ObjectKey $ ArtificialKey k
         M.put tx hashToKey h objectKey
-        M.put tx objects objectKey storable                           
+        M.put tx objects objectKey (Compressed so)
         M.put tx objectInsertedBy objectKey wv
         case object of
             CerRO c -> 
@@ -402,7 +402,7 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
 
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
-getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ M.get tx m wv    
+getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
 deleteVRPs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -424,7 +424,7 @@ putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion =
 putVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
-    liftIO $ M.put tx vrpMap worldVersion vrps    
+    liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
