@@ -63,7 +63,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 1
+currentDatabaseVersion = 2
 
 -- All of the stores of the application in one place
 data DB s = DB {
