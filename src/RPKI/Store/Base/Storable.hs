@@ -1,62 +1,78 @@
-{-# LANGUAGE DerivingVia    #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE StrictData     #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
 
 import Control.DeepSeq
+import Codec.Compression.LZ4
 import GHC.Generics
 
-import Data.Bifunctor (first)
+import Data.Maybe (fromMaybe)
 import Data.Monoid.Generic
 
 import RPKI.Config
-import RPKI.Reporting
 import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass NFData
 
 newtype SValue = SValue { unSValue :: Storable }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving stock (Eq, Ord, Show)
 
 newtype SKey = SKey { unSKey :: Storable }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving stock (Eq, Ord, Show)    
 
--- Strictness here is important
-data StorableUnit a e = SObject {-# UNPACK #-} (StorableObject a) | SError e
+data StorableUnit a e = 
+    SObject {-# UNPACK #-} (StorableObject a) 
+  | SError e
 
-data StorableObject a = StorableObject { object :: a, storable :: SValue }
-    deriving (Show, Eq, Generic)
+data StorableObject a = StorableObject {
+        object   :: a, 
+        storable :: Storable 
+    }
+    deriving stock (Show, Eq, Generic)
 
-toStorableObject :: TheBinary a => a -> StorableObject a
-toStorableObject a = StorableObject a (force (storableValue a))
+toStorableObject :: AsStorable a => a -> StorableObject a
+toStorableObject a = StorableObject a (force (toStorable a))
 
-toStorable :: TheBinary v => v -> Storable
-toStorable = Storable . serialise_
-
-storableValue :: TheBinary v => v -> SValue
+storableValue :: AsStorable v => v -> SValue
 storableValue = SValue . toStorable
 
-storableKey :: TheBinary v => v -> SKey
+storableKey :: AsStorable v => v -> SKey
 storableKey = SKey . toStorable
 
-fromStorable :: TheBinary t => Storable -> t
-fromStorable (Storable b) = deserialise_ b
+newtype Compressed a = Compressed { unCompressed :: a }
+    deriving stock (Show, Eq, Generic)
 
-fromSValue :: TheBinary t => SValue -> t
-fromSValue (SValue b) = fromStorable b
+class AsStorable a where
+    toStorable :: a -> Storable
+    fromStorable :: Storable -> a
 
-fromStorable' :: TheBinary t => Storable -> Either StorageError t
-fromStorable' (Storable b) = first DeserialisationError $ deserialiseOrFail_ b
+instance {-# OVERLAPPING #-} AsStorable Storable where
+    toStorable = id
+    fromStorable = id
 
-fromSValue' :: TheBinary t => SValue -> Either StorageError t
-fromSValue' (SValue b) = fromStorable' b
+instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
+    toStorable = Storable . serialise_
+    fromStorable (Storable a) = deserialise_ a
+
+instance {-# OVERLAPPING #-} AsStorable a => AsStorable (StorableObject a) where
+    toStorable StorableObject {..} = storable
+    fromStorable b = let o = fromStorable b in StorableObject o b
+
+instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
+    toStorable (Compressed a) = 
+        Storable $ fromMaybe mempty $ compress $ unStorable $ toStorable a
+    fromStorable (Storable b) = 
+        Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
 
 data SStats = SStats {
@@ -76,7 +92,6 @@ instance Semigroup SStats where
             statValueBytes = statValueBytes ss1 + statValueBytes ss2,
             statMaxKVBytes = statMaxKVBytes ss1 `max` statMaxKVBytes ss2
         }
-
 
 incrementStats :: SStats -> SKey -> SValue -> SStats
 incrementStats stat (SKey (Storable k)) (SValue (Storable v)) = 

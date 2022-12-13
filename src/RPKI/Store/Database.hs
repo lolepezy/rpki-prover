@@ -17,12 +17,11 @@ import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.IORef.Lifted
 import           Data.Foldable            (for_)
-import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe)
+import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -64,7 +63,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 1
+currentDatabaseVersion = 2
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -100,7 +99,7 @@ instance Storage s => WithStorage s (DB s) where
 -- 
 data RpkiObjectStore s = RpkiObjectStore {
         keys           :: Sequence s,
-        objects        :: SMap "objects" s ObjectKey SValue,
+        objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
         lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
@@ -132,14 +131,14 @@ instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
 newtype ValidationsStore s = ValidationsStore { 
-    results :: SMap "validations" s WorldVersion Validations 
+    results :: SMap "validations" s WorldVersion (Compressed Validations) 
 }
 
 instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricStore s = MetricStore {
-    metrics :: SMap "metrics" s WorldVersion RawMetric    
+    metrics :: SMap "metrics" s WorldVersion (Compressed RawMetric)
 }
 
 instance Storage s => WithStorage s (MetricStore s) where
@@ -148,12 +147,12 @@ instance Storage s => WithStorage s (MetricStore s) where
 
 -- | VRP store
 newtype VRPStore s = VRPStore {    
-    vrps :: SMap "vrps" s WorldVersion Vrps
+    vrps :: SMap "vrps" s WorldVersion (Compressed Vrps)
 }
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
-    aspas :: SMap "aspas" s WorldVersion (Set.Set Aspa)
+    aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
 }
 
 -- | BGP certificate store
@@ -175,7 +174,7 @@ instance Storage s => WithStorage s (VersionStore s) where
 
 
 newtype SlurmStore s = SlurmStore {
-    slurms :: SMap "slurms" s WorldVersion Slurm
+    slurms :: SMap "slurms" s WorldVersion (Compressed Slurm)
 }
 
 data RepositoryStore s = RepositoryStore {
@@ -220,8 +219,8 @@ getByUri tx store@RpkiObjectStore {..} uri = liftIO $
 
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe RpkiObject)
-getObjectByKey tx RpkiObjectStore {..} k = liftIO $    
-    (fromSValue <$>) <$> M.get tx objects k             
+getObjectByKey tx RpkiObjectStore {..} k = liftIO $ do 
+    fmap (\(Compressed StorableObject{..}) -> object) <$> M.get tx objects k    
 
 getLocatedByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
@@ -239,14 +238,14 @@ putObject :: (MonadIO m, Storage s) =>
             -> RpkiObjectStore s 
             -> StorableObject RpkiObject
             -> WorldVersion -> m ()
-putObject tx RpkiObjectStore {..} StorableObject {..} wv = liftIO $ do
+putObject tx RpkiObjectStore {..} so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
         SequenceValue k <- nextValue tx keys
         let objectKey = ObjectKey $ ArtificialKey k
         M.put tx hashToKey h objectKey
-        M.put tx objects objectKey storable                           
+        M.put tx objects objectKey (Compressed so)
         M.put tx objectInsertedBy objectKey wv
         case object of
             CerRO c -> 
@@ -394,11 +393,13 @@ getTAs tx (TAStore s) = liftIO $ M.all tx s
 
 putValidations :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
-putValidations tx DB { validationsStore = ValidationsStore s } wv validations = liftIO $ M.put tx s wv validations
+putValidations tx DB { validationsStore = ValidationsStore s } wv validations = 
+    liftIO $ M.put tx s wv (Compressed validations)
 
 validationsForVersion :: (MonadIO m, Storage s) => 
                         Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
-validationsForVersion tx ValidationsStore {..} wv = liftIO $ M.get tx results wv
+validationsForVersion tx ValidationsStore {..} wv = 
+    liftIO $ fmap unCompressed <$> M.get tx results wv
 
 deleteValidations :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -408,7 +409,7 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
 
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
-getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ M.get tx m wv    
+getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
 deleteVRPs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -416,7 +417,8 @@ deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap
 
 getAspas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Set.Set Aspa)
-getAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ fromMaybe Set.empty <$> M.get tx m wv    
+getAspas tx DB { aspaStore = AspaStore m } wv = 
+    liftIO $ maybe Set.empty unCompressed <$> M.get tx m wv    
 
 deleteAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -425,12 +427,12 @@ deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
 putAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
 putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
-    liftIO $ M.put tx m worldVersion aspas
+    liftIO $ M.put tx m worldVersion (Compressed aspas)
 
 putVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
-    liftIO $ M.put tx vrpMap worldVersion vrps    
+    liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
 
 putBgps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set BgpCertPayload -> WorldVersion -> m ()
@@ -467,11 +469,12 @@ completeWorldVersion tx database worldVersion =
 putMetrics :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 putMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
-    liftIO $ M.put tx s wv appMetric
+    liftIO $ M.put tx s wv (Compressed appMetric)
 
 metricsForVersion :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s  -> WorldVersion -> m (Maybe RawMetric)
-metricsForVersion tx DB { metricStore = MetricStore {..} } wv = liftIO $ M.get tx metrics wv    
+metricsForVersion tx DB { metricStore = MetricStore {..} } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx metrics wv    
 
 deleteMetrics :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -479,11 +482,13 @@ deleteMetrics tx DB { metricStore = MetricStore s } wv = liftIO $ M.delete tx s 
 
 putSlurm :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
-putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = liftIO $ M.put tx s wv slurm
+putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = 
+    liftIO $ M.put tx s wv (Compressed slurm)
 
 slurmForVersion :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> WorldVersion -> m (Maybe Slurm)
-slurmForVersion tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.get tx s wv    
+slurmForVersion tx DB { slurmStore = SlurmStore s } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx s wv    
 
 deleteSlurms :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
