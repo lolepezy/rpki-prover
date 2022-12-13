@@ -168,7 +168,7 @@ instance Storage s => WithStorage s (VersionStore s) where
 
 
 newtype SlurmStore s = SlurmStore {
-    slurms :: SMap "slurms" s WorldVersion Slurm
+    slurms :: SMap "slurms" s WorldVersion (Compressed Slurm)
 }
 
 data RepositoryStore s = RepositoryStore {
@@ -463,11 +463,13 @@ deleteMetrics tx DB { metricStore = MetricStore s } wv = liftIO $ M.delete tx s 
 
 putSlurm :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
-putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = liftIO $ M.put tx s wv slurm
+putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = 
+    liftIO $ M.put tx s wv (Compressed slurm)
 
 slurmForVersion :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> WorldVersion -> m (Maybe Slurm)
-slurmForVersion tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.get tx s wv    
+slurmForVersion tx DB { slurmStore = SlurmStore s } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx s wv    
 
 deleteSlurms :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
