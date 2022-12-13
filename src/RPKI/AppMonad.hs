@@ -195,13 +195,6 @@ updateMetric f = vHoist $ do
     mp <- asks (^. typed)
     modify' (& typed . metricLens %~ updateMetricInMap mp f)    
 
-updateMetricOverideScope :: forall metric m . 
-                (Monad m, MetricC metric) => 
-                Scope 'Metric -> (metric -> metric) -> ValidatorT m ()
-updateMetricOverideScope s f = vHoist $ do     
-    modify' (& typed . metricLens %~ updateMetricInMap s f)    
-
-
 timedMetric :: forall m metric r . 
                 (MonadIO m, 
                  MetricC metric, 

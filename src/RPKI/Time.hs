@@ -16,8 +16,7 @@ import           System.Hourglass       (dateCurrent)
 import           System.CPUTime
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Orphans.Serialise
-
+import           RPKI.Orphans.Store
 
 
 newtype Instant = Instant DateTime
