@@ -17,12 +17,11 @@ import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.IORef.Lifted
 import           Data.Foldable            (for_)
-import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe)
+import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -131,14 +130,14 @@ instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
 newtype ValidationsStore s = ValidationsStore { 
-    results :: SMap "validations" s WorldVersion Validations 
+    results :: SMap "validations" s WorldVersion (Compressed Validations) 
 }
 
 instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricStore s = MetricStore {
-    metrics :: SMap "metrics" s WorldVersion RawMetric    
+    metrics :: SMap "metrics" s WorldVersion (Compressed RawMetric)
 }
 
 instance Storage s => WithStorage s (MetricStore s) where
@@ -152,7 +151,7 @@ newtype VRPStore s = VRPStore {
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
-    aspas :: SMap "aspas" s WorldVersion (Set.Set Aspa)
+    aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -388,11 +387,13 @@ getTAs tx (TAStore s) = liftIO $ M.all tx s
 
 putValidations :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
-putValidations tx DB { validationsStore = ValidationsStore s } wv validations = liftIO $ M.put tx s wv validations
+putValidations tx DB { validationsStore = ValidationsStore s } wv validations = 
+    liftIO $ M.put tx s wv (Compressed validations)
 
 validationsForVersion :: (MonadIO m, Storage s) => 
                         Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
-validationsForVersion tx ValidationsStore {..} wv = liftIO $ M.get tx results wv
+validationsForVersion tx ValidationsStore {..} wv = 
+    liftIO $ fmap unCompressed <$> M.get tx results wv
 
 deleteValidations :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -410,7 +411,8 @@ deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap
 
 getAspas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Set.Set Aspa)
-getAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ fromMaybe Set.empty <$> M.get tx m wv    
+getAspas tx DB { aspaStore = AspaStore m } wv = 
+    liftIO $ maybe Set.empty unCompressed <$> M.get tx m wv    
 
 deleteAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -419,7 +421,7 @@ deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
 putAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
 putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
-    liftIO $ M.put tx m worldVersion aspas
+    liftIO $ M.put tx m worldVersion (Compressed aspas)
 
 putVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
@@ -448,11 +450,12 @@ completeWorldVersion tx database worldVersion =
 putMetrics :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 putMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
-    liftIO $ M.put tx s wv appMetric
+    liftIO $ M.put tx s wv (Compressed appMetric)
 
 metricsForVersion :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s  -> WorldVersion -> m (Maybe RawMetric)
-metricsForVersion tx DB { metricStore = MetricStore {..} } wv = liftIO $ M.get tx metrics wv    
+metricsForVersion tx DB { metricStore = MetricStore {..} } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx metrics wv    
 
 deleteMetrics :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
