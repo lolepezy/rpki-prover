@@ -243,7 +243,7 @@ getSystem AppContext {..} = do
                 tag = scopeText scope
                 aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
                 maxMemory = resourceUsage ^. #maxMemory
-                avgCpuTimePerSecond = cpuTimePerSecond aggregatedCpuTime (si ^. #startTime) now                
+                avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (si ^. #startTime) now                
             in ResourcesDto {..}
 
     let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ si ^. #metrics . #resources

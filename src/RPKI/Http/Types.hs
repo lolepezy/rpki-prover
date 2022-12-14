@@ -114,7 +114,7 @@ data ResourcesDto = ResourcesDto {
         tag                 :: Text,
         aggregatedCpuTime   :: CPUTime,
         maxMemory           :: MaxMemory,        
-        avgCpuTimePerSecond :: Double
+        avgCpuTimeMsPerSecond :: Double
     }
     deriving stock (Eq, Show, Generic)
 
