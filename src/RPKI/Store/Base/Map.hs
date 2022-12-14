@@ -61,7 +61,7 @@ keys tx (SMap _ s) = S.foldS tx s f []
 
 stats :: (AsStorable k, AsStorable v) =>
         Tx s m -> SMap name s k v -> IO SStats
-stats tx (SMap _ s) = S.foldS tx s f (SStats 0 0 0 0)
+stats tx (SMap _ s) = S.foldS tx s f mempty
   where
     f stat skey svalue = pure $! incrementStats stat skey svalue
 
