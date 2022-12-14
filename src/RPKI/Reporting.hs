@@ -472,3 +472,6 @@ focusToText = \case
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
+
+scopeText :: Scope a -> Text
+scopeText s = Text.intercalate "/" $ Prelude.map focusToText $ scopeList s

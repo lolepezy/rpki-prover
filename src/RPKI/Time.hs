@@ -21,7 +21,7 @@ import           RPKI.Orphans.Store
 
 newtype Instant = Instant DateTime
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass TheBinary    
 
 instance Show Instant where
     show (Instant d) = timePrint ISO8601_DateAndTime d
@@ -100,8 +100,12 @@ fromNanoseconds totalNanos =
         (seconds, nanos) = totalNanos `divMod` nanosPerSecond     
 
 closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
-closeEnoughMoments (Instant firstMoment) (Instant secondMoment) intervalSeconds = 
-    timeDiff secondMoment firstMoment < intervalSeconds
+closeEnoughMoments firstMoment secondMoment intervalSeconds = 
+    instantDiff secondMoment firstMoment < intervalSeconds
+
+instantDiff :: Instant -> Instant -> Seconds
+instantDiff (Instant firstMoment) (Instant secondMoment) = 
+    timeDiff secondMoment firstMoment
 
 uiDateFormat :: Instant -> String
 uiDateFormat (Instant d) = timePrint format d
@@ -117,3 +121,9 @@ uiDateFormat (Instant d) = timePrint format d
 
 secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
+
+cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
+cpuTimePerSecond (CPUTime t) i1 i2 = let
+    Seconds duration = instantDiff i1 i2
+    in (fromInteger t :: Double) / (fromIntegral duration :: Double)
+

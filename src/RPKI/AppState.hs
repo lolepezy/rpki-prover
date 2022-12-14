@@ -6,6 +6,7 @@
 
 module RPKI.AppState where
     
+import           Control.Lens
 import           Control.Monad (join)
 import           Control.Concurrent.STM
 import           GHC.Generics
@@ -24,18 +25,19 @@ data AppState = AppState {
         validatedVrps :: TVar Vrps,
         filteredVrps  :: TVar Vrps,
         readSlurm     :: Maybe (ValidatorT IO Slurm),
-        system        :: TVar SystemMetrics
+        system        :: TVar SystemInfo
     } deriving stock (Generic)
 
 -- 
 newAppState :: IO AppState
 newAppState = do        
+    Now now <- thisInstant
     atomically $ AppState <$> 
                     newTVar Nothing <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
                     pure Nothing <*>
-                    newTVar mempty
+                    newTVar (newSystemInfo now)
 
 setCurrentVersion :: AppState -> WorldVersion -> STM ()
 setCurrentVersion AppState {..} = writeTVar world . Just
@@ -82,4 +84,4 @@ waitForVersion AppState {..} =
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
-    liftIO $ atomically $ modifyTVar' system (<> sm)
+    liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))

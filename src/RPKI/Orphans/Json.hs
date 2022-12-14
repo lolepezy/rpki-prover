@@ -160,7 +160,7 @@ instance ToJSON a => ToJSON (GroupedValidationMetric a)
 instance ToJSON RsyncMetric
 instance ToJSON RrdpMetric
 instance ToJSON SystemMetrics
-instance ToJSON CpuMetrics
+instance ToJSON ResourceUsage
 instance ToJSON ScopeKind
 instance ToJSON FetchFreshness
 instance ToJSON HttpStatus where
