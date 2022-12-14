@@ -118,11 +118,18 @@ newtype JobsDto = JobsDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data ResourcesDto = ResourcesDto {
+        tag                 :: Text,
+        aggregatedCpuTime   :: CPUTime,
+        maxMemory           :: MaxMemory,        
+        avgCpuTimeMsPerSecond :: Double
+    }
+    deriving stock (Eq, Show, Generic)
 
 data SystemDto = SystemDto {
         proverVersion :: Text,
         config        :: Config,
-        systemMetrics :: SystemMetrics
+        resources     :: [ResourcesDto]
     }
     deriving stock (Eq, Show, Generic)
 
@@ -158,7 +165,9 @@ instance ToJSON ProviderAsn where
 instance ToJSON JobsDto     
 instance ToSchema JobsDto   
 instance ToJSON SystemDto  
+instance ToJSON ResourcesDto
 instance ToSchema SystemDto     
+instance ToSchema ResourcesDto     
 
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)

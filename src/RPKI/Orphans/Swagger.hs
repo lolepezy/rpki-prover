@@ -88,7 +88,7 @@ instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidationMetric
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
-instance ToSchema CpuMetrics
+instance ToSchema ResourceUsage
 instance ToSchema SystemMetrics
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
