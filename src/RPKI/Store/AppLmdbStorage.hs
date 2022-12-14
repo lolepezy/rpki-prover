@@ -266,7 +266,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
     let workerId = WorkerId "lmdb-compaction"
     
     let maxMemoryMb = let 
-            Size maxMemory = max (dbtats ^. #statMaxKVBytes * 20) 128 
+            Size maxMemory = max ((dbtats ^. #statMaxKeyBytes + dbtats ^. #statMaxValueBytes) * 20) 128 
             in maxMemory `div` 1024 `div` 1024
 
     let arguments = 
