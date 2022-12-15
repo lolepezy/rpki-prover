@@ -123,7 +123,7 @@ secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
 
 cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
-cpuTimePerSecond (CPUTime t) i1 i2 = let
-    Seconds duration = instantDiff i1 i2
+cpuTimePerSecond (CPUTime t) from to = let
+    Seconds duration = instantDiff to from
     in (fromInteger t :: Double) / (fromIntegral duration :: Double)
 
