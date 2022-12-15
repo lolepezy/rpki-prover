@@ -105,7 +105,7 @@ closeEnoughMoments firstMoment secondMoment intervalSeconds =
 
 instantDiff :: Instant -> Instant -> Seconds
 instantDiff (Instant firstMoment) (Instant secondMoment) = 
-    timeDiff secondMoment firstMoment
+    timeDiff firstMoment secondMoment 
 
 uiDateFormat :: Instant -> String
 uiDateFormat (Instant d) = timePrint format d
