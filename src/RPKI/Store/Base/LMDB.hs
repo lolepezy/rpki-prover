@@ -200,7 +200,7 @@ data CopyStat = CopyStat {
     deriving anyclass (TheBinary)
 
 
--- | Copy all databases from the from LMDB environment to the other
+-- | Copy all databases from one LMDB environment to the other
 -- This is a low-level operation to be used for de-fragmentation.
 -- `dstN` is supposed to be a completely empty environment.
 --
