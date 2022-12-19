@@ -63,11 +63,6 @@ extra-deps:
   - git: https://github.com/lolepezy/hs-connection
     commit: e3cf8623979f8687694280939349734868cd18ac    
 
-  - git: https://github.com/lolepezy/http-client/
-    commit: 769e4e536217916a1e577ad4b8bc94ab1ded8e50        
-    subdirs:
-      - http-client      
-
   - hw-ip-2.4.2.0
   - prometheus-metrics-ghc-1.0.1.1@sha256:d378a7186a967140fe0e09d325fe5e3bfd7b77a1123934b40f81fdfed2eacbdc,1233
   - monoidal-containers-0.6.0.1@sha256:f56ea8fe91ff93da140e38b8dab4b94437b901818c13ba72fc7fc802290323ee,2583
