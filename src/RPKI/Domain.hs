@@ -14,9 +14,6 @@
 
 module RPKI.Domain where
 
-import           Control.Lens 
-import           Data.Generics.Product.Typed
-
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
@@ -50,7 +47,6 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import Data.Kind (Type)
 
 newtype PolyRFC r (rfc :: ValidationRFC) = PolyRFC r
     deriving stock (Show, Eq, Ord, Generic)
@@ -449,10 +445,10 @@ data Aspa = Aspa {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-data BgpCertPayload = BgpCertPayload {
-        ski  :: SKI,
-        asns :: [ASN],
-        spki :: SPKI
+data BGPSecPayload = BGPSecPayload {
+        bgpSecSki  :: SKI,
+        bgpSecAsns :: [ASN],
+        bgpSecSpki :: SPKI
         -- TODO Possible store the hash of the original BGP certificate?
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -583,7 +579,7 @@ data Attribute = ContentTypeAttr ContentType
 
 
 -- Subject Public Key Info
-newtype SPKI = SPKI EncodedBase64
+newtype SPKI = SPKI { unSPKI :: EncodedBase64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -623,8 +619,7 @@ data TA = TA {
 -- Small utility functions that don't have anywhere else to go
 
 getSerial :: WithRawResourceCertificate a => a -> Serial
-getSerial c = 
-    Serial $ X509.certSerial $ cwsX509certificate $ certX509 $ getRawCert c
+getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
@@ -636,22 +631,16 @@ skiLen :: SKI -> Int
 skiLen (SKI (KI bs)) = BSS.length bs
 
 getCMSContent :: CMS a -> a
-getCMSContent (CMS so) = cContent $ scEncapContentInfo $ soContent so
+getCMSContent = cContent . scEncapContentInfo . soContent . unCMS
 
 getEEResourceCert :: SignedObject a -> EECerObject
 getEEResourceCert = scCertificate . soContent
 
 getCertWithSignature :: WithRawResourceCertificate a => a -> CertificateWithSignature
-getCertWithSignature c = certX509 $ getRawCert c 
+getCertWithSignature = certX509 . getRawCert
 
 getEECert :: SignedObject a -> CertificateWithSignature
 getEECert = certX509 . getRawCert . scCertificate . soContent
-
-strictCert :: RawResourceCertificate -> ResourceCertificate
-strictCert = ResourceCertificate . StrictRFC_ . PolyRFC
-
-reconsideredCert :: RawResourceCertificate -> ResourceCertificate
-reconsideredCert = ResourceCertificate . ReconsideredRFC_ . PolyRFC
 
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 
@@ -665,21 +654,6 @@ newCrl a h sc = CrlObject {
         aki = a,
         signCrl = sc
     } 
-
--- newCaCert :: Maybe AKI -> SKI -> Hash -> RawResourceCertificate -> CaCerObject
--- newCaCert a s h rc = CaCerObject {
---         hash = h,    
---         ski = s,
---         aki = a,
---         certificate = rc
---     } 
-
--- newEECert :: AKI -> SKI -> ResourceCertificate -> EECerObject
--- newEECert a s rc = EECerObject {
---         ski = s,
---         aki = a,
---         certificate = rc
---     }
 
 newCMSObject :: Hash -> CMS a -> CMSBasedObject a
 newCMSObject h cms = CMSBasedObject {

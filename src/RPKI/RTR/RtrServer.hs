@@ -17,7 +17,7 @@ import           Control.Monad
 
 import           Data.Generics.Product.Typed
 
-import           Data.Foldable                    (for_, toList)
+import           Data.Foldable                    (for_)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -45,9 +45,10 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.Parallel
 import           RPKI.Time
-import           RPKI.Util                        (convert, hexL)
+import           RPKI.Util                        (convert, hexL, decodeBase64)
 
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 
@@ -58,7 +59,7 @@ import           Time.Types
 -- | Main entry point, here we start the RTR server. 
 -- 
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
-runRtrServer AppContext {..} RtrConfig {..} = do         
+runRtrServer appContext@AppContext {..} RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
     rtrState <- newTVarIO Nothing
@@ -125,46 +126,35 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         lastTimeNotified <- newTVarIO Nothing
 
         forever $ do
-            --  wait for a new complete world version
-            (rtrState', previousVersion, newVersion, newVrps') 
-                <- atomically $ 
-                    readTVar rtrState >>= \case 
-                        Nothing        -> retry
-                        Just rtrState' -> do
-                            let knownVersion = rtrState' ^. #lastKnownWorldVersion
-                            (newVersion, newVrps_) <- waitForNewVersion appState knownVersion
-                            pure (rtrState', knownVersion, newVersion, newVrps_)
-                
-            db <- readTVarIO database
+            (rtrState', previousVersion, newVersion, currentRtrPayload) <- waitForLatestRtrPayload appContext rtrState
+            previousRtrPayload <- readRtrPayload appContext previousVersion
+            
+            let rtrDiff = evalDiffs previousRtrPayload currentRtrPayload
+            let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
-            previousVrps <- roTx db $ \tx -> 
-                                getVrps tx db previousVersion >>= \case 
-                                    Nothing   -> pure Set.empty 
-                                    Just vrps1 -> do  
-                                        slurm <- slurmForVersion tx db previousVersion
-                                        pure $ allVrps $ maybe vrps1 (`applySlurm` vrps1) slurm
-
-            let newVrpsFlattened = allVrps newVrps'
-            let vrpDiff            = evalVrpDiff previousVrps newVrpsFlattened 
-            let thereAreVrpUpdates = not $ isEmptyDiff vrpDiff
-
-            logDebug logger [i|Notified about an update: #{previousVersion} -> #{newVersion}, VRPs: #{Set.size previousVrps} -> #{Set.size newVrpsFlattened}|]
+            let 
+                previousVrpSize = Set.size $ previousRtrPayload ^. #vrps 
+                currentVrpSize  = Set.size $ currentRtrPayload ^. #vrps 
+                previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
+                currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
+                in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
+                              [i|VRPs: #{previousVrpSize} -> #{currentVrpSize}, |] <>
+                              [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}.|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
-            let !nextRtrState = if thereAreVrpUpdates
-                    then updatedRtrState rtrState' newVersion vrpDiff
+            let !nextRtrState = if thereAreRtrUpdates
+                    then updatedRtrState rtrState' newVersion rtrDiff
                     else rtrState' { lastKnownWorldVersion = newVersion }
 
-            logDebug logger [i|Generated new diff in VRP set: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
-            when thereAreVrpUpdates $ do 
-                let RtrState {..} = nextRtrState
-                let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{Set.size $ added d}, deleted = #{Set.size $ deleted d})|]) $ toList diffs
-                logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
+            -- logDebug logger [i|Generated new diff, VRPs: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
+            -- when thereAreRtrUpdates $ do 
+            --     let RtrState {..} = nextRtrState
+                -- let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{Set.size $ added d}, deleted = #{Set.size $ deleted d})|]) $ toList diffs
+                -- logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
 
             Now now <- thisInstant            
 
             atomically $ do                
-                -- TODO Some of these bangs are not needed?
                 writeTVar rtrState $! Just $! nextRtrState
 
                 -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
@@ -173,7 +163,7 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                 let moreThanMinuteAgo lastTime = not $ closeEnoughMoments lastTime now (Seconds 60)
                 sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
 
-                when (sendNotify && thereAreVrpUpdates) $ do                    
+                when (sendNotify && thereAreRtrUpdates) $ do                    
                     let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
                     writeTChan updateBroadcastChan [notifyPdu]
                     writeTVar lastTimeNotified $ Just now
@@ -181,15 +171,15 @@ runRtrServer AppContext {..} RtrConfig {..} = do
 
     -- For every connection run 2 threads:
     --      serveLoop blocks on `recv` and accepts client's requests
-    --      sendToClient simply sends all PDU to the client
+    --      sendToClient simply sends all PDUs to the client
     -- They communicate using the outboxChan
     serveConnection connection peer updateBroadcastChan rtrState = do        
-        logDebug logger [i|Waiting first PDU from the client #{peer}|]
+        logDebug logger [i|Waiting for the first PDU from client #{peer}|]
         firstPdu <- recv connection 1024
-        (rtrState', vrps, outboxQueue) <- 
+        (rtrState', rtrPayloads, outboxQueue) <- 
             atomically $ (,,) <$> 
                     readTVar rtrState <*>
-                    readTVar (filteredVrps appState) <*>
+                    getRtrPayloads appState <*>
                     newCQueue 10
 
         let firstPduLazy = LBS.fromStrict firstPdu
@@ -203,11 +193,11 @@ runRtrServer AppContext {..} RtrConfig {..} = do
         for_ message $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' vrps versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' rtrPayloads versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduToBytes errorPdu' V0
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
-                                       [i|error PDU: #{errorPdu'}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu' V0}|]
+                                      [i|error PDU: #{errorPdu'}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu' V0}|]
                     sendAll connection $ LBS.toStrict $ pduToBytes errorPdu' V0
 
                 Right (responsePdus, session, warning) -> do
@@ -253,9 +243,9 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                     join $ atomically $ do 
                         -- all the real work happens inside of pure `responseAction`, 
                         -- for better testability.
-                        rtrState'       <- readTVar rtrState
-                        flatCurrentVrps <- readTVar $ filteredVrps appState                    
-                        case responseAction logger peer session rtrState' flatCurrentVrps pduBytes of 
+                        rtrState'   <- readTVar rtrState                        
+                        rtrPayloads <- getRtrPayloads appState
+                        case responseAction logger peer session rtrState' rtrPayloads pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io
@@ -263,6 +253,36 @@ runRtrServer AppContext {..} RtrConfig {..} = do
                                 writeCQueue outboxQueue pdus
                                 pure $ io <> serveLoop session outboxQueue
 
+
+readRtrPayload :: Storage s => AppContext s -> WorldVersion -> IO RtrPayloads 
+readRtrPayload AppContext {..} worldVersion = do 
+    db <- readTVarIO database
+
+    (vrps, bgpSec) <- roTx db $ \tx -> do 
+                slurm <- slurmForVersion tx db worldVersion
+                vrps <- getVrps tx db worldVersion >>= \case 
+                            Nothing   -> pure Set.empty 
+                            Just vrps -> pure $ allVrps $ maybe vrps (`applySlurmToVrps` vrps) slurm
+
+                bgps <- getBgps tx db worldVersion
+                let bgpSec = maybe bgps (`applySlurmBgpSec` bgps) slurm
+                
+                pure (vrps, bgpSec)
+
+    pure RtrPayloads {..}
+
+
+waitForLatestRtrPayload :: Storage s => AppContext s 
+        -> TVar (Maybe RtrState) 
+        -> IO (RtrState, WorldVersion, WorldVersion, RtrPayloads)
+waitForLatestRtrPayload AppContext {..} rtrState = do 
+    atomically $ 
+        readTVar rtrState >>= \case 
+            Nothing        -> retry
+            Just rtrState' -> do
+                let knownVersion = rtrState' ^. #lastKnownWorldVersion
+                (newVersion, rtrPayloads) <- waitForNewVersion appState knownVersion                
+                pure (rtrState', knownVersion, newVersion, rtrPayloads)
 
 -- | Auxiliarry pure function to avoid doing too much inside of IO.
 -- Here IO is only doing logging
@@ -274,7 +294,7 @@ responseAction :: Show peer =>
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 
-                -> Vrps
+                -> RtrPayloads
                 -> BS.ByteString 
                 -> Either ([Pdu], IO ()) ([Pdu], IO ())
 responseAction logger peer session rtrState vrps pduBytes = 
@@ -347,7 +367,7 @@ analyzePdu peer pduBytes = \case
 -- | Process the first PDU and do the protocol version negotiation.
 -- 
 processFirstPdu :: Maybe RtrState 
-                -> Vrps
+                -> RtrPayloads
                 -> VersionedPdu
                 -> LBS.ByteString 
                 -> Either (Pdu, Text) ([Pdu], Session, Maybe Text)
@@ -376,7 +396,7 @@ processFirstPdu
 -- | Generate PDUs that would be an appropriate response the request PDU.
 -- 
 respondToPdu :: Maybe RtrState
-                -> Vrps
+                -> RtrPayloads
                 -> VersionedPdu 
                 -> LBS.ByteString 
                 -> Session
@@ -450,15 +470,23 @@ respondToPdu
 
 
 -- Create VRP PDUs 
--- TODO Add router certificate PDU here.
-diffPayloadPdus :: VrpDiff -> [Pdu]
-diffPayloadPdus Diff {..} = 
-    map (toPdu Withdrawal) (Set.toList deleted) <>
-    map (toPdu Announcement) (sortVrps $ Set.toList added)  
+diffPayloadPdus :: RtrDiffs -> [Pdu]
+diffPayloadPdus GenDiffs {..} = 
+    vrpWithdrawn <> vrpPdusAnn <> 
+    mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn
+  where
+    vrpWithdrawn = map (vrpToPdu Withdrawal) (Set.toList $ vrpDiff ^. #deleted)
+    vrpPdusAnn   = map (vrpToPdu Announcement) $ sortVrps $ Set.toList $ vrpDiff ^. #added 
+    bgpSecWithdrawn = map (bgpSecToPdu Withdrawal) $ Set.toList $ bgpSecDiff ^. #deleted
+    bgpSecPdusAnn   = map (bgpSecToPdu Announcement) $ Set.toList $ bgpSecDiff ^. #added
+
     
-currentCachePayloadPdus :: Vrps -> [Pdu]
-currentCachePayloadPdus vrps =
-    map (toPdu Announcement) $ sortVrps $ Set.toList $ allVrps vrps  
+currentCachePayloadPdus :: RtrPayloads -> [Pdu]
+currentCachePayloadPdus RtrPayloads {..} =
+    vrpPdusAnn <> mconcat bgpSecPdusAnn
+  where    
+    vrpPdusAnn = map (vrpToPdu Announcement) $ sortVrps $ Set.toList vrps
+    bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     
 
 -- Sort VRPs before sending them to routers
@@ -469,15 +497,26 @@ sortVrps = List.sortBy compareVrps
   where
     compareVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
         compare asn1 asn2 <> 
-        -- Sort prefixes backwards since it automatically means that 
+        -- Sort prefixes backwards -- it automatically means that 
         -- smaller prefixes will be in front of larger ones.
         compare (Down p1) (Down p2) <> 
         -- smaller max length should precede?
         compare ml1 ml2
     
 
-toPdu :: Flags -> Vrp -> Pdu
-toPdu flags (Vrp asn prefix maxLength) = 
+-- toPdu :: Flags -> Vrp -> Pdu
+-- toPdu flags (Vrp asn prefix maxLength) = 
+--     case prefix of
+--         Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
+--         Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
+
+vrpToPdu :: Flags -> Vrp -> Pdu
+vrpToPdu flags (Vrp asn prefix maxLength) = 
     case prefix of
         Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
         Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
+
+bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
+bgpSecToPdu flags BGPSecPayload {..} = 
+    let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text)
+    in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    

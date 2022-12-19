@@ -157,7 +157,7 @@ newtype AspaStore s = AspaStore {
 
 -- | BGP certificate store
 newtype BgpStore s = BgpStore {    
-    bgps :: SMap "bgps" s WorldVersion (Compressed (Set.Set BgpCertPayload))
+    bgps :: SMap "bgps" s WorldVersion (Compressed (Set.Set BGPSecPayload))
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -435,7 +435,7 @@ putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion =
     liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
 
 putBgps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set BgpCertPayload -> WorldVersion -> m ()
+            Tx s 'RW -> DB s -> Set.Set BGPSecPayload -> WorldVersion -> m ()
 putBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion = 
     liftIO $ M.put tx bgpMap worldVersion (Compressed bgps)
 
@@ -444,8 +444,9 @@ deleteBgps :: (MonadIO m, Storage s) =>
 deleteBgps tx DB { bgpStore = BgpStore m } wv = liftIO $ M.delete tx m wv
 
 getBgps :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Set.Set BgpCertPayload)
-getBgps tx DB { bgpStore = BgpStore m } wv = liftIO $ maybe Set.empty unCompressed <$> M.get tx m wv    
+            Tx s mode -> DB s -> WorldVersion -> m (Set.Set BGPSecPayload)
+getBgps tx DB { bgpStore = BgpStore m } wv = 
+    liftIO $ maybe Set.empty unCompressed <$> M.get tx m wv    
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
@@ -708,7 +709,7 @@ getLatestVRPs db =
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
 getLatestAspas db = getLatestSetOfSmth db getAspas
 
-getLatestBgps :: Storage s => DB s -> IO (Set.Set BgpCertPayload)
+getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
 getLatestBgps db = getLatestSetOfSmth db getBgps
 
 getLatestSetOfSmth :: Storage s =>

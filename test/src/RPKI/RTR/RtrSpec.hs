@@ -32,8 +32,6 @@ import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 
-
-
 rtrGroup :: TestTree
 rtrGroup = testGroup "RTR tests" [
         rtrPduParseGroup,
@@ -108,13 +106,11 @@ rtrStateGroup = testGroup "RTR state unit tests" [
 
 testEmptyDiff :: TestTree
 testEmptyDiff = HU.testCase "Should squash one diff properly" $    
-    HU.assertEqual "It's a bummer"                 
-        (Diff mempty mempty)
-        $ squashDiffs ([] :: [(SerialNumber, Diff Int)])
+    HU.assertEqual "It's a bummer" newRtrDiff $ squashDiffs []
 
 testOneDiff :: TestTree
 testOneDiff = HU.testCase "Should squash one diff" $ do
-    let diff = newDiff [1,2] [3,4]        
+    let diff :: GenDiffs Int Int = mkNewDiff [1,2] [3,4]
     HU.assertEqual "It's a bummer"                 
         diff
         $ squash [diff]
@@ -122,37 +118,48 @@ testOneDiff = HU.testCase "Should squash one diff" $ do
 testTwoIndependentDiffs :: TestTree
 testTwoIndependentDiffs = HU.testCase "Should squash two unrelated diffs" $
     HU.assertEqual "It's a bummer"                 
-        (newDiff [1, 2, 10, 20] [3, 4, 30])
+        (mkNewDiff [1, 2, 10, 20] [3, 4, 30] :: GenDiffs Int Int)
         $ squash [
-            newDiff [1,2] [3,4],
-            newDiff [10,20] [30]
+            mkNewDiff [1,2] [3,4],
+            mkNewDiff [10,20] [30]
         ]     
 
 testTwoDependentDiffs :: TestTree
 testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
     HU.assertEqual "It's a bummer"                             
-        (newDiff [1, 4, 5] [2, 3])
+        (mkNewDiff [1, 4, 5] [2, 3] :: GenDiffs Int Int)
         $ squash [
-            newDiff [1,2] [3,4],
-            newDiff [4,5] [2]            
+            mkNewDiff [1,2] [3,4],
+            mkNewDiff [4,5] [2]            
         ]        
 
 testThreeDiffs :: TestTree
 testThreeDiffs = HU.testCase "Should squash three diffs properly" $     
     HU.assertEqual "It's a bummer"                 
-        (newDiff [2, 3, 4, 5] [1, 6])
+        (mkNewDiff [2, 3, 4, 5] [1, 6] :: GenDiffs Int Int)
         $ squash [
-            newDiff [1,2] [3,4],
-            newDiff [4,5] [2],            
-            newDiff [2,3,4] [6,1]    
+            mkNewDiff [1,2] [3,4],
+            mkNewDiff [4,5] [2],            
+            mkNewDiff [2,3,4] [6,1]    
         ]
 
 
-squash :: Ord a => [Diff a] -> Diff a
+squash :: (Ord a, Ord b) => [GenDiffs a b] -> GenDiffs a b
 squash diffs = squashDiffs $ map (\(i, d) -> (SerialNumber i, d)) $ zip [1..] diffs
 
-newDiff :: Ord a => [a] -> [a] -> Diff a
-newDiff added deleted = Diff { 
+mkNewDiff :: (Ord a, Ord b) => [a] -> [a] -> GenDiffs a b
+mkNewDiff added deleted = 
+    GenDiffs {
+        vrpDiff = Diff { 
+                added = Set.fromList added, 
+                deleted = Set.fromList deleted
+            },
+        bgpSecDiff = newDiff
+    }
+
+
+mkNewGenDiff :: Ord a => [a] -> [a] -> Diff a
+mkNewGenDiff added deleted = Diff { 
         added = Set.fromList added, 
         deleted = Set.fromList deleted
     }
@@ -187,12 +194,12 @@ testGenerateDiffs = HU.testCase "Should generate correct VRP diffs" $ do
     vrps2 <- generateVrps 5
     vrps3 <- generateVrps 15
 
-    let diff1 = evalVrpDiff (vrps1 <> vrps2) vrps1
+    let diff1 = setDiff (vrps1 <> vrps2) vrps1
 
     HU.assertEqual "Wrong deleted diff" (added diff1) Set.empty
     HU.assertEqual "Wrong deleted diff 2" (deleted diff1) vrps2
 
-    let diff2 = evalVrpDiff (vrps1 <> vrps2) (vrps1 <> vrps3)
+    let diff2 = setDiff (vrps1 <> vrps2) (vrps1 <> vrps3)
 
     HU.assertEqual "Wrong mixed diff" (added diff2) vrps3
     HU.assertEqual "Wrong mixed diff 2" (deleted diff2) vrps2
@@ -221,12 +228,13 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 
     let update rtrState n m = do 
             newVersion <- getOrCreateWorldVerion appState
-            diff <- Diff <$> generateVrps n <*> generateVrps m
-            pure $! updatedRtrState rtrState newVersion diff
+            vrpDiff <- Diff <$> generateVrps n <*> generateVrps m
+            bgpSecDiff <- Diff <$> generateBgpSecs n <*> generateBgpSecs m
+            pure $! updatedRtrState rtrState newVersion GenDiffs {..}
     
     worldVersion <- getOrCreateWorldVerion appState
     let z = newRtrState worldVersion 10
-    let rtrState = z { maxSerialsPerSession = 2, maxTotalDiffSize = 40 }
+    let rtrState = z { maxSerialsPerSession = 2, maxTotalDiffSize = 80 }
 
     rtrState1 <- update rtrState 10 1
     HU.assertEqual "There should be one diff" 1 (List.length $ diffs rtrState1)    
@@ -252,3 +260,6 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 
 generateVrps :: Int -> IO (Set Vrp)
 generateVrps n = Set.fromList <$> replicateM n (QC.generate arbitrary)
+
+generateBgpSecs :: Int -> IO (Set BGPSecPayload)
+generateBgpSecs n = Set.fromList <$> replicateM n (QC.generate arbitrary)

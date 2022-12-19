@@ -47,8 +47,8 @@ slurmVrpName = TaName "slurm"
 
 -- TODO BgpSec stuff is not supported at the moment.
 
-applySlurm :: Slurm -> Vrps -> Vrps
-applySlurm slurm (Vrps vrps) = 
+applySlurmToVrps :: Slurm -> Vrps -> Vrps
+applySlurmToVrps slurm (Vrps vrps) = 
     Vrps $ filteredVrps <> MonoidalMap.singleton slurmVrpName assertedVrps
   where     
     filteredVrps = MonoidalMap.map (Set.filter filterFunc) vrps
@@ -73,6 +73,10 @@ applySlurm slurm (Vrps vrps) =
         isInsideOf (Ipv4P pS) (Ipv4P pB) = pB `contains` pS
         isInsideOf (Ipv6P pS) (Ipv6P pB) = pB `contains` pS
         isInsideOf _ _                   = False
+
+-- TODO Implement it
+applySlurmBgpSec :: Slurm -> Set.Set BGPSecPayload -> Set.Set BGPSecPayload
+applySlurmBgpSec slurm bgps = bgps
     
 
 readSlurmFiles :: [String] -> ValidatorT IO Slurm

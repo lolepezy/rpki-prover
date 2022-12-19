@@ -77,13 +77,13 @@ parseResources x509cert = do
         (_, _, Just _, Just _) -> broken "Both versions of ASN extensions"
         (Just _, _, _, Just _) -> broken "There are IP V1 and ASN V2 extensions"
         (_, Just _, Just _, _) -> broken "There are IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns, Nothing) -> (, StrictRFC)       <$> cert' x509cert ips asns
-        (Nothing, ips, Nothing, asns) -> (, ReconsideredRFC) <$> cert' x509cert ips asns
+        (ips, Nothing, asns', Nothing) -> (, StrictRFC)       <$> cert' x509cert ips asns'
+        (Nothing, ips, Nothing, asns') -> (, ReconsideredRFC) <$> cert' x509cert ips asns'
   where 
     broken = pureError . parseErr
-    cert' x509c ips asns = do 
+    cert' x509c ips asns1 = do 
         ips'  <- maybe (pure emptyIpResources) (parseR parseIpExt) ips
-        asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) asns
+        asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) asns1
         pure $ RawResourceCertificate x509c $ allResources ips' asns'
 
     parseR :: ([ASN1] -> PureValidatorT a) -> BS.ByteString -> PureValidatorT a

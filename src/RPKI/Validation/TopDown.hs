@@ -81,7 +81,7 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
 data Payloads a = Payloads {
         vrps     :: a,
         aspas    :: Set.Set Aspa,
-        bgpCerts :: Set.Set BgpCertPayload  
+        bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup (Payloads a)
@@ -685,7 +685,7 @@ validateCaCertificate
                 validateObjectLocations child
                 inSubObjectVScope (locationsToText locations) $ 
                     allowRevoked $ do
-                        bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl verifiedResources                                                        
+                        bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
                         oneMoreBgp
                         pure $! (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
                             

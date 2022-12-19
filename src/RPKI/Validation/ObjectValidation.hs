@@ -17,10 +17,8 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                    as BS
-import qualified Data.ByteString.Lazy               as LBS
 import qualified Data.Text                          as Text
 import           Data.Foldable (for_)
-import           Data.String.Interpolate.IsString
 
 import qualified Data.Set                           as Set
 
@@ -28,9 +26,6 @@ import           Data.Proxy
 
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
-import           Data.ASN1.BitArray
-import           Data.ASN1.BinaryEncoding
-import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import           GHC.Generics
 
@@ -241,14 +236,13 @@ validateBgpCert ::
     c ->
     parent ->
     Validated CrlObject ->
-    Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT BgpCertPayload
-validateBgpCert now bgpCert parentCert validCrl verifiedResources = do
+    PureValidatorT BGPSecPayload
+validateBgpCert now bgpCert parentCert validCrl = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
 
     -- Validate resource set
-    validateResourceCert @_ @_ @ 'BGPCert now bgpCert parentCert validCrl
+    void $ validateResourceCert @_ @_ @ 'BGPCert now bgpCert parentCert validCrl
 
     let cwsX509 = cwsX509certificate $ getCertWithSignature bgpCert
 
@@ -262,17 +256,17 @@ validateBgpCert now bgpCert parentCert validCrl verifiedResources = do
     ipMustBeEmpty ipv6 BGPCertIPv6Present    
     
     -- Must be some ASNs
-    asns <- case asns of 
+    bgpSecAsns <- case asns of 
                 Inherit -> vError BGPCertBrokenASNs
                 RS i
                     | IS.null i -> vError BGPCertBrokenASNs                
                     | otherwise -> pure $ unwrapAsns $ IS.toList i
 
-    let ski = getSKI bgpCert
+    let bgpSecSki = getSKI bgpCert
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
-    let spki = subjectPublicKeyInfo cwsX509
-    pure BgpCertPayload {..}
+    let bgpSecSpki = subjectPublicKeyInfo cwsX509
+    pure BGPSecPayload {..}
   where 
     ipMustBeEmpty ips errConstructor = 
         case ips of 

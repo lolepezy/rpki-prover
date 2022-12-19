@@ -228,6 +228,10 @@ instance Arbitrary Vrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary BGPSecPayload where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary PrefixLength where
     arbitrary = genericArbitrary
     shrink = genericShrink

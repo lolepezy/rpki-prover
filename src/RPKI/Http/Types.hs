@@ -34,7 +34,6 @@ import           Data.Swagger
 import           Network.HTTP.Media ((//))
 
 import           RPKI.Config
-import           RPKI.Metrics.System
 import           RPKI.AppTypes
 import           RPKI.Repository
 import           RPKI.Domain

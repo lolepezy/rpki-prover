@@ -130,7 +130,11 @@ getBGPCerts AppContext {..} = do
     bgps <- getLatestBgps =<< readTVarIO database     
     pure $ map toDto $ Set.toList bgps
   where
-    toDto BgpCertPayload {..} = BgpCertDto { subjectPublicKeyInfo = spki, ..}
+    toDto BGPSecPayload {..} = BgpCertDto { 
+            ski = bgpSecSki,
+            asns = bgpSecAsns,
+            subjectPublicKeyInfo = bgpSecSpki
+        }
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do 
