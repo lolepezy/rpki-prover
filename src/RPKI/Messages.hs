@@ -201,10 +201,10 @@ toValidationMessage = \case
       ObjectHasMultipleLocations locs -> 
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
-      NoMFT aki _ -> 
+      NoMFT (AKI aki) _ -> 
           [i|No manifest found for #{aki}.|]
 
-      NoCRLOnMFT aki _ -> 
+      NoCRLOnMFT (AKI aki) _ -> 
           [i|No CRL found on the manifest manifest found for AKI #{aki}.|]
 
       MoreThanOneCRLOnMFT aki locations entries ->
@@ -311,7 +311,7 @@ toValidationMessage = \case
 
   where
     fmtUrlList = mconcat . 
-                 List.intersperse "," . map show  
+                 List.intersperse "," . map (show . getURL)
 
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 
