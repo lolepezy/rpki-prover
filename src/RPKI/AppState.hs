@@ -1,7 +1,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE StrictData         #-}
 {-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE DerivingVia        #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.AppState where
     
@@ -9,6 +10,7 @@ import           Control.Lens
 import           Control.Monad (join)
 import           Control.Concurrent.STM
 import           Data.Set
+import           Data.Monoid.Generic
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -21,20 +23,25 @@ import           Control.Monad.IO.Class
 
 
 data AppState = AppState {
-        world         :: TVar (Maybe WorldVersion),
-        validatedVrps :: TVar Vrps,
-        filteredVrps  :: TVar Vrps,
-        validatedBgpSec :: TVar (Set BGPSecPayload),
-        filteredBgpSec  :: TVar (Set BGPSecPayload),
-        readSlurm     :: Maybe (ValidatorT IO Slurm),
-        system        :: TVar SystemInfo
+        world     :: TVar (Maybe WorldVersion),
+        validated :: TVar RtrPayloads,
+        filtered  :: TVar RtrPayloads,
+        readSlurm :: Maybe (ValidatorT IO Slurm),
+        system    :: TVar SystemInfo
     } deriving stock (Generic)
 
 data RtrPayloads = RtrPayloads {
-        vrps   :: Set Vrp,
-        bgpSec :: Set BGPSecPayload
+        vrps     :: Vrps,
+        -- Compute it only if required by RTR or API, otherwise don't allocate space for it
+        flatVrps :: ~(Set Vrp),
+        bgpSec   :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)
+    deriving Semigroup via GenericSemigroup RtrPayloads   
+    deriving Monoid    via GenericMonoid RtrPayloads           
+
+mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
+mkRtrPayloads vrps bgpSec = RtrPayloads { flatVrps = allVrps vrps, .. }
 
 -- 
 newAppState :: IO AppState
@@ -42,8 +49,6 @@ newAppState = do
     Now now <- thisInstant
     atomically $ AppState <$> 
                     newTVar Nothing <*>
-                    newTVar mempty <*>
-                    newTVar mempty <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
                     pure Nothing <*>
@@ -58,9 +63,9 @@ newWorldVersion = instantToVersion . unNow <$> thisInstant
 completeVersion :: AppState -> WorldVersion -> Vrps -> Maybe Slurm -> STM Vrps
 completeVersion AppState {..} worldVersion vrps slurm = do 
     writeTVar world $ Just worldVersion
-    writeTVar validatedVrps vrps
-    let slurmed = maybe vrps (`applySlurmToVrps` vrps) slurm
-    writeTVar filteredVrps slurmed
+    modifyTVar' validated (& #vrps %~ (<> vrps))
+    let slurmed = maybe vrps (`applySlurmToVrps` vrps) slurm    
+    modifyTVar' filtered (& #vrps %~ (<> slurmed))
     pure slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
@@ -83,7 +88,7 @@ waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
 waitForNewVersion appState@AppState {..} knownWorldVersion = do     
     readTVar world >>= \case 
         Just w         
-            | w > knownWorldVersion -> (w,) <$> getRtrPayloads appState                
+            | w > knownWorldVersion -> (w,) <$> readTVar filtered
             | otherwise             -> retry
         _                           -> retry
 
@@ -98,7 +103,4 @@ mergeSystemMetrics sm AppState {..} =
 
 
 getRtrPayloads :: AppState -> STM RtrPayloads    
-getRtrPayloads AppState {..} = do 
-    vrps   <- allVrps <$> readTVar filteredVrps
-    bgpSec <- readTVar filteredBgpSec
-    pure RtrPayloads {..}    
+getRtrPayloads AppState {..} = readTVar filtered

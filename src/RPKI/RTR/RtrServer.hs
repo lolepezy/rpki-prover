@@ -115,8 +115,8 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
-        vrps <- readTVarIO (appState ^. #filteredVrps)
-        let maxStoredDiffs = estimateVrpCount vrps
+        rtrPayloads <- atomically $ getRtrPayloads appState
+        let maxStoredDiffs = Set.size (rtrPayloads ^. #flatVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -133,8 +133,8 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let 
-                previousVrpSize = Set.size $ previousRtrPayload ^. #vrps 
-                currentVrpSize  = Set.size $ currentRtrPayload ^. #vrps 
+                previousVrpSize = Set.size $ previousRtrPayload ^. #flatVrps 
+                currentVrpSize  = Set.size $ currentRtrPayload ^. #flatVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
@@ -261,15 +261,15 @@ readRtrPayload AppContext {..} worldVersion = do
     (vrps, bgpSec) <- roTx db $ \tx -> do 
                 slurm <- slurmForVersion tx db worldVersion
                 vrps <- getVrps tx db worldVersion >>= \case 
-                            Nothing   -> pure Set.empty 
-                            Just vrps -> pure $ allVrps $ maybe vrps (`applySlurmToVrps` vrps) slurm
+                            Nothing   -> pure mempty
+                            Just vrps -> pure $ maybe vrps (`applySlurmToVrps` vrps) slurm
 
                 bgps <- getBgps tx db worldVersion
                 let bgpSec = maybe bgps (`applySlurmBgpSec` bgps) slurm
                 
                 pure (vrps, bgpSec)
 
-    pure RtrPayloads {..}
+    pure $ mkRtrPayloads vrps bgpSec
 
 
 waitForLatestRtrPayload :: Storage s => AppContext s 
@@ -485,7 +485,7 @@ currentCachePayloadPdus :: RtrPayloads -> [Pdu]
 currentCachePayloadPdus RtrPayloads {..} =
     vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn = map (vrpToPdu Announcement) $ sortVrps $ Set.toList vrps
+    vrpPdusAnn = map (vrpToPdu Announcement) $ sortVrps $ Set.toList flatVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     
 

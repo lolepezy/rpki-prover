@@ -24,6 +24,7 @@ import           RPKI.RTR.Types
 
 import           RPKI.AppTypes
 import           RPKI.Time      (nanosPerSecond)
+import RPKI.AppState (RtrPayloads(flatVrps))
 
 
 data Diff a = Diff {
@@ -167,7 +168,7 @@ setDiff previous current
 evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
     GenDiffs {
-        vrpDiff    = setDiff (vrps previous) (vrps current),
+        vrpDiff    = setDiff (flatVrps previous) (flatVrps current),
         bgpSecDiff = setDiff (bgpSec previous) (bgpSec current)
     }
 

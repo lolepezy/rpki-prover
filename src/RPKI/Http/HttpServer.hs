@@ -85,18 +85,18 @@ httpApi appContext = genericServe HttpApi {
         pure $ mainPage worldVersion vResults metrics    
 
 getVRPValidated :: Storage s => AppContext s -> IO [VrpDto]
-getVRPValidated appContext = getVRPs appContext (readTVar . (^. #validatedVrps))
+getVRPValidated appContext = getVRPs appContext (fmap (^. #vrps) . readTVar . (^. #validated))
 
 getVRPSlurmed :: Storage s => AppContext s -> IO [VrpDto]
-getVRPSlurmed appContext = getVRPs appContext (readTVar . (^. #filteredVrps))         
+getVRPSlurmed appContext = getVRPs appContext (fmap (^. #vrps) . readTVar . (^. #filtered))
 
 getVRPValidatedRaw :: Storage s => AppContext s -> IO RawCSV
 getVRPValidatedRaw appContext = 
-    rawCSV <$> getVRPs appContext (readTVar . (^. #validatedVrps))    
+    rawCSV <$> getVRPs appContext (fmap (^. #vrps) . readTVar . (^. #validated))    
 
 getVRPSlurmedRaw :: Storage s => AppContext s -> IO RawCSV
 getVRPSlurmedRaw appContext =
-    rawCSV <$> getVRPs appContext (readTVar . (^. #filteredVrps))
+    rawCSV <$> getVRPs appContext (fmap (^. #vrps) . readTVar . (^. #filtered))
 
 
 getVRPs :: Storage s => AppContext s -> (AppState -> STM Vrps) -> IO [VrpDto] 
