@@ -115,7 +115,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
     
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
-        rtrPayloads <- atomically $ getRtrPayloads appState
+        rtrPayloads <- atomically $ readRtrPayloads appState
         let maxStoredDiffs = Set.size (rtrPayloads ^. #flatVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
@@ -179,7 +179,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
         (rtrState', rtrPayloads, outboxQueue) <- 
             atomically $ (,,) <$> 
                     readTVar rtrState <*>
-                    getRtrPayloads appState <*>
+                    readRtrPayloads appState <*>
                     newCQueue 10
 
         let firstPduLazy = LBS.fromStrict firstPdu
@@ -244,7 +244,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                         -- all the real work happens inside of pure `responseAction`, 
                         -- for better testability.
                         rtrState'   <- readTVar rtrState                        
-                        rtrPayloads <- getRtrPayloads appState
+                        rtrPayloads <- readRtrPayloads appState
                         case responseAction logger peer session rtrState' rtrPayloads pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
@@ -264,8 +264,9 @@ readRtrPayload AppContext {..} worldVersion = do
                             Nothing   -> pure mempty
                             Just vrps -> pure $ maybe vrps (`applySlurmToVrps` vrps) slurm
 
-                bgps <- getBgps tx db worldVersion
-                let bgpSec = maybe bgps (`applySlurmBgpSec` bgps) slurm
+                bgpSec <- getBgps tx db worldVersion >>= \case 
+                            Nothing   -> pure mempty
+                            Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
                 
                 pure (vrps, bgpSec)
 

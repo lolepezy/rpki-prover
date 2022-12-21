@@ -60,12 +60,12 @@ setCurrentVersion AppState {..} = writeTVar world . Just
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
 
-completeVersion :: AppState -> WorldVersion -> Vrps -> Maybe Slurm -> STM Vrps
-completeVersion AppState {..} worldVersion vrps slurm = do 
+completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> STM RtrPayloads
+completeVersion AppState {..} worldVersion rtrPayloads slurm = do 
     writeTVar world $ Just worldVersion
-    modifyTVar' validated (& #vrps %~ (<> vrps))
-    let slurmed = maybe vrps (`applySlurmToVrps` vrps) slurm    
-    modifyTVar' filtered (& #vrps %~ (<> slurmed))
+    modifyTVar' validated (<> rtrPayloads)
+    let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
+    modifyTVar' filtered (<> maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm)
     pure slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
@@ -102,5 +102,9 @@ mergeSystemMetrics sm AppState {..} =
     liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
 
 
-getRtrPayloads :: AppState -> STM RtrPayloads    
-getRtrPayloads AppState {..} = readTVar filtered
+readRtrPayloads :: AppState -> STM RtrPayloads    
+readRtrPayloads AppState {..} = readTVar filtered
+
+filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads 
+filterWithSLURM RtrPayloads {..} slurm =     
+    mkRtrPayloads (slurm `applySlurmToVrps` vrps) (slurm `applySlurmBgpSec` bgpSec)

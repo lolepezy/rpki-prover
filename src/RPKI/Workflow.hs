@@ -13,6 +13,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
+import           Control.Monad.Trans.Maybe
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
@@ -53,7 +54,6 @@ import           RPKI.Worker
 
 import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
-
 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
                 AppContext s -> [TAL] -> IO ()
@@ -153,7 +153,9 @@ runWorkflow appContext@AppContext {..} tals = do
             database' <- readTVarIO database
             executeOrDie
                 (processTALs database' `finally` cleanupAfterValidation)
-                (\(vrps, slurmedVrps) elapsed ->
+                (\(rtrPayloads, slurmedPayloads) elapsed -> do 
+                    let vrps = rtrPayloads ^. #vrps
+                    let slurmedVrps = slurmedPayloads ^. #vrps
                     logInfo logger $
                         [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
@@ -184,19 +186,19 @@ runWorkflow appContext@AppContext {..} tals = do
 #{formatValidations (topDownState ^. typed)}.|]
                             updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
                             
-                            rereadAndupdateVrps maybeSlurm
+                            reReadAndUpdatePayloads maybeSlurm
                   where
 
-                    rereadAndupdateVrps maybeSlurm = do 
-                        roTx db (\tx -> getVrps tx db worldVersion) >>= \case                            
+                    reReadAndUpdatePayloads maybeSlurm = do 
+                        roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
                             Nothing -> do 
                                 logError logger [i|Something weird happened, could not re-read VRPs.|]
                                 pure (mempty, mempty)
-                            Just vrps -> do                 
-                                slurmedVrps <- atomically $ do
+                            Just rtrPayloads -> do                 
+                                slurmedPayloads <- atomically $ do
                                         setCurrentVersion appState worldVersion
-                                        completeVersion appState worldVersion vrps maybeSlurm
-                                pure (vrps, slurmedVrps)                        
+                                        completeVersion appState worldVersion rtrPayloads maybeSlurm
+                                pure (rtrPayloads, slurmedPayloads)                        
 
         -- Delete objects in the store that were read by top-down validation 
         -- longer than `cacheLifeTime` hours ago.
@@ -382,19 +384,19 @@ loadStoredAppState AppContext {..} = do
                     pure Nothing
 
                 | otherwise -> do
-                    (vrps, elapsed) <- timedMS $ do
-                        -- TODO It takes 350-400ms, which is pretty strange, profile it.           
-                        !vrps  <- getVrps tx database' lastVersion
+                    (payloads, elapsed) <- timedMS $ do                                            
                         !slurm <- slurmForVersion tx database' lastVersion
+                        payloads <- getRtrPayloads tx database' lastVersion
                         --
-                        for_ vrps $ \vrps' -> void $
+                        for_ payloads $ \payloads' -> void $
                                 atomically $ do
                                     setCurrentVersion appState lastVersion
-                                    completeVersion appState lastVersion vrps' slurm
-                        pure vrps
-                    for_ vrps $ \v ->
+                                    completeVersion appState lastVersion payloads' slurm
+                        pure payloads
+                    for_ payloads $ \p -> do 
+                        let vrps = p ^. #vrps
                         logInfo logger $ [i|Last cached version #{lastVersion} used to initialise |] <>
-                                        [i|current state (#{estimateVrpCount v} VRPs), took #{elapsed}ms.|]
+                                        [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
 
 
