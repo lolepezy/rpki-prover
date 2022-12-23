@@ -23,6 +23,7 @@ import           Servant.Swagger.UI
 
 import qualified Data.HashMap.Strict.InsOrd as IOMap
 
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Store.Types
 import           RPKI.Http.Types
@@ -31,11 +32,13 @@ import           RPKI.Util (convert)
 
 
 data API api = API {        
-        vrpsCsv  :: api :- "vrps.csv"  :> Get '[ManualCVS] RawCSV,
-        vrpsJson :: api :- "vrps" :> Get '[JSON] [VrpDto],
+        vrpsCsv  :: api :- "vrps.csv"  :> QueryParam "version" Text 
+                                       :> Get '[ManualCVS] RawCSV,
+        vrpsJson :: api :- "vrps" :> QueryParam "version" Text 
+                                  :> Get '[JSON] [VrpDto],
 
-        vrpsCsvFiltered  :: api :- "vrps-filtered.csv"  :> Get '[ManualCVS] RawCSV,        
-        vrpsJsonFiltered :: api :- "vrps-filtered" :> Get '[JSON] [VrpDto],
+        vrpsCsvFiltered  :: api :- "vrps-filtered.csv" :> QueryParam "version" Text :> Get '[ManualCVS] RawCSV,        
+        vrpsJsonFiltered :: api :- "vrps-filtered" :> QueryParam "version" Text :> Get '[JSON] [VrpDto],
 
         aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
         bgpCerts :: api :- "bgp-certificates" :> Get '[JSON] [BgpCertDto],
@@ -57,7 +60,9 @@ data API api = API {
                                     :> QueryParam "hash" Text 
                                     :> Get '[JSON] [RObject],
 
-        rtrDiffs :: api :- "rtr" :> Get '[JSON] RtrDto
+        rtrDiffs :: api :- "rtr" :> Get '[JSON] RtrDto,
+
+        versions :: api :- "versions" :> Get '[JSON] [WorldVersion]
     }
     deriving (Generic)
 
@@ -114,7 +119,9 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
-            ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config")
+            ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
+            ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
+            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")
         ] 
   where                
     jsonOn200 txt = mempty

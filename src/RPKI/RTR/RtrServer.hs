@@ -115,7 +115,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
         logInfo logger [i|RTR server: waiting for the first complete world version.|] 
         worldVersion <- atomically $ waitForVersion appState                
     
-        -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
+        -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         rtrPayloads <- atomically $ readRtrPayloads appState
         let maxStoredDiffs = Set.size (rtrPayloads ^. #uniqueVrps)
@@ -175,7 +175,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
 
             logDebug logger [i|Generated new diff, #{diffText rtrDiff}.|]                        
             let RtrState {..} = nextRtrState
-            let diffsStr :: Text = convert $ concatMap (\(n, diff) -> [i|#{n}, #{diffText diff}|]) $ toList diffs
+            let diffsStr :: Text = convert $ concatMap (\(n, diff) -> [i| #{n}, #{diffText diff}|]) $ toList diffs
             logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs: #{diffsStr}.|]                            
 
 

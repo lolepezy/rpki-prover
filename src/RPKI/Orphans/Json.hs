@@ -65,7 +65,9 @@ instance ToJSON IpPrefix where
     toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
     toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
 
-instance ToJSON WorldVersion
+instance ToJSON WorldVersion where
+    toJSON (WorldVersion v) = toJSON $ show $ toInteger v
+instance ToJSON VersionState
 instance ToJSON VIssue
 instance ToJSON VWarning
 instance ToJSON AppError
