@@ -13,7 +13,6 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Trans.Maybe
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
@@ -195,9 +194,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                 logError logger [i|Something weird happened, could not re-read VRPs.|]
                                 pure (mempty, mempty)
                             Just rtrPayloads -> do                 
-                                slurmedPayloads <- atomically $ do
-                                        setCurrentVersion appState worldVersion
-                                        completeVersion appState worldVersion rtrPayloads maybeSlurm
+                                slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
                                 pure (rtrPayloads, slurmedPayloads)                        
 
         -- Delete objects in the store that were read by top-down validation 
@@ -385,18 +382,15 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        !slurm <- slurmForVersion tx database' lastVersion
-                        payloads <- getRtrPayloads tx database' lastVersion
-                        --
-                        for_ payloads $ \payloads' -> void $
-                                atomically $ do
-                                    setCurrentVersion appState lastVersion
-                                    completeVersion appState lastVersion payloads' slurm
+                        slurm    <- slurmForVersion tx database' lastVersion
+                        payloads <- getRtrPayloads tx database' lastVersion                        
+                        for_ payloads $ \payloads' -> 
+                            void $ atomically $ completeVersion appState lastVersion payloads' slurm
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps
                         logInfo logger $ [i|Last cached version #{lastVersion} used to initialise |] <>
-                                        [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
+                                         [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
 
 

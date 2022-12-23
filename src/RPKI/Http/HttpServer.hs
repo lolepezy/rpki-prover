@@ -75,7 +75,8 @@ httpApi appContext = genericServe HttpApi {
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
-        system = liftIO $ getSystem appContext
+        system = liftIO $ getSystem appContext,
+        rtrDiffs = getRtrDiffs appContext
     }
 
     uiServer = do 
@@ -261,7 +262,15 @@ getSystem AppContext {..} = do
             in ResourcesDto {..}
 
     let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ si ^. #metrics . #resources
-    pure SystemDto {..}
+    pure SystemDto {..} 
+
+getRtrDiffs :: (MonadIO m, Storage s, MonadError ServerError m) => 
+                AppContext s -> m RtrDto
+getRtrDiffs AppContext {..} = do     
+    liftIO (readTVarIO $ appState ^. #rtrState) >>= \case
+        Nothing -> throwError $ err400 { errBody = 
+                "RTR state doesn't exist, RTR server is most likely disabled." }
+        Just rtrState -> pure RtrDto {..}        
       
 
 rawCSV :: [VrpDto] -> RawCSV

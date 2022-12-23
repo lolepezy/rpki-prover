@@ -43,6 +43,7 @@ import           RPKI.Orphans.Swagger
 import           RPKI.Reporting
 
 import           RPKI.Resources.Types
+import           RPKI.RTR.Types
 import           RPKI.Time
 import           RPKI.Util (mkHash)
 
@@ -132,6 +133,11 @@ data SystemDto = SystemDto {
     }
     deriving stock (Eq, Show, Generic)
 
+newtype RtrDto = RtrDto {
+        rtrState :: RtrState
+    }
+    deriving stock (Eq, Show, Generic)
+
 data ManualCVS = ManualCVS
 
 newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
@@ -150,12 +156,14 @@ instance ToJSON RObject
 instance ToJSON VrpDto     
 instance ToJSON AspaDto
 instance ToJSON BgpCertDto
+instance ToJSON RtrDto
 instance ToSchema RObject
 instance ToSchema VrpDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema AspaDto
 instance ToSchema BgpCertDto
+instance ToSchema RtrDto
 instance ToSchema ProviderAsn
 
 instance ToJSON ProviderAsn where

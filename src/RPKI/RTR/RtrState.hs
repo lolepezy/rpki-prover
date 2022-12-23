@@ -11,51 +11,16 @@ import           Control.Lens
 import           Data.Foldable  (toList)
 import           Data.Set       (Set, (\\))
 import qualified Data.Set       as Set
-
-import           GHC.Generics
-
 import qualified Data.List      as List
+import           Data.Generics.Labels
 
 import           Deque.Strict   as Deq
 
-import           RPKI.AppState
-import           RPKI.Domain
-import           RPKI.RTR.Types
-
 import           RPKI.AppTypes
 import           RPKI.Time      (nanosPerSecond)
-import RPKI.AppState (RtrPayloads(flatVrps))
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 
-
-data Diff a = Diff {
-        added   :: Set a,
-        deleted :: Set a
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-
--- This generic type is only usefull for testing, 
--- when a and b can be some primitive types instead of real VRPs
--- or BGPSec certificates.
-data GenDiffs a b = GenDiffs {
-        vrpDiff    :: Diff a,
-        bgpSecDiff :: Diff b
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving stock Generic
-
-type RtrDiffs = GenDiffs Vrp BGPSecPayload        
-
-
-data RtrState = RtrState {
-        lastKnownWorldVersion :: WorldVersion,
-        currentSessionId      :: RtrSessionId,
-        currentSerial         :: SerialNumber,
-        maxSerialsPerSession  :: Int,
-        diffs                 :: Deq.Deque (SerialNumber, RtrDiffs),
-        totalDiffSize         :: Int,
-        maxTotalDiffSize      :: Int
-    }
-    deriving stock (Show, Eq, Generic)
 
 newDiff :: Ord a => Diff a
 newDiff = Diff mempty mempty
@@ -168,7 +133,7 @@ setDiff previous current
 evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
     GenDiffs {
-        vrpDiff    = setDiff (flatVrps previous) (flatVrps current),
+        vrpDiff    = setDiff (uniqueVrps previous) (uniqueVrps current),
         bgpSecDiff = setDiff (bgpSec previous) (bgpSec current)
     }
 

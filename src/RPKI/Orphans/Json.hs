@@ -13,11 +13,13 @@ import qualified Data.ByteString.Short       as BSS
 import           Data.Text                   (Text)
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8)
+import           Data.Foldable               (toList)
 
 import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
 import           Data.Aeson.Types            (toJSONKeyText)
 import           Data.Tuple.Strict
+import           Deque.Strict                as Deq
 
 import           Data.String.Interpolate.IsString
 
@@ -46,8 +48,10 @@ import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
-import           RPKI.Resources.IntervalSet
+import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Resources.Types
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Types
@@ -122,7 +126,7 @@ instance ToJSON LBS.ByteString where
     toJSON = toJSON . showHexL
 
 instance ToJSON a => ToJSON (IntervalSet a) where
-    toJSON = toJSON . toList
+    toJSON = toJSON . IS.toList
     
 instance ToJSON a => ToJSON (RSet a)
    
@@ -295,6 +299,17 @@ instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
 instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (T3 a b c) where
     toJSON (T3 a b c) = toJSON (a, b, c)    
 
+instance ToJSON RtrState
+instance ToJSON BGPSecPayload
+instance ToJSON SerialNumber
+instance ToJSON RtrSessionId
+instance ToJSON AscOrderedVrp where
+    toJSON (AscOrderedVrp v) = toJSON v
+instance ToJSON a => ToJSON (Deq.Deque a) where
+    toJSON = toJSON . toList
+
+instance (ToJSON a, ToJSON b) => ToJSON (GenDiffs a b)
+instance ToJSON a => ToJSON (Diff a)
 
 -- Some utilities
 shortBsJson :: BSS.ShortByteString -> Json.Value

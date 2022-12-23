@@ -56,6 +56,7 @@ import           RPKI.Util                (increment, ifJustM)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
+import           RPKI.RTR.Types
 import           RPKI.Time
 
 -- This one is to be changed manually whenever 

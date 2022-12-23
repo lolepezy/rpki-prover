@@ -55,7 +55,9 @@ data API api = API {
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                     :> QueryParam "hash" Text 
-                                    :> Get '[JSON] [RObject]
+                                    :> Get '[JSON] [RObject],
+
+        rtrDiffs :: api :- "rtr" :> Get '[JSON] RtrDto
     }
     deriving (Generic)
 

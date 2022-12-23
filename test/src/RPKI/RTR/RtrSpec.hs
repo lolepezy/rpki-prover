@@ -23,7 +23,7 @@ import           RPKI.AppState
 import           RPKI.Orphans
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
-import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 
 import           RPKI.Resources.Types
 

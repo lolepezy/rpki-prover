@@ -6,11 +6,11 @@
 
 module RPKI.AppState where
     
-import           Control.Lens
+import           Control.Lens hiding (filtered)
 import           Control.Monad (join)
 import           Control.Concurrent.STM
-import           Data.Set
-import           Data.Monoid.Generic
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -19,6 +19,7 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
+import           RPKI.RTR.Types
 import           Control.Monad.IO.Class
 
 
@@ -27,21 +28,16 @@ data AppState = AppState {
         validated :: TVar RtrPayloads,
         filtered  :: TVar RtrPayloads,
         readSlurm :: Maybe (ValidatorT IO Slurm),
+        rtrState  :: TVar (Maybe RtrState),
         system    :: TVar SystemInfo
     } deriving stock (Generic)
 
-data RtrPayloads = RtrPayloads {
-        vrps     :: Vrps,
-        -- Compute it only if required by RTR or API, otherwise don't allocate space for it
-        flatVrps :: ~(Set Vrp),
-        bgpSec   :: Set BGPSecPayload
-    }
-    deriving stock (Show, Eq, Generic)
-    deriving Semigroup via GenericSemigroup RtrPayloads   
-    deriving Monoid    via GenericMonoid RtrPayloads           
+
+uniqVrps :: Vrps -> Set AscOrderedVrp 
+uniqVrps = mconcat . Prelude.map (Set.map AscOrderedVrp) . allVrps
 
 mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { flatVrps = allVrps vrps, .. }
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
 
 -- 
 newAppState :: IO AppState
@@ -52,10 +48,8 @@ newAppState = do
                     newTVar mempty <*>
                     newTVar mempty <*>
                     pure Nothing <*>
+                    newTVar Nothing <*>
                     newTVar (newSystemInfo now)
-
-setCurrentVersion :: AppState -> WorldVersion -> STM ()
-setCurrentVersion AppState {..} = writeTVar world . Just
 
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
@@ -85,7 +79,7 @@ instantToVersion = WorldVersion . toNanoseconds
 
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
-waitForNewVersion appState@AppState {..} knownWorldVersion = do     
+waitForNewVersion AppState {..} knownWorldVersion = do     
     readTVar world >>= \case 
         Just w         
             | w > knownWorldVersion -> (w,) <$> readTVar filtered

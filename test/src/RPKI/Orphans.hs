@@ -43,7 +43,7 @@ import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.RTR.RtrState
-import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 
 import           Time.Types
 

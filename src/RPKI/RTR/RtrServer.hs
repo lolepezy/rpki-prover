@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module RPKI.RTR.RtrServer where
 
@@ -17,7 +18,7 @@ import           Control.Monad
 
 import           Data.Generics.Product.Typed
 
-import           Data.Foldable                    (for_)
+import           Data.Foldable                    (for_, toList)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -25,8 +26,8 @@ import qualified Data.ByteString.Lazy             as LBS
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
-import qualified Data.List                        as List
-import           Data.Ord
+
+import           Data.Coerce
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
@@ -41,6 +42,7 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.Parallel
@@ -62,7 +64,7 @@ runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
 runRtrServer appContext@AppContext {..} RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
-    rtrState <- newTVarIO Nothing
+    let rtrState = appState ^. #rtrState
     updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
@@ -116,7 +118,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
         -- Do not store more the thrise the amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         rtrPayloads <- atomically $ readRtrPayloads appState
-        let maxStoredDiffs = Set.size (rtrPayloads ^. #flatVrps)
+        let maxStoredDiffs = Set.size (rtrPayloads ^. #uniqueVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -133,8 +135,8 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let 
-                previousVrpSize = Set.size $ previousRtrPayload ^. #flatVrps 
-                currentVrpSize  = Set.size $ currentRtrPayload ^. #flatVrps
+                previousVrpSize = Set.size $ previousRtrPayload ^. #uniqueVrps 
+                currentVrpSize  = Set.size $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
@@ -144,13 +146,10 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreRtrUpdates
                     then updatedRtrState rtrState' newVersion rtrDiff
-                    else rtrState' { lastKnownWorldVersion = newVersion }
+                    else rtrState' { lastKnownWorldVersion = newVersion }                    
 
-            -- logDebug logger [i|Generated new diff, VRPs: added #{length (added vrpDiff)}, deleted #{length (deleted vrpDiff)}.|]
-            -- when thereAreRtrUpdates $ do 
-            --     let RtrState {..} = nextRtrState
-                -- let diffsStr = concatMap (\(n, d) -> [i|(#{n}, added = #{Set.size $ added d}, deleted = #{Set.size $ deleted d})|]) $ toList diffs
-                -- logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs #{diffsStr}.|]
+
+            logDiff rtrDiff nextRtrState
 
             Now now <- thisInstant            
 
@@ -167,11 +166,22 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                     let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
                     writeTChan updateBroadcastChan [notifyPdu]
                     writeTVar lastTimeNotified $ Just now
+        where
+          logDiff rtrDiff nextRtrState = do 
+            
+            let diffText GenDiffs {..} =
+                    [i|(VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}), |] <>
+                    [i|(BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff})|] :: Text
+
+            logDebug logger [i|Generated new diff, #{diffText rtrDiff}.|]                        
+            let RtrState {..} = nextRtrState
+            let diffsStr :: Text = convert $ concatMap (\(n, diff) -> [i|#{n}, #{diffText diff}|]) $ toList diffs
+            logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs: #{diffsStr}.|]                            
 
 
     -- For every connection run 2 threads:
     --      serveLoop blocks on `recv` and accepts client's requests
-    --      sendToClient simply sends all PDUs to the client
+    --      sendFromQueuesToClient simply sends all PDUs to the client
     -- They communicate using the outboxChan
     serveConnection connection peer updateBroadcastChan rtrState = do        
         logDebug logger [i|Waiting for the first PDU from client #{peer}|]
@@ -204,7 +214,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                     for_ warning $ logWarn logger
                     atomically $ writeCQueue outboxQueue responsePdus
 
-                    withAsync (sendToClient session outboxQueue) $ \sender -> do
+                    withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
                         serveLoop session outboxQueue 
                             `finally` do 
                                 atomically (closeCQueue outboxQueue)
@@ -214,7 +224,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
         where
             -- | Wait for PDUs to appear in either broadcast chan or 
             -- in this session's outbox and send them to the socket.
-            sendToClient session outboxQueue =
+            sendFromQueuesToClient session outboxQueue =
                 loop =<< atomically (dupTChan updateBroadcastChan)
                 where
                     loop stateUpdateChan = do                         
@@ -323,7 +333,7 @@ responseAction logger peer session rtrState vrps pduBytes =
                 Right (pdus, warning) -> let
                     ioAction = do 
                         for_ warning $ logWarn logger
-                        logDebug logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}.. PDUs.|]                            
+                        logDebug logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}. PDUs.|]                            
                     in Right (pdus, ioAction)                                     
 
         errors = (mempty, logError') <> (errorResponse, mempty)
@@ -476,8 +486,8 @@ diffPayloadPdus GenDiffs {..} =
     vrpWithdrawn <> vrpPdusAnn <> 
     mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn
   where
-    vrpWithdrawn = map (vrpToPdu Withdrawal) (Set.toList $ vrpDiff ^. #deleted)
-    vrpPdusAnn   = map (vrpToPdu Announcement) $ sortVrps $ Set.toList $ vrpDiff ^. #added 
+    vrpWithdrawn = map (vrpToPdu Withdrawal) (coerce $ Set.toList $ vrpDiff ^. #deleted)
+    vrpPdusAnn   = map (vrpToPdu Announcement) $ coerce $ Set.toAscList $ vrpDiff ^. #added 
     bgpSecWithdrawn = map (bgpSecToPdu Withdrawal) $ Set.toList $ bgpSecDiff ^. #deleted
     bgpSecPdusAnn   = map (bgpSecToPdu Announcement) $ Set.toList $ bgpSecDiff ^. #added
 
@@ -486,31 +496,10 @@ currentCachePayloadPdus :: RtrPayloads -> [Pdu]
 currentCachePayloadPdus RtrPayloads {..} =
     vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn = map (vrpToPdu Announcement) $ sortVrps $ Set.toList flatVrps
+    vrpPdusAnn = map (vrpToPdu Announcement) $ coerce $ Set.toAscList uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     
-
--- Sort VRPs before sending them to routers
--- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-02#section-11
--- 
-sortVrps :: [Vrp] -> [Vrp] 
-sortVrps = List.sortBy compareVrps 
-  where
-    compareVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
-        compare asn1 asn2 <> 
-        -- Sort prefixes backwards -- it automatically means that 
-        -- smaller prefixes will be in front of larger ones.
-        compare (Down p1) (Down p2) <> 
-        -- smaller max length should precede?
-        compare ml1 ml2
     
-
--- toPdu :: Flags -> Vrp -> Pdu
--- toPdu flags (Vrp asn prefix maxLength) = 
---     case prefix of
---         Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
---         Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
-
 vrpToPdu :: Flags -> Vrp -> Pdu
 vrpToPdu flags (Vrp asn prefix maxLength) = 
     case prefix of

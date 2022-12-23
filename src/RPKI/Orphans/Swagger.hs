@@ -15,6 +15,7 @@ import           Data.Swagger hiding (ValidationError)
 import           Data.Map.Strict (Map)
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import           Data.Tuple.Strict
+import           Deque.Strict                as Deq
  
 import           Data.ASN1.Types
 import           Data.Hourglass
@@ -35,6 +36,9 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Types
 import           RPKI.Time
 import           RPKI.Orphans.Json
+
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 
 -- ToSchema insrances for Swagger doc generation
 instance ToSchema Focus
@@ -237,3 +241,16 @@ instance (ToSchema a, ToSchema b, ToSchema c) => ToSchema (T3 a b c)
 instance ToSchema a => ToSchema (IntervalSet a)
 instance ToSchema a => ToSchema (RSet a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+
+instance ToSchema RtrState
+instance ToSchema BGPSecPayload
+instance ToSchema SerialNumber
+instance ToSchema RtrSessionId
+instance ToSchema AscOrderedVrp where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Vrp)
+instance ToSchema a => ToSchema (Deq.Deque a) where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance (ToSchema a, ToSchema b) => ToSchema (GenDiffs a b)
+instance ToSchema a => ToSchema (Diff a)    

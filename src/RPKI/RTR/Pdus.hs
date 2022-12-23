@@ -18,7 +18,7 @@ import           Control.Monad            (unless)
 import           RPKI.Domain              (toNormalBS, KI (..), SKI (..), skiLen, toShortBS)
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
-import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 import           RPKI.Util
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 

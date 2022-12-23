@@ -30,6 +30,7 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
+import           Data.Coerce
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -721,10 +722,10 @@ estimateVrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount = Set.size . allVrps
+uniqueVrpCount (Vrps vrps) = Set.size $ mconcat $ MonoidalMap.elems vrps
 
 newVrps :: TaName -> Set Vrp -> Vrps
 newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
 
-allVrps :: Vrps -> Set Vrp 
-allVrps (Vrps vrps) = mconcat $ MonoidalMap.elems vrps          
+allVrps :: Vrps -> [Set Vrp] 
+allVrps (Vrps vrps) = MonoidalMap.elems vrps          
