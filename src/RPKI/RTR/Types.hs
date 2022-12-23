@@ -57,7 +57,7 @@ data RtrPayloads = RtrPayloads {
     deriving Monoid    via GenericMonoid RtrPayloads           
 
 newtype AscOrderedVrp = AscOrderedVrp Vrp
-    deriving (Show, Eq)
+    deriving stock (Show, Eq, Generic)
 
 
 -- We store VRPs sorteed in a specific way, so that we don't have to sort them before 

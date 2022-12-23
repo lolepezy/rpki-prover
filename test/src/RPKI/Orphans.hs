@@ -64,6 +64,8 @@ import System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.Logging
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)
 
 
@@ -225,6 +227,10 @@ instance Arbitrary Manifest where
     shrink = genericShrink
 
 instance Arbitrary Vrp where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary AscOrderedVrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

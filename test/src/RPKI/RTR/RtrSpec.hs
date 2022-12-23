@@ -26,6 +26,8 @@ import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
 import           RPKI.Resources.Types
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 
 import           Test.QuickCheck.Monadic
 import qualified Test.Tasty.HUnit                  as HU
@@ -258,7 +260,7 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 --         <> ", currentSessionId = " <> show currentSessionId
 --         <> ", maxSerialsPerSession = " <> show maxSerialsPerSession <> "]"
 
-generateVrps :: Int -> IO (Set Vrp)
+generateVrps :: Int -> IO (Set AscOrderedVrp)
 generateVrps n = Set.fromList <$> replicateM n (QC.generate arbitrary)
 
 generateBgpSecs :: Int -> IO (Set BGPSecPayload)
