@@ -39,7 +39,7 @@ import           RPKI.Resources.Resources (prefixLen)
 
 import           RPKI.SLURM.Types
 
-import RPKI.Util (fmtEx)
+import RPKI.Util (fmtEx, encodeBase64)
 
 
 slurmVrpName :: TaName
@@ -74,9 +74,30 @@ applySlurmToVrps slurm (Vrps vrps) =
         isInsideOf (Ipv6P pS) (Ipv6P pB) = pB `contains` pS
         isInsideOf _ _                   = False
 
--- TODO Implement it
+
 applySlurmBgpSec :: Slurm -> Set.Set BGPSecPayload -> Set.Set BGPSecPayload
-applySlurmBgpSec slurm bgps = bgps
+applySlurmBgpSec slurm bgps = Set.filter bgpSecFilter bgps <> assertedBgpSecs
+  where
+    bgpSecFilter BGPSecPayload {..} = do         
+        True
+    --     not 
+    --         $ any matchesFilter 
+    --         $ slurm ^. #validationOutputFilters . #prefixFilters
+    --   where
+    --     matchesFilter z = case z ^. #asnAndSKI of
+    --         This asn      -> coerce asn == vAsn
+    --         That ski      -> ski `isInsideOf` prefix
+    --         These asn ski -> coerce asn == vAsn && vPrefix `isInsideOf` prefix
+
+    assertedBgpSecs = Set.fromList 
+        $ map toBgpSec
+        $ slurm ^. #locallyAddedAssertions . #bgpsecAssertions
+      where
+        toBgpSec BgpsecAssertion { ski = DecodedBase64 ski', .. } = let 
+                bgpSecSki  = SKI $ mkKI ski'
+                bgpSecAsns = [coerce asn]
+                bgpSecSpki = SPKI $ encodeBase64 routerPublicKey
+            in BGPSecPayload {..}            
     
 
 readSlurmFiles :: [String] -> ValidatorT IO Slurm
