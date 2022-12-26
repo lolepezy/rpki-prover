@@ -30,7 +30,7 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Servant.API
-import           Data.Swagger
+import           Data.Swagger hiding (url)
 import           Network.HTTP.Media ((//))
 
 import           RPKI.Config
@@ -74,6 +74,13 @@ data VrpDto = VrpDto {
         prefix    :: IpPrefix,
         maxLength :: PrefixLength,
         ta        :: Text
+    } 
+    deriving stock (Eq, Show, Generic)
+
+data VrpMinimalDto = VrpMinimalDto {
+        asn       :: ASN,
+        prefix    :: IpPrefix,
+        maxLength :: PrefixLength        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -154,11 +161,15 @@ instance ToSchema RawCSV where
 
 instance ToJSON RObject
 instance ToJSON VrpDto     
+instance ToJSON VrpMinimalDto     
 instance ToJSON AspaDto
 instance ToJSON BgpCertDto
 instance ToJSON RtrDto
 instance ToSchema RObject
 instance ToSchema VrpDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance ToSchema VrpMinimalDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema AspaDto

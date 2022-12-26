@@ -9,6 +9,9 @@ module RPKI.AppState where
 import           Control.Lens hiding (filtered)
 import           Control.Monad (join)
 import           Control.Concurrent.STM
+
+import qualified Data.ByteString                  as BS
+
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           GHC.Generics
@@ -27,6 +30,7 @@ data AppState = AppState {
         world     :: TVar (Maybe WorldVersion),
         validated :: TVar RtrPayloads,
         filtered  :: TVar RtrPayloads,
+        cachedBinaryPdus :: TVar (Maybe BS.ByteString),
         readSlurm :: Maybe (ValidatorT IO Slurm),
         rtrState  :: TVar (Maybe RtrState),
         system    :: TVar SystemInfo
@@ -47,19 +51,23 @@ newAppState = do
                     newTVar Nothing <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
-                    pure Nothing <*>
+                    newTVar Nothing <*>
+                    pure Nothing <*>                    
                     newTVar Nothing <*>
                     newTVar (newSystemInfo now)
 
+-- World versions are nanosecond-timestamps
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
 
 completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> STM RtrPayloads
 completeVersion AppState {..} worldVersion rtrPayloads slurm = do 
     writeTVar world $ Just worldVersion
-    modifyTVar' validated (<> rtrPayloads)
+    writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
-    modifyTVar' filtered (<> maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm)
+    writeTVar filtered slurmed
+    -- invalidae serialised PDU cache with every new version
+    writeTVar cachedBinaryPdus Nothing
     pure slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
@@ -79,10 +87,10 @@ instantToVersion = WorldVersion . toNanoseconds
 
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
-waitForNewVersion AppState {..} knownWorldVersion = do     
+waitForNewVersion appState@AppState {..} knownWorldVersion = do     
     readTVar world >>= \case 
         Just w         
-            | w > knownWorldVersion -> (w,) <$> readTVar filtered
+            | w > knownWorldVersion -> (w,) <$> readRtrPayloads appState
             | otherwise             -> retry
         _                           -> retry
 
@@ -102,3 +110,12 @@ readRtrPayloads AppState {..} = readTVar filtered
 filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads 
 filterWithSLURM RtrPayloads {..} slurm =     
     mkRtrPayloads (slurm `applySlurmToVrps` vrps) (slurm `applySlurmBgpSec` bgpSec)
+
+cachedPduBinary :: AppState -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
+cachedPduBinary appState@AppState {..} f = do 
+    readTVar cachedBinaryPdus >>= \case     
+        Nothing -> do            
+            bs <- f <$> readRtrPayloads appState 
+            writeTVar cachedBinaryPdus $ Just bs
+            pure bs
+        Just bs -> pure bs

@@ -104,11 +104,11 @@ diffsFromSerial RtrState {..} clientSerial =
 squashDiffs :: (Ord a, Ord b) => [(SerialNumber, GenDiffs a b)] -> GenDiffs a b
 squashDiffs diffs =
     GenDiffs {
-        vrpDiff    = foldr (squash . (^. #vrpDiff)) newDiff sordedDiffs,
-        bgpSecDiff = foldr (squash . (^. #bgpSecDiff)) newDiff sordedDiffs
+        vrpDiff    = foldr (squash . (^. #vrpDiff)) newDiff sortedDiffs,
+        bgpSecDiff = foldr (squash . (^. #bgpSecDiff)) newDiff sortedDiffs
     }
   where
-    sordedDiffs = map snd $ List.sortOn fst diffs
+    sortedDiffs = map snd $ List.sortOn fst diffs
     squash diff resultDiff = let
          added'   = added diff   <> added resultDiff
          deleted' = deleted diff <> deleted resultDiff

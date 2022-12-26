@@ -30,7 +30,6 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
-import           Data.Coerce
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -59,7 +58,7 @@ data SomeRFC r = StrictRFC_ (PolyRFC r 'StrictRFC)
     deriving anyclass TheBinary               
 
 polyRFC :: SomeRFC r -> r
-polyRFC (StrictRFC_ (PolyRFC r))      = r
+polyRFC (StrictRFC_ (PolyRFC r))       = r
 polyRFC (ReconsideredRFC_ (PolyRFC r)) = r
 
 mkPolyRFC :: ValidationRFC -> r -> SomeRFC r

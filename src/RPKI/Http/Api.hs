@@ -34,11 +34,20 @@ import           RPKI.Util (convert)
 data API api = API {        
         vrpsCsv  :: api :- "vrps.csv"  :> QueryParam "version" Text 
                                        :> Get '[ManualCVS] RawCSV,
+
         vrpsJson :: api :- "vrps" :> QueryParam "version" Text 
                                   :> Get '[JSON] [VrpDto],
 
-        vrpsCsvFiltered  :: api :- "vrps-filtered.csv" :> QueryParam "version" Text :> Get '[ManualCVS] RawCSV,        
-        vrpsJsonFiltered :: api :- "vrps-filtered" :> QueryParam "version" Text :> Get '[JSON] [VrpDto],
+        vrpsCsvFiltered  :: api :- "vrps-filtered.csv" :> QueryParam "version" Text 
+                                                       :> Get '[ManualCVS] RawCSV,        
+        vrpsJsonFiltered :: api :- "vrps-filtered" :> QueryParam "version" Text 
+                                                   :> Get '[JSON] [VrpDto],
+
+        vrpsCsvUnique :: api :- "vrps-unique.csv" :> QueryParam "version" Text 
+                                                  :> Get '[ManualCVS] RawCSV,
+
+        vrpsJsonUnique :: api :- "vrps-unique" :> QueryParam "version" Text 
+                                                :> Get '[JSON] [VrpMinimalDto],
 
         aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
         bgpCerts :: api :- "bgp-certificates" :> Get '[JSON] [BgpCertDto],
@@ -98,6 +107,11 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/vrps-filtered", mempty & get ?~ jsonOn200 
                 "List of VRPs with SLURM filtering applied to it"),
 
+            ("/vrps-unique.csv", mempty & get ?~ csvOn200 
+                "CSV-formatted list of unique VRPs with SLURM filtering applied to it"),
+            ("/vrps-unique", mempty & get ?~ jsonOn200 
+                "List of of unique VRPs with SLURM filtering applied to it"),
+
             ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
             ("/bgp-certificates", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
 
@@ -121,7 +135,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
-            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")
+            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")            
         ] 
   where                
     jsonOn200 txt = mempty

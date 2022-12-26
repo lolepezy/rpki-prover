@@ -18,10 +18,11 @@ import           Control.Monad
 
 import           Data.Generics.Product.Typed
 
-import           Data.Foldable                    (for_, toList)
+import           Data.Foldable                    (for_)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
+import qualified Data.ByteString.Builder          as BB
 
 import           Data.List.Split                  (chunksOf)
 
@@ -47,7 +48,7 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.Parallel
 import           RPKI.Time
-import           RPKI.Util                        (convert, hexL, decodeBase64)
+import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
 import           RPKI.AppTypes
@@ -56,6 +57,10 @@ import           RPKI.Store.Database
 
 import           System.Timeout                   (timeout)
 import           Time.Types
+
+
+data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString 
+    deriving (Show, Eq)
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -148,8 +153,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                     then updatedRtrState rtrState' newVersion rtrDiff
                     else rtrState' { lastKnownWorldVersion = newVersion }                    
 
-
-            logDiff rtrDiff nextRtrState
+            logDiff rtrDiff
 
             Now now <- thisInstant            
 
@@ -164,19 +168,16 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
                     let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
-                    writeTChan updateBroadcastChan [notifyPdu]
+                    writeTChan updateBroadcastChan [TruePdu $ notifyPdu]
                     writeTVar lastTimeNotified $ Just now
         where
-          logDiff rtrDiff nextRtrState = do 
+          logDiff GenDiffs {..} = do 
             
-            let diffText GenDiffs {..} =
-                    [i|(VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}), |] <>
-                    [i|(BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff})|] :: Text
+            let diffText =
+                    [i|VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}, |] <>
+                    [i|BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff}|] :: Text
 
-            logDebug logger [i|Generated new diff, #{diffText rtrDiff}.|]                        
-            let RtrState {..} = nextRtrState
-            let diffsStr :: Text = convert $ concatMap (\(n, diff) -> [i| #{n}, #{diffText diff}|]) $ toList diffs
-            logDebug logger [i|Updated RTR state: currentSerial #{currentSerial}, diffs: #{diffsStr}.|]                            
+            logDebug logger [i|Generated new diff, #{diffText}.|]            
 
 
     -- For every connection run 2 threads:
@@ -186,33 +187,29 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
     serveConnection connection peer updateBroadcastChan rtrState = do        
         logDebug logger [i|Waiting for the first PDU from client #{peer}|]
         firstPdu <- recv connection 1024
-        (rtrState', rtrPayloads, outboxQueue) <- 
-            atomically $ (,,) <$> 
-                    readTVar rtrState <*>
-                    readRtrPayloads appState <*>
-                    newCQueue 10
+        (rtrState', outboxQueue) <- 
+            atomically $ (,) <$> readTVar rtrState <*> newCQueue 10
 
         let firstPduLazy = LBS.fromStrict firstPdu
 
         let (errorPdu, message, versionedPdu) = 
                 analyzePdu peer firstPduLazy $ bytesToVersionedPdu firstPduLazy        
 
-        for_ errorPdu $ \errorPdu' -> 
-            sendAll connection $ LBS.toStrict $ pduToBytes errorPdu' V0
+        for_ errorPdu $ sendAll connection . pduBytesL V0
 
         for_ message $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' rtrPayloads versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' appState versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
-                    let errorBytes = pduToBytes errorPdu' V0
+                    let errorBytes = pduBytesL V0 errorPdu'
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
-                                      [i|error PDU: #{errorPdu'}, errorBytes = #{hexL errorBytes}, length = #{pduLength errorPdu' V0}|]
-                    sendAll connection $ LBS.toStrict $ pduToBytes errorPdu' V0
+                                      [i|error PDU: #{errorPdu'}, errorBytes = #{hex errorBytes}, length = #{pduLengthL V0 errorPdu'}|]
+                    sendAll connection $ pduBytesL V0 errorPdu'
 
-                Right (responsePdus, session, warning) -> do
-                    for_ warning $ logWarn logger
-                    atomically $ writeCQueue outboxQueue responsePdus
+                Right (createPdus, session, warning) -> do
+                    for_ warning $ logWarn logger                    
+                    atomically $ writeCQueue outboxQueue =<< createPdus
 
                     withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
                         serveLoop session outboxQueue 
@@ -226,20 +223,19 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
             -- in this session's outbox and send them to the socket.
             sendFromQueuesToClient session outboxQueue =
                 loop =<< atomically (dupTChan updateBroadcastChan)
-                where
-                    loop stateUpdateChan = do                         
-                        -- wait for queued PDUs or for state updates
-                        r <- atomically $ 
-                                    readCQueue outboxQueue 
-                                <|> (Just <$> readTChan stateUpdateChan)
+              where
+                loop stateUpdateChan = do                         
+                    -- wait for queued PDUs or for state updates
+                    r <- atomically $ 
+                                readCQueue outboxQueue 
+                            <|> (Just <$> readTChan stateUpdateChan)
 
-                        for_ r $ \pdus -> do 
-                            for_ (chunksOf 1000 pdus) $ \chunk -> 
-                                sendMany connection 
-                                    $ map (\pdu -> LBS.toStrict $ 
-                                            pduToBytes pdu (session ^. typed @ProtocolVersion)) chunk
+                    for_ r $ \pdus -> do 
+                        for_ (chunksOf 3000 pdus) $ \chunk -> 
+                            sendMany connection $ map (pduBytesL (session ^. typed @ProtocolVersion)) chunk
 
-                            loop stateUpdateChan
+                        loop stateUpdateChan
+            
 
             -- Main loop of the client-server interaction: wait for a PDU from the client, 
             -- 
@@ -253,13 +249,13 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                     join $ atomically $ do 
                         -- all the real work happens inside of pure `responseAction`, 
                         -- for better testability.
-                        rtrState'   <- readTVar rtrState                        
-                        rtrPayloads <- readRtrPayloads appState
-                        case responseAction logger peer session rtrState' rtrPayloads pduBytes of 
+                        rtrState' <- readTVar rtrState                        
+                        case responseAction logger peer session rtrState' appState pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io
-                            Right (pdus, io) -> do 
+                            Right (createPdus, io) -> do 
+                                pdus <- createPdus
                                 writeCQueue outboxQueue pdus
                                 pure $ io <> serveLoop session outboxQueue
 
@@ -305,10 +301,10 @@ responseAction :: Show peer =>
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 
-                -> RtrPayloads
+                -> AppState 
                 -> BS.ByteString 
-                -> Either ([Pdu], IO ()) ([Pdu], IO ())
-responseAction logger peer session rtrState vrps pduBytes = 
+                -> Either ([PduLike], IO ()) (STM [PduLike], IO ())
+responseAction logger peer session rtrState appState pduBytes = 
     let 
         pduBytesLazy = LBS.fromStrict pduBytes
 
@@ -320,12 +316,7 @@ responseAction logger peer session rtrState vrps pduBytes =
         errorResponse = maybe mempty (: []) errorPdu
                 
         response pdu = let 
-            r = respondToPdu 
-                    rtrState
-                    vrps
-                    (toVersioned session pdu)
-                    pduBytesLazy
-                    session
+            r = respondToPdu rtrState appState (toVersioned session pdu) pduBytesLazy session
             in case r of 
                 Left (errorPdu', message') -> let
                     ioAction = logDebug logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
@@ -333,15 +324,17 @@ responseAction logger peer session rtrState vrps pduBytes =
                 Right (pdus, warning) -> let
                     ioAction = do 
                         for_ warning $ logWarn logger
-                        logDebug logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}. PDUs.|]                            
+                        -- logDebug logger [i|Parsed PDU: #{pdu}, responding with (first 10) #{take 10 pdus}. PDUs.|]                            
                     in Right (pdus, ioAction)                                     
 
-        errors = (mempty, logError') <> (errorResponse, mempty)
+        errors = (errorResponse, logError')
     in 
         case versionedPdu of 
             Nothing                   -> Left errors
             Just (VersionedPdu pdu _) -> 
-                (errors <> ) <$> response pdu 
+                case response pdu of 
+                    Left z                 -> Left $ errors <> z
+                    Right (createPdus, io) -> Right ((fst errors <>) <$> createPdus, io)
 
 
 -- | Helper function to reduce repeated code.
@@ -350,12 +343,12 @@ analyzePdu :: Show peer =>
                peer 
             -> LBS.ByteString 
             -> Either PduParseError VersionedPdu 
-            -> (Maybe Pdu, Maybe Text, Maybe VersionedPdu)
+            -> (Maybe PduLike, Maybe Text, Maybe VersionedPdu)
 analyzePdu peer pduBytes = \case
         Left (ParsedNothing errorCode errorMessage) -> let
             errorPdu = ErrorPdu errorCode (Just $ convert pduBytes) (Just $ convert errorMessage)
-            in (Just errorPdu, 
-                Just [i|PDU from the #{peer} was wrong: #{errorMessage}, error PDU: #{errorPdu}|], 
+            in (Just $ TruePdu errorPdu, 
+                Just [i|PDU from the #{peer} was broken: #{errorMessage}, error PDU: #{errorPdu}|], 
                 Nothing)
 
         Left (ParsedOnlyHeader errorCode errorMessage header@(PduHeader _ pduType)) ->                 
@@ -363,7 +356,7 @@ analyzePdu peer pduBytes = \case
             in if pduType == errorPduType
                 then let 
                     errorPdu = ErrorPdu errorCode (Just $ convert pduBytes) (Just $ convert errorMessage)
-                    in (Just errorPdu, Just message, Nothing)                        
+                    in (Just $ TruePdu errorPdu, Just message, Nothing)                        
                 else 
                     -- Do no send an error PDU as a response to an error PDU, it's prohibited by RFC                        
                     (Nothing, Just message, Nothing)                            
@@ -378,91 +371,93 @@ analyzePdu peer pduBytes = \case
 -- | Process the first PDU and do the protocol version negotiation.
 -- 
 processFirstPdu :: Maybe RtrState 
-                -> RtrPayloads
+                -> AppState
                 -> VersionedPdu
                 -> LBS.ByteString 
-                -> Either (Pdu, Text) ([Pdu], Session, Maybe Text)
+                -> Either (PduLike, Text) (STM [PduLike], Session, Maybe Text)
 processFirstPdu 
     rtrState 
-    vrps 
+    appState 
     versionedPdu@(VersionedPdu pdu protocolVersion) 
     pduBytes =                
     case pdu of 
         SerialQueryPdu _ _ -> let 
             session' = Session protocolVersion
-            r = respondToPdu rtrState vrps versionedPdu pduBytes session'
+            r = respondToPdu rtrState appState versionedPdu pduBytes session'
             in fmap (\(pdus, message) -> (pdus, session', message)) r
 
         ResetQueryPdu -> let
             session' = Session protocolVersion
-            r = respondToPdu rtrState vrps versionedPdu pduBytes session'
+            r = respondToPdu rtrState appState versionedPdu pduBytes session'
             in fmap (\(pdus, message) -> (pdus, session', message)) r
 
         otherPdu -> let 
             text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, " <> 
                              "but received " <> show otherPdu
-            in Left (ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
+            in Left (TruePdu $ ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
 
 
 -- | Generate PDUs that would be an appropriate response the request PDU.
 -- 
 respondToPdu :: Maybe RtrState
-                -> RtrPayloads
+                -> AppState
                 -> VersionedPdu 
-                -> LBS.ByteString 
+                -> LBS.ByteString                 
                 -> Session
-                -> Either (Pdu, Text) ([Pdu], Maybe Text)
+                -> Either (PduLike, Text) (STM [PduLike], Maybe Text)
 respondToPdu 
-    rtrState
-    vrps 
-    (VersionedPdu pdu pduProtocol) 
-    pduBytes 
+    rtrState    
+    appState
+    (VersionedPdu pdu pduProtocol)     
+    pduBytes     
     (Session sessionProtocol) =
         case rtrState of 
             Nothing -> let
                 text :: Text = "VRP set is empty, the RTR cache is not ready yet."
-                in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
+                in Left (TruePdu $ ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
             Just rtrState'@RtrState {..} ->             
                 case pdu of 
                     SerialQueryPdu sessionId clientSerial -> 
                         withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
                             if clientSerial == currentSerial 
                                 then let 
-                                    pdus = [CacheResponsePdu sessionId] 
-                                        <> [EndOfDataPdu sessionId currentSerial defIntervals]
-                                    in Right (pdus, Nothing)
+                                    pdus = [TruePdu $ CacheResponsePdu sessionId] 
+                                        <> [TruePdu $ EndOfDataPdu sessionId currentSerial defIntervals]
+                                    in Right (pure pdus, Nothing)
                                 else 
                                     case diffsFromSerial rtrState' clientSerial of
                                         Nothing -> 
                                             -- we don't have the data, you are too far behind
                                             Right (
-                                                [CacheResetPdu], 
+                                                pure [TruePdu $ CacheResetPdu], 
                                                 Just [i|No data for serial #{clientSerial}.|])
                                         Just diffs' -> let                                            
-                                            pdus = [CacheResponsePdu sessionId] 
+                                            pdus = [TruePdu $ CacheResponsePdu sessionId] 
                                                     <> diffPayloadPdus (squashDiffs diffs')
                                                     -- TODO Figure out how to instantiate intervals
                                                     -- Should they be configurable?                                                                     
-                                                    <> [EndOfDataPdu sessionId currentSerial defIntervals]
-                                            in Right (pdus, Nothing)
+                                                    <> [TruePdu $ EndOfDataPdu sessionId currentSerial defIntervals]
+                                            in Right (pure pdus, Nothing)
 
                     ResetQueryPdu -> 
-                        withProtocolVersionCheck pdu $ let
-                            pdus = [CacheResponsePdu currentSessionId] 
-                                    <> currentCachePayloadPdus vrps
-                                    <> [EndOfDataPdu currentSessionId currentSerial defIntervals]
-                            in Right (pdus, Nothing) 
+                        withProtocolVersionCheck pdu $ let 
+                            action = do 
+                                bs <- cachedPduBinary appState (currentCachePayloadBS pduProtocol)
+                                pure $ [TruePdu $ CacheResponsePdu currentSessionId] 
+                                    <> [SerialisedPdu bs]
+                                    <> [TruePdu $ EndOfDataPdu currentSessionId currentSerial defIntervals]                                    
+                            in Right (action, Nothing) 
 
                     -- TODO Refactor that stuff 
                     --  - react properly on ErrorPdu
                     --  - Log 
                     -- Dont't send back anything 
                     ErrorPdu {} -> 
-                        Right ([], Nothing)
+                        Right (pure [], Nothing)
 
                     other -> let
                         text = "Unexpected PDU received from the client: " <> show other
-                        in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), convert text)
+                        in Left (TruePdu $ ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), convert text)
                                 
     where        
         withProtocolVersionCheck _ respond = 
@@ -470,21 +465,31 @@ respondToPdu
                 then respond
                 else do            
                     let text :: Text = [i|Protocol version is not the same.|]                                
-                    Left (ErrorPdu UnexpectedProtocolVersion (Just $ convert pduBytes) (Just $ convert text), text)
+                    Left (TruePdu $ ErrorPdu UnexpectedProtocolVersion (Just $ convert pduBytes) (Just $ convert text), text)
 
         withSessionIdCheck currentSessionId sessionId respond =
             if currentSessionId == sessionId
                 then respond
                 else let 
                     text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{currentSessionId}.|]
-                    in Left (ErrorPdu CorruptData (Just $ convert pduBytes) (Just $ convert text), text)
+                    in Left (TruePdu $ ErrorPdu CorruptData (Just $ convert pduBytes) (Just $ convert text), text)
 
+
+pduBytesL :: ProtocolVersion -> PduLike -> BS.ByteString
+pduBytesL protocolVersion = \case
+    TruePdu pdu      -> LBS.toStrict $ pduToBytes pdu protocolVersion
+    SerialisedPdu bs -> bs
+
+pduLengthL :: ProtocolVersion -> PduLike -> Int
+pduLengthL protocolVersion = \case
+    TruePdu pdu      -> fromIntegral $ pduLength pdu protocolVersion
+    SerialisedPdu bs -> BS.length bs 
 
 -- Create VRP PDUs 
-diffPayloadPdus :: RtrDiffs -> [Pdu]
+diffPayloadPdus :: RtrDiffs -> [PduLike]
 diffPayloadPdus GenDiffs {..} = 
-    vrpWithdrawn <> vrpPdusAnn <> 
-    mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn
+    map TruePdu $ vrpWithdrawn <> vrpPdusAnn <> 
+                  mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn
   where
     vrpWithdrawn = map (vrpToPdu Withdrawal) (coerce $ Set.toList $ vrpDiff ^. #deleted)
     vrpPdusAnn   = map (vrpToPdu Announcement) $ coerce $ Set.toAscList $ vrpDiff ^. #added 
@@ -492,12 +497,17 @@ diffPayloadPdus GenDiffs {..} =
     bgpSecPdusAnn   = map (bgpSecToPdu Announcement) $ Set.toList $ bgpSecDiff ^. #added
 
     
-currentCachePayloadPdus :: RtrPayloads -> [Pdu]
-currentCachePayloadPdus RtrPayloads {..} =
-    vrpPdusAnn <> mconcat bgpSecPdusAnn
+currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
+currentCachePayloadBS protocolVersion RtrPayloads {..} =
+    LBS.toStrict 
+        $ BB.toLazyByteString 
+        $ mconcat 
+        $ map (\pdu -> BB.lazyByteString $ pduToBytes pdu protocolVersion) 
+        $ vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn = map (vrpToPdu Announcement) $ coerce $ Set.toAscList uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ Set.toAscList uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
+
     
     
 vrpToPdu :: Flags -> Vrp -> Pdu

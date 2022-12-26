@@ -70,5 +70,5 @@ instance Ord AscOrderedVrp where
         -- Sort prefixes backwards -- it automatically means that 
         -- smaller prefixes will be in front of larger ones.
         compare (Down p1) (Down p2) <> 
-        -- smaller max length should precede?
+        -- shourter max length should precede?
         compare ml1 ml2       

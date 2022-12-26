@@ -67,6 +67,7 @@ instance ToJSON IpPrefix where
 
 instance ToJSON WorldVersion where
     toJSON (WorldVersion v) = toJSON $ show $ toInteger v
+
 instance ToJSON VersionState
 instance ToJSON VIssue
 instance ToJSON VWarning

@@ -44,6 +44,7 @@ import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage hiding (get)
 import           RPKI.Store.Database
 import           RPKI.Resources.Types
+import           RPKI.RTR.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
@@ -63,6 +64,9 @@ httpApi appContext = genericServe HttpApi {
 
         vrpsCsvFiltered  = getVRPSlurmedRaw appContext,
         vrpsJsonFiltered = getVRPSlurmed appContext,
+
+        vrpsCsvUnique = getVRPsUniqueRaw appContext,
+        vrpsJsonUnique = getVRPsUnique appContext,
 
         aspas = liftIO (getASPAs appContext),
         bgpCerts = liftIO (getBGPCerts appContext),
@@ -90,38 +94,51 @@ httpApi appContext = genericServe HttpApi {
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
 getVRPValidated appContext version =
-    getVRPs appContext version (fmap (^. #vrps) . readTVar . (^. #validated))
+    getVRPs appContext version (fmap (^. #vrps) . readTVar . (^. #validated)) toVrpDtos
 
 getVRPSlurmed :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
 getVRPSlurmed appContext version =
-    getVRPs appContext version (fmap (^. #vrps) . readTVar . (^. #filtered))
+    getVRPs appContext version (fmap (^. #vrps) . readTVar . (^. #filtered)) toVrpDtos
 
 getVRPValidatedRaw :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m RawCSV
-getVRPValidatedRaw appContext version = rawCSV <$> getVRPValidated appContext version
+getVRPValidatedRaw appContext version = 
+    vrpDtosToCSV <$> getVRPValidated appContext version
 
 getVRPSlurmedRaw :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m RawCSV
-getVRPSlurmedRaw appContext version = rawCSV <$> getVRPSlurmed appContext version
+getVRPSlurmedRaw appContext version = 
+    vrpDtosToCSV <$> getVRPSlurmed appContext version
+
+getVRPsUniqueRaw :: (MonadIO m, Storage s, MonadError ServerError m)
+                    => AppContext s -> Maybe Text -> m RawCSV
+getVRPsUniqueRaw appContext version = 
+    vrpSetToCSV <$> getVRPs appContext version (fmap (^. #vrps) . readTVar . (^. #filtered)) toVrpSet
+
+getVRPsUnique :: (MonadIO m, Storage s, MonadError ServerError m)
+                    => AppContext s -> Maybe Text -> m [VrpMinimalDto]
+getVRPsUnique appContext version = 
+    getVRPs appContext version (fmap (^. #vrps) . readTVar . (^. #filtered)) toVrpMinimalDtos
 
 
 getVRPs :: (MonadIO m, Storage s, MonadError ServerError m)
         => AppContext s
         -> Maybe Text
-        -> (AppState -> STM Vrps)
-        -> m [VrpDto]
-getVRPs AppContext {..} version func = do
+        -> (AppState -> STM Vrps)        
+        -> (Maybe Vrps -> a)        
+        -> m a
+getVRPs AppContext {..} version readVrps convertVrps = do
     case version of
         Nothing -> liftIO getLatest
         Just v  ->
             case parseWorldVersion v of
                 Left e            -> throwError $ err400 { errBody = [i|'version' is not valid #{v}, error: #{e}|] }
-                Right worlVersion -> mapVrps <$> getByVersion worlVersion
+                Right worlVersion -> convertVrps <$> getByVersion worlVersion
   where
     getLatest =
-        mapVrps <$> do
-            vrps <- atomically (func appState)
+        convertVrps <$> do
+            vrps <- atomically (readVrps appState)
             if vrps == mempty
                 then
                     getLatestVRPs =<< readTVarIO database
@@ -135,11 +152,21 @@ getVRPs AppContext {..} version func = do
             [] -> throwError $ err404 { errBody = [i|Version #{worldVersion} doesn't exist.|] }
             _  -> liftIO $ roTx db $ \tx -> getVrps tx db worldVersion
 
-    mapVrps = \case
-        Nothing   -> []
-        Just vrps -> [ VrpDto a p len (unTaName ta) |
-                            (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                            Vrp a p len  <- Set.toList vrpSet ]
+toVrpDtos :: Maybe Vrps -> [VrpDto]
+toVrpDtos = \case
+    Nothing   -> []
+    Just vrps -> [ VrpDto a p len (unTaName ta) |
+                        (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
+                        Vrp a p len  <- Set.toList vrpSet ]
+
+toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
+toVrpSet = maybe mempty uniqVrps
+
+toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
+toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
+  where
+    asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
+
 
 getASPAs :: Storage s => AppContext s -> IO [AspaDto]
 getASPAs AppContext {..} = do
@@ -302,16 +329,16 @@ getVersions :: (MonadIO m, Storage s, MonadError ServerError m) =>
                 AppContext s -> m [WorldVersion]
 getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
+    -- Sort versions from latest to earliest
     sortBy (flip compare) . map fst <$> roTx db (`allVersions` db)
 
 
-rawCSV :: [VrpDto] -> RawCSV
-rawCSV vrpDtos =
-    RawCSV $ BS.toLazyByteString $ header <> body
+vrpDtosToCSV :: [VrpDto] -> RawCSV
+vrpDtosToCSV vrpDtos =
+    rawCSV 
+        (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
+        (mconcat $ map toBS vrpDtos)
   where
-    header = str "ASN,IP Prefix,Max Length,Trust Anchor\n"
-    body = mconcat $ map toBS vrpDtos
-
     toBS VrpDto {
             asn = ASN as,
             maxLength = PrefixLength ml,
@@ -321,8 +348,28 @@ rawCSV vrpDtos =
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
 
-    prefixStr (Ipv4P (Ipv4Prefix p)) = show p
-    prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
+vrpSetToCSV vrpDtos =
+    rawCSV 
+        (str "ASN,IP Prefix,Max Length\n")
+        (mconcat $ map toBS $ Set.toList vrpDtos)
+  where
+    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) = 
+        str "AS" <> str (show asn) <> ch ',' <>
+        str (prefixStr prefix) <> ch ',' <>
+        str (show maxLength) <> ch '\n'
 
-    str = BS.stringUtf8
-    ch  = BS.charUtf8
+
+rawCSV :: BS.Builder -> BS.Builder -> RawCSV
+rawCSV header body = RawCSV $ BS.toLazyByteString $ header <> body
+    
+
+prefixStr :: IpPrefix -> String
+prefixStr (Ipv4P (Ipv4Prefix p)) = show p
+prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+
+str :: String -> BS.Builder
+str = BS.stringUtf8
+
+ch :: Char -> BS.Builder
+ch  = BS.charUtf8    
