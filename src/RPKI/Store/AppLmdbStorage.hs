@@ -257,7 +257,7 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 
 
 -- | The only reason to do LMDB copying as a separate worker process is memory.
--- Even thought copying key-value pair is a perfectly streaming-like activity, 
+-- Even though copying key-value pairs is a perfectly streaming-like activity, 
 -- without enough GC pressure it allocates a large heap, so to avoid it we run 
 -- a worker process with limited heap that does the copying.
 -- 
@@ -266,10 +266,10 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
     let workerId = WorkerId "lmdb-compaction"
     
     -- Heap size is based on MS = "the biggest KV-pair that we need to copy"
-    -- and is equal to max(20*MS, 128mb)
+    -- and is equal to max(20*MS, 64mb)
     let maxMemoryMb = let 
-            Size maxMemory = max ((dbtats ^. #statMaxKeyBytes + dbtats ^. #statMaxValueBytes) * 20) 128 
-            in maxMemory `div` 1024 `div` 1024
+            Size maxMemory = (dbtats ^. #statMaxKeyBytes + dbtats ^. #statMaxValueBytes) * 20
+            in max (maxMemory `div` 1024 `div` 1024) 64
 
     let arguments = 
             [ worderIdS workerId ] <>
