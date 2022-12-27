@@ -10,7 +10,7 @@
 module RPKI.SLURM.SlurmProcessing where
 
 
-import Control.Lens ( (^.) )
+import Control.Lens hiding (contains)
 import Control.Monad
 
 import qualified Data.ByteString.Lazy as LBS
@@ -49,9 +49,9 @@ slurmVrpName = TaName "slurm"
 
 applySlurmToVrps :: Slurm -> Vrps -> Vrps
 applySlurmToVrps slurm (Vrps vrps) = 
-    Vrps $ filteredVrps <> MonoidalMap.singleton slurmVrpName assertedVrps
+    Vrps $ filteredVrps $ vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
   where     
-    filteredVrps = MonoidalMap.map (Set.filter filterFunc) vrps
+    filteredVrps vrps_ = MonoidalMap.map (Set.filter filterFunc) vrps_
 
     assertedVrps = Set.fromList 
         $ map toVrp 
@@ -76,19 +76,31 @@ applySlurmToVrps slurm (Vrps vrps) =
 
 
 applySlurmBgpSec :: Slurm -> Set.Set BGPSecPayload -> Set.Set BGPSecPayload
-applySlurmBgpSec slurm bgps = Set.filter bgpSecFilter bgps <> assertedBgpSecs
-  where
-    bgpSecFilter BGPSecPayload {..} = do         
-        True
-    --     not 
-    --         $ any matchesFilter 
-    --         $ slurm ^. #validationOutputFilters . #prefixFilters
-    --   where
-    --     matchesFilter z = case z ^. #asnAndSKI of
-    --         This asn      -> coerce asn == vAsn
-    --         That ski      -> ski `isInsideOf` prefix
-    --         These asn ski -> coerce asn == vAsn && vPrefix `isInsideOf` prefix
-
+applySlurmBgpSec slurm bgps = 
+    -- BGPSec filtering should be applied _after_ adding assertions
+    -- https://www.rfc-editor.org/rfc/rfc8416#section-3.3.2    
+    bgpSecFiltered $ bgps <> assertedBgpSecs
+  where    
+    bgpSecFiltered bgps' = 
+        let 
+            excludedByAsn :: Set.Set ASN = Set.fromList [ coerce asn | 
+                    BgpsecFilter { asnAndSKI = This asn } 
+                        <- slurm ^. #validationOutputFilters . #bgpsecFilters ]
+            excludedBySKI :: Set.Set SKI = Set.fromList [ SKI $ mkKI bs | 
+                    BgpsecFilter { asnAndSKI = That (DecodedBase64 bs) } 
+                        <- slurm ^. #validationOutputFilters . #bgpsecFilters ]
+            excludedByBoth :: Set.Set (ASN, SKI) = Set.fromList [ (coerce asn, SKI $ mkKI bs) | 
+                    BgpsecFilter { asnAndSKI = These asn (DecodedBase64 bs) } 
+                        <- slurm ^. #validationOutputFilters . #bgpsecFilters ]
+        in Set.fromList 
+            $ filter (\BGPSecPayload {..} -> not $ null bgpSecAsns) 
+            $ map (\bgp@BGPSecPayload {..} -> 
+                    bgp & #bgpSecAsns %~ filter (\asn -> 
+                            asn `Set.notMember` excludedByAsn && 
+                            (asn, bgpSecSki) `Set.notMember` excludedByBoth))  
+            $ filter (\BGPSecPayload {..} -> bgpSecSki `Set.notMember` excludedBySKI) 
+            $ Set.toList bgps'
+        
     assertedBgpSecs = Set.fromList 
         $ map toBgpSec
         $ slurm ^. #locallyAddedAssertions . #bgpsecAssertions
