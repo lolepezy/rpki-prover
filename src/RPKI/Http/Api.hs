@@ -53,6 +53,7 @@ data API api = API {
         bgpCerts :: api :- "bgp-certificates" :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
+        slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
                 
         validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),
         fullValidationResults    :: api :- "validations-full" :> Get '[JSON] (ValidationsDto FullVDto),
@@ -130,6 +131,9 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/slurm", mempty & get ?~ (jsonOn200 
                         "Returns SLURM (RFC 8416) that is set using --local-exceptions option"
                     & at 404 ?~ "SLURM is not set using --local-exceptions")),
+
+            ("/slurms", mempty & get ?~ jsonOn200 
+                        "Returns all SLURMs (RFC 8416) for every version"),
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),

@@ -25,6 +25,7 @@ import           Data.List                        (sortBy)
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (maybeToList)
 import qualified Data.Set                         as Set
+import qualified Data.List                         as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
 import           Data.String.Interpolate.IsString
@@ -48,6 +49,7 @@ import           RPKI.RTR.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
+import Data.Ord
 
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext = genericServe HttpApi {
@@ -72,6 +74,7 @@ httpApi appContext = genericServe HttpApi {
         bgpCerts = liftIO (getBGPCerts appContext),
 
         slurm = getSlurm appContext,
+        slurms = getAllSlurms appContext,
 
         fullValidationResults    = getValidationsDto appContext,
         validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
@@ -241,6 +244,16 @@ getSlurm AppContext {..} = do
     case z of
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }
         Just m  -> pure m
+
+getAllSlurms :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                AppContext s -> m [(WorldVersion, Slurm)]
+getAllSlurms AppContext {..} = do
+    db <- liftIO $ readTVarIO database
+    liftIO $ roTx db $ \tx -> do
+        versions <- List.sortOn Down <$> allVersions tx db
+        slurms   <- mapM (\(wv, _) -> (wv, ) <$> slurmForVersion tx db wv) versions        
+        pure [ (w, s) | (w, Just s) <- slurms ]
+
 
 toVR :: (Scope a, Set.Set VIssue) -> FullVDto
 toVR (Scope scope, issues) = FullVDto {
