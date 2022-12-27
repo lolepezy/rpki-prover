@@ -45,7 +45,6 @@ import RPKI.Util (fmtEx, encodeBase64)
 slurmVrpName :: TaName
 slurmVrpName = TaName "slurm"
 
--- TODO BgpSec stuff is not supported at the moment.
 
 applySlurmToVrps :: Slurm -> Vrps -> Vrps
 applySlurmToVrps slurm (Vrps vrps) = 
@@ -79,9 +78,9 @@ applySlurmBgpSec :: Slurm -> Set.Set BGPSecPayload -> Set.Set BGPSecPayload
 applySlurmBgpSec slurm bgps = 
     -- BGPSec filtering should be applied _after_ adding assertions
     -- https://www.rfc-editor.org/rfc/rfc8416#section-3.3.2    
-    bgpSecFiltered $ bgps <> assertedBgpSecs
+    filteredBgpSec $ bgps <> assertedBgpSecs
   where    
-    bgpSecFiltered bgps' = 
+    filteredBgpSec bgps' = 
         let 
             excludedByAsn :: Set.Set ASN = Set.fromList [ coerce asn | 
                     BgpsecFilter { asnAndSKI = This asn } 

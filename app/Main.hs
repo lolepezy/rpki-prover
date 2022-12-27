@@ -212,10 +212,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             then Just $ defaultRtrConfig
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
-            else Nothing
-
-    appState1 <- liftIO newAppState
-    database  <- liftIO $ newTVarIO db
+            else Nothing    
 
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -225,11 +222,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     unless (null localExceptions) $ do
         void $ readSlurms localExceptions
 
-    -- Set the function that re-reads SLURM files with every re-validation.
-    let appState =
-            case localExceptions of
-                []         -> appState1
-                slurmFiles -> appState1 & #readSlurm ?~ readSlurms slurmFiles
+    database <- liftIO $ newTVarIO db    
+    appState <- createAppState logger localExceptions
 
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions
 
@@ -437,10 +431,24 @@ createWorkerAppContext config logger = do
 
     db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
-    appState <- liftIO newAppState
+    appState <- createAppState logger (config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
 
     pure AppContext {..}
+
+createAppState :: MonadIO m => AppLogger -> [String] -> m AppState
+createAppState logger localExceptions = do
+    appState <- liftIO newAppState    
+
+    -- Set the function that re-reads SLURM files with every re-validation.
+    pure $ case localExceptions of
+            []         -> appState
+            slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles    
+  where
+    readSlurms files = do
+        logDebug logger [i|Reading SLURM files: #{files}.|]
+        readSlurmFiles files
+
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()

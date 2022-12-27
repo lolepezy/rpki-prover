@@ -302,7 +302,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
         runProcessTALsWorker worldVersion = do 
             let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
-            let workerId = WorkerId $ "validator:" <> talsStr
+            let workerId = WorkerId $ "validation:" <> talsStr
 
             let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
 
@@ -345,7 +345,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                 (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
                 case z of
                     Left e -> do
-                        logError logger [i|Failed to read apply SLURM files: #{e}|]
+                        logError logger [i|Failed to read SLURM files: #{e}|]
                         pure (vs, Nothing)
                     Right slurm ->
                         pure (vs, Just slurm)
