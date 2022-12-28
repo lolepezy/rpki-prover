@@ -54,8 +54,8 @@
             {
                 "asn": 64496,
                 "comment": "My known key for my important ASN",
-                "SKI": "PHNvbWUgYmFzZTY0IFNLST4=",
-                "routerPublicKey": "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
+                "SKI": "UQ9IXSminTe1FfHEeNjtPLeqfSM=",
+                "routerPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgFcjQ/g//LAQerAH2Mpp+GucoDAGBbhIqD33wNPsXxnAGb+mtZ7XQrVO9DQ6UlAShtig5+QfEKpTtFgiqfiAFQ=="
             }
         ]
     }
