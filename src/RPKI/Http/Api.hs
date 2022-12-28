@@ -50,7 +50,9 @@ data API api = API {
                                                 :> Get '[JSON] [VrpMinimalDto],
 
         aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
-        bgpCerts :: api :- "bgp-certificates" :> Get '[JSON] [BgpCertDto],
+
+        bgpCerts :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
+        bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
@@ -114,7 +116,9 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "List of of unique VRPs with SLURM filtering applied to it"),
 
             ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
-            ("/bgp-certificates", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
+            ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
+            ("/bgpsec-filtered", mempty & get ?~ jsonOn200 
+                "List of all valid BGPSec certificates found in repositories filtered with SLURM"),
 
             ("/validations", mempty & get ?~ jsonOn200 
                 "Validation results for the latest validation run"),

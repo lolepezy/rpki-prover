@@ -84,7 +84,6 @@ versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
-
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
 waitForNewVersion appState@AppState {..} knownWorldVersion = do     
@@ -98,19 +97,20 @@ waitForVersion :: AppState -> STM WorldVersion
 waitForVersion AppState {..} =
     maybe retry pure =<< readTVar world
 
-
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
     liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
 
-
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
 
-filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads 
+filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads
 filterWithSLURM RtrPayloads {..} slurm =     
-    mkRtrPayloads (slurm `applySlurmToVrps` vrps) (slurm `applySlurmBgpSec` bgpSec)
+    mkRtrPayloads (slurm `applySlurmToVrps` vrps) 
+                  (slurm `applySlurmBgpSec` bgpSec)
 
+-- TOSO Make it more generic for things that need to be recomoputed for each version 
+-- and things that are computed on-demand.
 cachedPduBinary :: AppState -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
 cachedPduBinary appState@AppState {..} f = do 
     readTVar cachedBinaryPdus >>= \case     

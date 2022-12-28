@@ -23,7 +23,7 @@ import qualified Data.ByteString.Builder          as BS
 
 import           Data.List                        (sortBy)
 import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Maybe                       (maybeToList)
+import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                         as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
@@ -50,6 +50,7 @@ import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
 import Data.Ord
+import RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
 httpApi :: Storage s => AppContext s -> Application
 httpApi appContext = genericServe HttpApi {
@@ -70,8 +71,9 @@ httpApi appContext = genericServe HttpApi {
         vrpsCsvUnique = getVRPsUniqueRaw appContext,
         vrpsJsonUnique = getVRPsUnique appContext,
 
-        aspas = liftIO (getASPAs appContext),
-        bgpCerts = liftIO (getBGPCerts appContext),
+        aspas = liftIO $ getASPAs appContext,
+        bgpCerts = liftIO $ getBGPCerts appContext,
+        bgpCertsFiltered = liftIO $ getBGPCertsFiltered appContext,
 
         slurm = getSlurm appContext,
         slurms = getAllSlurms appContext,
@@ -183,15 +185,28 @@ getASPAs AppContext {..} = do
         }
 
 getBGPCerts :: Storage s => AppContext s -> IO [BgpCertDto]
-getBGPCerts AppContext {..} = do
-    bgps <- getLatestBgps =<< readTVarIO database
-    pure $ map toDto $ Set.toList bgps
-  where
-    toDto BGPSecPayload {..} = BgpCertDto {
-            ski = bgpSecSki,
-            asns = bgpSecAsns,
-            subjectPublicKeyInfo = bgpSecSpki
-        }
+getBGPCerts AppContext {..} =
+    fmap (map bgpSecToDto . Set.toList) 
+        $ getLatestBgps =<< readTVarIO database    
+
+getBGPCertsFiltered :: Storage s => AppContext s -> IO [BgpCertDto]
+getBGPCertsFiltered AppContext {..} = do
+    db <- readTVarIO database
+    fmap (fromMaybe mempty) $ roTx db $ \tx -> do 
+        getLastCompletedVersion db tx >>= \case      
+            Nothing      -> pure mempty   
+            Just version -> runMaybeT $ do 
+                bgps  <- MaybeT $ getBgps tx db version
+                slurm <- MaybeT $ slurmForVersion tx db version                        
+                pure $ map bgpSecToDto $ Set.toList $ applySlurmBgpSec slurm bgps    
+  
+
+bgpSecToDto :: BGPSecPayload -> BgpCertDto
+bgpSecToDto BGPSecPayload {..} = BgpCertDto {
+        ski = bgpSecSki,
+        asns = bgpSecAsns,
+        subjectPublicKeyInfo = bgpSecSpki
+    }        
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do
