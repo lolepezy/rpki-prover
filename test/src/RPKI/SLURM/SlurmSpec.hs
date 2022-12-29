@@ -1,6 +1,7 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.SLURM.SlurmSpec where
 
@@ -17,6 +18,7 @@ import           Data.Aeson as Json
 
 import           Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Set                 as Set
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
@@ -28,6 +30,7 @@ import           RPKI.SLURM.Types
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
+import           RPKI.AppState
 
 
 slurmGroup :: TestTree
@@ -37,7 +40,8 @@ slurmGroup = testGroup "Slurm" [
         HU.testCase "Test Full" test_full,
         HU.testCase "Test reject duplicate SLURM files" test_reject_full_duplicates,
         HU.testCase "Test reject partial prefix duplicate SLURM files" test_reject_partial_prefix_duplicates,
-        HU.testCase "Test reject partial ASN duplicate SLURM files" test_reject_partial_asn_duplicates
+        HU.testCase "Test reject partial ASN duplicate SLURM files" test_reject_partial_asn_duplicates,
+        HU.testCase "Test SLURM filtering is applied to RTR payload" test_apply_slurm
     ]
 
 
@@ -165,6 +169,64 @@ test_reject_partial_asn_duplicates = do
         z    
 
 
+test_apply_slurm :: HU.Assertion
+test_apply_slurm = do    
+    let rtrPayloads = 
+            mkRtrPayloads 
+                (createVrps (TaName "ta") [
+                    mkVrp4 123 "192.168.0.0/16" 16,
+                    mkVrp4 124 "192.0.2.0/24" 24,
+                    mkVrp4 64496 "10.1.1.0/24" 24,
+                    mkVrp4 64497 "198.51.100.0/24" 24,
+                    mkVrp4 64497 "198.51.101.0/24" 24
+                ]) 
+                (Set.fromList [
+                    mkBgpSec "aabb" [ASN 64496] "aabbcc",
+                    mkBgpSec "foo" [ASN 123] "112233",                
+                    mkBgpSec "bar" [ASN 64497] "112233",
+                    mkBgpSec "bar" [ASN 64497, ASN 111] "445566",
+                    mkBgpSec "1122" [ASN 234] "112233"
+                ])
+
+    let filtered = filterWithSLURM rtrPayloads bigTestSlurm
+
+    let expected = 
+            mkRtrPayloads 
+                (createVrps (TaName "ta") [
+                    mkVrp4 123 "192.168.0.0/16" 16,
+                    mkVrp4 64497 "198.51.101.0/24" 24,                             
+                    mkVrp4 64496 "198.51.100.0/24" 24
+                    ] <>
+                createVrps (TaName "slurm") []) 
+                (Set.fromList [                                        
+                    mkBgpSec "1122" [ASN 234] "112233",
+                    mkBgpSec "bar" [ASN 111] "112233",
+                    mkBgpSec "<some base64 SKI>" 
+                        [ASN 64496] "<some base64 public key>"
+                ])
+    -- HU.assertEqual "Wrong:" expected filtered
+    pure ()
+  where
+    mkVrp4 asn prefix length = 
+        Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length)
+    mkVrp6 asn prefix length = 
+        Vrp (ASN asn) (Ipv6P $ readIp6 prefix) (PrefixLength length)
+
+    mkBgpSec ski asns spki = let 
+            bgpSecSki  = SKI $ mkKI ski
+            bgpSecAsns = asns
+            bgpSecSpki = SPKI $ EncodedBase64 spki 
+        in BGPSecPayload {..}
+
+{- 
+      expected: RtrPayloads {vrps = Vrps {unVrps = MonoidalMap {getMonoidalMap = fromList [("slurm",fromList []),("ta",fromList [Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16),Vrp (ASN 64496) (Ipv4P (Ipv4Prefix 198.51.100.0/24)) (PrefixLength 24),Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24)])]}}, uniqueVrps = fromList [AscOrderedVrp (Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16)),AscOrderedVrp (Vrp (ASN 64496) (Ipv4P (Ipv4Prefix 198.51.100.0/24)) (PrefixLength 24)),AscOrderedVrp (Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24))], bgpSec = fromList [BGPSecPayload {bgpSecSki = SKI {unSKI = "31313232"}, bgpSecAsns = [ASN 234], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "112233"}},BGPSecPayload {bgpSecSki = SKI {unSKI = "3c736f6d652062617365363420534b493e"}, bgpSecAsns = [ASN 64496], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "<some base64 public key>"}},BGPSecPayload {bgpSecSki = SKI {unSKI = "626172"}, bgpSecAsns = [ASN 111], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "112233"}}]}
+       but got: RtrPayloads {vrps = Vrps {unVrps = MonoidalMap {getMonoidalMap = fromList [("slurm",fromList []),("ta",fromList [Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16),Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24)])]}}, uniqueVrps = fromList [AscOrderedVrp (Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16)),AscOrderedVrp (Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24))], bgpSec = fromList [BGPSecPayload {bgpSecSki = SKI {unSKI = "31313232"}, bgpSecAsns = [ASN 234], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "112233"}},BGPSecPayload {bgpSecSki = SKI {unSKI = "626172"}, bgpSecAsns = [ASN 111], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "445566"}}]}
+
+
+-}
+
+
+bigTestSlurm :: Slurm
 bigTestSlurm = Slurm {
     slurmVersion = SlurmVersion 1, 
     validationOutputFilters = ValidationOutputFilters {

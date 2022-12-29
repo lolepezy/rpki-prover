@@ -728,3 +728,6 @@ newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
 
 allVrps :: Vrps -> [Set Vrp] 
 allVrps (Vrps vrps) = MonoidalMap.elems vrps          
+
+createVrps :: Foldable f => TaName -> f Vrp -> Vrps
+createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, Set.fromList $ toList vrps)]
