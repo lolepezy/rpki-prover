@@ -1,10 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.SLURM.SlurmSpec where
 
+import           Control.Lens
+
+import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 
 import           Test.Tasty
@@ -31,6 +35,7 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
 import           RPKI.AppState
+import           RPKI.Util 
 
 
 slurmGroup :: TestTree
@@ -194,18 +199,20 @@ test_apply_slurm = do
             mkRtrPayloads 
                 (createVrps (TaName "ta") [
                     mkVrp4 123 "192.168.0.0/16" 16,
-                    mkVrp4 64497 "198.51.101.0/24" 24,                             
-                    mkVrp4 64496 "198.51.100.0/24" 24
-                    ] <>
-                createVrps (TaName "slurm") []) 
+                    mkVrp4 64497 "198.51.101.0/24" 24                    
+                ] <>
+                createVrps (TaName "slurm") [
+                    mkVrp4 64496 "198.51.100.0/24" 24,
+                    mkVrp6 64496 "2001:db8::/32" 48
+                ]) 
                 (Set.fromList [                                        
                     mkBgpSec "1122" [ASN 234] "112233",
-                    mkBgpSec "bar" [ASN 111] "112233",
-                    mkBgpSec "<some base64 SKI>" 
-                        [ASN 64496] "<some base64 public key>"
+                    mkBgpSec "bar" [ASN 111] "445566",
+                    mkBgpSec "<some base64 SKI>"
+                        [ASN 64496] "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
                 ])
-    -- HU.assertEqual "Wrong:" expected filtered
-    pure ()
+    HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered ^. #vrps)
+    HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered ^. #bgpSec)
   where
     mkVrp4 asn prefix length = 
         Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length)
@@ -217,14 +224,6 @@ test_apply_slurm = do
             bgpSecAsns = asns
             bgpSecSpki = SPKI $ EncodedBase64 spki 
         in BGPSecPayload {..}
-
-{- 
-      expected: RtrPayloads {vrps = Vrps {unVrps = MonoidalMap {getMonoidalMap = fromList [("slurm",fromList []),("ta",fromList [Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16),Vrp (ASN 64496) (Ipv4P (Ipv4Prefix 198.51.100.0/24)) (PrefixLength 24),Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24)])]}}, uniqueVrps = fromList [AscOrderedVrp (Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16)),AscOrderedVrp (Vrp (ASN 64496) (Ipv4P (Ipv4Prefix 198.51.100.0/24)) (PrefixLength 24)),AscOrderedVrp (Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24))], bgpSec = fromList [BGPSecPayload {bgpSecSki = SKI {unSKI = "31313232"}, bgpSecAsns = [ASN 234], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "112233"}},BGPSecPayload {bgpSecSki = SKI {unSKI = "3c736f6d652062617365363420534b493e"}, bgpSecAsns = [ASN 64496], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "<some base64 public key>"}},BGPSecPayload {bgpSecSki = SKI {unSKI = "626172"}, bgpSecAsns = [ASN 111], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "112233"}}]}
-       but got: RtrPayloads {vrps = Vrps {unVrps = MonoidalMap {getMonoidalMap = fromList [("slurm",fromList []),("ta",fromList [Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16),Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24)])]}}, uniqueVrps = fromList [AscOrderedVrp (Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16)),AscOrderedVrp (Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24))], bgpSec = fromList [BGPSecPayload {bgpSecSki = SKI {unSKI = "31313232"}, bgpSecAsns = [ASN 234], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "112233"}},BGPSecPayload {bgpSecSki = SKI {unSKI = "626172"}, bgpSecAsns = [ASN 111], bgpSecSpki = SPKI {unSPKI = EncodedBase64 "445566"}}]}
-
-
--}
-
 
 bigTestSlurm :: Slurm
 bigTestSlurm = Slurm {
@@ -340,13 +339,15 @@ fullJson = [i|
             "asn": 64496,
             "comment" : "My known key for my important ASN",
             "SKI": "PHNvbWUgYmFzZTY0IFNLST4=",
-            "routerPublicKey": "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
+            "routerPublicKey": "#{mkBase64 "<some base64 public key>"}"
             }
         ]
         }
         }
     |]            
 
+mkBase64 :: BS.ByteString -> BS.ByteString
+mkBase64 bs = let EncodedBase64 z = encodeBase64 $ DecodedBase64 bs in z
 
 assertParsed slurm t = let
         decoded = Json.eitherDecode t
