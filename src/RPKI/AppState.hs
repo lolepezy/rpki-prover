@@ -109,10 +109,10 @@ filterWithSLURM RtrPayloads {..} slurm =
     mkRtrPayloads (slurm `applySlurmToVrps` vrps) 
                   (slurm `applySlurmBgpSec` bgpSec)
 
--- TOSO Make it more generic for things that need to be recomoputed for each version 
+-- TODO Make it more generic for things that need to be recomoputed for each version 
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
-cachedPduBinary appState@AppState {..} f = do 
+cachedPduBinary appState@AppState {..} f = 
     readTVar cachedBinaryPdus >>= \case     
         Nothing -> do            
             bs <- f <$> readRtrPayloads appState 
