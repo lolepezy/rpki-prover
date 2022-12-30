@@ -48,7 +48,7 @@ slurmVrpName = TaName "slurm"
 
 applySlurmToVrps :: Slurm -> Vrps -> Vrps
 applySlurmToVrps slurm (Vrps vrps) = 
-    Vrps $ filteredVrps $ vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
+    Vrps $ filteredVrps vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
   where     
     filteredVrps vrps_ = MonoidalMap.map (Set.filter filterFunc) vrps_
 
@@ -76,9 +76,12 @@ applySlurmToVrps slurm (Vrps vrps) =
 
 applySlurmBgpSec :: Slurm -> Set.Set BGPSecPayload -> Set.Set BGPSecPayload
 applySlurmBgpSec slurm bgps = 
-    -- BGPSec filtering should be applied _after_ adding assertions
+    -- TODO 
+    -- BGPSec filtering should be applied _after_ adding assertions?
     -- https://www.rfc-editor.org/rfc/rfc8416#section-3.3.2    
-    filteredBgpSec $ bgps <> assertedBgpSecs
+    -- it probably doesn't make a whole lot of sense, 
+    -- it is not very practical?
+    filteredBgpSec bgps <> assertedBgpSecs
   where    
     filteredBgpSec bgps' = 
         let 
