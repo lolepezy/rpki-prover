@@ -23,6 +23,7 @@ import           Servant.Swagger.UI
 
 import qualified Data.HashMap.Strict.InsOrd as IOMap
 
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Store.Types
 import           RPKI.Http.Types
@@ -31,15 +32,30 @@ import           RPKI.Util (convert)
 
 
 data API api = API {        
-        vrpsCsv  :: api :- "vrps.csv"  :> Get '[ManualCVS] RawCSV,
-        vrpsJson :: api :- "vrps" :> Get '[JSON] [VrpDto],
+        vrpsCsv  :: api :- "vrps.csv"  :> QueryParam "version" Text 
+                                       :> Get '[ManualCVS] RawCSV,
 
-        vrpsCsvFiltered  :: api :- "vrps-filtered.csv"  :> Get '[ManualCVS] RawCSV,        
-        vrpsJsonFiltered :: api :- "vrps-filtered" :> Get '[JSON] [VrpDto],
+        vrpsJson :: api :- "vrps" :> QueryParam "version" Text 
+                                  :> Get '[JSON] [VrpDto],
 
-        aspas :: api :- "aspa" :> Get '[JSON] [AspaDto],
+        vrpsCsvFiltered  :: api :- "vrps-filtered.csv" :> QueryParam "version" Text 
+                                                       :> Get '[ManualCVS] RawCSV,        
+        vrpsJsonFiltered :: api :- "vrps-filtered" :> QueryParam "version" Text 
+                                                   :> Get '[JSON] [VrpDto],
+
+        vrpsCsvUnique :: api :- "vrps-unique.csv" :> QueryParam "version" Text 
+                                                  :> Get '[ManualCVS] RawCSV,
+
+        vrpsJsonUnique :: api :- "vrps-unique" :> QueryParam "version" Text 
+                                                :> Get '[JSON] [VrpMinimalDto],
+
+        aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
+
+        bgpCerts :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
+        bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
+        slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
                 
         validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),
         fullValidationResults    :: api :- "validations-full" :> Get '[JSON] (ValidationsDto FullVDto),
@@ -54,7 +70,11 @@ data API api = API {
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                     :> QueryParam "hash" Text 
-                                    :> Get '[JSON] [RObject]
+                                    :> Get '[JSON] [RObject],
+
+        rtrDiffs :: api :- "rtr" :> Get '[JSON] RtrDto,
+
+        versions :: api :- "versions" :> Get '[JSON] [WorldVersion]
     }
     deriving (Generic)
 
@@ -90,7 +110,15 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/vrps-filtered", mempty & get ?~ jsonOn200 
                 "List of VRPs with SLURM filtering applied to it"),
 
-            ("/aspa", mempty & get ?~ jsonOn200 "List of all ASPA objects"),
+            ("/vrps-unique.csv", mempty & get ?~ csvOn200 
+                "CSV-formatted list of unique VRPs with SLURM filtering applied to it"),
+            ("/vrps-unique", mempty & get ?~ jsonOn200 
+                "List of of unique VRPs with SLURM filtering applied to it"),
+
+            ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
+            ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
+            ("/bgpsec-filtered", mempty & get ?~ jsonOn200 
+                "List of all valid BGPSec certificates found in repositories filtered with SLURM"),
 
             ("/validations", mempty & get ?~ jsonOn200 
                 "Validation results for the latest validation run"),
@@ -108,9 +136,14 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                         "Returns SLURM (RFC 8416) that is set using --local-exceptions option"
                     & at 404 ?~ "SLURM is not set using --local-exceptions")),
 
+            ("/slurms", mempty & get ?~ jsonOn200 
+                        "Returns all SLURMs (RFC 8416) for every version"),
+
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
-            ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config")
+            ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
+            ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
+            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")            
         ] 
   where                
     jsonOn200 txt = mempty

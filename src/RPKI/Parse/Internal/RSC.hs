@@ -15,22 +15,25 @@ import Data.Bifunctor
 
 import Data.Tuple.Strict
 
+import RPKI.AppMonad
 import RPKI.Domain 
 import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
-import RPKI.Util
 import RPKI.Resources.IntervalSet as IS
 import Data.Either
+
+import qualified RPKI.Util                  as U
 
 
 -- | Parse RSC, https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
 -- 
-parseRsc :: BS.ByteString -> ParseResult RscObject
+parseRsc :: BS.ByteString -> PureValidatorT RscObject
 parseRsc bs = do    
-    asns      <- first (fmtErr . show) $ decodeASN1' BER bs      
-    signedRsc <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseRsc') asns
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs      
+    signedRsc <- fromEither $ first (parseErr . U.fmtGen) $ 
+                    runParseASN1 (parseSignedObject $ parseSignedContent parseRsc') asns
     hash' <- getMetaFromSigned signedRsc bs
     pure $ newCMSObject hash' (CMS signedRsc)
   where     
@@ -67,9 +70,9 @@ parseRsc bs = do
                     getNext >>= \case 
                         ASN1String (ASN1CharacterString IA5 filename) ->
                             getNext >>= \case
-                                OctetString os -> pure $ T2 (Just $ convert filename) (mkHash os)
+                                OctetString os -> pure $ T2 (Just $ U.convert filename) (U.mkHash os)
                                 other          -> throwParseError $ "Unexpected checklist item: " ++ show other
-                        OctetString os         -> pure $ T2 Nothing (mkHash os)
+                        OctetString os         -> pure $ T2 Nothing (U.mkHash os)
                         other                  -> throwParseError $ "Unexpected checklist item: " ++ show other
     
     parseIps = do 

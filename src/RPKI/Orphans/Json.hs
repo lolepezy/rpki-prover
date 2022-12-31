@@ -13,11 +13,13 @@ import qualified Data.ByteString.Short       as BSS
 import           Data.Text                   (Text)
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8)
+import           Data.Foldable               (toList)
 
 import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
 import           Data.Aeson.Types            (toJSONKeyText)
 import           Data.Tuple.Strict
+import           Deque.Strict                as Deq
 
 import           Data.String.Interpolate.IsString
 
@@ -46,8 +48,10 @@ import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
-import           RPKI.Resources.IntervalSet
+import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Resources.Types
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Types
@@ -61,7 +65,10 @@ instance ToJSON IpPrefix where
     toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
     toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
 
-instance ToJSON WorldVersion
+instance ToJSON WorldVersion where
+    toJSON (WorldVersion v) = toJSON $ show $ toInteger v
+
+instance ToJSON VersionState
 instance ToJSON VIssue
 instance ToJSON VWarning
 instance ToJSON AppError
@@ -70,6 +77,7 @@ instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON ValidationError
+instance ToJSON SPKI
 instance ToJSON Locations
 instance ToJSON StorageError
 instance ToJSON RsyncError
@@ -121,7 +129,7 @@ instance ToJSON LBS.ByteString where
     toJSON = toJSON . showHexL
 
 instance ToJSON a => ToJSON (IntervalSet a) where
-    toJSON = toJSON . toList
+    toJSON = toJSON . IS.toList
     
 instance ToJSON a => ToJSON (RSet a)
    
@@ -190,9 +198,11 @@ instance ToJSON Count where
 
 -- RPKI Object
 instance ToJSON EECerObject
-instance ToJSON CerObject
+instance ToJSON CaCerObject
+instance ToJSON BgpCerObject
 instance ToJSON CrlObject
 instance ToJSON RpkiObject
+instance ToJSON a => ToJSON (TypedCert a t)
 instance ToJSON a => ToJSON (Located a)
 instance ToJSON a => ToJSON (CMSBasedObject a)
 instance ToJSON a => ToJSON (CMS a)
@@ -210,11 +220,9 @@ instance ToJSON Vrp
 instance ToJSON Manifest
 instance ToJSON CertificateWithSignature
 instance ToJSON ResourceCertificate
-instance ToJSON (ResourceCert 'Strict_)     
-instance ToJSON (ResourceCert 'Reconsidered_)
-instance ToJSON (WithRFC 'Strict_ ResourceCert)
-instance ToJSON (WithRFC 'Reconsidered_ ResourceCert)
-instance (ToJSON s, ToJSON r) => ToJSON (WithRFC_ s r)
+instance ToJSON RawResourceCertificate
+instance ToJSON r => ToJSON (PolyRFC r rfc)
+instance ToJSON r => ToJSON (SomeRFC r)
 
 instance ToJSON AsResources
 instance ToJSON IpResources
@@ -294,6 +302,17 @@ instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
 instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (T3 a b c) where
     toJSON (T3 a b c) = toJSON (a, b, c)    
 
+instance ToJSON RtrState
+instance ToJSON BGPSecPayload
+instance ToJSON SerialNumber
+instance ToJSON RtrSessionId
+instance ToJSON AscOrderedVrp where
+    toJSON (AscOrderedVrp v) = toJSON v
+instance ToJSON a => ToJSON (Deq.Deque a) where
+    toJSON = toJSON . toList
+
+instance (ToJSON a, ToJSON b) => ToJSON (GenDiffs a b)
+instance ToJSON a => ToJSON (Diff a)
 
 -- Some utilities
 shortBsJson :: BSS.ShortByteString -> Json.Value

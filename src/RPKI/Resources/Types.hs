@@ -73,8 +73,12 @@ class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p), WithSetOps p) => Pref
     toRange :: p -> Range (Address p)
     toPrefixes :: Range (Address p) -> [p]  
 
-
-data ValidationRFC = Strict_ | Reconsidered_
+-- There are two validation algorithms for RPKI tree
+--
+-- Classical one described in RFC 6487, here referred as Strict
+-- And the one described in RFC 8360, here (and in the RFC itself) referred as Reconsidered
+-- 
+data ValidationRFC = StrictRFC | ReconsideredRFC
     deriving stock (Show, Eq, Ord, Generic) 
 
 data RSet r = RS r | Inherit

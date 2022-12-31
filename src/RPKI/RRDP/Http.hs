@@ -3,7 +3,6 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE OverloadedLabels    #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE QuasiQuotes         #-}
 
 module RPKI.RRDP.Http where
 
@@ -18,7 +17,6 @@ import Data.Generics.Product.Typed
 
 import Data.IORef.Lifted
 
-import Data.Bifunctor (first)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
@@ -129,7 +127,7 @@ fetchRpkiObject appContext uri = do
                             (appContext ^. typed @Config) 
                             (getURL uri) 
                         
-    fromEitherM $ pure $ first ParseE $ readObject (RrdpU uri) content
+    vHoist $ readObject (RrdpU uri) content
 
 
 downloadToFile :: MonadIO m => 

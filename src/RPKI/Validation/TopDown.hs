@@ -79,8 +79,9 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
 
 
 data Payloads a = Payloads {
-        vrps  :: a,
-        aspas :: Set.Set Aspa        
+        vrps     :: a,
+        aspas    :: Set.Set Aspa,
+        bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving Semigroup via GenericSemigroup (Payloads a)
@@ -103,7 +104,7 @@ newTopDownContext :: MonadIO m =>
                     WorldVersion 
                     -> TaName                     
                     -> Now 
-                    -> CerObject 
+                    -> CaCerObject 
                     -> RepositoryProcessing
                     -> m (TopDownContext s)
 newTopDownContext worldVersion taName now certificate repositoryProcessing = 
@@ -226,7 +227,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 AppContext s 
                                 -> TAL 
                                 -> WorldVersion 
-                                -> ValidatorT IO (Located CerObject, PublicationPointAccess, TACertStatus)
+                                -> ValidatorT IO (Located CaCerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
     let validationConfig = config ^. typed @ValidationConfig    
@@ -266,7 +267,7 @@ validateFromTACert :: Storage s =>
                     AppContext s -> 
                     TopDownContext s ->                                        
                     PublicationPointAccess -> 
-                    Located CerObject ->                     
+                    Located CaCerObject ->                     
                     ValidatorT IO (Payloads (Set Vrp))
 validateFromTACert 
     appContext@AppContext {..}
@@ -299,7 +300,7 @@ validateCA :: Storage s =>
             AppContext s 
             -> Scopes 
             -> TopDownContext s 
-            -> Located CerObject 
+            -> Located CaCerObject 
             -> IO (T2 (Payloads (Set Vrp)) ValidationState)
 validateCA appContext scopes topDownContext certificate =
     validateCARecursively 
@@ -315,7 +316,7 @@ validateCA appContext scopes topDownContext certificate =
 validateCaCertificate :: Storage s =>
                         AppContext s ->
                         TopDownContext s ->
-                        Located CerObject ->                
+                        Located CaCerObject ->                
                         ValidatorT IO (Payloads (Set Vrp))
 validateCaCertificate 
     appContext@AppContext {..} 
@@ -605,19 +606,6 @@ validateCaCertificate
             longerThanOne []  = False
             longerThanOne _   = True
 
-
-    validateMftObject ro filename validCrl = do
-        -- warn about names on the manifest mismatching names in the object URLs
-        let objectLocations = getLocations ro
-        let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
-        when (null nameMatches) $ 
-            vWarn $ ManifestLocationMismatch filename objectLocations
-
-        -- Validate the MFT entry, i.e. validate a ROA/GBR/etc.
-        -- or recursively validate CA if the child is a certificate.                           
-        validateChild validCrl ro
-
-    
     findManifestEntryObject filename hash' = do                    
         validateMftFileName filename                         
         ro <- liftIO $ do 
@@ -627,24 +615,35 @@ validateCaCertificate
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
             Just ro' -> pure ro'
 
+    validateMftObject ro filename validCrl = do
+        -- warn about names on the manifest mismatching names in the object URLs
+        let objectLocations = getLocations ro
+        let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
+        when (null nameMatches) $ 
+            vWarn $ ManifestLocationMismatch filename objectLocations
+
+        -- Validate the MFT entry, i.e. validate a ROA/GBR/ASPA/BGP certificate/etc.
+        -- or recursively validate CA if the child is a certificate.                           
+        validateMftChild validCrl ro
     
-    validateChild validCrl child@(Located locations ro) = do
-        -- At the moment of writing RFC 6486-bis 
-        -- (https://tools.ietf.org/html/draft-ietf-sidrops-6486bis-03#page-12) 
-        -- prescribes to consider the manifest invalid if any of the objects 
-        -- referred by the manifest is invalid. 
-        -- 
-        -- That's why _only_ recursive validation of the child CA happens in the separate   
-        -- runValidatorT (...) call, but all the other objects are validated within the 
-        -- same context of ValidatorT, i.e. have short-circuit logic implemented by ExceptT.        
-        --
+
+    validateMftChild validCrl child@(Located locations ro) = do
+        {- 
+        Validate manifest children according to 
+            https://datatracker.ietf.org/doc/rfc9286/
+
+        Note that recursive validation of the child CA happens in the separate   
+        runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
+        It is done to 
+        -}
+        
         parentContext <- ask        
         case ro of
             CerRO childCert -> do 
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
                         inSubObjectVScope (toText $ pickLocation locations) $ do                                
                             childVerifiedResources <- vHoist $ do                 
-                                    Validated validCert <- validateResourceCert 
+                                    Validated validCert <- validateResourceCert @_ @_ @'CACert 
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
                             let childTopDownContext = topDownContext 
@@ -656,33 +655,42 @@ validateCaCertificate
                 pure $ fromRight mempty r                
 
             RoaRO roa -> do 
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
-                            let vrpList = getCMSContent $ cmsPayload roa                            
-                            oneMoreRoa                            
-                            moreVrps $ Count $ fromIntegral $ length vrpList
-                            pure $! Payloads (Set.fromList vrpList) mempty
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
+                        let vrpList = getCMSContent $ cmsPayload roa                            
+                        oneMoreRoa                            
+                        moreVrps $ Count $ fromIntegral $ length vrpList                            
+                        pure $! (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
 
             GbrRO gbr -> do                
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
-                            oneMoreGbr
-                            pure mempty
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
+                        oneMoreGbr
+                        pure mempty
 
             AspaRO aspa -> do                
-                    validateObjectLocations child
-                    inSubObjectVScope (locationsToText locations) $ 
-                        allowRevoked $ do
-                            void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
-                            oneMoreAspa            
-                            let aspa' = getCMSContent $ cmsPayload aspa
-                            pure $! Payloads mempty (Set.singleton aspa')
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
+                        oneMoreAspa            
+                        let aspa' = getCMSContent $ cmsPayload aspa
+                        pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
 
-            -- Any new type of object (ASPA, Cones, etc.) should be added here, otherwise
+            BgpRO bgpCert -> do                
+                validateObjectLocations child
+                inSubObjectVScope (locationsToText locations) $ 
+                    allowRevoked $ do
+                        bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
+                        oneMoreBgp
+                        pure $! (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
+                            
+
+            -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
             _somethingElse -> do 
                 logWarn logger [i|Unsupported type of object: #{locations}.|]
@@ -750,13 +758,14 @@ addValidMft TopDownContext {..} aki mft =
     liftIO $ atomically $ modifyTVar' 
                 validManifests (<> Map.singleton aki (getHash mft))    
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa, oneMoreBgp :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
+oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))

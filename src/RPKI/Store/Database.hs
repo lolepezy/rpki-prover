@@ -21,7 +21,7 @@ import           Data.Foldable            (for_)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes)
+import           Data.Maybe               (catMaybes, fromMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -54,7 +54,9 @@ import           RPKI.Parallel
 import           RPKI.Util                (increment, ifJustM)
 
 import           RPKI.AppMonad
+import           RPKI.AppState
 import           RPKI.AppTypes
+import           RPKI.RTR.Types
 import           RPKI.Time
 
 -- This one is to be changed manually whenever 
@@ -73,6 +75,7 @@ data DB s = DB {
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
+    bgpStore         :: BgpStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
@@ -147,11 +150,16 @@ instance Storage s => WithStorage s (MetricStore s) where
 -- | VRP store
 newtype VRPStore s = VRPStore {    
     vrps :: SMap "vrps" s WorldVersion (Compressed Vrps)
-}
+} deriving Generic
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
     aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
+}
+
+-- | BGP certificate store
+newtype BgpStore s = BgpStore {    
+    bgps :: SMap "bgps" s WorldVersion (Compressed (Set.Set BGPSecPayload))
 }
 
 instance Storage s => WithStorage s (VRPStore s) where
@@ -368,7 +376,7 @@ getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $
                 _                              -> Nothing
 
 
-getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CerObject))
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
 getBySKI tx DB { objectStore = store@RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx certBySKI ski
     located   <- MaybeT $ getLocatedByKey tx store objectKey
@@ -410,9 +418,9 @@ deleteVRPs :: (MonadIO m, Storage s) =>
 deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap wv
 
 getAspas :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Set.Set Aspa)
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Aspa))
 getAspas tx DB { aspaStore = AspaStore m } wv = 
-    liftIO $ maybe Set.empty unCompressed <$> M.get tx m wv    
+    liftIO $ fmap unCompressed <$> M.get tx m wv    
 
 deleteAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
@@ -427,6 +435,20 @@ putVrps :: (MonadIO m, Storage s) =>
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
     liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
+
+putBgps :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set BGPSecPayload -> WorldVersion -> m ()
+putBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion = 
+    liftIO $ M.put tx bgpMap worldVersion (Compressed bgps)
+
+deleteBgps :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteBgps tx DB { bgpStore = BgpStore m } wv = liftIO $ M.delete tx m wv
+
+getBgps :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
+getBgps tx DB { bgpStore = BgpStore m } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx m wv    
 
 putVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
@@ -660,6 +682,7 @@ deleteOldVersions database tooOld =
                 deleteVersion tx database worldVersion
                 deleteValidations tx database worldVersion
                 deleteAspas tx database worldVersion            
+                deleteBgps tx database worldVersion            
                 deleteVRPs tx database worldVersion            
                 deleteMetrics tx database worldVersion
                 deleteSlurms tx database worldVersion
@@ -689,9 +712,26 @@ getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
 getLatestAspas db = 
     roTx db $ \tx -> 
         getLastCompletedVersion db tx >>= \case         
-            Nothing      -> pure Set.empty
-            Just version -> getAspas tx db version        
+            Nothing      -> pure mempty
+            Just version -> fromMaybe mempty <$> getAspas tx db version        
 
+getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
+getLatestBgps db = 
+    roTx db $ \tx -> 
+        getLastCompletedVersion db tx >>= \case         
+            Nothing      -> pure mempty
+            Just version -> fromMaybe mempty <$> getBgps tx db version    
+    
+
+getRtrPayloads :: (MonadIO m, Storage s) => 
+                   Tx s 'RO
+                -> DB s                 
+                -> WorldVersion -> m (Maybe RtrPayloads)
+getRtrPayloads tx db worldVersion = 
+    liftIO $ runMaybeT $ do 
+            vrps <- MaybeT $ getVrps tx db worldVersion
+            bgps <- MaybeT $ getBgps tx db worldVersion
+            pure $ mkRtrPayloads vrps bgps
 
 getTotalDbStats :: (MonadIO m, Storage s) => 
                     DB s -> m TotalDBStats
@@ -710,6 +750,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     vResultStats    <- vResultStats' tx
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
     aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
+    bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
     metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
     versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
     sequenceStats   <- M.stats tx sequences
@@ -775,7 +816,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
     emptyRepositoryStore repositoryStore    
     emptyObjectStore objectStore    
     M.erase tx $ results validationsStore
-    M.erase tx $ vrps vrpStore
+    M.erase tx $ vrpStore ^. #vrps 
     M.erase tx $ aspas aspaStore
     M.erase tx $ versions versionStore
     M.erase tx $ metrics metricStore

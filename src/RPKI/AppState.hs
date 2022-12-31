@@ -1,14 +1,19 @@
-{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE StrictData         #-}
 {-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE DerivingVia        #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.AppState where
     
-import           Control.Lens
+import           Control.Lens hiding (filtered)
 import           Control.Monad (join)
 import           Control.Concurrent.STM
+
+import qualified Data.ByteString                  as BS
+
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -17,16 +22,26 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
+import           RPKI.RTR.Types
 import           Control.Monad.IO.Class
 
 
 data AppState = AppState {
-        world         :: TVar (Maybe WorldVersion),
-        validatedVrps :: TVar Vrps,
-        filteredVrps  :: TVar Vrps,
-        readSlurm     :: Maybe (ValidatorT IO Slurm),
-        system        :: TVar SystemInfo
+        world     :: TVar (Maybe WorldVersion),
+        validated :: TVar RtrPayloads,
+        filtered  :: TVar RtrPayloads,
+        cachedBinaryPdus :: TVar (Maybe BS.ByteString),
+        readSlurm :: Maybe (ValidatorT IO Slurm),
+        rtrState  :: TVar (Maybe RtrState),
+        system    :: TVar SystemInfo
     } deriving stock (Generic)
+
+
+uniqVrps :: Vrps -> Set AscOrderedVrp 
+uniqVrps = mconcat . Prelude.map (Set.map AscOrderedVrp) . allVrps
+
+mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
 
 -- 
 newAppState :: IO AppState
@@ -36,21 +51,23 @@ newAppState = do
                     newTVar Nothing <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
-                    pure Nothing <*>
+                    newTVar Nothing <*>
+                    pure Nothing <*>                    
+                    newTVar Nothing <*>
                     newTVar (newSystemInfo now)
 
-setCurrentVersion :: AppState -> WorldVersion -> STM ()
-setCurrentVersion AppState {..} = writeTVar world . Just
-
+-- World versions are nanosecond-timestamps
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
 
-completeVersion :: AppState -> WorldVersion -> Vrps -> Maybe Slurm -> STM Vrps
-completeVersion AppState {..} worldVersion vrps slurm = do 
+completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> STM RtrPayloads
+completeVersion AppState {..} worldVersion rtrPayloads slurm = do 
     writeTVar world $ Just worldVersion
-    writeTVar validatedVrps vrps
-    let slurmed = maybe vrps (`applySlurm` vrps) slurm
-    writeTVar filteredVrps slurmed
+    writeTVar validated rtrPayloads
+    let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
+    writeTVar filtered slurmed
+    -- invalidae serialised PDU cache with every new version
+    writeTVar cachedBinaryPdus Nothing
     pure slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
@@ -67,13 +84,12 @@ versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds
 
-
 -- Block on version updates
-waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, Vrps)
-waitForNewVersion AppState {..} knownWorldVersion = do     
+waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
+waitForNewVersion appState@AppState {..} knownWorldVersion = do     
     readTVar world >>= \case 
         Just w         
-            | w > knownWorldVersion -> (w,) <$> readTVar filteredVrps
+            | w > knownWorldVersion -> (w,) <$> readRtrPayloads appState
             | otherwise             -> retry
         _                           -> retry
 
@@ -81,7 +97,25 @@ waitForVersion :: AppState -> STM WorldVersion
 waitForVersion AppState {..} =
     maybe retry pure =<< readTVar world
 
-
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
     liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
+
+readRtrPayloads :: AppState -> STM RtrPayloads    
+readRtrPayloads AppState {..} = readTVar filtered
+
+filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads
+filterWithSLURM RtrPayloads {..} slurm =     
+    mkRtrPayloads (slurm `applySlurmToVrps` vrps) 
+                  (slurm `applySlurmBgpSec` bgpSec)
+
+-- TODO Make it more generic for things that need to be recomoputed for each version 
+-- and things that are computed on-demand.
+cachedPduBinary :: AppState -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
+cachedPduBinary appState@AppState {..} f = 
+    readTVar cachedBinaryPdus >>= \case     
+        Nothing -> do            
+            bs <- f <$> readRtrPayloads appState 
+            writeTVar cachedBinaryPdus $ Just bs
+            pure bs
+        Just bs -> pure bs

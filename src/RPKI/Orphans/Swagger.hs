@@ -15,6 +15,7 @@ import           Data.Swagger hiding (ValidationError)
 import           Data.Map.Strict (Map)
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import           Data.Tuple.Strict
+import           Deque.Strict                as Deq
  
 import           Data.ASN1.Types
 import           Data.Hourglass
@@ -36,6 +37,9 @@ import           RPKI.Store.Types
 import           RPKI.Time
 import           RPKI.Orphans.Json
 
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
+
 -- ToSchema insrances for Swagger doc generation
 instance ToSchema Focus
 instance ToSchema RpkiURL
@@ -47,6 +51,7 @@ instance ToSchema URI where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema WorldVersion     
+instance ToSchema VersionState
 instance ToSchema Instant where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DateTime     
@@ -68,6 +73,8 @@ instance ToSchema Ipv4Prefix where
 instance ToSchema Ipv6Prefix where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DecodedBase64 where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema SPKI where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance (ToSchema a, ToSchema b) => ToSchema (These a b)
@@ -130,7 +137,8 @@ instance ToSchema Locations where
 
 
 instance ToSchema RpkiObject
-instance ToSchema CerObject
+instance ToSchema CaCerObject
+instance ToSchema BgpCerObject
 instance ToSchema CrlObject
 instance ToSchema EECerObject
 
@@ -149,11 +157,10 @@ instance ToSchema Manifest
 instance ToSchema CertificateWithSignature  where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ResourceCertificate
-instance ToSchema (ResourceCert 'Strict_)     
-instance ToSchema (ResourceCert 'Reconsidered_)
-instance ToSchema (WithRFC 'Strict_ ResourceCert)
-instance ToSchema (WithRFC 'Reconsidered_ ResourceCert)
-instance (ToSchema s, ToSchema r) => ToSchema (WithRFC_ s r)
+instance ToSchema RawResourceCertificate
+instance ToSchema r => ToSchema (PolyRFC r rfc)
+instance ToSchema r => ToSchema (SomeRFC r)
+instance ToSchema r => ToSchema (TypedCert r t)
 
 instance ToSchema Hash where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -235,3 +242,16 @@ instance (ToSchema a, ToSchema b, ToSchema c) => ToSchema (T3 a b c)
 instance ToSchema a => ToSchema (IntervalSet a)
 instance ToSchema a => ToSchema (RSet a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+
+instance ToSchema RtrState
+instance ToSchema BGPSecPayload
+instance ToSchema SerialNumber
+instance ToSchema RtrSessionId
+instance ToSchema AscOrderedVrp where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Vrp)
+instance ToSchema a => ToSchema (Deq.Deque a) where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance (ToSchema a, ToSchema b) => ToSchema (GenDiffs a b)
+instance ToSchema a => ToSchema (Diff a)    

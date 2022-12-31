@@ -30,11 +30,10 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Servant.API
-import           Data.Swagger
+import           Data.Swagger hiding (url)
 import           Network.HTTP.Media ((//))
 
 import           RPKI.Config
-import           RPKI.Metrics.System
 import           RPKI.AppTypes
 import           RPKI.Repository
 import           RPKI.Domain
@@ -44,6 +43,7 @@ import           RPKI.Orphans.Swagger
 import           RPKI.Reporting
 
 import           RPKI.Resources.Types
+import           RPKI.RTR.Types
 import           RPKI.Time
 import           RPKI.Util (mkHash)
 
@@ -77,6 +77,13 @@ data VrpDto = VrpDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data VrpMinimalDto = VrpMinimalDto {
+        asn       :: ASN,
+        prefix    :: IpPrefix,
+        maxLength :: PrefixLength        
+    } 
+    deriving stock (Eq, Show, Generic)
+
 data ProviderAsn = ProviderAsn {
         asn      :: ASN, 
         afiLimit :: Maybe AddrFamily
@@ -86,6 +93,14 @@ data ProviderAsn = ProviderAsn {
 data AspaDto = AspaDto {
         customerAsn  :: ASN,
         providerAsns :: [ProviderAsn]        
+    } 
+    deriving stock (Eq, Show, Generic)
+
+
+data BgpCertDto = BgpCertDto {
+        ski  :: SKI,
+        asns :: [ASN],
+        subjectPublicKeyInfo :: SPKI
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -125,6 +140,11 @@ data SystemDto = SystemDto {
     }
     deriving stock (Eq, Show, Generic)
 
+newtype RtrDto = RtrDto {
+        rtrState :: RtrState
+    }
+    deriving stock (Eq, Show, Generic)
+
 data ManualCVS = ManualCVS
 
 newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
@@ -141,12 +161,20 @@ instance ToSchema RawCSV where
 
 instance ToJSON RObject
 instance ToJSON VrpDto     
+instance ToJSON VrpMinimalDto     
 instance ToJSON AspaDto
+instance ToJSON BgpCertDto
+instance ToJSON RtrDto
 instance ToSchema RObject
 instance ToSchema VrpDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
+instance ToSchema VrpMinimalDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema AspaDto
+instance ToSchema BgpCertDto
+instance ToSchema RtrDto
 instance ToSchema ProviderAsn
 
 instance ToJSON ProviderAsn where

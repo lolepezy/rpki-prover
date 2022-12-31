@@ -51,7 +51,7 @@ newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
+data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnknownObjectAsTACert |
                         ObjectIsTooSmall Integer |
                         ObjectIsTooBig Integer |
@@ -111,7 +111,12 @@ data ValidationError =  SPKIMismatch EncodedBase64 EncodedBase64 |
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
-                        AspaOverlappingCustomerProvider ASN [ASN]
+                        AspaOverlappingCustomerProvider ASN [ASN] | 
+                        BGPCertSIAPresent BS.ByteString | 
+                        BGPCertIPv4Present |
+                        BGPCertIPv6Present | 
+                        BGPCertBrokenASNs 
+
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     
@@ -393,6 +398,7 @@ data ValidationMetric = ValidationMetric {
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,
         validAspaNumber :: Count,
+        validBgpNumber  :: Count,
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)

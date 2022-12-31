@@ -283,6 +283,15 @@ optimiseAsns = mapMaybe f
             | otherwise = Just r
 {-# INLINE optimiseAsns #-}    
 
+unwrapAsns :: [AsResource] -> [ASN]
+unwrapAsns = mconcat . map unwrap
+  where
+    unwrap = \case
+        AS asn  -> [asn]
+        ASRange a1 a2
+            | a1 >= a2  -> []
+            | otherwise -> [ a1 .. a2 ]
+
 
 -- Bits munching
 fourW8sToW32 :: [Word8] -> Word32

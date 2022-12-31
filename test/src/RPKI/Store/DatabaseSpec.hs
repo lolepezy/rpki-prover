@@ -235,8 +235,8 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 shouldOrderManifests :: Storage s => IO (DB s) -> HU.Assertion
 shouldOrderManifests io = do  
     DB {..} <- io
-    (url1, Right mft1) <- readObjectFromFile "./test/data/afrinic_mft1.mft"
-    (url2, Right mft2) <- readObjectFromFile "./test/data/afrinic_mft2.mft"
+    (Right (url1, mft1), _) <- runValidatorT (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (url2, mft2), _) <- runValidatorT (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
 
     Now now <- thisInstant 
     let worldVersion = instantToVersion now
@@ -444,15 +444,17 @@ releaseLmdb ((dir, e), _) = do
     Lmdb.closeLmdb e
     removeDirectoryRecursive dir
 
-readObjectFromFile :: FilePath -> IO (RpkiURL, ParseResult RpkiObject)
+readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, RpkiObject)
 readObjectFromFile path = do 
-    bs <- BS.readFile path
+    bs <- liftIO $ BS.readFile path
     let url = let Right u = parseRpkiURL ("rsync://host/" <> Text.pack path) in u
-    pure (url, readObject url bs)
+    o <- vHoist $ readObject url bs
+    pure (url, o)
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = \case 
     CerRO c  -> CerRO $ c { aki = Just a }
+    BgpRO c  -> BgpRO $ c { aki = Just a }    
     CrlRO c  -> CrlRO $ c { aki = a }
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms

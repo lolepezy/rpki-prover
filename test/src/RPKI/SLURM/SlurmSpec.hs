@@ -1,9 +1,14 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.SLURM.SlurmSpec where
 
+import           Control.Lens
+
+import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 
 import           Test.Tasty
@@ -17,6 +22,7 @@ import           Data.Aeson as Json
 
 import           Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Set                 as Set
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
@@ -28,6 +34,8 @@ import           RPKI.SLURM.Types
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
+import           RPKI.AppState
+import           RPKI.Util 
 
 
 slurmGroup :: TestTree
@@ -37,7 +45,8 @@ slurmGroup = testGroup "Slurm" [
         HU.testCase "Test Full" test_full,
         HU.testCase "Test reject duplicate SLURM files" test_reject_full_duplicates,
         HU.testCase "Test reject partial prefix duplicate SLURM files" test_reject_partial_prefix_duplicates,
-        HU.testCase "Test reject partial ASN duplicate SLURM files" test_reject_partial_asn_duplicates
+        HU.testCase "Test reject partial ASN duplicate SLURM files" test_reject_partial_asn_duplicates,
+        HU.testCase "Test SLURM filtering is applied to RTR payload" test_apply_slurm
     ]
 
 
@@ -165,6 +174,58 @@ test_reject_partial_asn_duplicates = do
         z    
 
 
+test_apply_slurm :: HU.Assertion
+test_apply_slurm = do    
+    let rtrPayloads = 
+            mkRtrPayloads 
+                (createVrps (TaName "ta") [
+                    mkVrp4 123 "192.168.0.0/16" 16,
+                    mkVrp4 124 "192.0.2.0/24" 24,
+                    mkVrp4 64496 "10.1.1.0/24" 24,
+                    mkVrp4 64497 "198.51.100.0/24" 24,
+                    mkVrp4 64497 "198.51.101.0/24" 24
+                ]) 
+                (Set.fromList [
+                    mkBgpSec "aabb" [ASN 64496] "aabbcc",
+                    mkBgpSec "foo" [ASN 123] "112233",                
+                    mkBgpSec "bar" [ASN 64497] "112233",
+                    mkBgpSec "bar" [ASN 64497, ASN 111] "445566",
+                    mkBgpSec "1122" [ASN 234] "112233"
+                ])
+
+    let filtered = filterWithSLURM rtrPayloads bigTestSlurm
+
+    let expected = 
+            mkRtrPayloads 
+                (createVrps (TaName "ta") [
+                    mkVrp4 123 "192.168.0.0/16" 16,
+                    mkVrp4 64497 "198.51.101.0/24" 24                    
+                ] <>
+                createVrps (TaName "slurm") [
+                    mkVrp4 64496 "198.51.100.0/24" 24,
+                    mkVrp6 64496 "2001:db8::/32" 48
+                ]) 
+                (Set.fromList [                                        
+                    mkBgpSec "1122" [ASN 234] "112233",
+                    mkBgpSec "bar" [ASN 111] "445566",
+                    mkBgpSec "<some base64 SKI>"
+                        [ASN 64496] "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
+                ])
+    HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered ^. #vrps)
+    HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered ^. #bgpSec)
+  where
+    mkVrp4 asn prefix length = 
+        Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length)
+    mkVrp6 asn prefix length = 
+        Vrp (ASN asn) (Ipv6P $ readIp6 prefix) (PrefixLength length)
+
+    mkBgpSec ski asns spki = let 
+            bgpSecSki  = SKI $ mkKI ski
+            bgpSecAsns = asns
+            bgpSecSpki = SPKI $ EncodedBase64 spki 
+        in BGPSecPayload {..}
+
+bigTestSlurm :: Slurm
 bigTestSlurm = Slurm {
     slurmVersion = SlurmVersion 1, 
     validationOutputFilters = ValidationOutputFilters {
@@ -278,13 +339,15 @@ fullJson = [i|
             "asn": 64496,
             "comment" : "My known key for my important ASN",
             "SKI": "PHNvbWUgYmFzZTY0IFNLST4=",
-            "routerPublicKey": "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
+            "routerPublicKey": "#{mkBase64 "<some base64 public key>"}"
             }
         ]
         }
         }
     |]            
 
+mkBase64 :: BS.ByteString -> BS.ByteString
+mkBase64 bs = let EncodedBase64 z = encodeBase64 $ DecodedBase64 bs in z
 
 assertParsed slurm t = let
         decoded = Json.eitherDecode t

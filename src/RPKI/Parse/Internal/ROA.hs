@@ -15,17 +15,20 @@ import Data.ASN1.BitArray
 import Data.Bifunctor
 import Data.String.Interpolate.IsString
 
+import RPKI.AppMonad
 import RPKI.Domain 
 import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject
 
+import qualified RPKI.Util                  as U
+
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
-parseRoa :: BS.ByteString -> ParseResult RoaObject
+parseRoa :: BS.ByteString -> PureValidatorT RoaObject
 parseRoa bs = do    
-    asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
-    signedRoa <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas') asns
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs  
+    signedRoa <- fromEither $ first (parseErr . U.fmtGen) $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas') asns
     hash' <- getMetaFromSigned signedRoa bs
     pure $ newCMSObject hash' (CMS signedRoa)
     where     

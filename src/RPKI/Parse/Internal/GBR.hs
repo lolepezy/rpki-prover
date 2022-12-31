@@ -18,17 +18,21 @@ import Data.ASN1.Parse
 
 import Data.Bifunctor
 
+import RPKI.AppMonad
 import RPKI.Domain 
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
+import qualified RPKI.Util                  as U
+
 
 -- | Parse Ghostbusters record (https://tools.ietf.org/html/rfc6493)
 -- 
-parseGbr :: BS.ByteString -> ParseResult GbrObject
+parseGbr :: BS.ByteString -> PureValidatorT GbrObject
 parseGbr bs = do    
-    asns      <- first (fmtErr . show) $ decodeASN1' BER bs  
-    signedGbr <- first fmtErr $ runParseASN1 (parseSignedObject parseGbr') asns
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs  
+    signedGbr <- fromEither $ first (parseErr . U.fmtGen) $ 
+                    runParseASN1 (parseSignedObject parseGbr') asns
     hash' <- getMetaFromSigned signedGbr bs
     pure $ newCMSObject hash' (CMS signedGbr)
     where     

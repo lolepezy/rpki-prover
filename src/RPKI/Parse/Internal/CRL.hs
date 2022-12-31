@@ -11,37 +11,41 @@ import           Data.ASN1.Types
 import           Data.Bifunctor             (first)
 import qualified Data.ByteString            as BS
 import qualified Data.Set                   as Set
+import qualified Data.Text                  as Text
 
 import           Data.X509
 
+import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Time
 import           RPKI.Parse.Internal.Common
 import qualified RPKI.Util                  as U
 
 
-parseCrl :: BS.ByteString -> ParseResult CrlObject
+parseCrl :: BS.ByteString -> PureValidatorT CrlObject
 parseCrl bs = do
-    asns                <- first (fmtErr . show) $ decodeASN1' BER bs
-    (extensions, signCrlF) <- first fmtErr $ runParseASN1 getCrl asns      
+    -- pureError $ parseErr $ "Couldn't parse IP address extension: " <> Text.pack (show e)
+    asns                   <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    (extensions, signCrlF) <- fromEither $ first (parseErr . U.fmtGen) $ runParseASN1 getCrl asns      
     akiBS <- case extVal extensions id_authorityKeyId of
-                Nothing -> Left $ fmtErr "No AKI in CRL"
-                Just a  -> Right a
+                Nothing -> pureError $ parseErr "No AKI in CRL"
+                Just a  -> pure a
 
     aki' <- case decodeASN1' BER akiBS of
-                Left e -> Left $ fmtErr $ "Unknown AKI format: " <> show e
-                Right [Start Sequence, Other Context 0 ki, End Sequence] -> Right ki
-                Right s -> Left $ fmtErr $ "Unknown AKI format: " <> show s
+                Left e -> pureError $ parseErr $ "Unknown AKI format: " <> U.fmtGen e
+                Right [Start Sequence, Other Context 0 ki, End Sequence] -> pure ki
+                Right s -> pureError $ parseErr $ "Unknown AKI format: " <> U.fmtGen s
     
     crlNumberBS :: BS.ByteString  <- case extVal extensions id_crlNumber of
-                Nothing -> Left $ fmtErr "No CRL number in CRL"
-                Just n  -> Right n
+                Nothing -> pureError $ parseErr "No CRL number in CRL"
+                Just n  -> pure n
 
-    numberAsns <- first (fmtErr . show) $ decodeASN1' BER crlNumberBS
-    crlNumber' <- first fmtErr $ runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
+    numberAsns <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER crlNumberBS
+    crlNumber' <- fromEither $ first (parseErr . U.fmtGen) $ 
+                    runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
     case makeSerial crlNumber' of 
-        Left e       -> Left $ fmtErr e
+        Left e       -> pureError $ parseErr $ Text.pack e
         Right crlNum -> pure $ newCrl         
                             (AKI $ mkKI aki') 
                             (U.sha256s bs) 
@@ -95,7 +99,7 @@ parseCrl bs = do
                     (ASN1Time _ tnext _) -> Just tnext
                     _                    -> Nothing
 
-                -- TODO This is heavy and eats a lot o heap for long revocation lists
+                -- TODO This is heavy and eats a lot of heap for long revocation lists
                 getRevokedSerials = 
                     maybe Set.empty Set.fromList <$> 
                         onNextContainerMaybe Sequence (getMany getCrlSerial)

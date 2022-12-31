@@ -41,10 +41,9 @@ import           RPKI.Repository
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
-import           RPKI.RRDP.Types
 import           RPKI.Reporting
 import           RPKI.RTR.RtrState
-import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 
 import           Time.Types
 
@@ -65,6 +64,8 @@ import System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.Logging
+import           RPKI.RTR.Types
+import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)
 
 
@@ -143,6 +144,10 @@ instance Arbitrary EncodedBase64 where
     arbitrary = do 
         DecodedBase64 bs <- arbitrary
         pure $ EncodedBase64 $ B64.encodeBase64' bs
+
+instance Arbitrary SPKI where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary SnapshotInfo where
     arbitrary = genericArbitrary
@@ -225,6 +230,14 @@ instance Arbitrary Vrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary AscOrderedVrp where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary BGPSecPayload where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary PrefixLength where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -269,11 +282,15 @@ instance Arbitrary Locations where
     arbitrary = Locations . NESet.fromList <$> arbitrary        
     shrink = genericShrink
 
-instance Arbitrary CerObject where
+instance Arbitrary CaCerObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
 
 instance Arbitrary EECerObject where
+    arbitrary = genericArbitrary    
+    shrink = genericShrink
+
+instance Arbitrary BgpCerObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
 
@@ -285,23 +302,31 @@ instance Arbitrary a => Arbitrary (CMSBasedObject a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance (Arbitrary s, Arbitrary r) => Arbitrary (WithRFC_ s r) where
+instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (WithRFC 'Strict_ ResourceCert) where
+instance Arbitrary r => Arbitrary (SomeRFC r) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (ResourceCert 'Strict_) where
+instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (ResourceCert 'Reconsidered_) where
+instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary (WithRFC 'Reconsidered_ ResourceCert) where
+instance Arbitrary r => Arbitrary (TypedCert r 'CACert) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary r => Arbitrary (TypedCert r 'EECert) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary r => Arbitrary (TypedCert r 'BGPCert) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

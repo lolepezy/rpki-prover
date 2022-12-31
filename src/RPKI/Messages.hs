@@ -21,10 +21,12 @@ import qualified Data.Set                    as Set
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
 
+import           Data.ASN1.Types (OID)
+
 import           RPKI.Domain                 as Domain
 import           RPKI.Reporting
-import           RPKI.Util (fmtLocations)
-import Data.ASN1.Types (OID)
+import           RPKI.Util (fmtLocations, hex)
+
 
 
 toMessage :: AppError -> Text
@@ -158,7 +160,7 @@ toRrdpMessage = \case
 
 toValidationMessage :: ValidationError -> Text
 toValidationMessage = \case      
-      SPKIMismatch (EncodedBase64 talPKI) (EncodedBase64 actualPKI) -> 
+      SPKIMismatch (SPKI (EncodedBase64 talPKI)) (SPKI (EncodedBase64 actualPKI)) -> 
           [i|Mismatch between subject public key info in the TAL #{talPKI} and the actual one #{actualPKI}.|]
 
       UnknownObjectAsTACert -> 
@@ -199,10 +201,10 @@ toValidationMessage = \case
       ObjectHasMultipleLocations locs -> 
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
-      NoMFT aki _ -> 
+      NoMFT (AKI aki) _ -> 
           [i|No manifest found for #{aki}.|]
 
-      NoCRLOnMFT aki _ -> 
+      NoCRLOnMFT (AKI aki) _ -> 
           [i|No CRL found on the manifest manifest found for AKI #{aki}.|]
 
       MoreThanOneCRLOnMFT aki locations entries ->
@@ -299,9 +301,17 @@ toValidationMessage = \case
 
       AspaOverlappingCustomerProvider customerAsn providerAsns -> 
         [i|ASPA contains customer ASN #{customerAsn} in the list of provider ASNs #{providerAsns}.|]
+
+      BGPCertSIAPresent bs -> 
+        [i|SIA extension is present on the BGPSec certificate: #{hex bs}.|]
+
+      BGPCertIPv4Present -> [i|IPv4 extension is present on the BGPSec certificate.|]
+      BGPCertIPv6Present -> [i|IPv6 extension is present on the BGPSec certificate.|]
+      BGPCertBrokenASNs  -> [i|AS extension is not present on the BGPSec certificate.|]
+
   where
     fmtUrlList = mconcat . 
-                 List.intersperse "," . map show  
+                 List.intersperse "," . map (show . getURL)
 
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 

@@ -12,17 +12,19 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
 import           Data.Tuple.Strict
 
+import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Time
 import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.SignedObject
-import           RPKI.Util (mkHash)
+import qualified RPKI.Util                  as U
 
 
-parseMft :: BS.ByteString -> ParseResult MftObject
+parseMft :: BS.ByteString -> PureValidatorT MftObject
 parseMft bs = do
-    asns      <- first (fmtErr . show) $ decodeASN1' BER bs
-    signedMft <- first fmtErr $ runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    signedMft <- fromEither $ first (parseErr . U.fmtGen) $ 
+                    runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
     hash' <- getMetaFromSigned signedMft bs
     pure $ newCMSObject hash' (CMS signedMft)
     where
@@ -63,7 +65,7 @@ parseMft bs = do
         getEntries _ = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
                 T2 <$> getIA5String (pure . Text.pack) "Wrong file name"
-                   <*> getBitString (pure . mkHash) "Wrong hash"
+                   <*> getBitString (pure . U.mkHash) "Wrong hash"
 
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt

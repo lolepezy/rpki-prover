@@ -45,9 +45,9 @@ newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 
 
 cpuMemMetric :: Text -> CPUTime -> MaxMemory -> SystemMetrics
-cpuMemMetric scope cpuTime maxMemory = SystemMetrics {
+cpuMemMetric scope cpuTime maxMemory' = SystemMetrics {
         resources = updateMetricInMap 
                         (newScope scope) 
-                        ((& #aggregatedCpuTime %~ (<> cpuTime)) . (& #maxMemory %~ (<> maxMemory)))
+                        ((& #aggregatedCpuTime %~ (<> cpuTime)) . (& #maxMemory %~ (<> maxMemory')))
                         mempty
     }

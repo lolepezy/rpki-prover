@@ -4,6 +4,10 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE QuasiQuotes         #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -13,18 +17,15 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                    as BS
-import qualified Data.ByteString.Lazy               as LBS
 import qualified Data.Text                          as Text
 import           Data.Foldable (for_)
-import           Data.String.Interpolate.IsString
 
 import qualified Data.Set                           as Set
 
+import           Data.Proxy
+
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
-import           Data.ASN1.BitArray
-import           Data.ASN1.BinaryEncoding
-import           Data.ASN1.Encoding
 import           Data.ASN1.Types
 import           GHC.Generics
 
@@ -34,7 +35,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
-import           RPKI.Resources.IntervalSet
+import           RPKI.Resources.IntervalSet as IS
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                          (convert)
@@ -43,142 +44,101 @@ import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
 
 
-data CertType = BGPCert | CACert | EECert 
-
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
 
--- TODO That one needs to be refactored in such a way that certificate type is 
--- known after parsing the certificate on the type level.
-validateResourceCertExtensions ::
-    WithResourceCertificate c =>
-    c ->
-    PureValidatorT c
+
+class ExtensionValidator (t :: CertType) where
+    validateResourceCertExtensions_ :: Proxy t -> [ExtensionRaw] -> PureValidatorT ()
+
+instance ExtensionValidator 'CACert where
+    validateResourceCertExtensions_ _ extensions = do             
+        validateCaBasicConstraint extensions
+        validatePolicyExtension extensions                        
+
+instance ExtensionValidator 'BGPCert where
+    -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
+    validateResourceCertExtensions_ _ = noBasicContraint
+
+instance ExtensionValidator 'EECert where
+    validateResourceCertExtensions_ _ = noBasicContraint
+
+validateResourceCertExtensions :: forall c (t :: CertType) .
+    (WithRawResourceCertificate c, OfCertType c t, ExtensionValidator t) => 
+    c -> PureValidatorT c
 validateResourceCertExtensions cert = do     
     let extensions = getExts $ cwsX509certificate $ getCertWithSignature cert
 
-    -- Do not check for SKI, AKI and resource extensions -- they 
-    -- are validated when parsing certificates and are crucial for 
-    -- the whole tree validation.
-    certType extensions >>= \case                        
-        CACert -> do             
-            validateCaBasicConstraint extensions
-            validatePolicyExtension extensions                        
-        BGPCert -> do             
-            -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
-            noBasicContraint extensions            
-        EECert  -> do 
-            -- TODO Something else here?
-            noBasicContraint extensions                        
-
-    -- Same (or almost same?) for all types
+    validateResourceCertExtensions_ (Proxy :: Proxy t) extensions
     validateNoUnknownCriticalExtensions extensions            
     
     pure cert
-  where
-    certType extensions =
-        withExtension extensions id_ce_keyUsage $ \bs parsed ->             
-            case parsed of 
-                -- Bits position are from
-                -- https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3
-                -- 
-                -- Which bits needs to set and where
-                -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.4
-                [BitString ba@(BitArray 7 _)] -> do 
-                    unless (bitArrayGetBit ba 5) $ vPureError $ BrokenKeyUsage "keyCertSign bit is not set"
-                    unless (bitArrayGetBit ba 6) $ vPureError $ BrokenKeyUsage "cRLSign bit is not set"
-                    for_ [0..4] $ \bit -> 
-                        when (bitArrayGetBit ba bit) $ vPureError $ BrokenKeyUsage 
-                            [i|Bit #{bit} is set, only keyCertSign and cRLSign must be set.|]
 
-                    pure CACert            
 
-                -- There must be only the `digitalSignature` bit 
-                [BitString ba@(BitArray 1 _)] ->                     
-                    let badExtKU = vPureError $ CertBrokenExtension id_ce_extKeyUsage bs
-                    in case extVal extensions id_ce_extKeyUsage of
-                        Nothing -> do                             
-                            unless (bitArrayGetBit ba 0) $ vPureError $ BrokenKeyUsage "digitalSignature bit is not set"                            
-                            pure EECert
-                        Just bs1 
-                            | BS.null bs1 -> badExtKU
-                            | otherwise ->
-                                case decodeASN1 DER (LBS.fromStrict bs1) of
-                                    Left _  -> badExtKU
-                                    Right [Start Sequence, OID oid, End Sequence]
-                                        | oid == id_kp_bgpsecRouter -> pure BGPCert
-                                        | otherwise -> badExtKU                                            
-                                    _ -> badExtKU
-                    
-                _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
+-- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
+validateCaBasicConstraint :: [ExtensionRaw] -> PureValidatorT ()
+validateCaBasicConstraint extensions = 
+    withCriticalExtension extensions id_ce_basicConstraints $ \bs parsed ->
+        case parsed of 
+            [Start Sequence, Boolean _, End Sequence] -> pure ()                
+            _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
 
-    -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
-    validateCaBasicConstraint extensions = 
-        withExtension extensions id_ce_basicConstraints $ \bs parsed ->
-                case parsed of 
-                    [Start Sequence, Boolean _, End Sequence] -> pure ()                
-                    _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
+noBasicContraint :: [ExtensionRaw] -> PureValidatorT ()
+noBasicContraint extensions = 
+    for_ (extVal extensions id_ce_basicConstraints) $ \bs -> 
+        vPureError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
 
-    noBasicContraint extensions = 
-        for_ (extVal extensions id_ce_basicConstraints) $ \bs -> 
-            vPureError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
+validatePolicyExtension :: [ExtensionRaw] -> PureValidatorT ()
+validatePolicyExtension extensions = 
+    withCriticalExtension extensions id_ce_certificatePolicies $ \bs parsed ->
+        case parsed of 
+            [ Start Sequence
+                , Start Sequence
+                , OID oid
+                , End Sequence
+                , End Sequence
+                ] | oid == id_cp_ipAddr_asNumber -> pure ()        
+            [ Start Sequence
+                , Start Sequence
+                , OID oid
+                , Start Sequence
+                , Start Sequence
+                , OID oidCps
+                , ASN1String _
+                , End Sequence
+                , End Sequence
+                , End Sequence
+                , End Sequence
+                ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure ()   
 
-    validatePolicyExtension extensions = 
-        withExtension extensions id_ce_certificatePolicies $ \bs parsed ->
-            case parsed of 
-                [ Start Sequence
-                    , Start Sequence
-                    , OID oid
-                    , End Sequence
-                    , End Sequence
-                    ] | oid == id_cp_ipAddr_asNumber -> pure ()        
-                [ Start Sequence
-                    , Start Sequence
-                    , OID oid
-                    , Start Sequence
-                    , Start Sequence
-                    , OID oidCps
-                    , ASN1String _
-                    , End Sequence
-                    , End Sequence
-                    , End Sequence
-                    , End Sequence
-                    ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure ()   
-
-                _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
-                 
-    validateNoUnknownCriticalExtensions extensions = do                        
-        for_ extensions $ \ExtensionRaw {..} -> do 
-            when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
-                vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
-
-    withExtension extensions oid f = do 
-        case extVal extensions oid of
-            Nothing -> vPureError $ MissingCriticalExtension oid
-            Just bs 
-                | BS.null bs -> vPureError $ MissingCriticalExtension oid
-                | otherwise -> do 
-                    case decodeASN1 DER (LBS.fromStrict bs) of
-                        Left _  -> vPureError $ CertBrokenExtension oid bs        
-                        Right z -> f bs z
+            _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
+                
+validateNoUnknownCriticalExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateNoUnknownCriticalExtensions extensions =
+    for_ extensions $ \ExtensionRaw {..} -> do 
+        when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
+            vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
         
 
 -- | Validated specifically the TA's self-signed certificate
 -- 
-validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CerObject
+validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CaCerObject
 validateTACert tal u (CerRO taCert) = do
     let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
-    unless (publicKeyInfo tal == spki) $ vPureError $ SPKIMismatch (publicKeyInfo tal) spki
+    let talSPKI = SPKI $ publicKeyInfo tal
+    unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
     signatureCheck $ validateCertSignature taCert taCert
-    validateResourceCertExtensions taCert    
-      
+    validateResourceCertExtensions @CaCerObject @'CACert taCert
+
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
-
-validateTaCertAKI :: (WithAKI taCert, WithSKI taCert) 
-                    => taCert -> RpkiURL -> PureValidatorT ()
-validateTaCertAKI taCert u = 
+validateTaCertAKI ::
+    (WithAKI taCert, WithSKI taCert) =>
+    taCert ->
+    RpkiURL ->
+    PureValidatorT ()
+validateTaCertAKI taCert u =
     case getAKI taCert of
         Nothing -> pure ()
         Just (AKI ki)
@@ -190,38 +150,39 @@ validateTaCertAKI taCert u =
 -- the one of the previoius certificate, emit a warning and use
 -- the previous certificate.
 --
-validateTACertWithPreviousCert :: CerObject -> CerObject -> PureValidatorT CerObject
+validateTACertWithPreviousCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 validateTACertWithPreviousCert cert previousCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
     let (before, after) = validities cert
     let (prevBefore, prevAfter) = validities previousCert
-    if before < prevBefore || after < prevAfter 
+    if before < prevBefore || after < prevAfter
         then do
-            void $ vPureWarning $ TACertOlderThanPrevious {..}
-            pure previousCert 
-        else 
-            pure cert
+            void $ vPureWarning $ TACertOlderThanPrevious{..}
+            pure previousCert
+        else pure cert
 
 -- | In general, resource certifcate validation is:
 --
 --    - check the signature (with the parent)
---    - check if it's not revoked
 --    - check all the needed extensions
 --    - check expiration times
 --    - check the resource set (needs the parent as well)
 --    - check it's not revoked (needs CRL)
 -- 
-validateResourceCert ::
-    ( WithResourceCertificate c
-    , WithResourceCertificate parent
+validateResourceCert :: forall child parent (t :: CertType) .
+    ( WithRawResourceCertificate child
+    , WithRawResourceCertificate parent
     , WithSKI parent
-    , WithAKI c
+    , WithAKI child
+    , OfCertType parent 'CACert
+    , OfCertType child t
+    , ExtensionValidator t
     ) =>
     Now ->
-    c ->    
+    child ->    
     parent ->
     Validated CrlObject ->    
-    PureValidatorT (Validated c)
+    PureValidatorT (Validated child)
 validateResourceCert (Now now) cert parentCert vcrl = do
     let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
     signatureCheck $ validateCertSignature cert parentCert
@@ -238,34 +199,84 @@ validateResourceCert (Now now) cert parentCert vcrl = do
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
 
-    void $ validateResourceCertExtensions cert
-    pure $ Validated cert
+    Validated <$> validateResourceCertExtensions @_ @t cert    
   where
     correctSkiAki c (getSKI -> SKI s) =
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
 validateResources ::
-    (WithResourceCertificate c, WithResourceCertificate parent) =>
+    (WithRawResourceCertificate c, 
+     WithRawResourceCertificate parent,
+     WithRFC c,
+     OfCertType parent 'CACert) =>
     Maybe (VerifiedRS PrefixesAndAsns) ->
     c ->
     parent ->
     PureValidatorT (VerifiedRS PrefixesAndAsns)
-validateResources
-    verifiedResources
-    (getRC -> ResourceCertificate cert)
-    (getRC -> ResourceCertificate parentCert) =
-        validateChildParentResources
-            validationRFC
-            (withRFC cert (^. typed))
-            (withRFC parentCert (^. typed))
-            verifiedResources
-  where
-    validationRFC = forRFC cert (const Strict_) (const Reconsidered_)
+validateResources verifiedResources cert parentCert =
+    validateChildParentResources
+        (getRFC cert)
+        (getRawCert cert ^. typed)
+        (getRawCert parentCert ^. typed)
+        verifiedResources
+
+
+validateBgpCert ::
+    forall c parent.
+    ( WithRawResourceCertificate c
+    , WithRawResourceCertificate parent
+    , WithSKI parent
+    , WithAKI c
+    , WithSKI c
+    , OfCertType c 'BGPCert
+    , OfCertType parent 'CACert
+    ) =>
+    Now ->
+    c ->
+    parent ->
+    Validated CrlObject ->
+    PureValidatorT BGPSecPayload
+validateBgpCert now bgpCert parentCert validCrl = do
+    -- Validate BGP certificate according to 
+    -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
+
+    -- Validate resource set
+    void $ validateResourceCert @_ @_ @ 'BGPCert now bgpCert parentCert validCrl
+
+    let cwsX509 = cwsX509certificate $ getCertWithSignature bgpCert
+
+    -- No SIA
+    for_ (getSiaExt cwsX509) $ \sia -> 
+        vError $ BGPCertSIAPresent sia
+
+    -- No IP resources
+    let AllResources ipv4 ipv6 asns = getRawCert bgpCert ^. #resources
+    ipMustBeEmpty ipv4 BGPCertIPv4Present
+    ipMustBeEmpty ipv6 BGPCertIPv6Present    
+    
+    -- Must be some ASNs
+    bgpSecAsns <- case asns of 
+                Inherit -> vError BGPCertBrokenASNs
+                RS i
+                    | IS.null i -> vError BGPCertBrokenASNs                
+                    | otherwise -> pure $ unwrapAsns $ IS.toList i
+
+    let bgpSecSki = getSKI bgpCert
+
+    -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
+    let bgpSecSpki = subjectPublicKeyInfo cwsX509
+    pure BGPSecPayload {..}
+  where 
+    ipMustBeEmpty ips errConstructor = 
+        case ips of 
+            Inherit -> vError errConstructor
+            RS i    -> unless (IS.null i) $ vError errConstructor
+
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
-    WithResourceCertificate c =>
+    WithRawResourceCertificate c =>
     Now ->
     CrlObject ->
     c ->
@@ -279,7 +290,7 @@ validateCrl now crlObject parentCert = do
     SignCRL {..} = signCrl crlObject
 
 validateMft ::
-  (WithResourceCertificate c, WithSKI c) =>
+  (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
   Now ->
   MftObject ->
   c ->
@@ -295,7 +306,7 @@ validateMft now mft parentCert crl verifiedResources = do
 
 
 validateRoa ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     RoaObject ->
     c ->
@@ -331,7 +342,7 @@ validateRoa now roa parentCert crl verifiedResources = do
                     vPureError $ errorReport vrs
 
 validateGbr ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     GbrObject ->
     c ->
@@ -348,7 +359,7 @@ validateGbr now gbr parentCert crl verifiedResources = do
     pure $ Validated gbr
 
 validateRsc ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->
     RscObject ->
     c ->
@@ -359,17 +370,17 @@ validateRsc now rsc parentCert crl verifiedResources = do
     void $
         validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
             let rsc' = getCMSContent rscCms
-            let ResourceCertificate rc = getRC $ getEEResourceCert $ unCMS rscCms
-            let eeCert = toPrefixesAndAsns $ withRFC rc resources
+            let rc = getRawCert $ getEEResourceCert $ unCMS rscCms
+            let eeCert = toPrefixesAndAsns $ resources rc 
             validateNested (rsc' ^. #rscResources) eeCert            
             
     pure $ Validated rsc
 
 validateAspa ::
-    (WithResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate parent, WithSKI parent, OfCertType parent 'CACert) =>
     Now ->
     AspaObject ->
-    c ->
+    parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated AspaObject)
@@ -382,8 +393,11 @@ validateAspa now aspa parentCert crl verifiedResources = do
                 _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
     pure $ Validated aspa
 
-validateCms ::
-    (WithResourceCertificate c, WithSKI c) =>
+
+validateCms :: forall a c .
+    (WithRawResourceCertificate c, 
+    WithSKI c, 
+    OfCertType c 'CACert) =>
     Now ->
     CMS a ->
     c ->
@@ -409,7 +423,7 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
                 (Text.pack $ show attributeSigAlg)
 
     signatureCheck $ validateCMSSignature cms
-    void $ validateResourceCert now eeCert parentCert crl
+    void $ validateResourceCert @_ @_ @'EECert now eeCert parentCert crl
     void $ validateResources verifiedResources eeCert parentCert
     extraValidation cms
 
@@ -429,7 +443,7 @@ validateThisUpdate (Now now) thisUpdateTime
     | otherwise = pure thisUpdateTime
 
 -- | Check if CMS is on the revocation list
-isRevoked :: WithResourceCertificate c => c -> Validated CrlObject -> Bool
+isRevoked :: WithRawResourceCertificate c => c -> Validated CrlObject -> Bool
 isRevoked cert (Validated crlObject) =
     Set.member serial revokenSerials
   where
@@ -454,3 +468,20 @@ validateSize vc s =
             | s < vc ^. #minObjectSize -> Left $ ObjectIsTooSmall s
             | s > vc ^. #maxObjectSize -> Left $ ObjectIsTooBig s
             | otherwise                -> pure s
+
+
+
+{- 
+еще один вопрос вдогонку
+вот есть у меня 
+```
+data X = A | B
+
+class Bla (t :: X)
+
+instance Bla 'A
+instance Bla 'B
+```
+есть ли какой-то способ сказать ghc, что раз не писать `Bla t` а качестве констрейнта, зная, что
+
+-}
