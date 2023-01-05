@@ -66,16 +66,18 @@ data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString
 -- | Main entry point, here we start the RTR server. 
 -- 
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
-runRtrServer appContext@AppContext {..} RtrConfig {..} = do         
+runRtrServer appContext RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
-    let rtrState = appState ^. #rtrState
+    let rtrState = appContext ^. #appState . #rtrState
     updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
             (runSocketBusiness rtrState updateBroadcastChan)
             (listenToAppStateUpdates rtrState updateBroadcastChan)
   where    
+
+    logger = getRtrLogger appContext
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = 
@@ -113,6 +115,8 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
     --   - send 'notify PDU' to all clients using `broadcastChan`.
     --
     listenToAppStateUpdates rtrState updateBroadcastChan = do        
+
+        let appState = appContext ^. #appState
 
         -- If a version is recovered from the storage after the start, 
         -- use it, otherwise wait until some complete version is generated       
@@ -168,7 +172,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
                     let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
-                    writeTChan updateBroadcastChan [TruePdu $ notifyPdu]
+                    writeTChan updateBroadcastChan [TruePdu notifyPdu]
                     writeTVar lastTimeNotified $ Just now
         where
           logDiff GenDiffs {..} = do 
@@ -192,15 +196,14 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
 
         let firstPduLazy = LBS.fromStrict firstPdu
 
-        let (errorPdu, message, versionedPdu) = 
+        let (errorPdu, logMessage, versionedPdu) = 
                 analyzePdu peer firstPduLazy $ bytesToVersionedPdu firstPduLazy        
 
         for_ errorPdu $ sendAll connection . pduBytesL V0
-
-        for_ message $ logError logger
+        for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' appState versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazy of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduBytesL V0 errorPdu'
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
@@ -250,7 +253,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                         -- all the real work happens inside of pure `responseAction`, 
                         -- for better testability.
                         rtrState' <- readTVar rtrState                        
-                        case responseAction logger peer session rtrState' appState pduBytes of 
+                        case responseAction logger peer session rtrState' (appContext ^. #appState) pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io

@@ -97,11 +97,11 @@ main = do
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions = do 
-    -- TODO This doesn't look preetty, come up with someething better.
+    -- TODO This doesn't look pretty, come up with something better.
     appState' <- newTVarIO Nothing
 
     withLogLevel cliOptions $ \logLevel -> do
-        -- This one modifyies system meetrics in AppState
+        -- This one modifies system metrics in AppState
         -- if appState is actually initialised
         let bumpSysMetric = \sm -> do 
                 z <- readTVarIO appState'
@@ -131,9 +131,8 @@ executeMainProcess cliOptions = do
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput
-    let config = input ^. typed @Config
-    let logLevel' = config ^. #logLevel
-    withLogger WorkerLogger logLevel' (\_ -> pure ()) $ \logger -> liftIO $ do
+    let config = input ^. typed @Config    
+    withLogger WorkerLogger (config ^. #logLevel) (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
                                 (createWorkerAppContext config logger)
@@ -212,6 +211,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             then Just $ defaultRtrConfig
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
+                        & #rtrLogFile .~ rtrLogFile
             else Nothing    
 
     let readSlurms files = do
@@ -632,7 +632,10 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",
 
     maxValidationMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."
+        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
+
+    rtrLogFile :: wrapped ::: Maybe String <?>
+        "Path to a file used for RTR log (default is stdout, together with general output)."
 
 } deriving (Generic)
 

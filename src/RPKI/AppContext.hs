@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.AppContext where
     
@@ -17,4 +18,7 @@ data AppContext s = AppContext {
         database :: TVar (DB s)        
     } 
     deriving stock (Generic)
+
+getRtrLogger :: AppContext s -> AppLogger
+getRtrLogger AppContext {..} = logger    
 

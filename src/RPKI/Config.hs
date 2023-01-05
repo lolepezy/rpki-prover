@@ -1,7 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -133,7 +132,8 @@ data HttpApiConfig = HttpApiConfig {
 
 data RtrConfig = RtrConfig {
         rtrAddress :: String,
-        rtrPort    :: Int16            
+        rtrPort    :: Int16,
+        rtrLogFile :: Maybe String          
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -224,7 +224,8 @@ defaultsLogLevel = InfoL
 defaultRtrConfig :: RtrConfig
 defaultRtrConfig = RtrConfig { 
         rtrAddress = "localhost",
-        rtrPort    = 8283
+        rtrPort    = 8283,
+        rtrLogFile = Nothing
     }
     
 defaulPrefetchURLs :: [String]
