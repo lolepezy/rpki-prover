@@ -19,6 +19,6 @@ data AppContext s = AppContext {
     } 
     deriving stock (Generic)
 
-getRtrLogger :: AppContext s -> AppLogger
-getRtrLogger AppContext {..} = logger    
+getRtrLogger :: AppContext s -> RtrLogger
+getRtrLogger AppContext { logger = AppLogger {..} } = rtrLogger    
 

@@ -299,8 +299,8 @@ waitForLatestRtrPayload AppContext {..} rtrState = do
 --
 -- TODO Do something with contravariant logging here, it's the right place.
 -- 
-responseAction :: Show peer => 
-                   AppLogger 
+responseAction :: (Show peer, Logger logger) => 
+                   logger 
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 

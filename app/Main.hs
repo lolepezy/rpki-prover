@@ -100,14 +100,14 @@ executeMainProcess cliOptions = do
     -- TODO This doesn't look pretty, come up with something better.
     appState' <- newTVarIO Nothing
 
-    withLogLevel cliOptions $ \logLevel -> do
+    withLogConfig cliOptions $ \logConfig -> do
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
         let bumpSysMetric = \sm -> do 
                 z <- readTVarIO appState'
                 for_ z $ mergeSystemMetrics sm
 
-        withLogger MainLogger logLevel bumpSysMetric $ \logger ->
+        withLogger logConfig bumpSysMetric $ \logger ->
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -117,7 +117,7 @@ executeMainProcess cliOptions = do
                     (appContext, validations) <- do
                                 runValidatorT (newScopes "initialise") $ do
                                     checkPreconditions cliOptions
-                                    createAppContext cliOptions logger logLevel
+                                    createAppContext cliOptions logger (logConfig ^. #logLevel)
                     case appContext of
                         Left _ ->
                             logError logger [i|Couldn't initialise, problems: #{validations}.|]
@@ -132,7 +132,11 @@ executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput
     let config = input ^. typed @Config    
-    withLogger WorkerLogger (config ^. #logLevel) (\_ -> pure ()) $ \logger -> liftIO $ do
+    let logConfig = LogConfig {
+                        logLevel = config ^. #logLevel,
+                        logSetup = WorkerLog
+                    }
+    withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
                                 (createWorkerAppContext config logger)
@@ -458,8 +462,8 @@ checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do
-    withLogLevel cliOptions $ \logLevel1 ->
-        withLogger MainLogger logLevel1 (\_ -> pure ()) $ \logger ->
+    withLogConfig cliOptions $ \logConfig ->
+        withLogger logConfig (\_ -> pure ()) $ \logger ->
             withVerifier logger $ \verifyPath rscFile -> do
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
                 (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do
@@ -647,14 +651,23 @@ deriving instance Show (CLIOptions Unwrapped)
 type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
 
 
-withLogLevel :: CLIOptions Unwrapped -> (LogLevel -> IO ()) -> IO ()
-withLogLevel CLIOptions{..} f =
+withLogConfig :: CLIOptions Unwrapped -> (LogConfig -> IO ()) -> IO ()
+withLogConfig CLIOptions{..} f =
     case logLevel of
-        Nothing -> f defaultsLogLevel
+        Nothing -> run defaultsLogLevel
         Just s  ->
             case Text.toLower $ Text.pack s of
-                "error" -> f ErrorL
-                "warn"  -> f WarnL
-                "info"  -> f InfoL
-                "debug" -> f DebugL
+                "error" -> run ErrorL
+                "warn"  -> run WarnL
+                "info"  -> run InfoL
+                "debug" -> run DebugL
                 other   -> hPutStrLn stderr $ "Wrong log level: " <> Text.unpack other
+  where
+    run ll = f LogConfig { logLevel = ll, .. }
+    logSetup = 
+        case (rtrLogFile, worker) of 
+            (Just fs, Nothing) -> MainLogWithRtr fs
+            (Nothing, Nothing) -> MainLog
+            (_,        Just _) -> WorkerLog
+            
+                
