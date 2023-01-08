@@ -146,7 +146,7 @@ logDebug = logIfAboveLevel DebugL
 logIfAboveLevel :: (Logger log, MonadIO m) => 
                     LogLevel -> log -> Text -> m ()
 logIfAboveLevel messageLogLevel logger t = liftIO $ 
-    when (logLevel_ logger <= messageLogLevel) $ 
+    when (logLevel_ logger >= messageLogLevel) $ 
         logMessage_ logger =<< mkLogMessage messageLogLevel t
 
 
