@@ -588,6 +588,9 @@ data CLIOptions wrapped = CLIOptions {
     rtrPort :: wrapped ::: Maybe Int16 <?>
         "Port to listen to for the RTR server (default is 8283)",
 
+    rtrLogFile :: wrapped ::: Maybe String <?>
+        "Path to a file used for RTR log (default is stdout, together with general output).",
+
     logLevel :: wrapped ::: Maybe String <?>
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
 
@@ -636,10 +639,7 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",
 
     maxValidationMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
-
-    rtrLogFile :: wrapped ::: Maybe String <?>
-        "Path to a file used for RTR log (default is stdout, together with general output)."
+        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."    
 
 } deriving (Generic)
 
