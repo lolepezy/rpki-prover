@@ -7,7 +7,22 @@
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE StrictData         #-}
 
-module RPKI.Logging where
+module RPKI.Logging (
+    withLogger,
+    LogLevel(..),
+    LogConfig(..),
+    LogSetup(..),
+    Logger,
+    AppLogger(..),
+    RtrLogger,
+    logError,
+    logWarn,
+    logInfo,
+    logDebug,
+    sinkLog,
+    pushSystem
+) 
+where
 
 import           Conduit
 import           Control.Exception
@@ -95,14 +110,9 @@ data LogMessage = LogMessage {
 data QElem = BinQE BS.ByteString | MsgQE BusMessage
     deriving stock (Show, Eq, Ord, Generic)
 
-data ProcessLogger = MainLogger (ClosableQueue QElem) 
-                   | WorkerLogger (ClosableQueue QElem)     
-
-
 class Logger logger where  
     logMessage_ :: MonadIO m => logger -> LogMessage -> m ()
     logLevel_   :: logger -> LogLevel
-
 
 newtype CommonLogger = CommonLogger ALogger
 newtype RtrLogger    = RtrLogger ALogger
@@ -169,11 +179,14 @@ logBytes logger bytes =
 getQueue :: AppLogger -> ClosableQueue QElem
 getQueue AppLogger { commonLogger = CommonLogger ALogger {..} } = queue
 
+
+-- The main entry-point, done in CPS style.
 withLogger :: LogConfig 
-            -> (SystemMetrics -> IO ()) 
-            -> (AppLogger -> IO b) 
+            -> (SystemMetrics -> IO ()) -- ^ what to do with incoming system metrics messages
+            -> (AppLogger -> IO b)      -- ^ what to do with the configured and initialised logger
             -> IO b
 withLogger LogConfig {..} sysMetricCallback f = do 
+    -- this one is the process' log message queue
     messageQueue <- newCQueueIO 1000    
 
     -- Main process writes to stdout, workers -- to stderr
@@ -183,12 +196,7 @@ withLogger LogConfig {..} sysMetricCallback f = do
                 WorkerLog -> pure (stderr, stderr)
                 MainLog   -> pure (stdout, stdout)
                 MainLogWithRtr rtrLog -> 
-                    (stdout, ) <$> openFile rtrLog WriteMode
-
-    let appLogger = AppLogger {
-            commonLogger = CommonLogger $ ALogger messageQueue logLevel,
-            rtrLogger    = RtrLogger $ ALogger messageQueue logLevel
-        }
+                    (stdout, ) <$> openFile rtrLog WriteMode    
      
     -- TODO Figure out why removing it leads to the whole process getting stuck
     hSetBuffering commonLogStream LineBuffering    
@@ -200,16 +208,14 @@ withLogger LogConfig {..} sysMetricCallback f = do
     let logRaw = logToStream commonLogStream
     let logRtr = logToStream rtrLogStream    
 
+    -- Process queue messages in the main process, i.e. 
+    -- output them to stdout or a separate RTR log
     let processMsgInMain = \case
             LogM logMessage    -> logRaw $ messageToText logMessage
             RtrLogM logMessage -> logRtr $ messageToText logMessage
             SystemM sm         -> sysMetricCallback sm   
-
-    let loopQueue ff = do 
-                z <- atomically $ readCQueue messageQueue        
-                for_ z $ \m -> ff m >> loopQueue ff    
-
-    let loopMain = loopQueue $ \case 
+    
+    let loopMain = loopReadQueue messageQueue $ \case 
             BinQE b -> 
                 case bsToMsg b of 
                     Left e ->                                     
@@ -220,7 +226,10 @@ withLogger LogConfig {..} sysMetricCallback f = do
                                                     
             MsgQE z -> processMsgInMain z
 
-    let loopWorker = loopQueue $ logRaw . \case 
+    -- Worker simply re-sends all the binary messages 
+    -- (received from children processes). Messages 
+    -- from this process are serialised and then sent
+    let loopWorker = loopReadQueue messageQueue $ logRaw . \case 
                                 BinQE b   -> b
                                 MsgQE msg -> msgToBs msg        
 
@@ -229,13 +238,22 @@ withLogger LogConfig {..} sysMetricCallback f = do
                 WorkerLog -> loopWorker
                 _         -> loopMain
                 
+    let appLogger = AppLogger {
+            commonLogger = CommonLogger $ ALogger messageQueue logLevel,
+            rtrLogger    = RtrLogger $ ALogger messageQueue logLevel
+        }
+
     snd <$> concurrently 
                 (finallyCloseQ messageQueue actualLoop)                     
                 (finallyCloseQ messageQueue $ f appLogger)
 
   where
-    finallyCloseQ queue ff = 
-            ff `finally` atomically (closeCQueue queue)
+    loopReadQueue queue g = do 
+        z <- atomically $ readCQueue queue        
+        for_ z $ \m -> g m >> loopReadQueue queue g   
+
+    finallyCloseQ queue g = 
+        g `finally` atomically (closeCQueue queue)
 
     messageToText LogMessage {..} = let
             level = justifyLeft 6 ' ' [i|#{logLevel}|]
@@ -246,6 +264,8 @@ withLogger LogConfig {..} sysMetricCallback f = do
 eol :: Char
 eol = '\n' 
 
+-- Read input stream and extract serialised log messages from it.
+-- Messages are separated by the EOL character.
 sinkLog :: MonadIO m => AppLogger -> ConduitT C8.ByteString o m ()
 sinkLog logger = go mempty        
   where
