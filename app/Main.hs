@@ -98,13 +98,13 @@ main = do
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions = do 
     -- TODO This doesn't look pretty, come up with something better.
-    appState' <- newTVarIO Nothing
+    appStateHolder <- newTVarIO Nothing
 
     withLogConfig cliOptions $ \logConfig -> do
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
         let bumpSysMetric = \sm -> do 
-                z <- readTVarIO appState'
+                z <- readTVarIO appStateHolder
                 for_ z $ mergeSystemMetrics sm
 
         withLogger logConfig bumpSysMetric $ \logger ->
@@ -122,8 +122,8 @@ executeMainProcess cliOptions = do
                         Left _ ->
                             logError logger [i|Couldn't initialise, problems: #{validations}.|]
                         Right appContext' -> do 
-                            -- now we havee the appState, set appState'
-                            atomically $ writeTVar appState' $ Just $ appContext' ^. #appState
+                            -- now we have the appState, set appStateHolder
+                            atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
                             void $ race
                                 (runHttpApi appContext')
                                 (runValidatorServer appContext')
@@ -595,7 +595,9 @@ data CLIOptions wrapped = CLIOptions {
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
 
     strictManifestValidation :: wrapped ::: Bool <?>
-        "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/ item 6.4) for manifest handling (default is false).",
+        ("Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/" +++ 
+         " item 6.4) for manifest handling (default is false). More modern version is here " +++
+         "https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of and it is the default."),
 
     localExceptions :: wrapped ::: [String] <?>
         "Files with local exceptions in the SLURM format (RFC 8416).",
@@ -627,7 +629,7 @@ data CLIOptions wrapped = CLIOptions {
         ("Rsync repositories that will be fetched instead of their children (defaults are " +++
          "'rsync://rpki.afrinic.net/repository/member_repository' and" +++
          "'rsync://rpki.apnic.net/member_repository'). " +++
-         "It is an optimisation and in absolute majority the default is working fine."),
+         "It is an optimisation and in absolute majority of cases the default is working fine."),
 
     metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
@@ -661,7 +663,7 @@ withLogConfig CLIOptions{..} f =
                 "warn"  -> run WarnL
                 "info"  -> run InfoL
                 "debug" -> run DebugL
-                other   -> hPutStrLn stderr $ "Wrong log level: " <> Text.unpack other
+                other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
     run ll = f LogConfig { logLevel = ll, .. }
     logSetup = 

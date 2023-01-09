@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.RTR.RtrServer where
 
@@ -102,11 +102,11 @@ runRtrServer appContext RtrConfig {..} = do
 
         loop sock = forever $ do
             (conn, peer) <- accept sock
-            logDebug logger [i|Connection from #{peer}|]
+            logInfo logger [i|Connection from #{peer}|]
             void $ forkFinally 
                 (serveConnection conn peer updateBroadcastChan rtrState) 
                 (\_ -> do 
-                    logDebug logger [i|Closing connection with #{peer}|]
+                    logInfo logger [i|Closing connection with #{peer}|]
                     close conn)
     
     -- | Block on updates on `appState` and when these update happen
@@ -122,7 +122,7 @@ runRtrServer appContext RtrConfig {..} = do
         -- use it, otherwise wait until some complete version is generated       
         -- by a validation process 
         logInfo logger [i|RTR server: waiting for the first complete world version.|] 
-        worldVersion <- atomically $ waitForVersion appState                
+        worldVersion <- atomically $ waitForAnyVersion appState                
     
         -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
@@ -189,21 +189,21 @@ runRtrServer appContext RtrConfig {..} = do
     --      sendFromQueuesToClient simply sends all PDUs to the client
     -- They communicate using the outboxChan
     serveConnection connection peer updateBroadcastChan rtrState = do        
-        logDebug logger [i|Waiting for the first PDU from client #{peer}|]
+        logDebug logger [i|Waiting for the first PDU from the client #{peer}|]
         firstPdu <- recv connection 1024
         (rtrState', outboxQueue) <- 
             atomically $ (,) <$> readTVar rtrState <*> newCQueue 10
 
-        let firstPduLazy = LBS.fromStrict firstPdu
+        let firstPduLazyBS = LBS.fromStrict firstPdu
 
         let (errorPdu, logMessage, versionedPdu) = 
-                analyzePdu peer firstPduLazy $ bytesToVersionedPdu firstPduLazy        
+                analyzePdu peer firstPduLazyBS $ bytesToVersionedPdu firstPduLazyBS        
 
         for_ errorPdu $ sendAll connection . pduBytesL V0
         for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazyBS of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduBytesL V0 errorPdu'
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
@@ -211,7 +211,8 @@ runRtrServer appContext RtrConfig {..} = do
                     sendAll connection $ pduBytesL V0 errorPdu'
 
                 Right (createPdus, session, warning) -> do
-                    for_ warning $ logWarn logger                    
+                    for_ warning $ logWarn logger                     
+                    -- createPdus is an STM action that creates the response PDUs 
                     atomically $ writeCQueue outboxQueue =<< createPdus
 
                     withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
@@ -241,6 +242,7 @@ runRtrServer appContext RtrConfig {..} = do
             
 
             -- Main loop of the client-server interaction: wait for a PDU from the client, 
+            -- generate response and send the response using outboxQueue
             -- 
             serveLoop session outboxQueue = do
                 logDebug logger [i|Waiting data from the client #{peer}|]

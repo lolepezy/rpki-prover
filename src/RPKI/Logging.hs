@@ -7,22 +7,7 @@
 {-# LANGUAGE QuasiQuotes        #-}
 {-# LANGUAGE StrictData         #-}
 
-module RPKI.Logging (
-    withLogger,
-    LogLevel(..),
-    LogConfig(..),
-    LogSetup(..),
-    Logger,
-    AppLogger(..),
-    RtrLogger,
-    logError,
-    logWarn,
-    logInfo,
-    logDebug,
-    sinkLog,
-    pushSystem
-) 
-where
+module RPKI.Logging where
 
 import           Conduit
 import           Control.Exception

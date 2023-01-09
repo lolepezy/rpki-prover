@@ -93,8 +93,8 @@ waitForNewVersion appState@AppState {..} knownWorldVersion = do
             | otherwise             -> retry
         _                           -> retry
 
-waitForVersion :: AppState -> STM WorldVersion
-waitForVersion AppState {..} =
+waitForAnyVersion :: AppState -> STM WorldVersion
+waitForAnyVersion AppState {..} =
     maybe retry pure =<< readTVar world
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
