@@ -48,13 +48,15 @@ These messages are
  - sent to the parent process (if current process is a worker) 
  - interpreted, e.g. printed to the stdout/file/whatnot (if current process is the main one)
 
-At the moment there are 2 kinds of messages, logging messages and system metrics upadates.
+At the moment there are 3 kinds of messages, logging messages, RTR logging messages 
+and system metrics upadates.
 
 In order to sent a message to the parent process the following happens
  - messsage gets serialised to a bytestring
  - this bytestring get converted to base64
  - it is printed to stderr (at the moment) with '\n' after it.
  That's the way the parent knows where one message ends and the other one begins.
+ It looks cumbersome but it is actually quiet simple and reliable.
 
 If the parent accepting a message is not the main one, it just passes the bytes
 without any interpretation further to it's parent until the main one is reached.
@@ -137,7 +139,7 @@ data LogSetup = WorkerLog | MainLog | MainLogWithRtr String
 
 
 logError, logWarn, logInfo, logDebug :: (Logger log, MonadIO m) => log -> Text -> m ()
-logError logger t = liftIO $ logMessage_ logger =<< mkLogMessage ErrorL t
+logError logger t = liftIO $ logMessage_ logger =<< createLogMessage ErrorL t
 logWarn  = logIfAboveLevel WarnL
 logInfo  = logIfAboveLevel InfoL
 logDebug = logIfAboveLevel DebugL
@@ -147,11 +149,11 @@ logIfAboveLevel :: (Logger log, MonadIO m) =>
                     LogLevel -> log -> Text -> m ()
 logIfAboveLevel messageLogLevel logger t = liftIO $ 
     when (logLevel_ logger >= messageLogLevel) $ 
-        logMessage_ logger =<< mkLogMessage messageLogLevel t
+        logMessage_ logger =<< createLogMessage messageLogLevel t
 
 
-mkLogMessage :: LogLevel -> Text -> IO LogMessage
-mkLogMessage logLevel message = do 
+createLogMessage :: LogLevel -> Text -> IO LogMessage
+createLogMessage logLevel message = do 
     Now timestamp <- thisInstant
     processId <- getProcessID
     pure LogMessage {..}
@@ -183,18 +185,17 @@ withLogger LogConfig {..} sysMetricCallback f = do
                 MainLogWithRtr rtrLog -> 
                     (stdout, ) <$> openFile rtrLog WriteMode
 
-    let appLogger = let 
-                commonLogger = CommonLogger $ ALogger messageQueue logLevel
-                rtrLogger = RtrLogger $ ALogger messageQueue logLevel
-            in AppLogger {..}
-
+    let appLogger = AppLogger {
+            commonLogger = CommonLogger $ ALogger messageQueue logLevel,
+            rtrLogger    = RtrLogger $ ALogger messageQueue logLevel
+        }
+     
     -- TODO Figure out why removing it leads to the whole process getting stuck
     hSetBuffering commonLogStream LineBuffering    
     hSetBuffering rtrLogStream LineBuffering    
     
-    let logToStream stream t = do 
-            BS.hPut stream t
-            BS.hPut stream $ C8.singleton eol        
+    let logToStream stream t = 
+            mapM_ (BS.hPut stream) [t, C8.singleton eol]
 
     let logRaw = logToStream commonLogStream
     let logRtr = logToStream rtrLogStream    
@@ -213,7 +214,7 @@ withLogger LogConfig {..} sysMetricCallback f = do
                 case bsToMsg b of 
                     Left e ->                                     
                         logRaw . messageToText =<< 
-                            mkLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
+                            createLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
                     Right z -> 
                         processMsgInMain z                        
                                                     

@@ -9,8 +9,6 @@
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE InstanceSigs #-}
-
 
 module RPKI.Domain where
 
@@ -52,6 +50,7 @@ newtype PolyRFC r (rfc :: ValidationRFC) = PolyRFC r
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+-- Something that be related to validation with one of these two validation RFCs
 data SomeRFC r = StrictRFC_ (PolyRFC r 'StrictRFC) 
                | ReconsideredRFC_ (PolyRFC r 'ReconsideredRFC) 
     deriving stock (Show, Eq, Ord, Generic)
@@ -322,8 +321,7 @@ instance WithRFC (SomeRFC a) where
 instance WithRFC EECerObject where
     getRFC EECerObject {..} = getRFC certificate
 
-instance WithRFC CaCerObject where
-    getRFC :: CaCerObject -> ValidationRFC
+instance WithRFC CaCerObject where    
     getRFC CaCerObject {..} = getRFC certificate
 
 instance OfCertType (TypedCert c (t :: CertType)) t
@@ -389,6 +387,7 @@ data RawResourceCertificate = RawResourceCertificate {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+-- Resource certificate with a validation RFC associated with it
 newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificate)
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
