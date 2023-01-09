@@ -66,7 +66,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
     writeTVar filtered slurmed
-    -- invalidae serialised PDU cache with every new version
+    -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus Nothing
     pure slurmed
 
