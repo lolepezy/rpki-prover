@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.RTR.RtrServer where
 
@@ -66,16 +66,18 @@ data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString
 -- | Main entry point, here we start the RTR server. 
 -- 
 runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
-runRtrServer appContext@AppContext {..} RtrConfig {..} = do         
+runRtrServer appContext RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
-    let rtrState = appState ^. #rtrState
+    let rtrState = appContext ^. #appState . #rtrState
     updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
             (runSocketBusiness rtrState updateBroadcastChan)
             (listenToAppStateUpdates rtrState updateBroadcastChan)
   where    
+
+    logger = getRtrLogger appContext
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = 
@@ -100,11 +102,11 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
 
         loop sock = forever $ do
             (conn, peer) <- accept sock
-            logDebug logger [i|Connection from #{peer}|]
+            logInfo logger [i|Connection from #{peer}|]
             void $ forkFinally 
                 (serveConnection conn peer updateBroadcastChan rtrState) 
                 (\_ -> do 
-                    logDebug logger [i|Closing connection with #{peer}|]
+                    logInfo logger [i|Closing connection with #{peer}|]
                     close conn)
     
     -- | Block on updates on `appState` and when these update happen
@@ -114,11 +116,13 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
     --
     listenToAppStateUpdates rtrState updateBroadcastChan = do        
 
+        let appState = appContext ^. #appState
+
         -- If a version is recovered from the storage after the start, 
         -- use it, otherwise wait until some complete version is generated       
         -- by a validation process 
         logInfo logger [i|RTR server: waiting for the first complete world version.|] 
-        worldVersion <- atomically $ waitForVersion appState                
+        worldVersion <- atomically $ waitForAnyVersion appState                
     
         -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
@@ -168,7 +172,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
                     let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
-                    writeTChan updateBroadcastChan [TruePdu $ notifyPdu]
+                    writeTChan updateBroadcastChan [TruePdu notifyPdu]
                     writeTVar lastTimeNotified $ Just now
         where
           logDiff GenDiffs {..} = do 
@@ -185,22 +189,21 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
     --      sendFromQueuesToClient simply sends all PDUs to the client
     -- They communicate using the outboxChan
     serveConnection connection peer updateBroadcastChan rtrState = do        
-        logDebug logger [i|Waiting for the first PDU from client #{peer}|]
+        logDebug logger [i|Waiting for the first PDU from the client #{peer}|]
         firstPdu <- recv connection 1024
         (rtrState', outboxQueue) <- 
             atomically $ (,) <$> readTVar rtrState <*> newCQueue 10
 
-        let firstPduLazy = LBS.fromStrict firstPdu
+        let firstPduLazyBS = LBS.fromStrict firstPdu
 
-        let (errorPdu, message, versionedPdu) = 
-                analyzePdu peer firstPduLazy $ bytesToVersionedPdu firstPduLazy        
+        let (errorPdu, logMessage, versionedPdu) = 
+                analyzePdu peer firstPduLazyBS $ bytesToVersionedPdu firstPduLazyBS        
 
         for_ errorPdu $ sendAll connection . pduBytesL V0
-
-        for_ message $ logError logger
+        for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' appState versionedPdu' firstPduLazy of 
+            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazyBS of 
                 Left (errorPdu', errorMessage) -> do
                     let errorBytes = pduBytesL V0 errorPdu'
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
@@ -208,7 +211,8 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                     sendAll connection $ pduBytesL V0 errorPdu'
 
                 Right (createPdus, session, warning) -> do
-                    for_ warning $ logWarn logger                    
+                    for_ warning $ logWarn logger                     
+                    -- createPdus is an STM action that creates the response PDUs 
                     atomically $ writeCQueue outboxQueue =<< createPdus
 
                     withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
@@ -238,6 +242,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
             
 
             -- Main loop of the client-server interaction: wait for a PDU from the client, 
+            -- generate response and send the response using outboxQueue
             -- 
             serveLoop session outboxQueue = do
                 logDebug logger [i|Waiting data from the client #{peer}|]
@@ -250,7 +255,7 @@ runRtrServer appContext@AppContext {..} RtrConfig {..} = do
                         -- all the real work happens inside of pure `responseAction`, 
                         -- for better testability.
                         rtrState' <- readTVar rtrState                        
-                        case responseAction logger peer session rtrState' appState pduBytes of 
+                        case responseAction logger peer session rtrState' (appContext ^. #appState) pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io
@@ -296,8 +301,8 @@ waitForLatestRtrPayload AppContext {..} rtrState = do
 --
 -- TODO Do something with contravariant logging here, it's the right place.
 -- 
-responseAction :: Show peer => 
-                   AppLogger 
+responseAction :: (Show peer, Logger logger) => 
+                   logger 
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 

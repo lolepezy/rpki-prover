@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances  #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE OverloadedLabels   #-}
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE QuasiQuotes        #-}
@@ -30,7 +31,7 @@ import GHC.Generics (Generic)
 
 import System.Posix.Types
 import System.Posix.Process
-import System.IO (BufferMode (..), hSetBuffering, stdout, stderr)
+import System.IO
 
 import RPKI.Domain
 import RPKI.Util
@@ -40,6 +41,26 @@ import RPKI.Metrics.System
 
 import RPKI.Store.Base.Serialisation
 
+{- 
+Every process, the main one or a worker, has it's own queue of messages.
+
+These messages are 
+ - sent to the parent process (if current process is a worker) 
+ - interpreted, e.g. printed to the stdout/file/whatnot (if current process is the main one)
+
+At the moment there are 3 kinds of messages, logging messages, RTR logging messages 
+and system metrics upadates.
+
+In order to sent a message to the parent process the following happens
+ - messsage gets serialised to a bytestring
+ - this bytestring get converted to base64
+ - it is printed to stderr (at the moment) with '\n' after it.
+ That's the way the parent knows where one message ends and the other one begins.
+ It looks cumbersome but it is actually quiet simple and reliable.
+
+If the parent accepting a message is not the main one, it just passes the bytes
+without any interpretation further to it's parent until the main one is reached.
+-}
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
     deriving stock (Eq, Ord, Generic)
@@ -53,53 +74,12 @@ instance Show LogLevel where
         DebugL -> "Debug"
 
 data AppLogger = AppLogger {
-        logLevel :: LogLevel,
-        actualLogger :: ProcessLogger
+        commonLogger :: CommonLogger,
+        rtrLogger    :: RtrLogger        
     }
 
-logError, logWarn, logInfo, logDebug :: MonadIO m => AppLogger -> Text -> m ()
-
-logError AppLogger {..} s = liftIO $ logWLevel actualLogger =<< mkLogMessage ErrorL s
-logWarn  = logIfAboveLevel WarnL
-logInfo  = logIfAboveLevel InfoL
-logDebug = logIfAboveLevel DebugL
-
-logIfAboveLevel :: MonadIO m => LogLevel -> AppLogger -> Text -> m ()
-logIfAboveLevel level AppLogger {..} s = liftIO $
-    when (logLevel >= level) $ 
-        logWLevel actualLogger =<< mkLogMessage level s        
-
-mkLogMessage :: LogLevel -> Text -> IO LogMessage
-mkLogMessage logLevel message = do 
-    Now timestamp <- thisInstant
-    processId <- getProcessID
-    pure LogMessage {..}
-
-pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
-pushSystem AppLogger {..} sm = 
-    liftIO $ atomically $ writeCQueue (getQueue actualLogger) $ MsgQE $ SystemM sm  
-
-{- 
-Every process the main one or a worker has it's own queue of messages.
-
-These messages are 
- - sent to the parent process (if current process is a worker) 
- - interpreted, e.g. printed to the stdout/file/whatnot (if current process is the main one)
-
-At the moment there are 2 kinds of messages, logging messages and system metrics upadates.
-
-In order to sent a message to the parent process the following should happen
- - messsage gets serialised to a bytestring
- - this bytestring get converted to base64
- - it is printed to stderr (at the moment) with '\n' after it.
- That's the way the parent knows where one message ends and the other one begins.
-
-If the parent accepting a message is not the main one, it just passes the bytes
-without any interpretation further to it's parent until the main one is reached.
--}
-
 -- Messages in the queue 
-data BusMessage = LogM LogMessage | SystemM SystemMetrics
+data BusMessage = LogM LogMessage | RtrLogM LogMessage | SystemM SystemMetrics
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -115,104 +95,170 @@ data LogMessage = LogMessage {
 data QElem = BinQE BS.ByteString | MsgQE BusMessage
     deriving stock (Show, Eq, Ord, Generic)
 
-data ProcessLogger = MainLogger (ClosableQueue QElem) 
-                   | WorkerLogger (ClosableQueue QElem) 
+class Logger logger where  
+    logMessage_ :: MonadIO m => logger -> LogMessage -> m ()
+    logLevel_   :: logger -> LogLevel
+
+newtype CommonLogger = CommonLogger ALogger
+newtype RtrLogger    = RtrLogger ALogger
+
+data ALogger = ALogger {
+        queue    :: ClosableQueue QElem,
+        logLevel :: LogLevel
+    }
+
+instance Logger CommonLogger where 
+    logMessage_ (CommonLogger ALogger {..}) message =
+        liftIO $ atomically $ writeCQueue queue $ MsgQE $ LogM message  
+
+    logLevel_ (CommonLogger ALogger {..}) = logLevel
+
+instance Logger RtrLogger where 
+    logMessage_ (RtrLogger ALogger {..}) message = 
+        liftIO $ atomically $ writeCQueue queue $ MsgQE $ RtrLogM message  
+
+    logLevel_ (RtrLogger ALogger {..}) = logLevel
+
+instance Logger AppLogger where 
+    logMessage_ AppLogger {..} = logMessage_ commonLogger
+    logLevel_ AppLogger {..}   = logLevel_ commonLogger
+
+data LogConfig = LogConfig {
+        logLevel :: LogLevel,
+        logSetup :: LogSetup
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+
+data LogSetup = WorkerLog | MainLog | MainLogWithRtr String
+    deriving stock (Eq, Ord, Show, Generic)
 
 
-logWLevel :: ProcessLogger -> LogMessage -> IO ()
-logWLevel logger msg = 
-    atomically $ writeCQueue (getQueue logger) $ MsgQE $ LogM msg  
+logError, logWarn, logInfo, logDebug :: (Logger log, MonadIO m) => log -> Text -> m ()
+logError logger t = liftIO $ logMessage_ logger =<< createLogMessage ErrorL t
+logWarn  = logIfAboveLevel WarnL
+logInfo  = logIfAboveLevel InfoL
+logDebug = logIfAboveLevel DebugL
 
-logBytes :: ProcessLogger -> BS.ByteString -> IO ()
+
+logIfAboveLevel :: (Logger log, MonadIO m) => 
+                    LogLevel -> log -> Text -> m ()
+logIfAboveLevel messageLogLevel logger t = liftIO $ 
+    when (logLevel_ logger >= messageLogLevel) $ 
+        logMessage_ logger =<< createLogMessage messageLogLevel t
+
+
+createLogMessage :: LogLevel -> Text -> IO LogMessage
+createLogMessage logLevel message = do 
+    Now timestamp <- thisInstant
+    processId <- getProcessID
+    pure LogMessage {..}
+
+pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
+pushSystem logger sm = 
+    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemM sm  
+
+logBytes :: AppLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
     atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
 
+getQueue :: AppLogger -> ClosableQueue QElem
+getQueue AppLogger { commonLogger = CommonLogger ALogger {..} } = queue
 
-forLogger :: ProcessLogger -> (ClosableQueue QElem -> p) -> (ClosableQueue QElem -> p) -> p
-forLogger logger f g = 
-    case logger of 
-        MainLogger q -> f q
-        WorkerLogger q -> g q
 
-forLogger1 :: ProcessLogger -> (ClosableQueue QElem -> p) -> p
-forLogger1 logger f = forLogger logger f f 
-
-getQueue :: ProcessLogger -> ClosableQueue QElem
-getQueue logger = forLogger1 logger id
-
-withLogger :: (ClosableQueue a -> ProcessLogger) 
-            -> LogLevel 
-            -> (SystemMetrics -> IO ()) 
-            -> (AppLogger -> IO b) 
+-- The main entry-point, done in CPS style.
+withLogger :: LogConfig 
+            -> (SystemMetrics -> IO ()) -- ^ what to do with incoming system metrics messages
+            -> (AppLogger -> IO b)      -- ^ what to do with the configured and initialised logger
             -> IO b
-withLogger mkLogger maxLogLevel sysMetricCallback f = do 
-    q <- newCQueueIO 1000
-    let logger = mkLogger q    
-    let appLogger = AppLogger maxLogLevel logger
+withLogger LogConfig {..} sysMetricCallback f = do 
+    -- this one is the process' log message queue
+    messageQueue <- newCQueueIO 1000    
 
     -- Main process writes to stdout, workers -- to stderr
     -- TODO Think about it more, maybe there's more consistent option
-    let logStream = forLogger logger (const stdout) (const stderr)
-
+    (commonLogStream, rtrLogStream) <-
+            case logSetup of
+                WorkerLog -> pure (stderr, stderr)
+                MainLog   -> pure (stdout, stdout)
+                MainLogWithRtr rtrLog -> 
+                    (stdout, ) <$> openFile rtrLog WriteMode    
+     
     -- TODO Figure out why removing it leads to the whole process getting stuck
-    hSetBuffering logStream LineBuffering    
+    hSetBuffering commonLogStream LineBuffering    
+    hSetBuffering rtrLogStream LineBuffering    
     
-    let logRaw s = do 
-            BS.hPut logStream s
-            BS.hPut logStream $ C8.singleton eol        
+    let logToStream stream t = 
+            mapM_ (BS.hPut stream) [t, C8.singleton eol]
 
-    runWithLog logRaw logger (f appLogger)
+    let logRaw = logToStream commonLogStream
+    let logRtr = logToStream rtrLogStream    
 
-  where
-
-    finallyCloseQ logger ff = 
-            ff `finally` forLogger1 logger (atomically . closeCQueue)
-
-    runWithLog logRaw logger g = do        
-        snd <$> concurrently 
-                    (finallyCloseQ logger $ forLogger logger loopMain loopWorker)                     
-                    (finallyCloseQ logger g)
-      where                
-
-        loopMain = loop $ \case 
-            BinQE b -> do 
+    -- Process queue messages in the main process, i.e. 
+    -- output them to stdout or a separate RTR log
+    let processMsgInMain = \case
+            LogM logMessage    -> logRaw $ messageToText logMessage
+            RtrLogM logMessage -> logRtr $ messageToText logMessage
+            SystemM sm         -> sysMetricCallback sm   
+    
+    let loopMain = loopReadQueue messageQueue $ \case 
+            BinQE b -> 
                 case bsToMsg b of 
                     Left e ->                                     
-                        mainLogWithLevel =<< mkLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
-                    Right (LogM logMessage) -> 
-                        mainLogWithLevel logMessage
-                    Right (SystemM sm) -> 
-                        sysMetricCallback sm
-                                                  
-            MsgQE (LogM logMessage) -> 
-                mainLogWithLevel logMessage
-            MsgQE (SystemM sm) -> 
-                sysMetricCallback sm
+                        logRaw . messageToText =<< 
+                            createLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
+                    Right z -> 
+                        processMsgInMain z                        
+                                                    
+            MsgQE z -> processMsgInMain z
 
-        loopWorker = loop $ logRaw . \case 
+    -- Worker simply re-sends all the binary messages 
+    -- (received from children processes). Messages 
+    -- from this process are serialised and then sent
+    let loopWorker = loopReadQueue messageQueue $ logRaw . \case 
                                 BinQE b   -> b
-                                MsgQE msg -> msgToBs msg
+                                MsgQE msg -> msgToBs msg        
 
-        loop ff queue = do 
-                z <- atomically $ readCQueue queue        
-                for_ z $ \m -> ff m >> loop ff queue            
+    let actualLoop = 
+            case logSetup of
+                WorkerLog -> loopWorker
+                _         -> loopMain
+                
+    let appLogger = AppLogger {
+            commonLogger = CommonLogger $ ALogger messageQueue logLevel,
+            rtrLogger    = RtrLogger $ ALogger messageQueue logLevel
+        }
 
-        mainLogWithLevel LogMessage {..} = do
-            let level = justifyLeft 6 ' ' [i|#{logLevel}|]
-            let pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
-            logRaw [i|#{level}  #{pid}  #{timestamp}  #{message}|]      
-    
+    snd <$> concurrently 
+                (finallyCloseQ messageQueue actualLoop)                     
+                (finallyCloseQ messageQueue $ f appLogger)
+
+  where
+    loopReadQueue queue g = do 
+        z <- atomically $ readCQueue queue        
+        for_ z $ \m -> g m >> loopReadQueue queue g   
+
+    finallyCloseQ queue g = 
+        g `finally` atomically (closeCQueue queue)
+
+    messageToText LogMessage {..} = let
+            level = justifyLeft 6 ' ' [i|#{logLevel}|]
+            pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
+        in [i|#{level}  #{pid}  #{timestamp}  #{message}|] 
+
+
 eol :: Char
 eol = '\n' 
 
+-- Read input stream and extract serialised log messages from it.
+-- Messages are separated by the EOL character.
 sinkLog :: MonadIO m => AppLogger -> ConduitT C8.ByteString o m ()
-sinkLog AppLogger {..} = go mempty        
+sinkLog logger = go mempty        
   where
     go accum = do 
         z <- await
         for_ z $ \bs -> do 
             let (complete, leftover') = gatherMsgs accum bs            
-            for_ complete $ liftIO . logBytes actualLogger
+            for_ complete $ liftIO . logBytes logger
             go leftover'
 
 gatherMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
@@ -223,7 +269,6 @@ gatherMsgs accum bs =
     splitByEol (acc, chunks) c 
         | c == eol  = (mempty, BB.toLazyByteString acc : chunks)
         | otherwise = (acc <> BB.char8 c, chunks)
-
 
 msgToBs :: BusMessage -> BS.ByteString
 msgToBs msg = let 

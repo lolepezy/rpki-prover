@@ -66,7 +66,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
     writeTVar filtered slurmed
-    -- invalidae serialised PDU cache with every new version
+    -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus Nothing
     pure slurmed
 
@@ -93,8 +93,8 @@ waitForNewVersion appState@AppState {..} knownWorldVersion = do
             | otherwise             -> retry
         _                           -> retry
 
-waitForVersion :: AppState -> STM WorldVersion
-waitForVersion AppState {..} =
+waitForAnyVersion :: AppState -> STM WorldVersion
+waitForAnyVersion AppState {..} =
     maybe retry pure =<< readTVar world
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           

@@ -97,17 +97,17 @@ main = do
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions = do 
-    -- TODO This doesn't look preetty, come up with someething better.
-    appState' <- newTVarIO Nothing
+    -- TODO This doesn't look pretty, come up with something better.
+    appStateHolder <- newTVarIO Nothing
 
-    withLogLevel cliOptions $ \logLevel -> do
-        -- This one modifyies system meetrics in AppState
+    withLogConfig cliOptions $ \logConfig -> do
+        -- This one modifies system metrics in AppState
         -- if appState is actually initialised
         let bumpSysMetric = \sm -> do 
-                z <- readTVarIO appState'
+                z <- readTVarIO appStateHolder
                 for_ z $ mergeSystemMetrics sm
 
-        withLogger MainLogger logLevel bumpSysMetric $ \logger ->
+        withLogger logConfig bumpSysMetric $ \logger ->
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -117,13 +117,13 @@ executeMainProcess cliOptions = do
                     (appContext, validations) <- do
                                 runValidatorT (newScopes "initialise") $ do
                                     checkPreconditions cliOptions
-                                    createAppContext cliOptions logger logLevel
+                                    createAppContext cliOptions logger (logConfig ^. #logLevel)
                     case appContext of
                         Left _ ->
                             logError logger [i|Couldn't initialise, problems: #{validations}.|]
                         Right appContext' -> do 
-                            -- now we havee the appState, set appState'
-                            atomically $ writeTVar appState' $ Just $ appContext' ^. #appState
+                            -- now we have the appState, set appStateHolder
+                            atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
                             void $ race
                                 (runHttpApi appContext')
                                 (runValidatorServer appContext')
@@ -131,9 +131,12 @@ executeMainProcess cliOptions = do
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput
-    let config = input ^. typed @Config
-    let logLevel' = config ^. #logLevel
-    withLogger WorkerLogger logLevel' (\_ -> pure ()) $ \logger -> liftIO $ do
+    let config = input ^. typed @Config    
+    let logConfig = LogConfig {
+                        logLevel = config ^. #logLevel,
+                        logSetup = WorkerLog
+                    }
+    withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
                                 (createWorkerAppContext config logger)
@@ -212,6 +215,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             then Just $ defaultRtrConfig
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
+                        & #rtrLogFile .~ rtrLogFile
             else Nothing    
 
     let readSlurms files = do
@@ -458,8 +462,8 @@ checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do
-    withLogLevel cliOptions $ \logLevel1 ->
-        withLogger MainLogger logLevel1 (\_ -> pure ()) $ \logger ->
+    withLogConfig cliOptions $ \logConfig ->
+        withLogger logConfig (\_ -> pure ()) $ \logger ->
             withVerifier logger $ \verifyPath rscFile -> do
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
                 (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do
@@ -584,11 +588,16 @@ data CLIOptions wrapped = CLIOptions {
     rtrPort :: wrapped ::: Maybe Int16 <?>
         "Port to listen to for the RTR server (default is 8283)",
 
+    rtrLogFile :: wrapped ::: Maybe String <?>
+        "Path to a file used for RTR log (default is stdout, together with general output).",
+
     logLevel :: wrapped ::: Maybe String <?>
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
 
     strictManifestValidation :: wrapped ::: Bool <?>
-        "Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/ item 6.4) for manifest handling (default is false).",
+        ("Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/" +++ 
+         " item 6.4) for manifest handling (default is false). More modern version is here " +++
+         "https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of and it is the default."),
 
     localExceptions :: wrapped ::: [String] <?>
         "Files with local exceptions in the SLURM format (RFC 8416).",
@@ -620,7 +629,7 @@ data CLIOptions wrapped = CLIOptions {
         ("Rsync repositories that will be fetched instead of their children (defaults are " +++
          "'rsync://rpki.afrinic.net/repository/member_repository' and" +++
          "'rsync://rpki.apnic.net/member_repository'). " +++
-         "It is an optimisation and in absolute majority the default is working fine."),
+         "It is an optimisation and in absolute majority of cases the default is working fine."),
 
     metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
@@ -632,7 +641,7 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",
 
     maxValidationMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."
+        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."    
 
 } deriving (Generic)
 
@@ -644,14 +653,23 @@ deriving instance Show (CLIOptions Unwrapped)
 type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
 
 
-withLogLevel :: CLIOptions Unwrapped -> (LogLevel -> IO ()) -> IO ()
-withLogLevel CLIOptions{..} f =
+withLogConfig :: CLIOptions Unwrapped -> (LogConfig -> IO ()) -> IO ()
+withLogConfig CLIOptions{..} f =
     case logLevel of
-        Nothing -> f defaultsLogLevel
+        Nothing -> run defaultsLogLevel
         Just s  ->
             case Text.toLower $ Text.pack s of
-                "error" -> f ErrorL
-                "warn"  -> f WarnL
-                "info"  -> f InfoL
-                "debug" -> f DebugL
-                other   -> hPutStrLn stderr $ "Wrong log level: " <> Text.unpack other
+                "error" -> run ErrorL
+                "warn"  -> run WarnL
+                "info"  -> run InfoL
+                "debug" -> run DebugL
+                other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
+  where
+    run ll = f LogConfig { logLevel = ll, .. }
+    logSetup = 
+        case (rtrLogFile, worker) of 
+            (Just fs, Nothing) -> MainLogWithRtr fs
+            (Nothing, Nothing) -> MainLog
+            (_,        Just _) -> WorkerLog
+            
+                
