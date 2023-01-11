@@ -195,10 +195,10 @@ withLogger LogConfig {..} sysMetricCallback f = do
 
     -- Process queue messages in the main process, i.e. 
     -- output them to stdout or a separate RTR log
-    let processMsgInMain = \case
+    let processMessageInMainProcess = \case
             LogM logMessage    -> logRaw $ messageToText logMessage
             RtrLogM logMessage -> logRtr $ messageToText logMessage
-            SystemM sm         -> sysMetricCallback sm   
+            SystemM sysMetric  -> sysMetricCallback sysMetric
     
     let loopMain = loopReadQueue messageQueue $ \case 
             BinQE b -> 
@@ -207,17 +207,16 @@ withLogger LogConfig {..} sysMetricCallback f = do
                         logRaw . messageToText =<< 
                             createLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
                     Right z -> 
-                        processMsgInMain z                        
+                        processMessageInMainProcess z                        
                                                     
-            MsgQE z -> processMsgInMain z
+            MsgQE z -> processMessageInMainProcess z
 
     -- Worker simply re-sends all the binary messages 
-    -- (received from children processes). Messages 
-    -- from this process are serialised and then sent
+    -- (received from children processes) to its parent. 
+    -- Messages from this process are serialised and then sent
     let loopWorker = loopReadQueue messageQueue $ logRaw . \case 
                                 BinQE b   -> b
                                 MsgQE msg -> msgToBs msg        
-
     let actualLoop = 
             case logSetup of
                 WorkerLog -> loopWorker
@@ -271,9 +270,8 @@ gatherMsgs accum bs =
         | otherwise = (acc <> BB.char8 c, chunks)
 
 msgToBs :: BusMessage -> BS.ByteString
-msgToBs msg = let 
-    s = serialise_ msg
-    EncodedBase64 bs = encodeBase64 $ DecodedBase64 s
+msgToBs msg = let     
+    EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ serialise_ msg
     in bs
 
 bsToMsg :: BS.ByteString -> Either Text BusMessage
