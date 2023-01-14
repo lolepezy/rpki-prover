@@ -39,25 +39,4 @@ jobs:
         stack --system-ghc --no-install-ghc
         test
         rpki-prover:lib rpki-prover:test:rpki-prover-test
-# --pedantic
-# --ghc-options=-Wincomplete-record-updates
-# --ghc-options=-Wincomplete-uni-patterns
-# --ghc-options=-Wredundant-constraints        
 
-    # - name: Install stack
-    #   run:
-    #     - mkdir -p ~/.local/bin
-    #     - export PATH=$HOME/.local/bin:$PATH
-    #     - |
-    #       if which stack; then
-    #         stack --version
-    #       else
-    #         curl -sSL https://get.haskellstack.org/ | sh
-    #     - export STACK="stack --no-terminal --install-ghc"
-
-    # - name: Install dependencies
-    #   run: stack build --test --only-dependencies
-    # - name: Build
-    #   run: stack build
-    # - name: Run tests
-    #   run: stack test
