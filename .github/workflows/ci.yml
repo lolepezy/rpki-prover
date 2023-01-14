@@ -33,7 +33,7 @@ jobs:
           ${{ runner.os }}-
     - name: Install dependencies          
       run: 
-        sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev
+        sudo apt-get install rsync libc-dev libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev
     - name: Compile and test
       run:
         stack --system-ghc --no-install-ghc
