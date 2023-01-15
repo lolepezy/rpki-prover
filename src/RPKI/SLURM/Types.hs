@@ -12,9 +12,8 @@ import           Data.Text (Text)
 import           Data.These
 import           Data.Aeson as Json
 import           Data.Aeson.Types
+import qualified Data.Aeson.KeyMap as KM
 import           Data.Swagger
-
-import qualified Data.HashMap.Strict as HM
 import           Data.String.Interpolate.IsString
 
 import           Data.Semigroup
@@ -134,9 +133,9 @@ instance FromJSON BgpsecAssertion where
 instance FromJSON PrefixAssertion    
 
 parseOneOrBoth :: (FromJSON a, FromJSON b) => 
-                  Object -> Text -> Text -> Parser (These a b)
+                  Object -> Key -> Key -> Parser (These a b)
 parseOneOrBoth o t1 t2 =     
-    case (HM.lookup t1 o, HM.lookup t2 o) of        
+    case (KM.lookup t1 o, KM.lookup t2 o) of        
         (Just a, Nothing)  -> This  <$> parseJSON a
         (Nothing, Just b)  -> That  <$> parseJSON b
         (Just a, Just b)   -> These <$> parseJSON a <*> parseJSON b
@@ -177,7 +176,7 @@ instance ToJSON PrefixFilter where
         <> jsonComment comment        
 
 oneOrBothToJSON :: (ToJSON a, ToJSON b) => 
-                  These a b -> Text -> Text -> [Pair]
+                  These a b -> Key -> Key -> [Pair]
 oneOrBothToJSON these' t1 t2 =     
     case these' of 
         This a    -> [ t1 .= toJSON a ]

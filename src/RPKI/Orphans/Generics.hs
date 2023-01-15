@@ -12,6 +12,7 @@ import Data.Hourglass
 import Data.Set.NonEmpty
 import Data.Set.NonEmpty.Internal
 import Data.Map.Monoidal.Strict
+
 import Data.ASN1.BitArray
 import Crypto.PubKey.RSA.Types (PublicKey(..))
 import Crypto.PubKey.DSA (PublicKey(..), Params(..))
@@ -42,5 +43,6 @@ deriving instance Generic ASN1ConstructionType
 deriving instance Generic Crypto.PubKey.ECC.Types.CurveName
 
 deriving instance Generic BitArray
+
 deriving instance Generic (NESet a)
 deriving instance Generic (MonoidalMap a b)

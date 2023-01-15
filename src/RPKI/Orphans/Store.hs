@@ -1,12 +1,16 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Orphans.Store where
 
 import qualified Data.ByteString as BS
 
 import Data.Store
+-- import Data.Store.TH
+import TH.Derive
 
 import Data.ByteArray (convert)
 
@@ -36,36 +40,29 @@ import Crypto.PubKey.ECC.Types
 
 import RPKI.Orphans.Generics
 
-instance Store X509.Certificate
-instance Store X509.CRL
-instance Store X509.RevokedCertificate
-instance Store a => Store (X509.SignedExact a)    
-instance Store a => Store (X509.Signed a) 
 
-instance Store SignatureALG
+peekPK :: (BS.ByteString -> CryptoFailable b) -> Peek b
+peekPK f = do 
+    bs <- peek
+    case f bs of     
+        CryptoPassed p -> pure p
+        CryptoFailed e -> fail $ show e
 
-instance Store DateTime
-instance Store Date
-instance Store TimeOfDay
-instance Store Month
-instance Store Hours
-instance Store Minutes
-instance Store Seconds
-instance Store NanoSeconds
-instance Store TimezoneOffset
+$($(derive [d|instance Deriving (Store HashALG)|]))
+$($(derive [d|instance Deriving (Store Month)|]))
+$($(derive [d|instance Deriving (Store Hours)|]))
+$($(derive [d|instance Deriving (Store Minutes)|]))
+$($(derive [d|instance Deriving (Store Seconds)|]))
+$($(derive [d|instance Deriving (Store NanoSeconds)|]))
+$($(derive [d|instance Deriving (Store TimezoneOffset)|]))
+$($(derive [d|instance Deriving (Store TimeOfDay)|]))
+$($(derive [d|instance Deriving (Store Date)|]))
+$($(derive [d|instance Deriving (Store DateTime)|]))
 
-instance Store ASN1
-instance Store DistinguishedName
-instance Store PubKey
-instance Store PubKeyEC
-instance Store PubKeyALG
-instance Store Extensions
-instance Store ExtensionRaw
-instance Store HashALG
+$($(derive [d|instance Deriving (Store Crypto.PubKey.DSA.Params)|]))
+$($(derive [d|instance Deriving (Store Crypto.PubKey.RSA.Types.PublicKey)|]))
+$($(derive [d|instance Deriving (Store Crypto.PubKey.DSA.PublicKey)|]))
 
-instance Store Crypto.PubKey.RSA.Types.PublicKey
-instance Store Crypto.PubKey.DSA.PublicKey
-instance Store Crypto.PubKey.DSA.Params
 
 instance Store C25519.PublicKey where    
     size = ConstSize 32
@@ -88,21 +85,29 @@ instance Store E448.PublicKey where
     poke pk = let bs = convert pk :: BS.ByteString in poke bs    
     peek = peekPK E448.publicKey
 
-instance Store BitArray
-instance Store ASN1CharacterString
-instance Store ASN1StringEncoding
-instance Store ASN1TimeType
-instance Store ASN1Class
-instance Store ASN1ConstructionType
-instance Store SerializedPoint
-instance Store Crypto.PubKey.ECC.Types.CurveName
+$($(derive [d|instance Deriving (Store BitArray)|]))
+$($(derive [d|instance Deriving (Store ASN1StringEncoding)|]))
+$($(derive [d|instance Deriving (Store ASN1CharacterString)|]))
+$($(derive [d|instance Deriving (Store ASN1TimeType)|]))
+$($(derive [d|instance Deriving (Store ASN1Class)|]))
+$($(derive [d|instance Deriving (Store ASN1ConstructionType)|]))
+$($(derive [d|instance Deriving (Store SerializedPoint)|]))
+$($(derive [d|instance Deriving (Store Crypto.PubKey.ECC.Types.CurveName)|]))
+$($(derive [d|instance Deriving (Store ASN1)|]))
+$($(derive [d|instance Deriving (Store DistinguishedName)|]))
 
-peekPK :: (BS.ByteString -> CryptoFailable b) -> Peek b
-peekPK f = do 
-    bs <- peek
-    case f bs of     
-        CryptoPassed p -> pure p
-        CryptoFailed e -> fail $ show e
+$($(derive [d|instance Deriving (Store PubKeyEC)|]))
+$($(derive [d|instance Deriving (Store PubKeyALG)|]))
+$($(derive [d|instance Deriving (Store PubKey)|]))
+$($(derive [d|instance Deriving (Store ExtensionRaw)|]))
+$($(derive [d|instance Deriving (Store Extensions)|]))
+$($(derive [d|instance Deriving (Store SignatureALG)|]))
+
+$($(derive [d|instance Deriving (Store X509.Certificate)|]))
+$($(derive [d|instance Deriving (Store X509.RevokedCertificate)|]))
+$($(derive [d|instance Deriving (Store X509.CRL)|]))
+$($(derive [d|instance Store a => Deriving(Store (X509.Signed a))|]))
+$($(derive [d|instance Store a => Deriving(Store (X509.SignedExact a))|]))
 
 
 deriving instance (Store a, Store b) => Store (T2 a b)

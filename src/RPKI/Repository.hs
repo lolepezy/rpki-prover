@@ -370,7 +370,7 @@ updateStatuses
             foldr foldRepos ([], rsyncs, []) newStatuses
 
         foldRepos (RrdpR r@RrdpRepository {..}, newStatus) (rrdps', rsyncs', lastS) = 
-                    ((uri, r { status = newStatus } :: RrdpRepository) : rrdps', 
+                    ((uri, r & #status .~ newStatus) : rrdps', 
                     rsyncs', 
                     status2Success (RrdpU uri) newStatus lastS)
 

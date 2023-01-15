@@ -30,7 +30,6 @@ import           Data.Int                         (Int16, Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
-import           Numeric.Natural                  (Natural)
 
 import           Data.String.Interpolate.IsString
 

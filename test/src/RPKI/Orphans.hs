@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=8 #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -59,10 +60,11 @@ import qualified Crypto.PubKey.RSA                    as RSA
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
-import System.Posix.Types
+import           System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.Logging
+import           RPKI.Orphans.Generics
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)

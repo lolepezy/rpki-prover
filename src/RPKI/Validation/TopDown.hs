@@ -662,7 +662,7 @@ validateCaCertificate
                         let vrpList = getCMSContent $ cmsPayload roa                            
                         oneMoreRoa                            
                         moreVrps $ Count $ fromIntegral $ length vrpList                            
-                        pure $! (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
+                        pure $! (mempty :: Payloads (Set Vrp)) & #vrps .~ Set.fromList vrpList
 
             GbrRO gbr -> do                
                 validateObjectLocations child
@@ -679,7 +679,7 @@ validateCaCertificate
                         void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
                         oneMoreAspa            
                         let aspa' = getCMSContent $ cmsPayload aspa
-                        pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+                        pure $! (mempty :: Payloads (Set Vrp)) & #aspas .~ Set.singleton aspa'
 
             BgpRO bgpCert -> do                
                 validateObjectLocations child
@@ -687,7 +687,7 @@ validateCaCertificate
                     allowRevoked $ do
                         bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
                         oneMoreBgp
-                        pure $! (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
+                        pure $! (mempty :: Payloads (Set Vrp)) & #bgpCerts .~ Set.singleton bgpPayload
                             
 
             -- Any new type of object should be added here, otherwise
