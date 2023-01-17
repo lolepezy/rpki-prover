@@ -175,6 +175,7 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     - -O2  
+    # - -ddump-splices 
     dependencies:
     - rpki-prover
     - QuickCheck

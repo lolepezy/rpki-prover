@@ -1,5 +1,6 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
@@ -17,7 +18,8 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 
 newtype SequenceValue = SequenceValue Int64
-    deriving (Show, Eq, Generic, TheBinary)
+    deriving stock (Show, Eq, Generic) 
+    deriving anyclass TheBinary
 
 type SequenceMap s = SMap "sequences" s Text SequenceValue
 

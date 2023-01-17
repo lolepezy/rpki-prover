@@ -106,17 +106,17 @@ $($(derive [d|instance Deriving (Store SignatureALG)|]))
 $($(derive [d|instance Deriving (Store X509.Certificate)|]))
 $($(derive [d|instance Deriving (Store X509.RevokedCertificate)|]))
 $($(derive [d|instance Deriving (Store X509.CRL)|]))
-$($(derive [d|instance Store a => Deriving(Store (X509.Signed a))|]))
-$($(derive [d|instance Store a => Deriving(Store (X509.SignedExact a))|]))
+$($(derive [d|instance Store a => Deriving (Store (X509.Signed a))|]))
+$($(derive [d|instance Store a => Deriving (Store (X509.SignedExact a))|]))
 
 
-deriving instance (Store a, Store b) => Store (T2 a b)
-deriving instance (Store a, Store b, Store c) => Store (T3 a b c)
+$($(derive [d|instance (Store a, Store b) => Deriving (Store (T2 a b))|]))
+$($(derive [d|instance (Store a, Store b, Store c) => Deriving (Store (T3 a b c))|]))
 
-deriving instance (Ord a, Store a) => Store (NESet a)
+$($(derive [d|instance (Ord a, Store a) => Deriving (Store (NESet a))|]))
 
-deriving instance (Ord a, Store a, Store b) => Store (MonoidalMap a b)
+$($(derive [d|instance (Ord a, Store a, Store b) => Deriving (Store (MonoidalMap a b))|]))
 
-deriving instance (Store a, Store b) => Store (These a b)
+$($(derive [d|instance (Store a, Store b) => Deriving (Store (These a b))|]))
 
 
