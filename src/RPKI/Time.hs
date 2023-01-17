@@ -32,14 +32,14 @@ newtype Now = Now { unNow :: Instant }
 
 newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary    
     deriving newtype (Num)
     deriving Semigroup via Sum TimeMs
     deriving Monoid via Sum TimeMs
 
 newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary    
     deriving newtype (Num)
     deriving Semigroup via Sum CPUTime
     deriving Monoid via Sum CPUTime

@@ -34,27 +34,27 @@ data ROMeta = ROMeta {
         validatedBy :: Maybe WorldVersion
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data MftTimingMark = MftTimingMark Instant Instant 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving anyclass TheBinary        
 
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,

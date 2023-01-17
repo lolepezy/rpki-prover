@@ -203,7 +203,7 @@ data CopyStat = CopyStat {
         maxKVPairSize :: Int
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 
 -- | Copy all databases from one LMDB environment to the other

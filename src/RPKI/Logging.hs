@@ -64,7 +64,7 @@ without any interpretation further to it's parent until the main one is reached.
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
    
 instance Show LogLevel where
     show = \case 
@@ -81,7 +81,7 @@ data AppLogger = AppLogger {
 -- Messages in the queue 
 data BusMessage = LogM LogMessage | RtrLogM LogMessage | SystemM SystemMetrics
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data LogMessage = LogMessage { 
         logLevel  :: LogLevel,
@@ -90,7 +90,7 @@ data LogMessage = LogMessage {
         timestamp :: Instant
     }
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data QElem = BinQE BS.ByteString | MsgQE BusMessage
     deriving stock (Show, Eq, Ord, Generic)

@@ -38,8 +38,6 @@ import qualified Crypto.PubKey.Ed448 as E448
 
 import Crypto.PubKey.ECC.Types
 
-import RPKI.Orphans.Generics
-
 
 peekPK :: (BS.ByteString -> CryptoFailable b) -> Peek b
 peekPK f = do 

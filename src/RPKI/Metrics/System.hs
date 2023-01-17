@@ -21,7 +21,7 @@ data ResourceUsage = ResourceUsage {
         maxMemory         :: MaxMemory
     }
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup ResourceUsage   
     deriving Monoid    via GenericMonoid ResourceUsage       
 
@@ -29,7 +29,7 @@ newtype SystemMetrics = SystemMetrics {
         resources :: MetricMap ResourceUsage
     }
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup SystemMetrics   
     deriving Monoid    via GenericMonoid SystemMetrics    
 
@@ -39,7 +39,7 @@ data SystemInfo = SystemInfo {
         startTime :: Instant
     }   
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 

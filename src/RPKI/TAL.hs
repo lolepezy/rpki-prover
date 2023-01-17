@@ -50,7 +50,7 @@ data TAL = PropertiesTAL {
         taName               :: TaName
     } 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 talCertLocations :: TAL -> Locations
 talCertLocations PropertiesTAL {..} = certificateLocation
