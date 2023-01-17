@@ -96,7 +96,7 @@ instance Storage s => WithStorage s (DB s) where
 -- That's why all the fiddling with locations in putObject, getLocatedByKey 
 -- and deleteObject.
 -- 
--- Also, since URLs are relatives long, there's a separate mapping between 
+-- Also, since URLs are relatively long, there's a separate mapping between 
 -- URLs and artificial UrlKeys.
 -- 
 data RpkiObjectStore s = RpkiObjectStore {

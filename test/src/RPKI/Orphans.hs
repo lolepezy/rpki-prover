@@ -188,18 +188,18 @@ instance Arbitrary LogMessage where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (X509.SignedExact a) where
+instance (Arg (X509.SignedExact a) a, Arbitrary a) => Arbitrary (X509.SignedExact a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (X509.Signed a) where
+instance (Arg (X509.Signed a) a, Arbitrary a) => Arbitrary (X509.Signed a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
-instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
+instance (Arg (NESet.NESet a) a, Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -259,10 +259,6 @@ instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (CMS a) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary SignCRL where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -275,7 +271,7 @@ instance Arbitrary RpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (Located a) where
+instance (Arg (Located a) a, Arbitrary a) => Arbitrary (Located a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -299,19 +295,16 @@ instance Arbitrary CrlObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (CMSBasedObject a) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
 
 instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (SomeRFC r) where
+instance (Arg (SomeRFC r) r, Arbitrary r) => Arbitrary (SomeRFC r) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
+instance (Arg (PolyRFC r 'StrictRFC) r, Arbitrary r) => Arbitrary (PolyRFC r 'StrictRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

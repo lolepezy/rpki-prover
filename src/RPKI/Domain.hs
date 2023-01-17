@@ -33,6 +33,9 @@ import           Data.Tuple.Strict
 
 import           GHC.Generics
 
+import           Test.QuickCheck hiding ((.&.))
+import           Test.QuickCheck.Arbitrary.Generic
+
 import qualified Data.X509                as X509
 
 import           Data.ASN1.OID
@@ -203,6 +206,10 @@ newtype CMS a = CMS { unCMS :: SignedObject a }
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+instance (Arg (CMS a) a, Arbitrary a) => Arbitrary (CMS a) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 data CrlObject = CrlObject {
         hash    :: {-# UNPACK #-} Hash,
         aki     :: {-# UNPACK #-} AKI,
@@ -243,6 +250,10 @@ data CMSBasedObject a = CMSBasedObject {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
+
+instance (Arg (CMSBasedObject a) a, Arbitrary a) => Arbitrary (CMSBasedObject a) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink    
 
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
