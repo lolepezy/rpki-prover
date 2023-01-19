@@ -614,6 +614,24 @@ data TA = TA {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
   
+data RpkiObjectBrief = RpkiObjectBrief {
+        notValidBefore :: Instant,
+        notValidBAfter :: Instant,
+        parentHash     :: Hash,
+        objectPayload  :: Maybe (Payloads (Set.Set Vrp))
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass TheBinary
+
+data Payloads a = Payloads {
+        vrps     :: a,
+        aspas    :: Set.Set Aspa,
+        bgpCerts :: Set.Set BGPSecPayload  
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+    deriving Semigroup via GenericSemigroup (Payloads a)
+    deriving Monoid    via GenericMonoid (Payloads a)
 
 -- Small utility functions that don't have anywhere else to go
 

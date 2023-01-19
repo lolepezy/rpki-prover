@@ -65,11 +65,12 @@ data TopDownContext s = TopDownContext {
         now                     :: Now,
         worldVersion            :: WorldVersion,
         validManifests          :: TVar (Map AKI Hash),
-        visitedHashes           :: TVar (Set Hash),
+        visitedHashes           :: TVar (Set Hash),        
         repositoryProcessing    :: RepositoryProcessing,
         currentPathDepth        :: Int,
         startingRepositoryCount :: Int,
-        interruptedByLimit      :: TVar Limited
+        interruptedByLimit      :: TVar Limited,
+        objectBriefs            :: TVar (Map Hash RpkiObjectBrief)
     }
     deriving stock (Generic)    
 
@@ -77,15 +78,6 @@ data TopDownContext s = TopDownContext {
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
-
-data Payloads a = Payloads {
-        vrps     :: a,
-        aspas    :: Set.Set Aspa,
-        bgpCerts :: Set.Set BGPSecPayload  
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving Semigroup via GenericSemigroup (Payloads a)
-    deriving Monoid    via GenericMonoid (Payloads a)
 
 data TopDownResult = TopDownResult {
         payloads           :: Payloads Vrps,        
@@ -115,6 +107,7 @@ newTopDownContext worldVersion taName now certificate repositoryProcessing =
         visitedHashes           <- newTVar mempty
         validManifests          <- newTVar mempty                
         interruptedByLimit      <- newTVar CanProceed
+        objectBriefs            <- newTVar mempty
         pure $ TopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
@@ -713,21 +706,25 @@ validateCaCertificate
 -- 
 -- - save all the visited hashes together with the current world version
 -- - save all the valid manifests for each CA/AKI
+-- - save all the object validation briefs
 -- 
 markValidatedObjects :: (MonadIO m, Storage s) => 
                         AppContext s -> TopDownContext s -> m ()
 markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
     ((visitedSize, validMftsSize), elapsed) <- timedMS $ do 
-            (vhs, vmfts, objectStore') <- atomically $ (,,) <$> 
+            (vhs, vmfts, briefs, db) <- atomically $ (,,,) <$> 
                                 readTVar visitedHashes <*> 
                                 readTVar validManifests <*>
-                                ((^. #objectStore) <$> readTVar database)
+                                readTVar objectBriefs <*>
+                                readTVar database
 
-            rwTx objectStore' $ \tx -> do 
+            rwTx db $ \tx -> do 
                 for_ vhs $ \h -> 
-                    markValidated tx objectStore' h worldVersion 
+                    markValidated tx db h worldVersion 
                 for_ (Map.toList vmfts) $ \(aki, h) -> 
-                    markLatestValidMft tx objectStore' aki h
+                    markLatestValidMft tx db aki h
+                for_ (Map.toList briefs) $ \(hash, brief) -> 
+                    putObjectBrief tx db hash brief
 
             pure (Set.size vhs, Map.size vmfts)
 

@@ -72,6 +72,7 @@ data DB s = DB {
     taStore          :: TAStore s, 
     repositoryStore  :: RepositoryStore s, 
     objectStore      :: RpkiObjectStore s,
+    objectBriefStore :: ObjectBriefStore s,
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
@@ -124,6 +125,10 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
 
 
+newtype ObjectBriefStore s = ObjectBriefStore { 
+    briefs :: SMap "object-briefs" s ObjectKey RpkiObjectBrief
+}
+
 -- | TA Store 
 newtype TAStore s = TAStore { 
     tas :: SMap "trust-anchors" s TaName StorableTA
@@ -154,8 +159,9 @@ newtype VRPStore s = VRPStore {
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
-    aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
-}
+        aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
+    } 
+    deriving stock (Generic)
 
 -- | BGP certificate store
 newtype BgpStore s = BgpStore {    
@@ -335,10 +341,19 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
 
 
 markValidated :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
-markValidated tx RpkiObjectStore {..} hash wv = liftIO $    
+                Tx s 'RW -> DB s -> Hash -> WorldVersion -> m ()
+markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $    
     ifJustM (M.get tx hashToKey hash) $ \key -> 
         M.put tx objectValidatedBy key wv                                
+
+putObjectBrief :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> Hash -> RpkiObjectBrief -> m ()
+putObjectBrief tx DB { 
+        objectBriefStore = ObjectBriefStore {..}, 
+        objectStore = RpkiObjectStore {..} } 
+    hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
+        M.put tx briefs key brief
+
 
 
 -- This is for testing purposes mostly
@@ -358,8 +373,8 @@ getMftTimingMark mft = let
 
 
 markLatestValidMft :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> RpkiObjectStore s -> AKI -> Hash -> m ()
-markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do 
+                    Tx s 'RW -> DB s -> AKI -> Hash -> m ()
+markLatestValidMft tx DB { objectStore = RpkiObjectStore {..}} aki hash = liftIO $ do 
     k <- M.get tx hashToKey hash
     for_ k $ M.put tx lastValidMft aki
 
@@ -817,7 +832,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
     emptyObjectStore objectStore    
     M.erase tx $ results validationsStore
     M.erase tx $ vrpStore ^. #vrps 
-    M.erase tx $ aspas aspaStore
+    M.erase tx $ aspaStore ^. #aspas
     M.erase tx $ versions versionStore
     M.erase tx $ metrics metricStore
     M.erase tx $ slurms slurmStore
