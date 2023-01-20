@@ -126,8 +126,8 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 
 newtype ObjectBriefStore s = ObjectBriefStore { 
-    briefs :: SMap "object-briefs" s ObjectKey RpkiObjectBrief
-}
+        briefs :: SMap "object-briefs" s ObjectKey (Compressed RpkiObjectBrief)
+    } deriving Generic
 
 -- | TA Store 
 newtype TAStore s = TAStore { 
@@ -298,14 +298,17 @@ hashExists :: (MonadIO m, Storage s) =>
 hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
-deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
-deleteObject tx store@RpkiObjectStore {..} h = liftIO $
+deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
+deleteObject tx DB { 
+        objectBriefStore = ObjectBriefStore {..}, 
+        objectStore = store@RpkiObjectStore {..} } h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey ->             
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
             M.delete tx objects objectKey
             M.delete tx objectInsertedBy objectKey        
             M.delete tx objectValidatedBy objectKey        
             M.delete tx hashToKey h        
+            M.delete tx briefs objectKey    
             case ro of 
                 CerRO c -> M.delete tx certBySKI (getSKI c)
                 _       -> pure ()
@@ -352,7 +355,7 @@ putObjectBrief tx DB {
         objectBriefStore = ObjectBriefStore {..}, 
         objectStore = RpkiObjectStore {..} } 
     hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
-        M.put tx briefs key brief
+        M.put tx briefs key (Compressed brief)
 
 
 
@@ -605,7 +608,7 @@ cleanObjectCache :: Storage s =>
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that decides if the object is too old to stay in cache
                     IO CleanUpResult
-cleanObjectCache DB {..} tooOld = do
+cleanObjectCache db@DB {..} tooOld = do
     kept        <- newIORef (0 :: Int)
     deleted     <- newIORef (0 :: Int)
     deletedURLs <- newIORef (0 :: Int)
@@ -626,7 +629,7 @@ cleanObjectCache DB {..} tooOld = do
     let deleteObjects queue =
             readQueueChunked queue chunkSize $ \quuElems ->
                 rwTx objectStore $ \tx ->
-                    forM_ quuElems $ deleteObject tx objectStore
+                    forM_ quuElems $ deleteObject tx db
 
     mapException (AppException . storageError) 
         $ voidRun "cleanObjectCache" 
@@ -763,6 +766,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     repositoryStats <- repositoryStats' tx
     rpkiObjectStats <- rpkiObjectStats' tx
     vResultStats    <- vResultStats' tx
+    briefStats      <- let ObjectBriefStore sm = objectBriefStore in M.stats tx sm
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
     aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
     bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
@@ -830,6 +834,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
     M.erase tx $ tas taStore
     emptyRepositoryStore repositoryStore    
     emptyObjectStore objectStore    
+    M.erase tx $ objectBriefStore ^. #briefs
     M.erase tx $ results validationsStore
     M.erase tx $ vrpStore ^. #vrps 
     M.erase tx $ aspaStore ^. #aspas

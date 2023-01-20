@@ -501,13 +501,13 @@ validateCaCertificate
                                 visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
                                                 
                         let processChildren = do 
-                                -- this indicates the difeerence between RFC6486-bis 
+                                -- this indicates the difeerence between RFC9286-bis 
                                 -- version 02 (strict) and version 03 and later (more loose).                                                                                            
                                 let gatherMftEntryValidations = 
                                         case config ^. #validationConfig . #manifestProcessing of
                                             {- 
                                             The latest version so far of the 
-                                            https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/06/                                            
+                                            https://datatracker.ietf.org/doc/rfc9286/
                                             item 6.4 says
                                                 "If there are files listed in the manifest that cannot be retrieved 
                                                 from the publication point, the fetch has failed.." 
@@ -515,7 +515,7 @@ validateCaCertificate
                                             For that case validity of every object on the manifest is completely 
                                             separate from each other and don't influence the manifest validity.
                                             -}
-                                            RFC6486 -> independentMftChildrenResults
+                                            RFC9286 -> independentMftChildrenResults
 
                                             {- 
                                             https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/
@@ -524,8 +524,8 @@ validateCaCertificate
                                                 from the publication point, or if they fail the validity tests 
                                                 specified in [RFC6488], the fetch has failed...". 
 
-                                            For that case invalidity of some of the objects (all except certificates) 
-                                            on the manifest make the whole manifest invalid.
+                                            For that case invalidity of some of the objects (except child CA certificates, 
+                                            because that would be completeely insane) on the manifest make the whole manifest invalid.
                                             -}
                                             RFC6486_Strict -> allOrNothingMftChildrenResults
 
@@ -627,7 +627,7 @@ validateCaCertificate
 
         Note that recursive validation of the child CA happens in the separate   
         runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
-        It is done to 
+        It is done to prevent child CAs short-circuiting and breaking validation of parents.
         -}
         
         parentContext <- ask        
@@ -645,7 +645,11 @@ validateCaCertificate
                             validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
 
                 embedState validationState
-                pure $ fromRight mempty r                
+                case r of 
+                    Left _  -> pure mempty
+                    Right z -> do 
+                        updateBrief Nothing childCert
+                        pure z
 
             RoaRO roa -> do 
                 validateObjectLocations child
@@ -655,7 +659,9 @@ validateCaCertificate
                         let vrpList = getCMSContent $ cmsPayload roa                            
                         oneMoreRoa                            
                         moreVrps $ Count $ fromIntegral $ length vrpList                            
-                        pure $! (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
+                        let payload = (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
+                        updateBrief (Just payload) roa
+                        pure $! payload
 
             GbrRO gbr -> do                
                 validateObjectLocations child
@@ -672,7 +678,9 @@ validateCaCertificate
                         void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
                         oneMoreAspa            
                         let aspa' = getCMSContent $ cmsPayload aspa
-                        pure $! (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+                        let payload = (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+                        updateBrief (Just payload) aspa
+                        pure $! payload
 
             BgpRO bgpCert -> do                
                 validateObjectLocations child
@@ -680,7 +688,9 @@ validateCaCertificate
                     allowRevoked $ do
                         bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
                         oneMoreBgp
-                        pure $! (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
+                        let payload = (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
+                        updateBrief (Just payload) bgpCert
+                        pure $! payload
                             
 
             -- Any new type of object should be added here, otherwise
@@ -690,6 +700,14 @@ validateCaCertificate
                 pure mempty
 
         where                
+            updateBrief :: (MonadIO m, WithHash object, WithValidityPeriod object) => 
+                            Maybe (Payloads (Set.Set Vrp)) -> object -> m ()
+            updateBrief objectPayload object = liftIO $ do 
+                let (notValidBefore, notValidBAfter) = getValidityPeriod object
+                let parentHash = getHash certificate
+                let brief = RpkiObjectBrief {..}
+                atomically $ modifyTVar' objectBriefs (<> Map.singleton (getHash object) brief)                
+
             -- In case of RevokedResourceCertificate error, the whole manifest is not be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
             -- This is a slightly ad-hoc code, but works fine.
@@ -711,7 +729,7 @@ validateCaCertificate
 markValidatedObjects :: (MonadIO m, Storage s) => 
                         AppContext s -> TopDownContext s -> m ()
 markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize), elapsed) <- timedMS $ do 
+    ((visitedSize, validMftsSize, briefsNumber), elapsed) <- timedMS $ do 
             (vhs, vmfts, briefs, db) <- atomically $ (,,,) <$> 
                                 readTVar visitedHashes <*> 
                                 readTVar validManifests <*>
@@ -726,10 +744,11 @@ markValidatedObjects AppContext { .. } TopDownContext {..} = liftIO $ do
                 for_ (Map.toList briefs) $ \(hash, brief) -> 
                     putObjectBrief tx db hash brief
 
-            pure (Set.size vhs, Map.size vmfts)
+            pure (Set.size vhs, Map.size vmfts, Map.size briefs)
 
-    logInfo logger 
-        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid for TA #{unTaName taName}, took #{elapsed}ms.|]
+    logInfo logger $
+        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid for TA #{unTaName taName}, |] <> 
+        [i|saved #{briefsNumber} object briefs, took #{elapsed}ms.|]
 
 
 

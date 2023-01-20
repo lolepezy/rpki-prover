@@ -28,6 +28,7 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
+import           Data.Bifunctor
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -104,6 +105,9 @@ newtype RrdpURL = RrdpURL URI
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving  (Eq, Ord, Generic)
     deriving anyclass TheBinary
+
+class WithValidityPeriod a where
+    getValidityPeriod :: a -> (Instant, Instant)
 
 class WithURL a where
     getURL :: a -> URI
@@ -284,6 +288,12 @@ instance WithAKI (CMSBasedObject a) where
 instance WithHash (CMSBasedObject a) where
     getHash CMSBasedObject {..} = hash
 
+instance{-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
+    getValidityPeriod CMSBasedObject {..} = 
+        bimap Instant Instant $ X509.certValidity 
+            $ cwsX509certificate $ getCertWithSignature 
+            $ getEEResourceCert $ unCMS cmsPayload 
+
 instance WithAKI EECerObject where
     getAKI EECerObject {..} = Just aki
 
@@ -295,6 +305,11 @@ instance WithSKI BgpCerObject where
 
 instance WithAKI BgpCerObject where
     getAKI BgpCerObject {..} = aki
+
+instance WithRawResourceCertificate a => WithValidityPeriod a where
+    getValidityPeriod cert = 
+        bimap Instant Instant $ X509.certValidity 
+            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert    
 
 instance WithRawResourceCertificate CaCerObject where
     getRawCert CaCerObject {..} = getRawCert certificate

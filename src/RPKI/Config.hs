@@ -89,7 +89,7 @@ data RrdpConf = RrdpConf {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data ManifestProcessing = RFC6486_Strict | RFC6486
+data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -189,7 +189,7 @@ defaultConfig = Config {
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         topDownTimeout                 = Seconds $ 60 * 60,    
-        manifestProcessing             = RFC6486,
+        manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
         maxObjectSize                  = 32 * 1024 * 1024,

@@ -135,7 +135,7 @@ shouldMergeObjectLocations io = do
     verifyUrlCount objectStore "1" 3    
 
     rwTx objectStore $ \tx ->
-        deleteObject tx objectStore (getHash ro1)    
+        deleteObject tx db (getHash ro1)    
 
     verifyUrlCount objectStore "2" 3
 
@@ -178,7 +178,7 @@ shouldCreateAndDeleteAllTheMaps io = do
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromObjectStore io = do  
-    DB {..} <- io
+    db@DB {..} <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
@@ -210,7 +210,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx objectStore $ \tx -> 
         forM_ toDelete $ \(Located _ ro) -> 
-            deleteObject tx objectStore (getHash ro)
+            deleteObject tx db (getHash ro)
     
     compareLatestMfts objectStore ros2 aki2      
     compareLatestMfts objectStore toKeep aki1
