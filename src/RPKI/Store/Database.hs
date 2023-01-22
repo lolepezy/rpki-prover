@@ -71,8 +71,7 @@ currentDatabaseVersion = 3
 data DB s = DB {
     taStore          :: TAStore s, 
     repositoryStore  :: RepositoryStore s, 
-    objectStore      :: RpkiObjectStore s,
-    objectBriefStore :: ObjectBriefStore s,
+    objectStore      :: RpkiObjectStore s,    
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
@@ -116,7 +115,9 @@ data RpkiObjectStore s = RpkiObjectStore {
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
         urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
-        objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey]
+        objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
+
+        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed RpkiObjectBrief)
     } 
     deriving stock (Generic, Typeable)
 
@@ -124,10 +125,6 @@ data RpkiObjectStore s = RpkiObjectStore {
 instance Storage s => WithStorage s (RpkiObjectStore s) where
     storage = storage . objects
 
-
-newtype ObjectBriefStore s = ObjectBriefStore { 
-        briefs :: SMap "object-briefs" s ObjectKey (Compressed RpkiObjectBrief)
-    } deriving Generic
 
 -- | TA Store 
 newtype TAStore s = TAStore { 
@@ -299,8 +296,7 @@ hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
-deleteObject tx DB { 
-        objectBriefStore = ObjectBriefStore {..}, 
+deleteObject tx DB {         
         objectStore = store@RpkiObjectStore {..} } h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey ->             
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
@@ -308,7 +304,7 @@ deleteObject tx DB {
             M.delete tx objectInsertedBy objectKey        
             M.delete tx objectValidatedBy objectKey        
             M.delete tx hashToKey h        
-            M.delete tx briefs objectKey    
+            M.delete tx objectBriefs objectKey    
             case ro of 
                 CerRO c -> M.delete tx certBySKI (getSKI c)
                 _       -> pure ()
@@ -351,11 +347,10 @@ markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $
 
 putObjectBrief :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> Hash -> RpkiObjectBrief -> m ()
-putObjectBrief tx DB { 
-        objectBriefStore = ObjectBriefStore {..}, 
+putObjectBrief tx DB {         
         objectStore = RpkiObjectStore {..} } 
     hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
-        M.put tx briefs key (Compressed brief)
+        M.put tx objectBriefs key (Compressed brief)
 
 
 
@@ -765,8 +760,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     taStats         <- let TAStore sm = taStore in M.stats tx sm
     repositoryStats <- repositoryStats' tx
     rpkiObjectStats <- rpkiObjectStats' tx
-    vResultStats    <- vResultStats' tx
-    briefStats      <- let ObjectBriefStore sm = objectBriefStore in M.stats tx sm
+    vResultStats    <- vResultStats' tx    
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
     aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
     bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
@@ -790,6 +784,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
 
         objectInsertedByStats <- M.stats tx objectInsertedBy
         objectValidatedByStats <- M.stats tx objectValidatedBy            
+        objecBriefStats <- M.stats tx objectBriefs
         pure RpkiObjectStats {..}
 
     repositoryStats' tx = 
@@ -833,8 +828,7 @@ emptyDBMaps :: (MonadIO m, Storage s) =>
 emptyDBMaps tx DB {..} = liftIO $ do     
     M.erase tx $ tas taStore
     emptyRepositoryStore repositoryStore    
-    emptyObjectStore objectStore    
-    M.erase tx $ objectBriefStore ^. #briefs
+    emptyObjectStore objectStore        
     M.erase tx $ results validationsStore
     M.erase tx $ vrpStore ^. #vrps 
     M.erase tx $ aspaStore ^. #aspas
@@ -855,6 +849,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
         M.erase tx uriKeyToUri
         MM.erase tx urlKeyToObjectKey
         M.erase tx objectKeyToUrlKeys
+        M.erase tx objectBriefs
 
     emptyRepositoryStore RepositoryStore {..} = do   
         M.erase tx rrdpS

@@ -32,8 +32,7 @@ createDatabase e logger checkAction = do
     sequences <- SMap lmdb <$> createLmdbStore e
     taStore          <- createTAStore
     repositoryStore  <- createRepositoryStore
-    objectStore      <- createObjectStore sequences
-    objectBriefStore <- createObjectBriefStore
+    objectStore      <- createObjectStore sequences    
     validationsStore <- createValidationsStore
     vrpStore         <- createVRPStore    
     aspaStore        <- createAspaStore
@@ -54,7 +53,7 @@ createDatabase e logger checkAction = do
 
     verifyDBVersion db =
         rwTx db $ \tx -> do     
-            dbVersion <- getDatabaseVersion tx db            
+            dbVersion <- getDatabaseVersion tx db
             case dbVersion of 
                 Nothing -> do
                     logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}, dropping the cache.|]
@@ -70,7 +69,7 @@ createDatabase e logger checkAction = do
                         -- sense to automate that part.
                         logInfo logger [i|Cache version is #{version} and current version is #{currentDatabaseVersion}, dropping the cache.|]    
                         (_, ms) <- timedMS $ emptyDBMaps tx db
-                        logDebug logger  [i|Erasing cache took #{ms}ms.|]
+                        logDebug logger [i|Erasing cache took #{ms}ms.|]
                         saveCurrentDatabaseVersion tx db
                      
 
@@ -88,6 +87,7 @@ createDatabase e logger checkAction = do
         urlKeyToObjectKey  <- SMultiMap lmdb <$> createLmdbMultiStore e
         objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
         certBySKI <- SMap lmdb <$> createLmdbStore e
+        objectBriefs <- SMap lmdb <$> createLmdbStore e
         pure RpkiObjectStore {..}
             
     createRepositoryStore = 
@@ -95,8 +95,7 @@ createDatabase e logger checkAction = do
             (SMap lmdb <$> createLmdbStore e) <*>
             (SMap lmdb <$> createLmdbStore e) <*>
             (SMap lmdb <$> createLmdbStore e)        
-
-    createObjectBriefStore = ObjectBriefStore . SMap lmdb <$> createLmdbStore e
+    
     createValidationsStore = ValidationsStore . SMap lmdb <$> createLmdbStore e
     createVRPStore = VRPStore . SMap lmdb <$> createLmdbStore e    
     createAspaStore = AspaStore . SMap lmdb <$> createLmdbStore e    
@@ -108,16 +107,18 @@ createDatabase e logger checkAction = do
     createJobStore = JobStore . SMap lmdb <$> createLmdbStore e    
     createMetadataStore = MetadataStore . SMap lmdb <$> createLmdbStore e    
     
-mkLmdb :: FilePath -> Size -> Int -> IO LmdbEnv
-mkLmdb fileName maxSizeMb maxReaders = do 
+mkLmdb :: FilePath -> Size -> IO LmdbEnv
+mkLmdb fileName maxSizeMb = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
                     maxReaders maxDatabases fileName
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
-        createSemaphoreIO maxReaders
+        createSemaphoreIO maxBottleNeck
   where    
     mapSize = unSize maxSizeMb * 1024 * 1024
-    maxDatabases = 120
+    maxDatabases = 120    
+    maxBottleNeck = maxReaders - 50
+    maxReaders = 500
 
 closeLmdb :: LmdbEnv -> IO ()
 closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)
