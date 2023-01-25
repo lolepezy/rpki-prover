@@ -626,7 +626,7 @@ validateCaCertificate
         db    <- liftIO $ readTVarIO database
         brief <- liftIO $ roTx db $ \tx -> getOjectBrief tx db hash'
         case brief of 
-            Just b  -> pure $ RBrief b hash'
+            Just b  -> pure $! RBrief b hash'
             Nothing -> RObject <$> getManifestEntry hash' filename
 
 
@@ -646,7 +646,7 @@ validateCaCertificate
                     -- It's under the same parent, so it's definitely the same object.
                     validateBrief brief validCrl
                 | otherwise -> do 
-                    -- oops, brief is outdated, switch to the real object
+                    -- oops, brief is not as we expected it to be, switch to the real object
                     me <- getManifestEntry h filename
                     validateRealObject me validCrl
             RObject o -> 
@@ -660,7 +660,7 @@ validateCaCertificate
         vHoist $ do
             validateCertValidityPeriod brief now        
             if (isRevoked brief validCrl) then do
-                vPureWarning RevokedResourceCertificate
+                void $ vPureWarning RevokedResourceCertificate
                 pure $! mempty
             else do 
                 oneMoreBrief
@@ -710,8 +710,7 @@ validateCaCertificate
                         oneMoreRoa                            
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
-                        updateEEBrief roa RoaBrief payload
-                        pure $! payload
+                        updateEEBrief roa RoaBrief payload                        
 
             GbrRO gbr -> do                
                 validateObjectLocations child
@@ -729,8 +728,7 @@ validateCaCertificate
                         oneMoreAspa            
                         let aspa' = getCMSContent $ cmsPayload aspa
                         let payload = (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
-                        updateEEBrief aspa AspaBrief payload
-                        pure $! payload
+                        updateEEBrief aspa AspaBrief payload                        
 
             BgpRO bgpCert -> do                
                 validateObjectLocations child
@@ -739,8 +737,7 @@ validateCaCertificate
                         bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
                         oneMoreBgp
                         let payload = (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
-                        updateEEBrief bgpCert BgpBrief payload
-                        pure $! payload
+                        updateEEBrief bgpCert BgpBrief payload                        
                             
 
             -- Any new type of object should be added here, otherwise
@@ -752,13 +749,14 @@ validateCaCertificate
         where                
               
             updateEEBrief :: (MonadIO m, WithHash object, WithValidityPeriod object, WithSerial object) => 
-                            object -> BriefType -> Payloads (Set.Set Vrp) -> m ()
+                            object -> BriefType -> Payloads (Set.Set Vrp) -> m (Payloads (Set Vrp))
             updateEEBrief object briefType payload = liftIO $ do 
                 let (notValidBefore, notValidAfter) = getValidityPeriod object
                 let parentHash = getHash certificate
                 let serial = getSerial object
                 let !brief = EEBrief {..}
                 atomically $ writeCQueue updateQueue $ UpdateObjectBrief (getHash object) brief                
+                pure $! payload
 
             -- In case of RevokedResourceCertificate error, the whole manifest is not be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
@@ -840,7 +838,8 @@ addValidMft TopDownContext {..} aki mft =
 --     liftIO $ atomically $ writeCQueue updateQueue $ MarkLatestManifest aki (getHash mft)
                 
 
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl, oneMoreGbr, oneMoreAspa, oneMoreBgp :: Monad m => ValidatorT m ()
+oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
+oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreBrief :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
