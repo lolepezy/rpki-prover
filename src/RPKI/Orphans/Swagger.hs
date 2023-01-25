@@ -36,6 +36,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Types
 import           RPKI.Time
 import           RPKI.Orphans.Json
+import           RPKI.Orphans.Generics
 
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
