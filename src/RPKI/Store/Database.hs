@@ -117,7 +117,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
-        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed RpkiObjectBrief)
+        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed EEBrief)
     } 
     deriving stock (Generic, Typeable)
 
@@ -201,12 +201,12 @@ newtype MetadataStore s = MetadataStore {
 
 
 getByHash :: (MonadIO m, Storage s) => 
-            Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
-getByHash tx store h = (snd <$>) <$> getByHash_ tx store h    
+            Tx s mode -> DB s -> Hash -> m (Maybe (Located RpkiObject))
+getByHash tx db h = (snd <$>) <$> getByHash_ tx db h    
 
 getByHash_ :: (MonadIO m, Storage s) => 
-              Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (ObjectKey, Located RpkiObject))
-getByHash_ tx store@RpkiObjectStore {..} h = liftIO $ runMaybeT $ do 
+              Tx s mode -> DB s -> Hash -> m (Maybe (ObjectKey, Located RpkiObject))
+getByHash_ tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx hashToKey h
     z         <- MaybeT $ getLocatedByKey tx store objectKey
     pure (objectKey, z)
@@ -230,13 +230,19 @@ getObjectByKey tx RpkiObjectStore {..} k = liftIO $ do
 getLocatedByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
 getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do     
-    object    <- MaybeT $ getObjectByKey tx store k
+    object    <- MaybeT $ getObjectByKey tx store k    
+    locations <- MaybeT $ getLocationsByKey tx store k                    
+    pure $ Located locations object
+
+
+getLocationsByKey :: (MonadIO m, Storage s) => 
+                Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe Locations)
+getLocationsByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do         
     uriKeys   <- MaybeT $ M.get tx objectKeyToUrlKeys k
     locations <- MaybeT 
                     $ (toNESet . catMaybes <$>)
                     $ mapM (M.get tx uriKeyToUri) uriKeys             
-    pure $ Located (Locations locations) object
-
+    pure $ Locations locations
 
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW 
@@ -346,20 +352,28 @@ markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $
         M.put tx objectValidatedBy key wv                                
 
 putObjectBrief :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Hash -> RpkiObjectBrief -> m ()
+                Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()
 putObjectBrief tx DB {         
         objectStore = RpkiObjectStore {..} } 
     hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
         M.put tx objectBriefs key (Compressed brief)
 
 
+getOjectBrief :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> Hash -> m (Maybe (Located EEBrief))
+getOjectBrief tx DB { objectStore = store@RpkiObjectStore {..} } h =  
+    liftIO $ runMaybeT $ do 
+        objectKey <- MaybeT $ M.get tx hashToKey h
+        brief <- unCompressed <$> MaybeT (M.get tx objectBriefs objectKey)        
+        locations <- MaybeT $ getLocationsByKey tx store objectKey
+        pure $ Located locations brief
+
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [Located RpkiObject]
 getAll tx store = liftIO $ do 
     keys <- M.keys tx (objects store)
-    objs <- forM keys $ \k -> getLocatedByKey tx store k
-    pure $ catMaybes objs
+    catMaybes <$> forM keys (\k -> getLocatedByKey tx store k)    
 
 
 -- | Get something from the manifest that would allow us to judge 

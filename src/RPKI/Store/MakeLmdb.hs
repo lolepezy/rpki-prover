@@ -71,7 +71,6 @@ createDatabase e logger checkAction = do
                         (_, ms) <- timedMS $ emptyDBMaps tx db
                         logDebug logger [i|Erasing cache took #{ms}ms.|]
                         saveCurrentDatabaseVersion tx db
-                     
 
     createObjectStore seqMap = do 
         let keys = Sequence "object-key" seqMap

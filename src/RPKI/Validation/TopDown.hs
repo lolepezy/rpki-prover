@@ -79,7 +79,10 @@ data TopDownContext s = TopDownContext {
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
-data UpdateOp = UpdateObjectBrief Hash RpkiObjectBrief
+data UpdateOp = UpdateObjectBrief Hash EEBrief
+    deriving stock (Show, Eq, Generic)
+
+data ObjectOrBrief = RObject (Located RpkiObject) | RBrief (Located EEBrief) Hash
     deriving stock (Show, Eq, Generic)
 
 data TopDownResult = TopDownResult {
@@ -397,9 +400,9 @@ validateCaCertificate
                 AlreadyReportedLimit -> pure mempty
 
     checkAndReport treeDepthLimit 
-            $ checkAndReport visitedObjectCountLimit 
-            $ checkAndReport repositoryCountLimit
-            $ actuallyValidate
+        $ checkAndReport visitedObjectCountLimit 
+        $ checkAndReport repositoryCountLimit
+        $ actuallyValidate
 
   where    
 
@@ -480,8 +483,8 @@ validateCaCertificate
                         [crl] -> pure crl
                         crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
 
-                objectStore' <- (^. #objectStore) <$> liftIO (readTVarIO database)
-                crlObject <- liftIO $ roTx objectStore' $ \tx -> getByHash tx objectStore' crlHash
+                db <- liftIO $ readTVarIO database
+                crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
                 case crlObject of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations    
@@ -540,7 +543,7 @@ validateCaCertificate
                                             -}
                                             RFC6486_Strict -> allOrNothingMftChildrenResults
 
-                                useMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
+                                gatherMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
 
                         mconcat <$> processChildren `recover` markAllEntriesAsVisited                                                
 
@@ -558,7 +561,7 @@ validateCaCertificate
             $ \(T2 filename hash') -> runValidatorT vp $ do 
                     ro <- findManifestEntryObject filename hash' 
                     -- if failed this one interrupts the whole MFT valdiation
-                    validateMftObject ro filename validCrl                
+                    validateMftChild ro filename validCrl                
 
     independentMftChildrenResults nonCrlChildren validCrl = do
         vp <- askScopes
@@ -573,12 +576,12 @@ validateCaCertificate
                         -- 
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
-                        (z, vs') <- runValidatorT vp $ validateMftObject ro filename validCrl
+                        (z, vs') <- runValidatorT vp $ validateMftChild ro filename validCrl
                         pure $ case z of                             
                             Left _ -> (Right mempty, vs')
                             _      -> (z, vs')     
 
-    useMftEntryResults mftEntryResults = do                 
+    gatherMftEntryResults mftEntryResults = do                 
         -- gather all the validation states from every MFT entry
         mapM_ (embedState . snd) mftEntryResults                
 
@@ -610,42 +613,82 @@ validateCaCertificate
             longerThanOne []  = False
             longerThanOne _   = True
 
-    findManifestEntryObject filename hash' = do                    
-        validateMftFileName filename                         
+    getManifestEntry hash' filename = do
         ro <- liftIO $ do 
-            objectStore' <- (^. #objectStore) <$> readTVarIO database
-            roTx objectStore' $ \tx -> getByHash tx objectStore' hash'
+            db <- readTVarIO database
+            roTx db $ \tx -> getByHash tx db hash'
         case ro of 
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
-            Just ro' -> pure ro'
+            Just ro' -> pure ro'        
 
-    validateMftObject ro filename validCrl = do
+    findManifestEntryObject filename hash' = do                    
+        validateMftFileName filename        
+        db    <- liftIO $ readTVarIO database
+        brief <- liftIO $ roTx db $ \tx -> getOjectBrief tx db hash'
+        case brief of 
+            Just b  -> pure $ RBrief b hash'
+            Nothing -> RObject <$> getManifestEntry hash' filename
+
+
+    validateMftChild child filename validCrl = do
         -- warn about names on the manifest mismatching names in the object URLs
-        let objectLocations = getLocations ro
+        let objectLocations = case child of 
+                RObject o  -> getLocations o
+                RBrief o _ -> getLocations o
+
         let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
         when (null nameMatches) $ 
             vWarn $ ManifestLocationMismatch filename objectLocations
 
-        -- Validate the MFT entry, i.e. validate a ROA/GBR/ASPA/BGP certificate/etc.
-        -- or recursively validate CA if the child is a certificate.                           
-        validateMftChild validCrl ro
-    
+        case child of             
+            RBrief ((^. #payload) -> brief) h                
+                | getHash certificate == brief ^. #parentHash ->
+                    -- It's under the same parent, so it's definitely the same object.
+                    validateBrief brief validCrl
+                | otherwise -> do 
+                    -- oops, brief is outdated, switch to the real object
+                    me <- getManifestEntry h filename
+                    validateRealObject me validCrl
+            RObject o -> 
+                validateRealObject o validCrl
 
-    validateMftChild validCrl child@(Located locations ro) = do
-        {- 
+    {- 
+        There's a brief for the already validated object, so only check, 
+        validity period and if it wasn't revoked.             
+    -}    
+    validateBrief brief validCrl = do
+        vHoist $ do
+            validateCertValidityPeriod brief now        
+            if (isRevoked brief validCrl) then do
+                vPureWarning RevokedResourceCertificate
+                pure $! mempty
+            else do 
+                oneMoreBrief
+                case brief ^. #briefType of 
+                    RoaBrief  -> do 
+                        oneMoreRoa
+                        moreVrps $ Count $ fromIntegral $ Set.size $ brief ^. #payload . #vrps
+                    AspaBrief -> oneMoreAspa
+                    BgpBrief  -> oneMoreBgp
+                    GbrBrief  -> oneMoreGbr
+                pure $! brief ^. #payload
+
+    {-         
         Validate manifest children according to 
-            https://datatracker.ietf.org/doc/rfc9286/
-
-        Note that recursive validation of the child CA happens in the separate   
-        runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
-        It is done to prevent child CAs short-circuiting and breaking validation of parents.
-        -}
-        
-        parentContext <- ask        
-        case ro of
+        https://datatracker.ietf.org/doc/rfc9286/
+    -}                    
+    validateRealObject child validCrl = do        
+        let locations = getLocations child
+        case child ^. #payload of
             CerRO childCert -> do 
+                parentContext <- ask
+                {- 
+                    Note that recursive validation of the child CA happens in the separate   
+                    runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
+                    It is done to prevent child CAs short-circuiting and breaking validation of parents.
+                -}                
                 (r, validationState) <- liftIO $ runValidatorT parentContext $                     
-                        inSubObjectVScope (toText $ pickLocation locations) $ do                                
+                        inSubObjectVScope (toText $ pickLocation locations) $ do
                             childVerifiedResources <- vHoist $ do                 
                                     Validated validCert <- validateResourceCert @_ @_ @'CACert 
                                             now childCert (certificate ^. #payload) validCrl
@@ -656,11 +699,7 @@ validateCaCertificate
                             validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
 
                 embedState validationState
-                case r of 
-                    Left _  -> pure mempty
-                    Right z -> do 
-                        updateBrief Nothing childCert
-                        pure z
+                pure $! fromRight mempty r                
 
             RoaRO roa -> do 
                 validateObjectLocations child
@@ -669,9 +708,9 @@ validateCaCertificate
                         void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
                         let vrpList = getCMSContent $ cmsPayload roa                            
                         oneMoreRoa                            
-                        moreVrps $ Count $ fromIntegral $ length vrpList                            
+                        moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
-                        updateBrief (Just payload) roa
+                        updateEEBrief roa RoaBrief payload
                         pure $! payload
 
             GbrRO gbr -> do                
@@ -680,7 +719,7 @@ validateCaCertificate
                     allowRevoked $ do
                         void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                         oneMoreGbr
-                        pure mempty
+                        pure $! mempty
 
             AspaRO aspa -> do                
                 validateObjectLocations child
@@ -690,7 +729,7 @@ validateCaCertificate
                         oneMoreAspa            
                         let aspa' = getCMSContent $ cmsPayload aspa
                         let payload = (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
-                        updateBrief (Just payload) aspa
+                        updateEEBrief aspa AspaBrief payload
                         pure $! payload
 
             BgpRO bgpCert -> do                
@@ -700,7 +739,7 @@ validateCaCertificate
                         bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
                         oneMoreBgp
                         let payload = (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
-                        updateBrief (Just payload) bgpCert
+                        updateEEBrief bgpCert BgpBrief payload
                         pure $! payload
                             
 
@@ -708,17 +747,18 @@ validateCaCertificate
             -- they will emit a warning.
             _somethingElse -> do 
                 logWarn logger [i|Unsupported type of object: #{locations}.|]
-                pure mempty
+                pure $! mempty
 
         where                
-            updateBrief :: (MonadIO m, WithHash object, WithValidityPeriod object) => 
-                            Maybe (Payloads (Set.Set Vrp)) -> object -> m ()
-            updateBrief objectPayload object = liftIO $ do 
-                let (notValidBefore, notValidBAfter) = getValidityPeriod object
+              
+            updateEEBrief :: (MonadIO m, WithHash object, WithValidityPeriod object, WithSerial object) => 
+                            object -> BriefType -> Payloads (Set.Set Vrp) -> m ()
+            updateEEBrief object briefType payload = liftIO $ do 
+                let (notValidBefore, notValidAfter) = getValidityPeriod object
                 let parentHash = getHash certificate
-                let !brief = RpkiObjectBrief {..}
-                atomically $ writeCQueue updateQueue $ UpdateObjectBrief (getHash object) brief
-                -- atomically $ modifyTVar' objectBriefs (<> Map.singleton (getHash object) brief)                
+                let serial = getSerial object
+                let !brief = EEBrief {..}
+                atomically $ writeCQueue updateQueue $ UpdateObjectBrief (getHash object) brief                
 
             -- In case of RevokedResourceCertificate error, the whole manifest is not be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
@@ -808,6 +848,7 @@ oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
 oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
+oneMoreBrief  = updateMetric @ValidationMetric @_ (& #validBriefNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))

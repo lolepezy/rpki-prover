@@ -133,6 +133,9 @@ class WithRawResourceCertificate a where
 class WithRFC a where
     getRFC :: a -> ValidationRFC
 
+class WithSerial a where
+    getSerial :: a -> Serial
+
 instance WithURL URI where
     getURL = id
 
@@ -288,10 +291,15 @@ instance WithAKI (CMSBasedObject a) where
 instance WithHash (CMSBasedObject a) where
     getHash CMSBasedObject {..} = hash
 
-instance{-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
+instance {-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
     getValidityPeriod CMSBasedObject {..} = 
         bimap Instant Instant $ X509.certValidity 
             $ cwsX509certificate $ getCertWithSignature 
+            $ getEEResourceCert $ unCMS cmsPayload 
+
+instance {-# OVERLAPPING #-} WithSerial (CMSBasedObject a) where
+    getSerial CMSBasedObject {..} = 
+        Serial $ X509.certSerial $ cwsX509certificate $ getCertWithSignature 
             $ getEEResourceCert $ unCMS cmsPayload 
 
 instance WithAKI EECerObject where
@@ -310,6 +318,9 @@ instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
         bimap Instant Instant $ X509.certValidity 
             $ cwsX509certificate $ getCertWithSignature $ getRawCert cert    
+            
+instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
+    getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 
 instance WithRawResourceCertificate CaCerObject where
     getRawCert CaCerObject {..} = getRawCert certificate
@@ -353,7 +364,7 @@ instance WithAKI RpkiObject where
     getAKI (CrlRO c) = getAKI c
     getAKI (RscRO c) = getAKI c
     getAKI (AspaRO c) = getAKI c
-    getAKI (BgpRO c) = getAKI c
+    getAKI (BgpRO c)  = getAKI c
 
 instance WithHash RpkiObject where
     getHash (CerRO c) = getHash c
@@ -629,14 +640,31 @@ data TA = TA {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
   
-data RpkiObjectBrief = RpkiObjectBrief {
-        notValidBefore :: Instant,
-        notValidBAfter :: Instant,
-        parentHash     :: Hash,
-        objectPayload  :: Maybe (Payloads (Set.Set Vrp))
-    } 
+
+data BriefType = RoaBrief 
+           | AspaBrief
+           | BgpBrief
+           | GbrBrief
     deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass TheBinary        
+
+
+data EEBrief = EEBrief {
+        briefType      :: BriefType,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
+        parentHash     :: Hash,
+        serial         :: Serial,
+        payload        :: Payloads (Set.Set Vrp)
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass TheBinary        
+
+instance {-# OVERLAPPING #-} WithValidityPeriod EEBrief where
+    getValidityPeriod EEBrief {.. } = (notValidBefore, notValidAfter)
+        
+instance {-# OVERLAPPING #-} WithSerial EEBrief where
+    getSerial EEBrief {..} = serial
 
 data Payloads a = Payloads {
         vrps     :: a,
@@ -648,10 +676,8 @@ data Payloads a = Payloads {
     deriving Semigroup via GenericSemigroup (Payloads a)
     deriving Monoid    via GenericMonoid (Payloads a)
 
--- Small utility functions that don't have anywhere else to go
 
-getSerial :: WithRawResourceCertificate a => a -> Serial
-getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
+-- Small utility functions that don't have anywhere else to go
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki

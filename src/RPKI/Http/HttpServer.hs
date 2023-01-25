@@ -321,9 +321,9 @@ getRpkiObject AppContext {..} uri hash =
             case parseHash hash' of
                 Left _  -> throwError err400
                 Right h -> liftIO $ do
-                    DB {..} <- readTVarIO database
-                    roTx objectStore $ \tx ->
-                        (RObject <$>) . maybeToList <$> getByHash tx objectStore h
+                    db <- readTVarIO database
+                    roTx db $ \tx -> 
+                        (RObject <$>) . maybeToList <$> getByHash tx db h
 
         (Just _, Just _) ->
             throwError $ err400 { errBody =

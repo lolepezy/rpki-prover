@@ -66,7 +66,7 @@ validateBottomUp
         let locations = getLocations taCert
         vHoist $ inSubObjectVScope (locationsToText $ getLocations taCert) 
                $ validateTaCertAKI taCert (pickLocation locations)
-        let verifiedResources = createVerifiedResources $ payload taCert
+        let verifiedResources = createVerifiedResources $ taCert ^. #payload
         go verifiedResources certPath
       where        
         go _ [] = pure ()
@@ -140,7 +140,7 @@ validateBottomUp
                             (pc :) <$> go taCerts pc
 
 
-    validateManifest DB{..} certificate = do
+    validateManifest db certificate = do
         {- This resembles `validateThisCertAndGoDown` from TopDown.hs 
            but the difference is that we don't do any descent down the tree
            and don't track visited object or metrics.
@@ -166,7 +166,7 @@ validateBottomUp
                         [crl] -> pure crl
                         crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
             
-            crlObject <- liftIO $ roTx objectStore $ \tx -> getByHash tx objectStore crlHash
+            crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
             case crlObject of 
                 Nothing -> 
                     vError $ NoCRLExists childrenAki certLocations    
