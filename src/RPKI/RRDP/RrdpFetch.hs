@@ -107,7 +107,7 @@ updateObjectForRrdpRepository appContext worldVersion repository =
 --    - download notifications file, parse it
 --    - decide what to do next based on it
 --    - download snapshot or deltas
---    - do something appropriate with either of them
+--    - do all the appropriate stuff with either of them, parse, save objects, etc.
 -- 
 downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository 
