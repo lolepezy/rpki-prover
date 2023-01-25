@@ -216,6 +216,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
                         & #rtrLogFile .~ rtrLogFile
+                        & #rtrTlsCertificateFile .~ rtrTlsCertificateFile
             else Nothing    
 
     let readSlurms files = do
@@ -590,6 +591,9 @@ data CLIOptions wrapped = CLIOptions {
 
     rtrLogFile :: wrapped ::: Maybe String <?>
         "Path to a file used for RTR log (default is stdout, together with general output).",
+
+    rtrTlsCertificateFile :: wrapped ::: Maybe String <?>
+        "Path to a file with TLS certificate to be use for RTR server.",
 
     logLevel :: wrapped ::: Maybe String <?>
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",

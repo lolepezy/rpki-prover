@@ -133,7 +133,8 @@ data HttpApiConfig = HttpApiConfig {
 data RtrConfig = RtrConfig {
         rtrAddress :: String,
         rtrPort    :: Int16,
-        rtrLogFile :: Maybe String          
+        rtrLogFile :: Maybe String,
+        rtrTlsCertificateFile :: Maybe String
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -225,7 +226,8 @@ defaultRtrConfig :: RtrConfig
 defaultRtrConfig = RtrConfig { 
         rtrAddress = "localhost",
         rtrPort    = 8283,
-        rtrLogFile = Nothing
+        rtrLogFile = Nothing,
+        rtrTlsCertificateFile = Nothing
     }
     
 defaulPrefetchURLs :: [String]
