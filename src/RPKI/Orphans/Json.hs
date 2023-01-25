@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE TemplateHaskell            #-}
 
 module RPKI.Orphans.Json where
 
@@ -18,6 +19,7 @@ import           Data.Foldable               (toList)
 import           Data.Aeson                  hiding ((.=))
 import qualified Data.Aeson                  as Json
 import           Data.Aeson.Types            (toJSONKeyText)
+import           Data.Aeson.TH
 import           Data.Tuple.Strict
 import           Deque.Strict                as Deq
 
@@ -68,22 +70,20 @@ instance ToJSON IpPrefix where
 instance ToJSON WorldVersion where
     toJSON (WorldVersion v) = toJSON $ show $ toInteger v
 
-instance ToJSON VersionState
-instance ToJSON VIssue
-instance ToJSON VWarning
-instance ToJSON AppError
-instance ToJSON InitError
-instance ToJSON InternalError
-instance ToJSON SlurmError
-instance ToJSON a => ToJSON (ParseError a)
-instance ToJSON ValidationError
-instance ToJSON SPKI
-instance ToJSON Locations
-instance ToJSON StorageError
-instance ToJSON RsyncError
-instance ToJSON RrdpError
-instance ToJSON TALError
-instance ToJSON PrefixesAndAsns
+instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
+    toJSON (T2 a b) = toJSON (a, b)
+instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (T3 a b c) where
+    toJSON (T3 a b c) = toJSON (a, b, c)    
+
+-- Some utilities
+showHex :: BS.ByteString -> Text
+showHex = decodeUtf8 . Hex.encode
+
+showHexL :: LBS.ByteString -> Text
+showHexL = decodeUtf8 . LBS.toStrict . HexLazy.encode
+
+shortBsJson :: BSS.ShortByteString -> Json.Value
+shortBsJson = toJSON . showHex . BSS.fromShort
 
 instance ToJSON Instant where
     toJSON = toJSON . show
@@ -147,43 +147,23 @@ instance ToJSON AddrFamily where
         Ipv4F -> toJSON ("ipv4" :: Text)
         Ipv6F -> toJSON ("ipv6" :: Text)
 
+instance ToJSON PrefixesAndAsns
+
 instance ToJSON Size where 
     toJSON (Size s) = toJSON s
     
-instance ToJSON SStats
-instance ToJSON RpkiObjectStats
-instance ToJSON VResultStats
-instance ToJSON RepositoryStats
-instance ToJSON DBStats
-instance ToJSON TotalDBStats
-instance ToJSON RawMetric
-instance ToJSON VrpCounts
 
 instance ToJSON TaName where 
     toJSON (TaName t) = toJSON t
 
-instance ToJSON a => ToJSON (MetricMap a)
-instance ToJSON ValidationMetric
-instance ToJSON a => ToJSON (GroupedValidationMetric a)
-instance ToJSON RsyncMetric
-instance ToJSON RrdpMetric
-instance ToJSON SystemMetrics
-instance ToJSON ResourceUsage
-instance ToJSON ScopeKind
-instance ToJSON FetchFreshness
-instance ToJSON HttpStatus where
-    toJSON (HttpStatus s) = toJSON s
-    
-instance ToJSON RrdpSource
+instance ToJSON Count where
+    toJSON (Count s) = toJSON s
+
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
-instance ToJSONKey TaName where
-    toJSONKey = toJSONKeyText unTaName
-
-instance ToJSONKey RpkiURL where
-    toJSONKey = toJSONKeyText $ unURI . getURL
-    
 instance ToJSON (Scope 'Metric)
+instance ToJSON a => ToJSON (MetricMap a)
+
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON s
     
@@ -193,83 +173,74 @@ instance ToJSON CPUTime where
 instance ToJSON MaxMemory where 
     toJSON (MaxMemory s) = toJSON s
 
-instance ToJSON Count where
-    toJSON (Count s) = toJSON s
+instance ToJSON HttpStatus where
+    toJSON (HttpStatus s) = toJSON s
+    
+$(deriveToJSON defaultOptions ''RrdpSource)
 
--- RPKI Object
-instance ToJSON EECerObject
-instance ToJSON CaCerObject
-instance ToJSON BgpCerObject
-instance ToJSON CrlObject
-instance ToJSON RpkiObject
-instance ToJSON a => ToJSON (TypedCert a t)
-instance ToJSON a => ToJSON (Located a)
-instance ToJSON a => ToJSON (CMSBasedObject a)
-instance ToJSON a => ToJSON (CMS a)
-instance ToJSON a => ToJSON (SignedObject a)
-instance ToJSON a => ToJSON (SignedData a)
-instance ToJSON a => ToJSON (EncapsulatedContentInfo a)
+instance ToJSONKey TaName where
+    toJSONKey = toJSONKeyText unTaName
 
-instance ToJSON PrefixLength
+instance ToJSONKey RpkiURL where
+    toJSONKey = toJSONKeyText $ unURI . getURL
+
+$(deriveToJSON defaultOptions ''ValidationMetric)
+
+instance ToJSON a => ToJSON (GroupedValidationMetric a)
+
+$(deriveToJSON defaultOptions ''FetchFreshness)
+$(deriveToJSON defaultOptions ''RsyncMetric)
+$(deriveToJSON defaultOptions ''RrdpMetric)
+$(deriveToJSON defaultOptions ''ResourceUsage)
+$(deriveToJSON defaultOptions ''SystemMetrics)
+$(deriveToJSON defaultOptions ''ScopeKind)
+
+$(deriveToJSON defaultOptions ''SStats)
+$(deriveToJSON defaultOptions ''RpkiObjectStats)
+$(deriveToJSON defaultOptions ''VResultStats)
+$(deriveToJSON defaultOptions ''RepositoryStats)
+$(deriveToJSON defaultOptions ''DBStats)
+$(deriveToJSON defaultOptions ''TotalDBStats)
+$(deriveToJSON defaultOptions ''VrpCounts)
+$(deriveToJSON defaultOptions ''RawMetric)
+    
+
+$(deriveToJSON defaultOptions ''PrefixLength)
+
 instance ToJSON Gbr where
     toJSON (Gbr s) = toJSON $ show s
 
-instance ToJSON Aspa
-instance ToJSON RSC
-instance ToJSON Vrp
-instance ToJSON Manifest
-instance ToJSON CertificateWithSignature
-instance ToJSON ResourceCertificate
-instance ToJSON RawResourceCertificate
 instance ToJSON r => ToJSON (PolyRFC r rfc)
 instance ToJSON r => ToJSON (SomeRFC r)
 
-instance ToJSON AsResources
-instance ToJSON IpResources
-instance ToJSON AllResources
-instance ToJSON IpResourceSet
+$(deriveToJSON defaultOptions ''IpResourceSet)
+$(deriveToJSON defaultOptions ''AsResources)
+$(deriveToJSON defaultOptions ''IpResources)
+$(deriveToJSON defaultOptions ''AllResources)
 
-instance ToJSON SignCRL
-instance ToJSON ContentType
-instance ToJSON SignerInfos
-instance ToJSON SignerIdentifier
-instance ToJSON SignatureValue
-instance ToJSON SignatureAlgorithmIdentifier
-instance ToJSON SignedAttributes
-instance ToJSON Attribute
-instance ToJSON DigestAlgorithmIdentifier
-instance ToJSON DigestAlgorithmIdentifiers
-instance ToJSON CMSVersion
+$(deriveToJSON defaultOptions ''Month)
+$(deriveToJSON defaultOptions ''Hours)
+$(deriveToJSON defaultOptions ''Minutes)
+$(deriveToJSON defaultOptions ''Seconds)
+$(deriveToJSON defaultOptions ''NanoSeconds)
+$(deriveToJSON defaultOptions ''TimezoneOffset)
+$(deriveToJSON defaultOptions ''TimeOfDay)
+$(deriveToJSON defaultOptions ''Date)
 
-instance ToJSON X509.Certificate
-instance ToJSON X509.CRL
-instance ToJSON X509.RevokedCertificate
-instance ToJSON a => ToJSON (X509.SignedExact a)    
-instance ToJSON a => ToJSON (X509.Signed a) 
-    
-instance ToJSON SignatureALG
+$(deriveToJSON defaultOptions ''BitArray)
+$(deriveToJSON defaultOptions ''ASN1StringEncoding)
+$(deriveToJSON defaultOptions ''ASN1CharacterString)
+$(deriveToJSON defaultOptions ''ASN1TimeType)
+$(deriveToJSON defaultOptions ''ASN1Class)
+$(deriveToJSON defaultOptions ''ASN1ConstructionType)
+$(deriveToJSON defaultOptions ''SerializedPoint)
+$(deriveToJSON defaultOptions ''Crypto.PubKey.ECC.Types.CurveName)
+$(deriveToJSON defaultOptions ''ASN1)
+$(deriveToJSON defaultOptions ''DistinguishedName)
 
-instance ToJSON Date
-instance ToJSON TimeOfDay
-instance ToJSON Month
-instance ToJSON Hours
-instance ToJSON Minutes
-instance ToJSON Seconds
-instance ToJSON NanoSeconds
-instance ToJSON TimezoneOffset
-
-instance ToJSON ASN1
-instance ToJSON DistinguishedName
-instance ToJSON PubKey
-instance ToJSON PubKeyEC
-instance ToJSON PubKeyALG
-instance ToJSON Extensions
-instance ToJSON ExtensionRaw
-instance ToJSON HashALG
-
-instance ToJSON Crypto.PubKey.RSA.Types.PublicKey
-instance ToJSON Crypto.PubKey.DSA.PublicKey
-instance ToJSON Crypto.PubKey.DSA.Params
+$(deriveToJSON defaultOptions ''Crypto.PubKey.DSA.Params)
+$(deriveToJSON defaultOptions ''Crypto.PubKey.RSA.Types.PublicKey)
+$(deriveToJSON defaultOptions ''Crypto.PubKey.DSA.PublicKey)
 
 instance ToJSON C25519.PublicKey where    
     toJSON = toJSON . showHex . convert
@@ -283,29 +254,68 @@ instance ToJSON C448.PublicKey where
 instance ToJSON E448.PublicKey where
     toJSON = toJSON . showHex . convert
 
-instance ToJSON BitArray
-instance ToJSON ASN1CharacterString
-instance ToJSON ASN1TimeType
-instance ToJSON ASN1StringEncoding
-instance ToJSON ASN1Class
-instance ToJSON ASN1ConstructionType
-instance ToJSON SerializedPoint
-instance ToJSON Crypto.PubKey.ECC.Types.CurveName
+instance ToJSON ContentType    
+
+$(deriveToJSON defaultOptions ''PubKeyEC)
+$(deriveToJSON defaultOptions ''PubKeyALG)
+$(deriveToJSON defaultOptions ''ExtensionRaw)
+$(deriveToJSON defaultOptions ''Extensions)
+$(deriveToJSON defaultOptions ''HashALG)
+$(deriveToJSON defaultOptions ''SignatureALG)
+$(deriveToJSON defaultOptions ''SignatureAlgorithmIdentifier)
+$(deriveToJSON defaultOptions ''PubKey)
+$(deriveToJSON defaultOptions ''CMSVersion)
+$(deriveToJSON defaultOptions ''SignerIdentifier)
+$(deriveToJSON defaultOptions ''SignatureValue)
+$(deriveToJSON defaultOptions ''Attribute)
+$(deriveToJSON defaultOptions ''SignedAttributes)
+$(deriveToJSON defaultOptions ''DigestAlgorithmIdentifier)
+$(deriveToJSON defaultOptions ''DigestAlgorithmIdentifiers)
+$(deriveToJSON defaultOptions ''SignerInfos)
+$(deriveToJSON defaultOptions ''SignCRL)
+
+$(deriveToJSON defaultOptions ''X509.Certificate)
+$(deriveToJSON defaultOptions ''X509.RevokedCertificate)
+$(deriveToJSON defaultOptions ''X509.CRL)
+
+$(deriveToJSON defaultOptions ''Aspa)
+$(deriveToJSON defaultOptions ''RSC)
+$(deriveToJSON defaultOptions ''Vrp)
+$(deriveToJSON defaultOptions ''Manifest)
+$(deriveToJSON defaultOptions ''CertificateWithSignature)
+$(deriveToJSON defaultOptions ''RawResourceCertificate)
+$(deriveToJSON defaultOptions ''ResourceCertificate)
+
+-- RPKI Object
+instance ToJSON a => ToJSON (TypedCert a t)
+
+$(deriveToJSON defaultOptions ''EECerObject)
+$(deriveToJSON defaultOptions ''CaCerObject)
+$(deriveToJSON defaultOptions ''BgpCerObject)
+$(deriveToJSON defaultOptions ''CrlObject)
+$(deriveToJSON defaultOptions ''RpkiObject)
+
+instance ToJSON a => ToJSON (X509.SignedExact a)    
+instance ToJSON a => ToJSON (X509.Signed a) 
+
+instance ToJSON Locations    
+instance ToJSON a => ToJSON (Located a)
+instance ToJSON a => ToJSON (CMSBasedObject a)
+instance ToJSON a => ToJSON (CMS a)
+instance ToJSON a => ToJSON (SignedObject a)
+instance ToJSON a => ToJSON (SignedData a)
+instance ToJSON a => ToJSON (EncapsulatedContentInfo a)
+
 
 instance ToJSON SessionId where
     toJSON (SessionId s) = toJSON s
 
 instance ToJSON RrdpSerial
-
-instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
-    toJSON (T2 a b) = toJSON (a, b)
-instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (T3 a b c) where
-    toJSON (T3 a b c) = toJSON (a, b, c)    
-
 instance ToJSON RtrState
 instance ToJSON BGPSecPayload
 instance ToJSON SerialNumber
 instance ToJSON RtrSessionId
+
 instance ToJSON AscOrderedVrp where
     toJSON (AscOrderedVrp v) = toJSON v
 instance ToJSON a => ToJSON (Deq.Deque a) where
@@ -314,15 +324,6 @@ instance ToJSON a => ToJSON (Deq.Deque a) where
 instance (ToJSON a, ToJSON b) => ToJSON (GenDiffs a b)
 instance ToJSON a => ToJSON (Diff a)
 
--- Some utilities
-shortBsJson :: BSS.ShortByteString -> Json.Value
-shortBsJson = toJSON . showHex . BSS.fromShort
-
-showHex :: BS.ByteString -> Text
-showHex = decodeUtf8 . Hex.encode
-
-showHexL :: LBS.ByteString -> Text
-showHexL = decodeUtf8 . LBS.toStrict . HexLazy.encode
 
 -- FromJSON
 instance FromJSON ASN
@@ -360,3 +361,18 @@ instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
+
+instance ToJSON VersionState
+instance ToJSON VIssue
+instance ToJSON VWarning
+instance ToJSON AppError
+instance ToJSON InitError
+instance ToJSON InternalError
+instance ToJSON SlurmError
+instance ToJSON a => ToJSON (ParseError a)
+instance ToJSON ValidationError
+instance ToJSON SPKI
+instance ToJSON StorageError
+instance ToJSON RsyncError
+instance ToJSON RrdpError
+instance ToJSON TALError
