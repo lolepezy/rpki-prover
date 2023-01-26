@@ -76,6 +76,8 @@ dependencies:
 - monoidal-containers
 - mtl
 - network
+- network-simple
+- network-simple-tls
 - nonempty-containers
 - optparse-generic
 - pipes

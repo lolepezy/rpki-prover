@@ -33,6 +33,8 @@ import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
 import           Network.Socket                   
+import qualified Network.Simple.TCP               as TCP
+import qualified Network.Simple.TCP.TLS           as TLS
 import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 
 import           RPKI.AppContext
@@ -73,7 +75,7 @@ runRtrServer appContext RtrConfig {..} = do
     updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
-            (runSocketBusiness rtrState updateBroadcastChan)
+            (runSocketBusiness1 rtrState updateBroadcastChan)
             (listenToAppStateUpdates rtrState updateBroadcastChan)
   where    
 
@@ -81,9 +83,15 @@ runRtrServer appContext RtrConfig {..} = do
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = 
-        withSocketsDo $ do                 
-            address <- resolve (show rtrPort)
-            bracket (open address) close loop
+        case rtrTlsCertificateFile of 
+            Nothing -> 
+                withSocketsDo $ do                 
+                    address <- resolve (show rtrPort)
+                    bracket (open address) close loop
+            Just certFile -> do     
+                -- read certificate file
+                -- listen on TLS-secured connection
+                pure ()
       where
         resolve port = do
             let hints = defaultHints {
@@ -108,6 +116,29 @@ runRtrServer appContext RtrConfig {..} = do
                 (\_ -> do 
                     logInfo logger [i|Closing connection with #{peer}|]
                     close conn)
+
+    runSocketBusiness1 rtrState updateBroadcastChan = 
+        case rtrTlsCertificateFile of 
+            Nothing       -> runPlainSocket                 
+            Just certFile -> do 
+                runTlsSocket certFile                
+                pure ()
+      where
+        runPlainSocket = do 
+            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) -> do
+                logInfo logger [i|Connection from #{peer}|]
+                void $ forkFinally 
+                    (serveConnection sock peer updateBroadcastChan rtrState) 
+                    (\_ -> logInfo logger [i|Closed connection with #{peer}.|])
+            
+
+        runTlsSocket certFile = withSocketsDo $ do                 
+            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) -> do
+                logInfo logger [i|Connection from #{peer}|]
+                void $ forkFinally 
+                    (serveConnection sock peer updateBroadcastChan rtrState) 
+                    (\_ -> logInfo logger [i|Closed connection with #{peer}.|])
+
     
     -- | Block on updates on `appState` and when these update happen
     --
