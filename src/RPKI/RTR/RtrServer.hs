@@ -125,11 +125,14 @@ runRtrServer appContext RtrConfig {..} = do
                 pure ()
       where
         runPlainSocket = do 
-            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) -> do
-                logInfo logger [i|Connection from #{peer}|]
-                void $ forkFinally 
-                    (serveConnection sock peer updateBroadcastChan rtrState) 
-                    (\_ -> logInfo logger [i|Closed connection with #{peer}.|])
+            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
+                forever $ catch
+                    (void (TCP.acceptFork sock $ \(sock', peer') -> do
+                            logInfo logger [i|Connection from #{peer'}.|]
+                            serveConnection sock' peer' updateBroadcastChan rtrState
+                            logInfo logger [i|Connection from #{peer'} is closed.|]))
+                    (\(e :: SomeException) -> 
+                        logError logger [i|Error when talking to #{peer}: #{e}|])  
             
 
         runTlsSocket certFile = withSocketsDo $ do                 
@@ -248,16 +251,24 @@ runRtrServer appContext RtrConfig {..} = do
 
                     withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
                         serveLoop session outboxQueue 
+                            `catches` [
+                                    Handler $ \(_ :: AsyncCancelled) -> pure (), -- that one is fine, don't log anything
+                                    Handler $ \(e :: SomeException)  -> logError logger [i|Connection to #{peer} terminated: #{e}|]
+                                ]
                             `finally` do 
-                                atomically (closeCQueue outboxQueue)
+                                atomically $ closeCQueue outboxQueue
                                 -- Wait before returning from this functions and thus getting the sender killed
                                 -- Let it first drain `outboxQueue` to the socket.
                                 void $ timeout 30_000_000 $ wait sender
         where
             -- | Wait for PDUs to appear in either broadcast chan or 
             -- in this session's outbox and send them to the socket.
-            sendFromQueuesToClient session outboxQueue =
-                loop =<< atomically (dupTChan updateBroadcastChan)
+            sendFromQueuesToClient session outboxQueue = do
+                chan <- atomically $ dupTChan updateBroadcastChan
+                loop chan 
+                    `catch` 
+                    (\(e :: SomeException) -> 
+                        logError logger [i|Connection to #{peer} terminated: #{e}|]) 
               where
                 loop stateUpdateChan = do                         
                     -- wait for queued PDUs or for state updates
