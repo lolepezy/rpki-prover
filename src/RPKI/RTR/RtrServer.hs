@@ -135,12 +135,15 @@ runRtrServer appContext RtrConfig {..} = do
                         logError logger [i|Error when talking to #{peer}: #{e}|])  
             
 
-        runTlsSocket certFile = withSocketsDo $ do                 
-            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) -> do
-                logInfo logger [i|Connection from #{peer}|]
-                void $ forkFinally 
-                    (serveConnection sock peer updateBroadcastChan rtrState) 
-                    (\_ -> logInfo logger [i|Closed connection with #{peer}.|])
+        runTlsSocket certFile = do                 
+            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
+                forever $ catch
+                    (void (TCP.acceptFork sock $ \(sock', peer') -> do
+                            logInfo logger [i|Connection from #{peer'}.|]
+                            serveConnection sock' peer' updateBroadcastChan rtrState
+                            logInfo logger [i|Connection from #{peer'} is closed.|]))
+                    (\(e :: SomeException) -> 
+                        logError logger [i|Error when talking to #{peer}: #{e}|])
 
     
     -- | Block on updates on `appState` and when these update happen
