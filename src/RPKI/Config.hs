@@ -134,8 +134,9 @@ data RtrConfig = RtrConfig {
         rtrAddress :: String,
         rtrPort    :: Int16,
         rtrLogFile :: Maybe String,
-        rtrTlsCertificateFile :: Maybe String
-    } 
+        rtrTlsCertificateFile :: Maybe String,
+        rtrTlsPrivateKey      :: Maybe String
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -227,7 +228,8 @@ defaultRtrConfig = RtrConfig {
         rtrAddress = "localhost",
         rtrPort    = 8283,
         rtrLogFile = Nothing,
-        rtrTlsCertificateFile = Nothing
+        rtrTlsCertificateFile = Nothing,
+        rtrTlsPrivateKey = Nothing
     }
     
 defaulPrefetchURLs :: [String]

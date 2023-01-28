@@ -156,7 +156,7 @@ runValidatorServer appContext@AppContext {..} = do
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
             inSubVScope' TAFocus (convert taName) $
-                parseTALFromFile talFilePath (Text.pack taName)
+                parseTALFromFile talFilePath $ Text.pack taName
 
     logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 
@@ -217,6 +217,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & maybeSet #rtrAddress rtrAddress
                         & #rtrLogFile .~ rtrLogFile
                         & #rtrTlsCertificateFile .~ rtrTlsCertificateFile
+                        & #rtrTlsPrivateKey .~ rtrTlsPrivateKey
             else Nothing    
 
     let readSlurms files = do
@@ -593,7 +594,10 @@ data CLIOptions wrapped = CLIOptions {
         "Path to a file used for RTR log (default is stdout, together with general output).",
 
     rtrTlsCertificateFile :: wrapped ::: Maybe String <?>
-        "Path to a file with TLS certificate to be use for RTR server.",
+        "Path to the file with TLS certificate to be used for RTR server.",
+
+    rtrTlsPrivateKey :: wrapped ::: Maybe String <?>
+        "Path to the file with the private key to be used for RTR server.",
 
     logLevel :: wrapped ::: Maybe String <?>
         "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
