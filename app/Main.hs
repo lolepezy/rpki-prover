@@ -211,14 +211,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ setCpuCount cpuCount'
     let parallelism = makeParallelism cpuCount'
 
-    let rtrConfig = if withRtr
-            then Just $ defaultRtrConfig
-                        & maybeSet #rtrPort rtrPort
-                        & maybeSet #rtrAddress rtrAddress
-                        & #rtrLogFile .~ rtrLogFile
-                        & #rtrTlsCertificateFile .~ rtrTlsCertificateFile
-                        & #rtrTlsPrivateKey .~ rtrTlsPrivateKey
-            else Nothing    
+    rtrConfig <- getRtrConfig
 
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -275,6 +268,36 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     logInfo logger [i|Created application context with configuration: 
 #{shower (appContext ^. typed @Config)}|]
     pure appContext
+  where
+    getRtrConfig :: ValidatorT IO (Maybe RtrConfig)
+    getRtrConfig = do 
+        let rtrConf = defaultRtrConfig
+                        & maybeSet #rtrPort rtrPort
+                        & maybeSet #rtrAddress rtrAddress
+                        & #rtrLogFile .~ rtrLogFile            
+
+        case (withRtr, withRtrTls) of 
+            (True, False) -> pure $ Just $ rtrConf
+
+            (True, True) ->
+                appError $ InitE $ InitError "Only one of --with-rtr and --with-rtr-tls can be set."
+                
+            (False, True) -> do 
+                case (rtrTlsCertificate, rtrTlsPrivateKey) of 
+                    (Just cf, Just pkf) -> do 
+                        certificate <- readF cf
+                        privateKey  <- readF pkf
+                        pure $ Just $ rtrConf & #rtrTlsConfig .~ (Just RtrTlsConfig {..})
+                    (Nothing, _) -> 
+                        appError $ InitE $ InitError "TLS certificate is not set (set the --rtr-tls-certificate option)."
+                    (_, Nothing) -> 
+                        appError $ InitE $ InitError "TLS private key is not set (set the --rtr-tls-private-key option)."                        
+
+            _ -> pure $ Nothing    
+  
+    readF f = do 
+        z <- fromTry (\e -> InitE $ InitError $ "Could not read TLS certificate file: " <> fmtEx e) $ LBS.readFile f
+        pure $! LBS.toStrict z
 
 
 data TALsHandle = CreateTALs | CheckTALsExists
@@ -584,6 +607,9 @@ data CLIOptions wrapped = CLIOptions {
     withRtr :: wrapped ::: Bool <?>
         "Start RTR server (default is false)",
 
+    withRtrTls :: wrapped ::: Bool <?>
+        "Start RTR server with server-side TLS support (default is false)",
+
     rtrAddress :: wrapped ::: Maybe String <?>
         "Address to bind to for the RTR server (default is localhost)",
 
@@ -593,7 +619,7 @@ data CLIOptions wrapped = CLIOptions {
     rtrLogFile :: wrapped ::: Maybe String <?>
         "Path to a file used for RTR log (default is stdout, together with general output).",
 
-    rtrTlsCertificateFile :: wrapped ::: Maybe String <?>
+    rtrTlsCertificate :: wrapped ::: Maybe String <?>
         "Path to the file with TLS certificate to be used for RTR server.",
 
     rtrTlsPrivateKey :: wrapped ::: Maybe String <?>

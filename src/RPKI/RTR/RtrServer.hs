@@ -83,7 +83,7 @@ runRtrServer appContext RtrConfig {..} = do
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = 
-        case rtrTlsCertificateFile of 
+        case rtrTlsConfig of 
             Nothing -> 
                 withSocketsDo $ do                 
                     address <- resolve (show rtrPort)
@@ -118,7 +118,7 @@ runRtrServer appContext RtrConfig {..} = do
                     close conn)
 
     runSocketBusiness1 rtrState updateBroadcastChan = 
-        case rtrTlsCertificateFile of 
+        case rtrTlsConfig of 
             Nothing       -> runPlainSocket                 
             Just certFile -> do 
                 runTlsSocket certFile                
@@ -127,10 +127,10 @@ runRtrServer appContext RtrConfig {..} = do
         runPlainSocket = do 
             TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
                 forever $ catch
-                    (void (TCP.acceptFork sock $ \(sock', peer') -> do
-                            logInfo logger [i|Connection from #{peer'}.|]
-                            serveConnection sock' peer' updateBroadcastChan rtrState
-                            logInfo logger [i|Connection from #{peer'} is closed.|]))
+                    (void $ TCP.acceptFork sock $ \(sock', peer') -> do
+                                logInfo logger [i|Connection from #{peer'}.|]
+                                serveConnection sock' peer' updateBroadcastChan rtrState
+                                logInfo logger [i|Connection from #{peer'} is closed.|])
                     (\(e :: SomeException) -> 
                         logError logger [i|Error when talking to #{peer}: #{e}|])  
             
@@ -138,10 +138,10 @@ runRtrServer appContext RtrConfig {..} = do
         runTlsSocket certFile = do                 
             TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
                 forever $ catch
-                    (void (TCP.acceptFork sock $ \(sock', peer') -> do
-                            logInfo logger [i|Connection from #{peer'}.|]
-                            serveConnection sock' peer' updateBroadcastChan rtrState
-                            logInfo logger [i|Connection from #{peer'} is closed.|]))
+                    (void $ TCP.acceptFork sock $ \(sock', peer') -> do
+                                logInfo logger [i|Connection from #{peer'}.|]
+                                serveConnection sock' peer' updateBroadcastChan rtrState
+                                logInfo logger [i|Connection from #{peer'} is closed.|])
                     (\(e :: SomeException) -> 
                         logError logger [i|Error when talking to #{peer}: #{e}|])
 
@@ -570,3 +570,5 @@ bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
 bgpSecToPdu flags BGPSecPayload {..} = 
     let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text)
     in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+
+

@@ -8,6 +8,9 @@ module RPKI.Config where
 
 import GHC.Conc
 import Numeric.Natural
+
+import qualified Data.ByteString as BS
+
 import Data.Int
 import Data.Text (Text)
 import Data.Word ( Word16 )
@@ -130,12 +133,18 @@ data HttpApiConfig = HttpApiConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+data RtrTlsConfig = RtrTlsConfig {
+        certificate :: BS.ByteString,
+        privateKey  :: BS.ByteString
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 data RtrConfig = RtrConfig {
         rtrAddress :: String,
         rtrPort    :: Int16,
         rtrLogFile :: Maybe String,
-        rtrTlsCertificateFile :: Maybe String,
-        rtrTlsPrivateKey      :: Maybe String
+        rtrTlsConfig :: Maybe RtrTlsConfig        
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -228,8 +237,7 @@ defaultRtrConfig = RtrConfig {
         rtrAddress = "localhost",
         rtrPort    = 8283,
         rtrLogFile = Nothing,
-        rtrTlsCertificateFile = Nothing,
-        rtrTlsPrivateKey = Nothing
+        rtrTlsConfig = Nothing        
     }
     
 defaulPrefetchURLs :: [String]
