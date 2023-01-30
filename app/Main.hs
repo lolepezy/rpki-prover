@@ -268,8 +268,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     logInfo logger [i|Created application context with configuration: 
 #{shower (appContext ^. typed @Config)}|]
     pure appContext
-  where
-    getRtrConfig :: ValidatorT IO (Maybe RtrConfig)
+  where    
     getRtrConfig = do 
         let rtrConf = defaultRtrConfig
                         & maybeSet #rtrPort rtrPort
