@@ -80,6 +80,7 @@ dependencies:
 - network-simple-tls
 - nonempty-containers
 - optparse-generic
+- pem
 - pipes
 - primitive
 - prometheus-client
@@ -110,6 +111,7 @@ dependencies:
 - tasty-hunit
 - tasty-quickcheck    
 - th-utilities
+- tls
 - generic-arbitrary
 - quickcheck-instances
 - unix

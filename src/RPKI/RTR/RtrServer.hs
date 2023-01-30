@@ -35,6 +35,7 @@ import           Data.Text                        (Text)
 import           Network.Socket                   
 import qualified Network.Simple.TCP               as TCP
 import qualified Network.Simple.TCP.TLS           as TLS
+import qualified Network.TLS                      as T
 import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 
 import           RPKI.AppContext
@@ -75,54 +76,53 @@ runRtrServer appContext RtrConfig {..} = do
     updateBroadcastChan <- atomically newBroadcastTChan 
 
     void $ race 
-            (runSocketBusiness1 rtrState updateBroadcastChan)
+            (runSocketBusiness rtrState updateBroadcastChan)
             (listenToAppStateUpdates rtrState updateBroadcastChan)
   where    
 
     logger = getRtrLogger appContext
 
     -- | Handling TCP conections happens here
+    -- runSocketBusinessOld rtrState updateBroadcastChan = 
+    --     case rtrTlsConfig of 
+    --         Nothing -> 
+    --             withSocketsDo $ do                 
+    --                 address <- resolve (show rtrPort)
+    --                 bracket (open address) close loop
+    --         Just certFile -> do     
+    --             -- read certificate file
+    --             -- listen on TLS-secured connection
+    --             pure ()
+    --   where
+    --     resolve port = do
+    --         let hints = defaultHints {
+    --                 addrFlags = [AI_PASSIVE], 
+    --                 addrSocketType = Stream                                        
+    --             }
+    --         head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
+
+    --     open addr = do
+    --         sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+    --         setSocketOption sock ReuseAddr 1
+    --         withFdSocket sock setCloseOnExecIfNeeded
+    --         bind sock $ addrAddress addr
+    --         listen sock 1024
+    --         pure sock
+
+    --     loop sock = forever $ do
+    --         (conn, peer) <- accept sock
+    --         logInfo logger [i|Connection from #{peer}|]
+    --         void $ forkFinally 
+    --             (serveConnection conn peer updateBroadcastChan rtrState) 
+    --             (\_ -> do 
+    --                 logInfo logger [i|Closing connection with #{peer}|]
+    --                 close conn)
+
     runSocketBusiness rtrState updateBroadcastChan = 
         case rtrTlsConfig of 
-            Nothing -> 
-                withSocketsDo $ do                 
-                    address <- resolve (show rtrPort)
-                    bracket (open address) close loop
-            Just certFile -> do     
-                -- read certificate file
-                -- listen on TLS-secured connection
-                pure ()
-      where
-        resolve port = do
-            let hints = defaultHints {
-                    addrFlags = [AI_PASSIVE], 
-                    addrSocketType = Stream                                        
-                }
-            head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
-
-        open addr = do
-            sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-            setSocketOption sock ReuseAddr 1
-            withFdSocket sock setCloseOnExecIfNeeded
-            bind sock $ addrAddress addr
-            listen sock 1024
-            pure sock
-
-        loop sock = forever $ do
-            (conn, peer) <- accept sock
-            logInfo logger [i|Connection from #{peer}|]
-            void $ forkFinally 
-                (serveConnection conn peer updateBroadcastChan rtrState) 
-                (\_ -> do 
-                    logInfo logger [i|Closing connection with #{peer}|]
-                    close conn)
-
-    runSocketBusiness1 rtrState updateBroadcastChan = 
-        case rtrTlsConfig of 
-            Nothing       -> runPlainSocket                 
-            Just certFile -> do 
-                runTlsSocket certFile                
-                pure ()
+            Nothing      -> runPlainSocket                 
+            Just tlsConf -> runTlsSocket tlsConf
+                
       where
         runPlainSocket = do 
             TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
@@ -135,7 +135,9 @@ runRtrServer appContext RtrConfig {..} = do
                         logError logger [i|Error when talking to #{peer}: #{e}|])  
             
 
-        runTlsSocket certFile = do                 
+        runTlsSocket RtrTlsConfig {..} = do                 
+            let credentials = T.credentialLoadX509FromMemory certificate privateKey
+            -- logDebug logger [i|TLS credentials = #{credentials}|]
             TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
                 forever $ catch
                     (void $ TCP.acceptFork sock $ \(sock', peer') -> do
