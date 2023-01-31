@@ -250,7 +250,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
                 & #validationConfig . #manifestProcessing .~
-                        (if strictManifestValidation then RFC6486_Strict else RFC6486)
+                        (if strictManifestValidation then RFC6486_Strict else RFC9286)
                 & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
                 & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth

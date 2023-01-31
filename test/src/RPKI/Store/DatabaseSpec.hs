@@ -117,7 +117,7 @@ shouldMergeObjectLocations io = do
             putObject tx objectStore (toStorableObject obj) (instantToVersion now)
             linkObjectToUrl tx objectStore url (getHash obj)
 
-    let getIt hash = roTx objectStore $ \tx -> getByHash tx objectStore hash    
+    let getIt hash = roTx objectStore $ \tx -> getByHash tx db hash    
 
 
     storeIt ro1 url1
@@ -135,7 +135,7 @@ shouldMergeObjectLocations io = do
     verifyUrlCount objectStore "1" 3    
 
     rwTx objectStore $ \tx ->
-        deleteObject tx objectStore (getHash ro1)    
+        deleteObject tx db (getHash ro1)    
 
     verifyUrlCount objectStore "2" 3
 
@@ -178,7 +178,7 @@ shouldCreateAndDeleteAllTheMaps io = do
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromObjectStore io = do  
-    DB {..} <- io
+    db@DB {..} <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
@@ -200,8 +200,8 @@ shouldInsertAndGetAllBackFromObjectStore io = do
     allObjects <- roTx objectStore $ \tx -> getAll tx objectStore
     HU.assertEqual 
         "Not the same objects" 
-        (List.sortOn (getHash . payload) allObjects) 
-        (List.sortOn (getHash . payload) ros')
+        (List.sortOn (getHash . (^. #payload)) allObjects) 
+        (List.sortOn (getHash . (^. #payload)) ros')
         
     compareLatestMfts objectStore ros1 aki1    
     compareLatestMfts objectStore ros2 aki2  
@@ -210,7 +210,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx objectStore $ \tx -> 
         forM_ toDelete $ \(Located _ ro) -> 
-            deleteObject tx objectStore (getHash ro)
+            deleteObject tx db (getHash ro)
     
     compareLatestMfts objectStore ros2 aki2      
     compareLatestMfts objectStore toKeep aki1
@@ -435,7 +435,7 @@ dbTestCase s f = ioTestCase s $ f . (snd <$>)
 makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
 makeLmdbStuff mkStore = do 
     dir <- createTempDirectory "/tmp" "lmdb-test"
-    e <- Lmdb.mkLmdb dir 1000 1000 
+    e <- Lmdb.mkLmdb dir 1000
     store <- mkStore e
     pure ((dir, e), store)
 

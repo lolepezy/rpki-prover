@@ -71,7 +71,7 @@ currentDatabaseVersion = 3
 data DB s = DB {
     taStore          :: TAStore s, 
     repositoryStore  :: RepositoryStore s, 
-    objectStore      :: RpkiObjectStore s,
+    objectStore      :: RpkiObjectStore s,    
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
@@ -115,7 +115,9 @@ data RpkiObjectStore s = RpkiObjectStore {
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
         urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
-        objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey]
+        objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
+
+        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed EEBrief)
     } 
     deriving stock (Generic, Typeable)
 
@@ -154,8 +156,9 @@ newtype VRPStore s = VRPStore {
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
-    aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
-}
+        aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
+    } 
+    deriving stock (Generic)
 
 -- | BGP certificate store
 newtype BgpStore s = BgpStore {    
@@ -198,12 +201,12 @@ newtype MetadataStore s = MetadataStore {
 
 
 getByHash :: (MonadIO m, Storage s) => 
-            Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (Located RpkiObject))
-getByHash tx store h = (snd <$>) <$> getByHash_ tx store h    
+            Tx s mode -> DB s -> Hash -> m (Maybe (Located RpkiObject))
+getByHash tx db h = (snd <$>) <$> getByHash_ tx db h    
 
 getByHash_ :: (MonadIO m, Storage s) => 
-              Tx s mode -> RpkiObjectStore s -> Hash -> m (Maybe (ObjectKey, Located RpkiObject))
-getByHash_ tx store@RpkiObjectStore {..} h = liftIO $ runMaybeT $ do 
+              Tx s mode -> DB s -> Hash -> m (Maybe (ObjectKey, Located RpkiObject))
+getByHash_ tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx hashToKey h
     z         <- MaybeT $ getLocatedByKey tx store objectKey
     pure (objectKey, z)
@@ -227,13 +230,19 @@ getObjectByKey tx RpkiObjectStore {..} k = liftIO $ do
 getLocatedByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
 getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do     
-    object    <- MaybeT $ getObjectByKey tx store k
+    object    <- MaybeT $ getObjectByKey tx store k    
+    locations <- MaybeT $ getLocationsByKey tx store k                    
+    pure $ Located locations object
+
+
+getLocationsByKey :: (MonadIO m, Storage s) => 
+                Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe Locations)
+getLocationsByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do         
     uriKeys   <- MaybeT $ M.get tx objectKeyToUrlKeys k
     locations <- MaybeT 
                     $ (toNESet . catMaybes <$>)
                     $ mapM (M.get tx uriKeyToUri) uriKeys             
-    pure $ Located (Locations locations) object
-
+    pure $ Locations locations
 
 putObject :: (MonadIO m, Storage s) => 
             Tx s 'RW 
@@ -292,14 +301,16 @@ hashExists :: (MonadIO m, Storage s) =>
 hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
-deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> RpkiObjectStore s -> Hash -> m ()
-deleteObject tx store@RpkiObjectStore {..} h = liftIO $
+deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
+deleteObject tx DB {         
+        objectStore = store@RpkiObjectStore {..} } h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey ->             
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
             M.delete tx objects objectKey
             M.delete tx objectInsertedBy objectKey        
             M.delete tx objectValidatedBy objectKey        
             M.delete tx hashToKey h        
+            M.delete tx objectBriefs objectKey    
             case ro of 
                 CerRO c -> M.delete tx certBySKI (getSKI c)
                 _       -> pure ()
@@ -335,18 +346,34 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
 
 
 markValidated :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> RpkiObjectStore s -> Hash -> WorldVersion -> m ()
-markValidated tx RpkiObjectStore {..} hash wv = liftIO $    
+                Tx s 'RW -> DB s -> Hash -> WorldVersion -> m ()
+markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $    
     ifJustM (M.get tx hashToKey hash) $ \key -> 
         M.put tx objectValidatedBy key wv                                
+
+putObjectBrief :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()
+putObjectBrief tx DB {         
+        objectStore = RpkiObjectStore {..} } 
+    hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
+        M.put tx objectBriefs key (Compressed brief)
+
+
+getOjectBrief :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> Hash -> m (Maybe (Located EEBrief))
+getOjectBrief tx DB { objectStore = store@RpkiObjectStore {..} } h =  
+    liftIO $ runMaybeT $ do 
+        objectKey <- MaybeT $ M.get tx hashToKey h
+        brief <- unCompressed <$> MaybeT (M.get tx objectBriefs objectKey)        
+        locations <- MaybeT $ getLocationsByKey tx store objectKey
+        pure $ Located locations brief
 
 
 -- This is for testing purposes mostly
 getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [Located RpkiObject]
 getAll tx store = liftIO $ do 
     keys <- M.keys tx (objects store)
-    objs <- forM keys $ \k -> getLocatedByKey tx store k
-    pure $ catMaybes objs
+    catMaybes <$> forM keys (\k -> getLocatedByKey tx store k)    
 
 
 -- | Get something from the manifest that would allow us to judge 
@@ -358,8 +385,8 @@ getMftTimingMark mft = let
 
 
 markLatestValidMft :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> RpkiObjectStore s -> AKI -> Hash -> m ()
-markLatestValidMft tx RpkiObjectStore {..} aki hash = liftIO $ do 
+                    Tx s 'RW -> DB s -> AKI -> Hash -> m ()
+markLatestValidMft tx DB { objectStore = RpkiObjectStore {..}} aki hash = liftIO $ do 
     k <- M.get tx hashToKey hash
     for_ k $ M.put tx lastValidMft aki
 
@@ -590,7 +617,7 @@ cleanObjectCache :: Storage s =>
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that decides if the object is too old to stay in cache
                     IO CleanUpResult
-cleanObjectCache DB {..} tooOld = do
+cleanObjectCache db@DB {..} tooOld = do
     kept        <- newIORef (0 :: Int)
     deleted     <- newIORef (0 :: Int)
     deletedURLs <- newIORef (0 :: Int)
@@ -611,7 +638,7 @@ cleanObjectCache DB {..} tooOld = do
     let deleteObjects queue =
             readQueueChunked queue chunkSize $ \quuElems ->
                 rwTx objectStore $ \tx ->
-                    forM_ quuElems $ deleteObject tx objectStore
+                    forM_ quuElems $ deleteObject tx db
 
     mapException (AppException . storageError) 
         $ voidRun "cleanObjectCache" 
@@ -747,7 +774,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     taStats         <- let TAStore sm = taStore in M.stats tx sm
     repositoryStats <- repositoryStats' tx
     rpkiObjectStats <- rpkiObjectStats' tx
-    vResultStats    <- vResultStats' tx
+    vResultStats    <- vResultStats' tx    
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
     aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
     bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
@@ -771,6 +798,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
 
         objectInsertedByStats <- M.stats tx objectInsertedBy
         objectValidatedByStats <- M.stats tx objectValidatedBy            
+        objecBriefStats <- M.stats tx objectBriefs
         pure RpkiObjectStats {..}
 
     repositoryStats' tx = 
@@ -814,10 +842,10 @@ emptyDBMaps :: (MonadIO m, Storage s) =>
 emptyDBMaps tx DB {..} = liftIO $ do     
     M.erase tx $ tas taStore
     emptyRepositoryStore repositoryStore    
-    emptyObjectStore objectStore    
+    emptyObjectStore objectStore        
     M.erase tx $ results validationsStore
     M.erase tx $ vrpStore ^. #vrps 
-    M.erase tx $ aspas aspaStore
+    M.erase tx $ aspaStore ^. #aspas
     M.erase tx $ versions versionStore
     M.erase tx $ metrics metricStore
     M.erase tx $ slurms slurmStore
@@ -835,6 +863,7 @@ emptyDBMaps tx DB {..} = liftIO $ do
         M.erase tx uriKeyToUri
         MM.erase tx urlKeyToObjectKey
         M.erase tx objectKeyToUrlKeys
+        M.erase tx objectBriefs
 
     emptyRepositoryStore RepositoryStore {..} = do   
         M.erase tx rrdpS

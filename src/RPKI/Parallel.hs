@@ -61,23 +61,6 @@ foldPipeline parallelism stream mapStream consume accum0 =
                         consume p accum >>= go
 
 
--- foldPipeline1 :: (MonadBaseControl IO m, MonadIO m) =>
---             Natural ->
---             Stream (Of s) (ValidatorTCurried m) () ->
---             (s -> ValidatorT m p) ->          -- ^ producer
---             (p -> ValidatorT m ()) ->     -- ^ consumer, called for every item of the traversed argument
---             ValidatorT m ()
--- foldPipeline1 parallelism stream mapStream consume =
---     txFoldPipeline parallelism stream' withTx' consume'
---   where
---       g s = do 
---           scopes <- askScopes
---           liftIO $ async $ runValidatorT scopes (mapStream s)
-
---       stream' = S.mapM g stream
---       withTx' f = f ()
---       consume' _ a = wait a >>= consume
-
 
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
@@ -129,7 +112,7 @@ bracketChanClosable size produce consume kill = do
             killAll queue kill    
 
 
-data QState = QWorks | QClosed
+data QState = QOperational | QClosed
     deriving (Show, Eq)
 
 -- Simplest closeable queue  
@@ -139,42 +122,23 @@ newCQueueIO :: Natural -> IO (ClosableQueue a)
 newCQueueIO = atomically . newCQueue
 
 newCQueue :: Natural -> STM (ClosableQueue a)
-newCQueue n = ClosableQueue <$> newTBQueue n <*> newTVar QWorks
+newCQueue n = ClosableQueue <$> newTBQueue n <*> newTVar QOperational
 
 writeCQueue :: ClosableQueue a -> a -> STM ()
 writeCQueue (ClosableQueue q s) qe =
-    readTVar s >>= \case 
-        QClosed -> pure ()
-        QWorks  -> Q.writeTBQueue q qe
+    readTVar s >>= \case         
+        QOperational -> Q.writeTBQueue q qe
+        QClosed      -> pure ()
 
 ifFullCQueue :: ClosableQueue a -> STM Bool
 ifFullCQueue (ClosableQueue q _) = isFullTBQueue q
 
--- | Read elements from the queue in chunks and apply the function to 
--- each chunk
-readQueueChunked :: ClosableQueue a -> Natural -> ([a] -> IO ()) -> IO ()
-readQueueChunked cq chunkSize f = go
-  where     
-    go = atomically (readChunk chunkSize cq) >>= \case             
-            []    -> pure ()
-            chunk -> f chunk >> go              
-
+        
 closeCQueue :: ClosableQueue a -> STM ()
 closeCQueue (ClosableQueue _ s) = writeTVar s QClosed
 
 isClosedCQueue :: ClosableQueue a -> STM Bool
 isClosedCQueue (ClosableQueue _ s) = (QClosed ==) <$> readTVar s 
-
-readChunk :: Natural -> ClosableQueue a -> STM [a]
-readChunk 0 _ = pure []
-readChunk leftToRead cq@(ClosableQueue q queueState) =
-    Q.tryReadTBQueue q >>= \case     
-        Just z -> (z : ) <$> readChunk (leftToRead - 1) cq
-        Nothing -> 
-            readTVar queueState >>= \case 
-                QClosed -> pure []
-                QWorks  -> retry
-
 
 readCQueue :: ClosableQueue a -> STM (Maybe a)
 readCQueue (ClosableQueue q queueState) =
@@ -183,7 +147,26 @@ readCQueue (ClosableQueue q queueState) =
         Nothing -> 
             readTVar queueState >>= \case 
                 QClosed -> pure Nothing
-                QWorks  -> retry
+                QOperational  -> retry
+
+readChunk :: Natural -> ClosableQueue a -> STM [a]
+readChunk 0 _ = pure []
+readChunk leftToRead cq@(ClosableQueue q queueState) =
+    Q.tryReadTBQueue q >>= \case     
+        Just z -> (z : ) <$> readChunk (leftToRead - 1) cq
+        Nothing -> 
+            readTVar queueState >>= \case 
+                QClosed      -> pure []
+                QOperational -> retry
+
+-- | Read elements from the queue in chunks and apply the function to 
+-- each chunk
+readQueueChunked :: ClosableQueue a -> Natural -> ([a] -> IO ()) -> IO ()
+readQueueChunked cq chunkSize f = go
+  where     
+    go = atomically (readChunk chunkSize cq) >>= \case             
+            []    -> pure ()
+            chunk -> f chunk >> go  
 
 killAll :: MonadIO m => ClosableQueue t -> (t -> m a) -> m ()
 killAll queue kill = do

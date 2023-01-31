@@ -40,7 +40,7 @@ import           System.Posix.Files
 data LmdbFlow = UseExisting | Reset
 
 maxReadersDefault :: Int
-maxReadersDefault = 100
+maxReadersDefault = 500
 
 
 -- | Verify that the cache directory is consistent and use it as LMDB cache.
@@ -97,8 +97,7 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
             createLmdb currentCache
 
         createLmdb lmdbDir' =
-            fromTry (InitE . InitError . fmtEx) $ 
-                mkLmdb lmdbDir' lmdbSize maxReadersDefault    
+            fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdbDir' lmdbSize
 
         removePossibleOtherLMDBCaches linkTarget = 
             cleanDirFiltered cacheDir $ \f -> 
@@ -129,8 +128,7 @@ setupWorkerLmdbCache logger cacheDir lmdbSize = do
         currentCache = cacheDir </> "current"
 
         createLmdb lmdbDir' =
-            fromTry (InitE . InitError . fmtEx) $ 
-                mkLmdb lmdbDir' lmdbSize maxReadersDefault    
+            fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdbDir' lmdbSize 
         
 
 -- | De-fragment LMDB cache.
@@ -195,7 +193,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
-            newLmdb <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb) maxReadersDefault
+            newLmdb <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb)
             newDB <- createDatabase newLmdb logger DontCheckVersion
             atomically $ do
                 newNative <- getNativeEnv newLmdb
@@ -250,7 +248,7 @@ closeLmdbStorage AppContext {..} =
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
     currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
-    newLmdb    <- mkLmdb targetLmdbPath (config ^. #lmdbSizeMb) maxReadersDefault
+    newLmdb    <- mkLmdb targetLmdbPath (config ^. #lmdbSizeMb)
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
     void $ copyEnv currentNativeEnv newNativeEnv        

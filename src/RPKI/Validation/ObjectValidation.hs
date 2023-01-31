@@ -169,40 +169,47 @@ validateTACertWithPreviousCert cert previousCert = do
 --    - check the resource set (needs the parent as well)
 --    - check it's not revoked (needs CRL)
 -- 
-validateResourceCert :: forall child parent (t :: CertType) .
+validateResourceCert :: forall child parent (childCertType :: CertType) .
     ( WithRawResourceCertificate child
     , WithRawResourceCertificate parent
     , WithSKI parent
     , WithAKI child
+    , WithSerial child
+    , WithValidityPeriod child
     , OfCertType parent 'CACert
-    , OfCertType child t
-    , ExtensionValidator t
+    , OfCertType child childCertType
+    , ExtensionValidator childCertType
     ) =>
     Now ->
     child ->    
     parent ->
     Validated CrlObject ->    
     PureValidatorT (Validated child)
-validateResourceCert (Now now) cert parentCert vcrl = do
-    let (before, after) = certValidity $ cwsX509certificate $ getCertWithSignature cert
+validateResourceCert now cert parentCert vcrl = do
+    
     signatureCheck $ validateCertSignature cert parentCert
 
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate
 
-    when (now < Instant before) $ 
-        vPureError $ CertificateIsInTheFuture (Instant before) (Instant after)
-
-    when (now > Instant after) $ 
-        vPureError $ CertificateIsExpired (Instant before) (Instant after)
+    validateCertValidityPeriod cert now    
 
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
 
-    Validated <$> validateResourceCertExtensions @_ @t cert    
+    Validated <$> validateResourceCertExtensions @_ @childCertType cert    
   where
     correctSkiAki c (getSKI -> SKI s) =
         maybe False (\(AKI a) -> a == s) $ getAKI c
+
+
+validateCertValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
+validateCertValidityPeriod c (Now now) = do 
+    let (before, after) = getValidityPeriod c
+    when (now < before) $ 
+        vPureError $ CertificateIsInTheFuture before after
+    when (now > after) $ 
+        vPureError $ CertificateIsExpired before after
 
 
 validateResources ::
@@ -229,6 +236,8 @@ validateBgpCert ::
     , WithSKI parent
     , WithAKI c
     , WithSKI c
+    , WithValidityPeriod c
+    , WithSerial c
     , OfCertType c 'BGPCert
     , OfCertType parent 'CACert
     ) =>
@@ -443,12 +452,11 @@ validateThisUpdate (Now now) thisUpdateTime
     | otherwise = pure thisUpdateTime
 
 -- | Check if CMS is on the revocation list
-isRevoked :: WithRawResourceCertificate c => c -> Validated CrlObject -> Bool
-isRevoked cert (Validated crlObject) =
+isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
+isRevoked (getSerial -> serial) (Validated crlObject) = 
     Set.member serial revokenSerials
   where
     SignCRL{..} = signCrl crlObject
-    serial = getSerial cert
 
 signatureCheck :: SignatureVerification -> PureValidatorT ()
 signatureCheck sv = case sv of
@@ -468,20 +476,3 @@ validateSize vc s =
             | s < vc ^. #minObjectSize -> Left $ ObjectIsTooSmall s
             | s > vc ^. #maxObjectSize -> Left $ ObjectIsTooBig s
             | otherwise                -> pure s
-
-
-
-{- 
-еще один вопрос вдогонку
-вот есть у меня 
-```
-data X = A | B
-
-class Bla (t :: X)
-
-instance Bla 'A
-instance Bla 'B
-```
-есть ли какой-то способ сказать ghc, что раз не писать `Bla t` а качестве констрейнта, зная, что
-
--}
