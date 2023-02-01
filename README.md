@@ -55,7 +55,7 @@ There is no config file and all the configuration is provided with CLI (most of 
 /opt/bin/rpki-prover-linux.exe --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 8080 --log-level debug
 ```
 
-There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well. The awkward part related to ARIN TAL license agreement is pretty much a rip off from the Routinator implementation as the most convenient for the user.
+There is an initialise step necessary to start after downloading or building the executable: you need to run something like `rpki-prover.exe --initialise --rpki-root-directory /var/where-you-want-data-to-be` to create the necessary FS layout in `/var/where-you-want-data-to-be`. It will download the TAL files to `/var/where-you-want-data-to-be/tals` as well.
 
 ## Static Linux binary <a name="static-linux-binary"></a>
 
@@ -72,7 +72,7 @@ Since `rpki-prover` needs to have some persistent directory to use for TALs, cac
 ```
 docker volume create rpki-data
 docker pull lolepezy/rpki-prover:latest
-docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --initialise --agree-with-arin-rpa
+docker run --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --initialise
 docker run -p 9999:9999 --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest --cpu-count 4 --revalidation-interval 300
 ``` 
 The important part here is `target=/rpki-data`, this directory is created by default inside of the docker container. Otherwise it can be adjusted as in
