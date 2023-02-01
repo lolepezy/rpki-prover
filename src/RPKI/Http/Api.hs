@@ -72,7 +72,7 @@ data API api = API {
                                     :> QueryParam "hash" Text 
                                     :> Get '[JSON] [RObject],
 
-        rtrDiffs :: api :- "rtr" :> Get '[JSON] RtrDto,
+        rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
         versions :: api :- "versions" :> Get '[JSON] [WorldVersion]
     }

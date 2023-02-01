@@ -86,7 +86,7 @@ httpApi appContext = genericServe HttpApi {
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         system = liftIO $ getSystem appContext,
-        rtrDiffs = getRtrDiffs appContext,
+        rtr = getRtr appContext,
         versions = getVersions appContext
     }
 
@@ -345,9 +345,9 @@ getSystem AppContext {..} = do
     let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ si ^. #metrics . #resources
     pure SystemDto {..}
 
-getRtrDiffs :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                AppContext s -> m RtrDto
-getRtrDiffs AppContext {..} = do
+getRtr :: (MonadIO m, Storage s, MonadError ServerError m) =>
+            AppContext s -> m RtrDto
+getRtr AppContext {..} = do
     liftIO (readTVarIO $ appState ^. #rtrState) >>= \case
         Nothing -> throwError $ err400 { errBody =
                 "RTR state doesn't exist, RTR server is waiting for a validation result or disabled." }
