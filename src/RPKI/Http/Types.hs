@@ -107,6 +107,51 @@ data BgpCertDto = BgpCertDto {
 newtype RObject = RObject (Located RpkiObject)
     deriving stock (Eq, Show, Generic)
 
+
+data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
+                | Manifest (ObjectContentDto ManifestDto)
+                | CRL (ObjectContentDto CrlDto)
+                | ROA 
+                | ASPA
+                | BGPSec
+                | GBR
+                | RSC
+    deriving stock (Eq, Show, Generic)
+
+data ObjectContentDto payload = ObjectContentDto {
+        hash :: Hash,
+        aki  :: Maybe AKI,
+        ski  :: SKI,
+        eeCertificate :: Maybe EECertDto,          
+        payload :: payload
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ManifestDto = ManifestDto {
+        mftNumber   :: Serial, 
+        fileHashAlg :: Text, 
+        thisTime    :: Instant, 
+        nextTime    :: Instant, 
+        mftEntries  :: [(Text, Hash)]
+    } 
+    deriving stock (Show, Eq, Generic)
+
+
+data CertificateDto = CertificateDto {
+
+    }
+    deriving stock (Eq, Show, Generic)
+
+data EECertDto = EECertDto {
+
+    }
+    deriving stock (Eq, Show, Generic)
+
+data CrlDto = CrlDto {
+
+    }
+    deriving stock (Eq, Show, Generic)
+
 data MetricsDto = MetricsDto {
         groupedValidations :: GroupedValidationMetric ValidationMetric,      
         rsync              :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
