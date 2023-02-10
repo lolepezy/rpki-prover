@@ -109,20 +109,20 @@ newtype RObject = RObject (Located RpkiObject)
 
 
 data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
-                | Manifest (ObjectContentDto ManifestDto)
-                | CRL (ObjectContentDto CrlDto)
-                | ROA 
-                | ASPA
-                | BGPSec
-                | GBR
-                | RSC
+                | ManifestD (ObjectContentDto ManifestDto)
+                | CRLD (ObjectContentDto CrlDto)
+                | ROAD (ObjectContentDto RoaDto)
+                | ASPAD (ObjectContentDto AspaDto)
+                | BGPSecD (ObjectContentDto BgpCertDto)
+                | GBRD (ObjectContentDto GrbDto)
+                | RSCD (ObjectContentDto RscDto)
     deriving stock (Eq, Show, Generic)
 
 data ObjectContentDto payload = ObjectContentDto {
         hash :: Hash,
         aki  :: Maybe AKI,
-        ski  :: SKI,
-        eeCertificate :: Maybe EECertDto,          
+        -- ski  :: SKI,
+        eeCertificate :: Maybe CertificateDto,          
         payload :: payload
     }
     deriving stock (Eq, Show, Generic)
@@ -132,7 +132,7 @@ data ManifestDto = ManifestDto {
         fileHashAlg :: Text, 
         thisTime    :: Instant, 
         nextTime    :: Instant, 
-        mftEntries  :: [(Text, Hash)]
+        entries     :: [(Text, Hash)]
     } 
     deriving stock (Show, Eq, Generic)
 
@@ -142,15 +142,29 @@ data CertificateDto = CertificateDto {
     }
     deriving stock (Eq, Show, Generic)
 
-data EECertDto = EECertDto {
-
-    }
-    deriving stock (Eq, Show, Generic)
 
 data CrlDto = CrlDto {
-
+        serials :: [Serial]
     }
     deriving stock (Eq, Show, Generic)
+
+
+data RoaDto = RoaDto {
+
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data GrbDto = GrbDto {
+
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data RscDto = RscDto {
+
+    }  
+    deriving stock (Eq, Show, Generic)
+
+
 
 data MetricsDto = MetricsDto {
         groupedValidations :: GroupedValidationMetric ValidationMetric,      

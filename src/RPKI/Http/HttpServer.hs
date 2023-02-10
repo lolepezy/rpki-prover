@@ -28,6 +28,7 @@ import qualified Data.Set                         as Set
 import qualified Data.List                         as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
+import           Data.Tuple.Strict
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -401,3 +402,26 @@ str = BS.stringUtf8
 
 ch :: Char -> BS.Builder
 ch  = BS.charUtf8    
+
+-- objectToDto :: RpkiObject -> ObjectDto
+-- objectToDto = \case 
+--     CerRO c -> CertificateD (objectDto c CertificateDto)
+--     MftRO m -> ManifestD (objectDto m (manifestDto m))
+--     RoaRO r -> ROAD (objectDto r (roaDto r) & #payload %~ eeCertDto r)
+--     GbrRO g -> GBRD (objectDto g (roaDto g) & #payload %~ eeCertDto g)
+--     CrlRO c -> CRLD (objectDto c (crlDto c) & #payload %~ eeCertDto c)
+--     RscRO c ->  c
+--     AspaRO c ->  c
+--     BgpRO c ->  c
+--   where
+--     objectDto o p = ObjectContentDto {
+--             aki = getAKI o,
+--             hash = getHash o,
+--             payload = p,
+--             eeCertificate = Nothing
+--         }
+--     manifestDto m = let 
+--             Manifest {..} = cmsPayload m 
+--             entries = map (\(T2 f h) -> (f, h)) mftEntries 
+--         in 
+--             ManifestDto {..}
