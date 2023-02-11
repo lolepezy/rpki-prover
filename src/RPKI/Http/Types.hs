@@ -104,7 +104,7 @@ data BgpCertDto = BgpCertDto {
     } 
     deriving stock (Eq, Show, Generic)
 
-newtype RObject = RObject (Located RpkiObject)
+newtype RObject = RObject (Located ObjectDto)
     deriving stock (Eq, Show, Generic)
 
 
@@ -219,6 +219,14 @@ instance ToSchema RawCSV where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON RObject
+instance ToJSON ObjectDto
+instance ToJSON a => ToJSON (ObjectContentDto a)
+instance ToJSON CertificateDto
+instance ToJSON ManifestDto
+instance ToJSON CrlDto
+instance ToJSON RoaDto
+instance ToJSON GrbDto
+instance ToJSON RscDto
 instance ToJSON VrpDto     
 instance ToJSON VrpMinimalDto     
 instance ToJSON AspaDto
@@ -231,6 +239,14 @@ instance ToSchema VrpDto where
 instance ToSchema VrpMinimalDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
+instance ToSchema ObjectDto
+instance ToSchema a => ToSchema (ObjectContentDto a)
+instance ToSchema CertificateDto
+instance ToSchema ManifestDto
+instance ToSchema CrlDto
+instance ToSchema RoaDto
+instance ToSchema GrbDto
+instance ToSchema RscDto
 instance ToSchema AspaDto
 instance ToSchema BgpCertDto
 instance ToSchema RtrDto

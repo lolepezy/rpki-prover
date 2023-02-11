@@ -124,7 +124,7 @@ validateNoUnknownCriticalExtensions extensions =
 -- 
 validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CaCerObject
 validateTACert tal u (CerRO taCert) = do
-    let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
+    let spki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
     let talSPKI = SPKI $ publicKeyInfo tal
     unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
@@ -274,7 +274,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
     let bgpSecSki = getSKI bgpCert
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
-    let bgpSecSpki = subjectPublicKeyInfo cwsX509
+    let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
     pure BGPSecPayload {..}
   where 
     ipMustBeEmpty ips errConstructor = 

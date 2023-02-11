@@ -93,7 +93,7 @@ validateBottomUp
                 go childVerifiedResources certs
         
         validateOnMft mft o = do             
-            let mftChildren = mftEntries $ getCMSContent $ cmsPayload mft
+            let mftChildren = mftEntries $ getCMSContent $ mft ^. #cmsPayload
             case filter (\(T2 _ h) -> h == getHash o) mftChildren of 
                 [] -> appError $ ValidationE ObjectNotOnManifest
                 _  -> pure ()            

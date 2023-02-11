@@ -12,6 +12,7 @@ import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 
 import           Data.Text                   (Text)
+import qualified Data.List                   as List
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8)
 import           Data.Foldable               (toList)
@@ -84,6 +85,9 @@ showHexL = decodeUtf8 . LBS.toStrict . HexLazy.encode
 
 shortBsJson :: BSS.ShortByteString -> Json.Value
 shortBsJson = toJSON . showHex . BSS.fromShort
+
+oid2text :: OID -> String
+oid2text oid = List.intercalate "." $ map show oid
 
 instance ToJSON Instant where
     toJSON = toJSON . show
@@ -254,7 +258,8 @@ instance ToJSON C448.PublicKey where
 instance ToJSON E448.PublicKey where
     toJSON = toJSON . showHex . convert
 
-instance ToJSON ContentType    
+instance ToJSON ContentType where
+    toJSON (ContentType oid) = toJSON $ oid2text oid
 
 $(deriveToJSON defaultOptions ''PubKeyEC)
 $(deriveToJSON defaultOptions ''PubKeyALG)
@@ -269,8 +274,13 @@ $(deriveToJSON defaultOptions ''SignerIdentifier)
 $(deriveToJSON defaultOptions ''SignatureValue)
 $(deriveToJSON defaultOptions ''Attribute)
 $(deriveToJSON defaultOptions ''SignedAttributes)
-$(deriveToJSON defaultOptions ''DigestAlgorithmIdentifier)
-$(deriveToJSON defaultOptions ''DigestAlgorithmIdentifiers)
+
+instance ToJSON DigestAlgorithmIdentifier where
+    toJSON (DigestAlgorithmIdentifier oid) = toJSON $ oid2text oid
+
+instance ToJSON DigestAlgorithmIdentifiers where
+    toJSON (DigestAlgorithmIdentifiers oids) = toJSON $ map oid2text oids
+
 $(deriveToJSON defaultOptions ''SignerInfos)
 $(deriveToJSON defaultOptions ''SignCRL)
 

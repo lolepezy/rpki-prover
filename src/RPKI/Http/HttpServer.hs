@@ -21,6 +21,7 @@ import           Servant.Swagger.UI
 
 import qualified Data.ByteString.Builder          as BS
 
+import           Data.Ord
 import           Data.List                        (sortBy)
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (maybeToList, fromMaybe)
@@ -28,6 +29,7 @@ import qualified Data.Set                         as Set
 import qualified Data.List                         as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
+import qualified Data.Text                       as Text
 import           Data.Tuple.Strict
 import           Data.String.Interpolate.IsString
 
@@ -38,6 +40,9 @@ import           RPKI.Domain
 import           RPKI.Config
 import           RPKI.Messages
 import           RPKI.Metrics.Prometheus
+import           RPKI.Resources.Resources
+import           RPKI.Resources.IntervalSet as IS
+import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
@@ -50,7 +55,7 @@ import           RPKI.RTR.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
-import Data.Ord
+
 import RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
 httpApi :: Storage s => AppContext s -> Application
@@ -177,13 +182,7 @@ toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
 getASPAs :: Storage s => AppContext s -> IO [AspaDto]
 getASPAs AppContext {..} = do
     aspas <- getLatestAspas =<< readTVarIO database
-    pure $ map toDto $ Set.toList aspas
-  where
-    toDto aspa =
-        AspaDto {
-            customerAsn = aspa ^. #customerAsn,
-            providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
-        }
+    pure $ map aspaToDto $ Set.toList aspas
 
 getBGPCerts :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCerts AppContext {..} =
@@ -208,6 +207,13 @@ bgpSecToDto BGPSecPayload {..} = BgpCertDto {
         asns = bgpSecAsns,
         subjectPublicKeyInfo = bgpSecSpki
     }        
+
+aspaToDto :: Aspa -> AspaDto
+aspaToDto aspa =
+    AspaDto {
+        customerAsn = aspa ^. #customerAsn,
+        providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
+    }
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do
@@ -316,7 +322,7 @@ getRpkiObject AppContext {..} uri hash =
                 Right rpkiUrl -> liftIO $ do
                     DB {..} <- readTVarIO database
                     roTx objectStore $ \tx ->
-                        (RObject <$>) <$> getByUri tx objectStore rpkiUrl
+                        (locatedDto <$>) <$> getByUri tx objectStore rpkiUrl
 
         (Nothing, Just hash') ->
             case parseHash hash' of
@@ -324,11 +330,14 @@ getRpkiObject AppContext {..} uri hash =
                 Right h -> liftIO $ do
                     db <- readTVarIO database
                     roTx db $ \tx -> 
-                        (RObject <$>) . maybeToList <$> getByHash tx db h
+                        (locatedDto <$>) . maybeToList <$> getByHash tx db h
 
         (Just _, Just _) ->
             throwError $ err400 { errBody =
                 "Only 'uri' or 'hash' must be provided, not both." }
+  where
+    locatedDto located = RObject $ located & #payload %~ objectToDto
+
 
 getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do
@@ -403,25 +412,51 @@ str = BS.stringUtf8
 ch :: Char -> BS.Builder
 ch  = BS.charUtf8    
 
--- objectToDto :: RpkiObject -> ObjectDto
--- objectToDto = \case 
---     CerRO c -> CertificateD (objectDto c CertificateDto)
---     MftRO m -> ManifestD (objectDto m (manifestDto m))
---     RoaRO r -> ROAD (objectDto r (roaDto r) & #payload %~ eeCertDto r)
---     GbrRO g -> GBRD (objectDto g (roaDto g) & #payload %~ eeCertDto g)
---     CrlRO c -> CRLD (objectDto c (crlDto c) & #payload %~ eeCertDto c)
---     RscRO c ->  c
---     AspaRO c ->  c
---     BgpRO c ->  c
---   where
---     objectDto o p = ObjectContentDto {
---             aki = getAKI o,
---             hash = getHash o,
---             payload = p,
---             eeCertificate = Nothing
---         }
---     manifestDto m = let 
---             Manifest {..} = cmsPayload m 
---             entries = map (\(T2 f h) -> (f, h)) mftEntries 
---         in 
---             ManifestDto {..}
+objectToDto :: RpkiObject -> ObjectDto
+objectToDto = \case 
+    CerRO c -> CertificateD (objectDto c CertificateDto)
+
+    -- CMS-based stuff
+    MftRO m  -> ManifestD (objectDto m (manifestDto m))
+    RoaRO r  -> ROAD (objectDto r (roaDto r) & #eeCertificate ?~ eeCertDto r)
+    GbrRO g  -> GBRD (objectDto g (gbrDto g) & #eeCertificate ?~ eeCertDto g)    
+    RscRO r  -> RSCD (objectDto r (rscDto r) & #eeCertificate ?~ eeCertDto r)
+    AspaRO a -> ASPAD (objectDto a (aspaDto a) & #eeCertificate ?~ eeCertDto a)
+
+    CrlRO c -> CRLD (objectDto c (crlDto c) & #eeCertificate ?~ eeCertDto c)
+    BgpRO b -> BGPSecD (objectDto b (bgpSecDto b))
+  where
+    objectDto o p = ObjectContentDto {
+            aki = getAKI o,
+            hash = getHash o,
+            payload = p,
+            eeCertificate = Nothing
+        }
+    manifestDto m = let
+            mft@Manifest {..} = getCMSContent $ cmsPayload m
+            entries = map (\(T2 f h) -> (f, h)) mftEntries 
+        in 
+            ManifestDto {
+                fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
+                ..
+            }
+    gbrDto g = GrbDto {}
+    roaDto r = RoaDto {}
+    crlDto c = CrlDto { serials = [] }    
+    rscDto c = RscDto {}
+    eeCertDto c = CertificateDto 
+    aspaDto = aspaToDto . getCMSContent . cmsPayload
+
+    bgpSecDto :: BgpCerObject -> BgpCertDto
+    bgpSecDto bgpCert = let            
+            AllResources _ _ asns = getRawCert bgpCert ^. #resources                        
+            bgpSecSpki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
+            bgpSecAsns = case asns of 
+                            Inherit -> []
+                            RS r
+                                | IS.null r -> []         
+                                | otherwise -> unwrapAsns $ IS.toList r
+            bgpSecSki = getSKI bgpCert
+        in bgpSecToDto $ BGPSecPayload {..}
+
+
