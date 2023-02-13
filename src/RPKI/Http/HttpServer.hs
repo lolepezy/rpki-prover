@@ -16,21 +16,16 @@ import           Control.Monad.Error.Class
 import           FileEmbedLzma
 
 import           Servant.Server.Generic
-import           Servant
+import           Servant hiding (contentType)
 import           Servant.Swagger.UI
-
-import qualified Data.ByteString.Builder          as BS
 
 import           Data.Ord
 import           Data.List                        (sortBy)
-import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                         as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                       (Text)
-import qualified Data.Text                       as Text
-import           Data.Tuple.Strict
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -38,20 +33,15 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Config
-import           RPKI.Messages
 import           RPKI.Metrics.Prometheus
-import           RPKI.Resources.Resources
-import           RPKI.Resources.IntervalSet as IS
-import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Http.Types
+import           RPKI.Http.Dto
 import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage hiding (get)
 import           RPKI.Store.Database
-import           RPKI.Resources.Types
-import           RPKI.RTR.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
@@ -163,21 +153,6 @@ getVRPs AppContext {..} version readVrps convertVrps = do
             [] -> throwError $ err404 { errBody = [i|Version #{worldVersion} doesn't exist.|] }
             _  -> liftIO $ roTx db $ \tx -> getVrps tx db worldVersion
 
-toVrpDtos :: Maybe Vrps -> [VrpDto]
-toVrpDtos = \case
-    Nothing   -> []
-    Just vrps -> [ VrpDto a p len (unTaName ta) |
-                        (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                        Vrp a p len  <- Set.toList vrpSet ]
-
-toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
-toVrpSet = maybe mempty uniqVrps
-
-toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
-toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
-  where
-    asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
-
 
 getASPAs :: Storage s => AppContext s -> IO [AspaDto]
 getASPAs AppContext {..} = do
@@ -201,19 +176,7 @@ getBGPCertsFiltered AppContext {..} = do
                 pure $ map bgpSecToDto $ Set.toList $ applySlurmBgpSec slurm bgps    
   
 
-bgpSecToDto :: BGPSecPayload -> BgpCertDto
-bgpSecToDto BGPSecPayload {..} = BgpCertDto {
-        ski = bgpSecSki,
-        asns = bgpSecAsns,
-        subjectPublicKeyInfo = bgpSecSpki
-    }        
 
-aspaToDto :: Aspa -> AspaDto
-aspaToDto aspa =
-    AspaDto {
-        customerAsn = aspa ^. #customerAsn,
-        providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
-    }
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do
@@ -275,18 +238,6 @@ getAllSlurms AppContext {..} = do
         versions <- List.sortOn Down <$> allVersions tx db
         slurms   <- mapM (\(wv, _) -> (wv, ) <$> slurmForVersion tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
-
-
-toVR :: (Scope a, Set.Set VIssue) -> FullVDto
-toVR (Scope scope, issues) = FullVDto {
-        issues = map toDto $ Set.toList issues,
-        path   = NonEmpty.toList scope,
-        url    = NonEmpty.head scope
-    }
-  where
-    toDto = \case
-        VErr e               -> ErrorDto $ toMessage e
-        (VWarn (VWarning w)) -> WarningDto $ toMessage w
 
 
 getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
@@ -369,94 +320,3 @@ getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
     sortBy (flip compare) . map fst <$> roTx db (`allVersions` db)
-
-
-vrpDtosToCSV :: [VrpDto] -> RawCSV
-vrpDtosToCSV vrpDtos =
-    rawCSV 
-        (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
-        (mconcat $ map toBS vrpDtos)
-  where
-    toBS VrpDto {
-            asn = ASN as,
-            maxLength = PrefixLength ml,
-            ..
-        } = str "AS" <> str (show as) <> ch ',' <>
-            str (prefixStr prefix) <> ch ',' <>
-            str (show ml) <> ch ',' <>
-            str (convert ta) <> ch '\n'
-
-vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
-vrpSetToCSV vrpDtos =
-    rawCSV 
-        (str "ASN,IP Prefix,Max Length\n")
-        (mconcat $ map toBS $ Set.toList vrpDtos)
-  where
-    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) = 
-        str "AS" <> str (show asn) <> ch ',' <>
-        str (prefixStr prefix) <> ch ',' <>
-        str (show maxLength) <> ch '\n'
-
-
-rawCSV :: BS.Builder -> BS.Builder -> RawCSV
-rawCSV header body = RawCSV $ BS.toLazyByteString $ header <> body
-    
-
-prefixStr :: IpPrefix -> String
-prefixStr (Ipv4P (Ipv4Prefix p)) = show p
-prefixStr (Ipv6P (Ipv6Prefix p)) = show p
-
-str :: String -> BS.Builder
-str = BS.stringUtf8
-
-ch :: Char -> BS.Builder
-ch  = BS.charUtf8    
-
-objectToDto :: RpkiObject -> ObjectDto
-objectToDto = \case 
-    CerRO c -> CertificateD (objectDto c CertificateDto)
-
-    -- CMS-based stuff
-    MftRO m  -> ManifestD (objectDto m (manifestDto m))
-    RoaRO r  -> ROAD (objectDto r (roaDto r) & #eeCertificate ?~ eeCertDto r)
-    GbrRO g  -> GBRD (objectDto g (gbrDto g) & #eeCertificate ?~ eeCertDto g)    
-    RscRO r  -> RSCD (objectDto r (rscDto r) & #eeCertificate ?~ eeCertDto r)
-    AspaRO a -> ASPAD (objectDto a (aspaDto a) & #eeCertificate ?~ eeCertDto a)
-
-    CrlRO c -> CRLD (objectDto c (crlDto c) & #eeCertificate ?~ eeCertDto c)
-    BgpRO b -> BGPSecD (objectDto b (bgpSecDto b))
-  where
-    objectDto o p = ObjectContentDto {
-            aki = getAKI o,
-            hash = getHash o,
-            payload = p,
-            eeCertificate = Nothing
-        }
-    manifestDto m = let
-            mft@Manifest {..} = getCMSContent $ cmsPayload m
-            entries = map (\(T2 f h) -> (f, h)) mftEntries 
-        in 
-            ManifestDto {
-                fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
-                ..
-            }
-    gbrDto g = GrbDto {}
-    roaDto r = RoaDto {}
-    crlDto c = CrlDto { serials = [] }    
-    rscDto c = RscDto {}
-    eeCertDto c = CertificateDto 
-    aspaDto = aspaToDto . getCMSContent . cmsPayload
-
-    bgpSecDto :: BgpCerObject -> BgpCertDto
-    bgpSecDto bgpCert = let            
-            AllResources _ _ asns = getRawCert bgpCert ^. #resources                        
-            bgpSecSpki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
-            bgpSecAsns = case asns of 
-                            Inherit -> []
-                            RS r
-                                | IS.null r -> []         
-                                | otherwise -> unwrapAsns $ IS.toList r
-            bgpSecSki = getSKI bgpCert
-        in bgpSecToDto $ BGPSecPayload {..}
-
-

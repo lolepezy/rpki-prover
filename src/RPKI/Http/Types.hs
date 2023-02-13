@@ -109,21 +109,35 @@ newtype RObject = RObject (Located ObjectDto)
 
 
 data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
-                | ManifestD (ObjectContentDto ManifestDto)
+                | ManifestD (ObjectContentDto (CMSObjectDto ManifestDto))
                 | CRLD (ObjectContentDto CrlDto)
-                | ROAD (ObjectContentDto RoaDto)
-                | ASPAD (ObjectContentDto AspaDto)
-                | BGPSecD (ObjectContentDto BgpCertDto)
-                | GBRD (ObjectContentDto GrbDto)
-                | RSCD (ObjectContentDto RscDto)
+                | BGPSecD (ObjectContentDto BgpCertDto)                
+                | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
+                | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
+                | GBRD (ObjectContentDto (CMSObjectDto GrbDto))
+                | RSCD (ObjectContentDto (CMSObjectDto RscDto))
     deriving stock (Eq, Show, Generic)
 
 data ObjectContentDto payload = ObjectContentDto {
         hash :: Hash,
         aki  :: Maybe AKI,
-        -- ski  :: SKI,
         eeCertificate :: Maybe CertificateDto,          
-        payload :: payload
+        payload       :: payload
+    }
+    deriving stock (Eq, Show, Generic)
+
+
+data CMSObjectDto a = CMSObjectDto {
+        cmsVersion         :: CMSVersion,
+        signedInfoVersion  :: CMSVersion,
+        contentType        :: ContentType,        
+        encapsulatedContentType :: ContentType,        
+        digestAlgorithms   :: DigestAlgorithmIdentifiers,
+        signatureAlgorithm :: SignatureAlgorithmIdentifier,
+        signerIdentifier   :: SignerIdentifier,        
+        signature          :: SignatureValue,
+        signedAttributes   :: SignedAttributes,
+        cmsPayload        :: a
     }
     deriving stock (Eq, Show, Generic)
 
@@ -138,7 +152,24 @@ data ManifestDto = ManifestDto {
 
 
 data CertificateDto = CertificateDto {
+        certVersion      :: Version,
+        certSerial       :: Serial,
+        certSignatureAlg :: Text,
+        certIssuerDN     :: Text,
+        certSubjectDN    :: Text,
+        notValidBefore   :: Instant,
+        notValidAfter    :: Instant,        
+        pubKey           :: Either Text PubKeyDto,
+        ipv4             :: IntervalSet Ipv4Prefix,        
+        ipv6             :: IntervalSet Ipv6Prefix,        
+        asn              :: IntervalSet AsResource        
+    }
+    deriving stock (Eq, Show, Generic)
 
+data PubKeyDto = PubKeyDto {
+        pubKeySize :: Int,
+        pubKeyPQ   :: Integer,
+        pubKeyExp  :: Integer
     }
     deriving stock (Eq, Show, Generic)
 
@@ -220,8 +251,13 @@ instance ToSchema RawCSV where
 
 instance ToJSON RObject
 instance ToJSON ObjectDto
-instance ToJSON a => ToJSON (ObjectContentDto a)
+
+instance ToJSON a => ToJSON (ObjectContentDto a) where
+    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+
+instance ToJSON a => ToJSON (CMSObjectDto a)
 instance ToJSON CertificateDto
+instance ToJSON PubKeyDto
 instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
@@ -241,7 +277,9 @@ instance ToSchema VrpMinimalDto where
 
 instance ToSchema ObjectDto
 instance ToSchema a => ToSchema (ObjectContentDto a)
+instance ToSchema a => ToSchema (CMSObjectDto a)
 instance ToSchema CertificateDto
+instance ToSchema PubKeyDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
 instance ToSchema RoaDto

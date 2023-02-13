@@ -107,8 +107,8 @@ instantDiff :: Instant -> Instant -> Seconds
 instantDiff (Instant firstMoment) (Instant secondMoment) = 
     timeDiff firstMoment secondMoment 
 
-uiDateFormat :: Instant -> String
-uiDateFormat (Instant d) = timePrint format d
+instantDateFormat :: Instant -> String
+instantDateFormat (Instant d) = timePrint format d
   where 
     format = TimeFormatString [
             Format_Year, dash, Format_Month2, dash, Format_Day2,

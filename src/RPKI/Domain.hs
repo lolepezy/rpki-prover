@@ -302,6 +302,9 @@ instance {-# OVERLAPPING #-} WithSerial (CMSBasedObject a) where
         Serial $ X509.certSerial $ cwsX509certificate $ getCertWithSignature 
             $ getEEResourceCert $ unCMS cmsPayload 
 
+instance WithRawResourceCertificate (CMSBasedObject a) where
+    getRawCert CMSBasedObject {..} = getRawCert $ getEEResourceCert $ unCMS cmsPayload 
+
 instance WithAKI EECerObject where
     getAKI EECerObject {..} = Just aki
 
@@ -420,9 +423,9 @@ newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificat
     deriving newtype (WithRFC)
 
 data Vrp = Vrp 
-    {-# UNPACK #-} !ASN 
-    !IpPrefix 
-    {-# UNPACK #-} !PrefixLength
+        {-# UNPACK #-} !ASN 
+        !IpPrefix 
+        {-# UNPACK #-} !PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -479,22 +482,23 @@ data BGPSecPayload = BGPSecPayload {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
--- | Types for the signed object template 
--- https://tools.ietf.org/html/rfc5652
-
-data SignedObject a = SignedObject {
-        soContentType :: ContentType, 
-        soContent     :: SignedData a
-    } 
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary
-
 
 data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
         cwsSignature          :: SignatureValue,
         cwsEncoded            :: BSS.ShortByteString
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass TheBinary
+
+
+-- | Types for the signed object template 
+-- https://tools.ietf.org/html/rfc5652
+
+data SignedObject a = SignedObject {
+        soContentType :: ContentType, 
+        soContent     :: SignedData a
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary

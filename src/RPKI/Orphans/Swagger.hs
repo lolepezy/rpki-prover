@@ -207,6 +207,7 @@ instance ToSchema Attribute where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DigestAlgorithmIdentifier
 instance ToSchema DigestAlgorithmIdentifiers
+instance ToSchema Version
 instance ToSchema CMSVersion
 
 instance ToSchema X509.Certificate
