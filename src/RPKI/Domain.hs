@@ -317,6 +317,12 @@ instance WithSKI BgpCerObject where
 instance WithAKI BgpCerObject where
     getAKI BgpCerObject {..} = aki
 
+instance WithSKI EECerObject where
+    getSKI EECerObject {..} = ski
+
+instance WithSKI (CMSBasedObject a) where    
+    getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert $ unCMS cmsPayload 
+
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
         bimap Instant Instant $ X509.certValidity 

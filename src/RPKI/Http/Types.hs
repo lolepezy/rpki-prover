@@ -12,6 +12,7 @@ module RPKI.Http.Types where
 
 import           Control.Lens hiding ((.=))
 
+import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
@@ -32,6 +33,8 @@ import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Servant.API
 import           Data.Swagger hiding (url)
 import           Network.HTTP.Media ((//))
+
+import           Data.ASN1.OID
 
 import           RPKI.Config
 import           RPKI.AppTypes
@@ -120,6 +123,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
 
 data ObjectContentDto payload = ObjectContentDto {
         hash :: Hash,
+        ski  :: Maybe SKI,
         aki  :: Maybe AKI,
         eeCertificate :: Maybe CertificateDto,          
         payload       :: payload
@@ -127,7 +131,7 @@ data ObjectContentDto payload = ObjectContentDto {
     deriving stock (Eq, Show, Generic)
 
 
-data CMSObjectDto a = CMSObjectDto {
+data CMSObjectDto cmsPayload = CMSObjectDto {
         cmsVersion         :: CMSVersion,
         signedInfoVersion  :: CMSVersion,
         contentType        :: ContentType,        
@@ -137,7 +141,7 @@ data CMSObjectDto a = CMSObjectDto {
         signerIdentifier   :: SignerIdentifier,        
         signature          :: SignatureValue,
         signedAttributes   :: SignedAttributes,
-        cmsPayload        :: a
+        cmsPayload         :: cmsPayload
     }
     deriving stock (Eq, Show, Generic)
 
@@ -162,7 +166,8 @@ data CertificateDto = CertificateDto {
         pubKey           :: Either Text PubKeyDto,
         ipv4             :: IntervalSet Ipv4Prefix,        
         ipv6             :: IntervalSet Ipv6Prefix,        
-        asn              :: IntervalSet AsResource        
+        asn              :: IntervalSet AsResource,
+        extensions       :: ExtensionsDto
     }
     deriving stock (Eq, Show, Generic)
 
@@ -173,6 +178,19 @@ data PubKeyDto = PubKeyDto {
     }
     deriving stock (Eq, Show, Generic)
 
+newtype OIDDto = OIDDto OID 
+    deriving stock (Eq, Show, Generic)
+
+data ExtensionDto = ExtensionDto {
+        oid      :: OIDDto,
+        bytes    :: BS.ByteString,
+        critical :: Bool,
+        value    :: Text
+    }
+    deriving stock (Eq, Show, Generic)
+
+newtype ExtensionsDto = ExtensionsDto [ExtensionDto]
+    deriving stock (Eq, Show, Generic)
 
 data CrlDto = CrlDto {
         serials :: [Serial]
@@ -258,6 +276,12 @@ instance ToJSON a => ToJSON (ObjectContentDto a) where
 instance ToJSON a => ToJSON (CMSObjectDto a)
 instance ToJSON CertificateDto
 instance ToJSON PubKeyDto
+instance ToJSON ExtensionDto where
+    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+instance ToJSON ExtensionsDto
+instance ToJSON OIDDto where
+    toJSON (OIDDto oid) = toJSON $ oid2text oid
+
 instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
@@ -280,6 +304,10 @@ instance ToSchema a => ToSchema (ObjectContentDto a)
 instance ToSchema a => ToSchema (CMSObjectDto a)
 instance ToSchema CertificateDto
 instance ToSchema PubKeyDto
+instance ToSchema ExtensionDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ExtensionsDto
+instance ToSchema OIDDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
 instance ToSchema RoaDto

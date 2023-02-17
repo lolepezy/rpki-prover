@@ -119,9 +119,9 @@ ch  = BS.charUtf8
 
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case 
-    CerRO c -> CertificateD $ objectDto c $ certDto c
+    CerRO c -> CertificateD $ objectDto c (certDto c) & #ski ?~ getSKI c
     CrlRO c -> CRLD $ objectDto c $ crlDto c
-    BgpRO b -> BGPSecD $ objectDto b $ bgpSecDto b
+    BgpRO b -> BGPSecD $ objectDto b (bgpSecDto b) & #ski ?~ getSKI b
 
     -- CMS-based stuff
     MftRO m  -> ManifestD $ cmsDto m $ manifestDto m
@@ -132,6 +132,7 @@ objectToDto = \case
     
   where
     objectDto o p = ObjectContentDto {
+            ski  = Nothing,
             aki  = getAKI o,
             hash = getHash o,
             payload = p,
@@ -152,6 +153,7 @@ objectToDto = \case
             encapsulatedContentType = signedData ^. #scEncapContentInfo . #eContentType
         in objectDto c CMSObjectDto {..} 
                 & #eeCertificate ?~ eeCertDto c
+                & #ski ?~ getSKI c
 
     manifestDto m = let
             mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
@@ -164,7 +166,7 @@ objectToDto = \case
 
     gbrDto g = GrbDto {}
     roaDto r = RoaDto {}
-    crlDto c = CrlDto { serials = [] }    
+    crlDto c = CrlDto { serials = [] }
     rscDto c = RscDto {}
 
     eeCertDto = certDto
@@ -193,11 +195,31 @@ objectToDto = \case
                                 pubKeyExp  = public_e
                             in PubKeyDto {..}
                         _ -> Left $ Text.pack $ show $ x509cert ^. #certPubKey
+            
+            extensions = getExtensions $ rawCert ^. #certX509
+
         in CertificateDto {..}      
       where
         asRS = \case 
             (RS s)  -> s
             Inherit -> IS.empty
+
+        getExtensions cert = 
+            ExtensionsDto $ map mapExt $ getExtsSign cert
+          where
+            mapExt X509.ExtensionRaw {..} = let
+                    oid      = OIDDto extRawOID
+                    bytes    = extRawContent    
+                    critical = extRawCritical
+
+                    value = 
+                        case () of 
+                            _ 
+                                | extRawOID == id_ce_keyUsage         -> "id_ce_keyUsage"
+                                | extRawOID == id_ce_basicConstraints -> "id_ce_basicConstraints"
+                                | otherwise                           -> "Don't know"
+
+                in ExtensionDto {..}
 
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
 
