@@ -199,9 +199,17 @@ data CrlDto = CrlDto {
 
 
 data RoaDto = RoaDto {
-
+        asn      :: ASN,
+        prefixes :: [RoaPrefixDto]
     }  
     deriving stock (Eq, Show, Generic)
+
+data RoaPrefixDto = RoaPrefixDto {
+        prefix    :: IpPrefix,
+        maxLength :: PrefixLength        
+    }
+    deriving stock (Eq, Show, Generic)
+
 
 data GrbDto = GrbDto {
 
@@ -268,7 +276,17 @@ instance ToSchema RawCSV where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON RObject
-instance ToJSON ObjectDto
+instance ToJSON ObjectDto where
+    toJSON = \case
+        CertificateD v -> object ["type" .= ("certificate" :: Text), "value" .= toJSON v]
+        ManifestD v    -> object ["type" .= ("manifest" :: Text), "value" .= toJSON v]
+        CRLD v         -> object ["type" .= ("CRL" :: Text), "value" .= toJSON v]
+        BGPSecD v      -> object ["type" .= ("BGPSec" :: Text), "value" .= toJSON v]
+        ROAD v  -> object ["type" .= ("ROA" :: Text), "value" .= toJSON v]
+        ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
+        GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
+        RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
+
 
 instance ToJSON a => ToJSON (ObjectContentDto a) where
     toJSON = genericToJSON defaultOptions { omitNothingFields = True }
@@ -285,6 +303,7 @@ instance ToJSON OIDDto where
 instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
+instance ToJSON RoaPrefixDto
 instance ToJSON GrbDto
 instance ToJSON RscDto
 instance ToJSON VrpDto     
@@ -292,6 +311,7 @@ instance ToJSON VrpMinimalDto
 instance ToJSON AspaDto
 instance ToJSON BgpCertDto
 instance ToJSON RtrDto
+
 instance ToSchema RObject
 instance ToSchema VrpDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -311,6 +331,7 @@ instance ToSchema OIDDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
 instance ToSchema RoaDto
+instance ToSchema RoaPrefixDto
 instance ToSchema GrbDto
 instance ToSchema RscDto
 instance ToSchema AspaDto

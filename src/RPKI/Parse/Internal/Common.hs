@@ -239,6 +239,10 @@ getManifestUri c = URI . decodeUtf8 <$> getSiaValue c id_ad_rpkiManifest
 getCrlDistributionPoint :: Certificate -> Maybe URI
 getCrlDistributionPoint c = do
     crlDP <- extVal (getExts c) id_ce_CRLDistributionPoints
+    extractCrlDistributionPoint crlDP    
+
+extractCrlDistributionPoint :: BS.ByteString -> Maybe URI
+extractCrlDistributionPoint crlDP = do    
     asns  <- toMaybe $ decodeASN1' BER crlDP
     join $ toMaybe $ flip runParseASN1 asns $ 
         onNextContainer Sequence $ 

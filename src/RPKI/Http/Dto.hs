@@ -6,13 +6,16 @@ module RPKI.Http.Dto where
 
 import           Control.Lens
 
-import qualified Data.ByteString.Builder          as BS
+import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Builder          as BB
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.Text                       as Text
 import           Data.Tuple.Strict
+import           Data.Proxy
+import           Data.Maybe
 
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
@@ -103,19 +106,19 @@ vrpSetToCSV vrpDtos =
         str (show maxLength) <> ch '\n'
 
 
-rawCSV :: BS.Builder -> BS.Builder -> RawCSV
-rawCSV header body = RawCSV $ BS.toLazyByteString $ header <> body
+rawCSV :: BB.Builder -> BB.Builder -> RawCSV
+rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
     
 
 prefixStr :: IpPrefix -> String
 prefixStr (Ipv4P (Ipv4Prefix p)) = show p
 prefixStr (Ipv6P (Ipv6Prefix p)) = show p
 
-str :: String -> BS.Builder
-str = BS.stringUtf8
+str :: String -> BB.Builder
+str = BB.stringUtf8
 
-ch :: Char -> BS.Builder
-ch  = BS.charUtf8    
+ch :: Char -> BB.Builder
+ch  = BB.charUtf8    
 
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case 
@@ -165,8 +168,14 @@ objectToDto = \case
             }
 
     gbrDto g = GrbDto {}
-    roaDto r = RoaDto {}
+
+    roaDto r = let 
+                asn = ASN 0
+                prefixes = []
+            in RoaDto {..}
+
     crlDto c = CrlDto { serials = [] }
+
     rscDto c = RscDto {}
 
     eeCertDto = certDto
@@ -211,18 +220,23 @@ objectToDto = \case
                     oid      = OIDDto extRawOID
                     bytes    = extRawContent    
                     critical = extRawCritical
-
-                    value = 
-                        case () of 
-                            _ 
-                                | extRawOID == id_ce_keyUsage         -> "id_ce_keyUsage"
-                                | extRawOID == id_ce_basicConstraints -> "id_ce_basicConstraints"
-                                | otherwise                           -> "Don't know"
+                    value = case () of 
+                        _ 
+                            | extRawOID == id_ce_keyUsage -> 
+                                strExt (Proxy :: Proxy X509.ExtKeyUsage) extRawContent
+                            | extRawOID == id_ce_basicConstraints    -> 
+                                strExt (Proxy :: Proxy X509.ExtBasicConstraints) extRawContent
+                            | extRawOID == id_ce_CRLDistributionPoints -> 
+                                fromMaybe "undefined" $ unURI <$> extractCrlDistributionPoint extRawContent                                
+                            | otherwise                              -> "Don't know"
 
                 in ExtensionDto {..}
+            
+            strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text.Text
+            strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
+                        
 
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
-
     
 
     bgpSecDto :: BgpCerObject -> BgpCertDto
@@ -236,5 +250,3 @@ objectToDto = \case
                                 | otherwise -> unwrapAsns $ IS.toList r
             bgpSecSki = getSKI bgpCert
         in bgpSecToDto $ BGPSecPayload {..}
-
-
