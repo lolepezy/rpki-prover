@@ -118,7 +118,7 @@ instance ToJSON Domain.RsyncURL where
     toJSON = toJSON . Domain.getURL
 
 instance ToJSON Domain.Serial where
-    toJSON (Serial s) = toJSON s
+    toJSON (Serial s) = toJSON $ show s
 
 instance ToJSON Domain.EncodedBase64 where
     toJSON (EncodedBase64 bs) = toJSON (U.convert bs :: Text)
