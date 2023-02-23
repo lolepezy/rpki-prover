@@ -155,7 +155,7 @@ objectToDto = \case
             signedAttributes   = signedData ^. #scSignerInfos . #signedAttrs
             encapsulatedContentType = signedData ^. #scEncapContentInfo . #eContentType
         in objectDto c CMSObjectDto {..} 
-                & #eeCertificate ?~ eeCertDto c
+                & #eeCertificate ?~ certDto c
                 & #ski ?~ getSKI c
 
     manifestDto m = let
@@ -165,24 +165,18 @@ objectToDto = \case
             ManifestDto {
                 fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
                 ..
-            }
-
-    gbrDto g = GrbDto {}
+            }    
 
     roaDto r = let 
                 vrps = getCMSContent $ r ^. #cmsPayload
                 -- TODO Fix ROA somehow, make it NonEmpty?
-                asn = head $ map (\(Vrp asn _ _) -> asn) vrps
+                asn = head $ map (\(Vrp a _ _) -> a) vrps
                 prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
 
     crlDto CrlObject {..} = let             
             SignCRL {..} = signCrl
         in CrlDto { revokedSerials = Set.toList $ signCrl ^. #revokedSerials, .. }
-
-    rscDto c = RscDto {}
-
-    eeCertDto = certDto
 
     certDto c = let             
             rawCert = getRawCert c
@@ -241,6 +235,10 @@ objectToDto = \case
                         
 
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
+
+    rscDto c = RscDto {}
+
+    gbrDto g = GrbDto {}
     
 
     bgpSecDto :: BgpCerObject -> BgpCertDto
