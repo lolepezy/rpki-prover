@@ -454,7 +454,7 @@ validateThisUpdate (Now now) thisUpdateTime
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
 isRevoked (getSerial -> serial) (Validated crlObject) = 
-    Set.member serial revokenSerials
+    Set.member serial revokedSerials
   where
     SignCRL{..} = signCrl crlObject
 

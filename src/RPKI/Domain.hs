@@ -452,7 +452,7 @@ data SignCRL = SignCRL {
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
         crlNumber          :: Serial,
-        revokenSerials     :: Set Serial
+        revokedSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary

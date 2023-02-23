@@ -193,7 +193,12 @@ newtype ExtensionsDto = ExtensionsDto [ExtensionDto]
     deriving stock (Eq, Show, Generic)
 
 data CrlDto = CrlDto {
-        serials :: [Serial]
+        thisUpdateTime     :: Instant,
+        nextUpdateTime     :: Maybe Instant,
+        signatureAlgorithm :: SignatureAlgorithmIdentifier,
+        signatureValue     :: SignatureValue,
+        crlNumber          :: Serial,
+        revokedSerials     :: [Serial]        
     }
     deriving stock (Eq, Show, Generic)
 

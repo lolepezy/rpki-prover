@@ -24,7 +24,7 @@ import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Resources.Resources
-import           RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalSet as IS
 import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.Reporting
@@ -170,11 +170,15 @@ objectToDto = \case
     gbrDto g = GrbDto {}
 
     roaDto r = let 
-                asn = ASN 0
-                prefixes = []
+                vrps = getCMSContent $ r ^. #cmsPayload
+                -- TODO Fix ROA somehow, make it NonEmpty?
+                asn = head $ map (\(Vrp asn _ _) -> asn) vrps
+                prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
 
-    crlDto c = CrlDto { serials = [] }
+    crlDto CrlObject {..} = let             
+            SignCRL {..} = signCrl
+        in CrlDto { revokedSerials = Set.toList $ signCrl ^. #revokedSerials, .. }
 
     rscDto c = RscDto {}
 
