@@ -15,7 +15,6 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.Text                       as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
-import           Data.Maybe
 
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
@@ -51,14 +50,14 @@ toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
 toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
   where
     asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
-  
+
 
 bgpSecToDto :: BGPSecPayload -> BgpCertDto
 bgpSecToDto BGPSecPayload {..} = BgpCertDto {
         ski = bgpSecSki,
         asns = bgpSecAsns,
         subjectPublicKeyInfo = bgpSecSpki
-    }        
+    }
 
 aspaToDto :: Aspa -> AspaDto
 aspaToDto aspa =
@@ -81,7 +80,7 @@ toVR (Scope scope, issues) = FullVDto {
 
 vrpDtosToCSV :: [VrpDto] -> RawCSV
 vrpDtosToCSV vrpDtos =
-    rawCSV 
+    rawCSV
         (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
         (mconcat $ map toBS vrpDtos)
   where
@@ -96,11 +95,11 @@ vrpDtosToCSV vrpDtos =
 
 vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
 vrpSetToCSV vrpDtos =
-    rawCSV 
+    rawCSV
         (str "ASN,IP Prefix,Max Length\n")
         (mconcat $ map toBS $ Set.toList vrpDtos)
   where
-    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) = 
+    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
         str "AS" <> str (show asn) <> ch ',' <>
         str (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
@@ -108,7 +107,7 @@ vrpSetToCSV vrpDtos =
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
-    
+
 
 prefixStr :: IpPrefix -> String
 prefixStr (Ipv4P (Ipv4Prefix p)) = show p
@@ -118,10 +117,10 @@ str :: String -> BB.Builder
 str = BB.stringUtf8
 
 ch :: Char -> BB.Builder
-ch  = BB.charUtf8    
+ch  = BB.charUtf8
 
 objectToDto :: RpkiObject -> ObjectDto
-objectToDto = \case 
+objectToDto = \case
     CerRO c -> CertificateD $ objectDto c (certDto c) & #ski ?~ getSKI c
     CrlRO c -> CRLD $ objectDto c $ crlDto c
     BgpRO b -> BGPSecD $ objectDto b (bgpSecDto b) & #ski ?~ getSKI b
@@ -132,7 +131,7 @@ objectToDto = \case
     GbrRO g  -> GBRD $ cmsDto g $ gbrDto g
     RscRO r  -> RSCD $ cmsDto r $ rscDto r
     AspaRO a -> ASPAD $ cmsDto a $ aspaDto a
-    
+
   where
     objectDto o p = ObjectContentDto {
             ski  = Nothing,
@@ -142,43 +141,43 @@ objectToDto = \case
             eeCertificate = Nothing
         }
 
-    cmsDto c cmsPayload = let                 
+    cmsDto c cmsPayload = let
             signedObject = unCMS $ c ^. #cmsPayload
-            contentType  = signedObject ^. #soContentType            
+            contentType  = signedObject ^. #soContentType
             signedData   = signedObject ^. #soContent
-            cmsVersion         = signedData ^. #scVersion            
-            signedInfoVersion  = signedData ^. #scSignerInfos . #siVersion            
+            cmsVersion         = signedData ^. #scVersion
+            signedInfoVersion  = signedData ^. #scSignerInfos . #siVersion
             digestAlgorithms   = signedData ^. #scDigestAlgorithms
             signerIdentifier   = signedData ^. #scSignerInfos . #siSid
             signatureAlgorithm = signedData ^. #scSignerInfos . #signatureAlgorithm
             signature          = signedData ^. #scSignerInfos . #signature
             signedAttributes   = signedData ^. #scSignerInfos . #signedAttrs
             encapsulatedContentType = signedData ^. #scEncapContentInfo . #eContentType
-        in objectDto c CMSObjectDto {..} 
+        in objectDto c CMSObjectDto {..}
                 & #eeCertificate ?~ certDto c
                 & #ski ?~ getSKI c
 
     manifestDto m = let
             mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
-            entries = map (\(T2 f h) -> (f, h)) mftEntries 
-        in 
+            entries = map (\(T2 f h) -> (f, h)) mftEntries
+        in
             ManifestDto {
                 fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
                 ..
-            }    
+            }
 
-    roaDto r = let 
+    roaDto r = let
                 vrps = getCMSContent $ r ^. #cmsPayload
                 -- TODO Fix ROA somehow, make it NonEmpty?
                 asn = head $ map (\(Vrp a _ _) -> a) vrps
                 prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
 
-    crlDto CrlObject {..} = let             
+    crlDto CrlObject {..} = let
             SignCRL {..} = signCrl
         in CrlDto { revokedSerials = Set.toList $ signCrl ^. #revokedSerials, .. }
 
-    certDto c = let             
+    certDto c = let
             rawCert = getRawCert c
 
             AllResources (asRS -> ipv4) (asRS -> ipv6) (asRS -> asn) = rawCert ^. #resources
@@ -191,64 +190,66 @@ objectToDto = \case
             certSubjectDN = Text.pack $ show $ x509cert ^. #certSubjectDN
 
             certSignatureAlg = Text.pack $ show $ x509cert ^. #certSignatureAlg
-            
+
             notValidBefore  = Instant $ fst $ x509cert ^. #certValidity
             notValidAfter  = Instant $ snd $ x509cert ^. #certValidity
 
-            pubKey = case x509cert ^. #certPubKey of 
-                        X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let 
+            pubKey = case x509cert ^. #certPubKey of
+                        X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let
                                 pubKeySize = public_size
                                 pubKeyPQ   = public_n
                                 pubKeyExp  = public_e
                             in PubKeyDto {..}
                         _ -> Left $ Text.pack $ show $ x509cert ^. #certPubKey
-            
+
             extensions = getExtensions $ rawCert ^. #certX509
 
-        in CertificateDto {..}      
+        in CertificateDto {..}
       where
-        asRS = \case 
+        asRS = \case
             (RS s)  -> s
             Inherit -> IS.empty
 
-        getExtensions cert = 
+        getExtensions cert =
             ExtensionsDto $ map mapExt $ getExtsSign cert
           where
             mapExt X509.ExtensionRaw {..} = let
                     oid      = OIDDto extRawOID
-                    bytes    = extRawContent    
+                    bytes    = extRawContent
                     critical = extRawCritical
-                    value = case () of 
-                        _ 
-                            | extRawOID == id_ce_keyUsage -> 
+                    value = case () of
+                        _
+                            | extRawOID == id_ce_keyUsage ->
                                 strExt (Proxy :: Proxy X509.ExtKeyUsage) extRawContent
-                            | extRawOID == id_ce_basicConstraints    -> 
+                            | extRawOID == id_ce_basicConstraints    ->
                                 strExt (Proxy :: Proxy X509.ExtBasicConstraints) extRawContent
-                            | extRawOID == id_ce_CRLDistributionPoints -> 
-                                fromMaybe "undefined" $ unURI <$> extractCrlDistributionPoint extRawContent                                
-                            | otherwise                              -> "Don't know"
+                            | extRawOID == id_ce_CRLDistributionPoints ->
+                                maybe "undefined" unURI (extractCrlDistributionPoint extRawContent)
+                            | otherwise -> "Don't know"
 
                 in ExtensionDto {..}
-            
+
             strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text.Text
             strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
-                        
+
 
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
 
-    rscDto c = RscDto {}
+    rscDto r = let 
+            rsc@RSC {..} = getCMSContent $ r ^. #cmsPayload
+        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, ..}
 
     gbrDto g = GrbDto {}
-    
+
 
     bgpSecDto :: BgpCerObject -> BgpCertDto
-    bgpSecDto bgpCert = let            
+    bgpSecDto bgpCert = let
             AllResources _ _ asns = getRawCert bgpCert ^. #resources
             bgpSecSpki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
-            bgpSecAsns = case asns of 
+            bgpSecAsns = case asns of
                             Inherit -> []
                             RS r
-                                | IS.null r -> []         
+                                | IS.null r -> []
                                 | otherwise -> unwrapAsns $ IS.toList r
             bgpSecSki = getSKI bgpCert
         in bgpSecToDto $ BGPSecPayload {..}

@@ -222,10 +222,17 @@ data GrbDto = GrbDto {
     deriving stock (Eq, Show, Generic)
 
 data RscDto = RscDto {
-
+        rscResources    :: PrefixesAndAsns,        
+        checkList       :: [CheckListDto],
+        digestAlgorithm :: DigestAlgorithmIdentifier
     }  
     deriving stock (Eq, Show, Generic)
 
+data CheckListDto = CheckListDto {
+        fileName :: Maybe Text,
+        hash     :: Hash
+    }  
+    deriving stock (Eq, Show, Generic)
 
 
 data MetricsDto = MetricsDto {
@@ -311,6 +318,7 @@ instance ToJSON RoaDto
 instance ToJSON RoaPrefixDto
 instance ToJSON GrbDto
 instance ToJSON RscDto
+instance ToJSON CheckListDto
 instance ToJSON VrpDto     
 instance ToJSON VrpMinimalDto     
 instance ToJSON AspaDto
@@ -339,6 +347,7 @@ instance ToSchema RoaDto
 instance ToSchema RoaPrefixDto
 instance ToSchema GrbDto
 instance ToSchema RscDto
+instance ToSchema CheckListDto
 instance ToSchema AspaDto
 instance ToSchema BgpCertDto
 instance ToSchema RtrDto
