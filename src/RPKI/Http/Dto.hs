@@ -225,6 +225,15 @@ objectToDto = \case
                                 strExt (Proxy :: Proxy X509.ExtBasicConstraints) extRawContent
                             | extRawOID == id_ce_CRLDistributionPoints ->
                                 maybe "undefined" unURI (extractCrlDistributionPoint extRawContent)
+                            | extRawOID == id_ad_rpki_notify ->
+                                maybe "undefined" (unURI . extractURI) 
+                                    $ extractSiaValue extRawContent id_ad_rpki_notify
+                            | extRawOID == id_ad_rpki_repository ->
+                                maybe "undefined" (unURI . extractURI) 
+                                    $ extractSiaValue extRawContent id_ad_rpki_repository
+                            | extRawOID == id_ad_rpkiManifest ->
+                                maybe "undefined" (unURI . extractURI) 
+                                    $ extractSiaValue extRawContent id_ad_rpkiManifest
                             | otherwise -> "Don't know"
 
                 in ExtensionDto {..}
