@@ -309,6 +309,12 @@ toValidationMessage = \case
       BGPCertIPv6Present -> [i|IPv6 extension is present on the BGPSec certificate.|]
       BGPCertBrokenASNs  -> [i|AS extension is not present on the BGPSec certificate.|]
 
+      AspaNoAsn       -> [i|ASN extension is not present on the ASPA EE certificate or has 'inherit' value.|]
+      AspaIPv4Present -> [i|IPv4 extension is present on the ASPA EE certificate.|]
+      AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
+      AspaOverlappingCustomerProvider customerAsn eeAsns -> 
+        [i|Customer ASN #{customerAsn} is not in the EE certificate AS set #{eeAsns}.|]      
+
   where
     fmtUrlList = mconcat . 
                  List.intersperse "," . map (show . getURL)

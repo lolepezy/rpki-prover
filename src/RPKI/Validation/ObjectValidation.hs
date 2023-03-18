@@ -276,11 +276,13 @@ validateBgpCert now bgpCert parentCert validCrl = do
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
     let bgpSecSpki = subjectPublicKeyInfo cwsX509
     pure BGPSecPayload {..}
-  where 
-    ipMustBeEmpty ips errConstructor = 
-        case ips of 
-            Inherit -> vError errConstructor
-            RS i    -> unless (IS.null i) $ vError errConstructor
+
+ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
+ipMustBeEmpty ips errConstructor = 
+    case ips of 
+        Inherit -> vError errConstructor
+        RS i    -> unless (IS.null i) $ vError errConstructor  
+    
 
 
 -- | Validate CRL object with the parent certificate
@@ -395,12 +397,28 @@ validateAspa ::
     PureValidatorT (Validated AspaObject)
 validateAspa now aspa parentCert crl verifiedResources = do
     void $
-        validateCms now (cmsPayload aspa) parentCert crl verifiedResources $ \aspaCms -> do
-            let Aspa {..} = getCMSContent aspaCms            
+        validateCms now (aspa ^. #cmsPayload) parentCert crl verifiedResources $ \aspaCms -> do
+
+            -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
+            let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS aspaCms) ^. #resources
+            ipMustBeEmpty ipv4 AspaIPv4Present
+            ipMustBeEmpty ipv6 AspaIPv6Present
+
+            asnSet <- case asns of 
+                        Inherit -> vError AspaNoAsn
+                        RS s    -> pure s
+
+            let Aspa {..} = getCMSContent aspaCms         
+
+            when ((AS customerAsn) `IS.isInside` asnSet) $ 
+                vError $ AspaAsNotOnEECert customerAsn (IS.toList asnSet)
+
             case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
                 []       -> pure ()
                 _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
+    
     pure $ Validated aspa
+    
 
 
 validateCms :: forall a c .
