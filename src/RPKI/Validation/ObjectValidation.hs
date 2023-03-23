@@ -293,12 +293,13 @@ validateCrl ::
     c ->
     PureValidatorT (Validated CrlObject)
 validateCrl now crlObject parentCert = do
+    let SignCRL {..} = signCrl crlObject
     signatureCheck $ validateCRLSignature crlObject parentCert
-    void $ validateThisUpdate now thisUpdateTime
-    void $ validateNextUpdate now nextUpdateTime    
-    pure $ Validated crlObject
-  where
-    SignCRL {..} = signCrl crlObject
+    case nextUpdateTime of 
+        Nothing   -> vPureError NextUpdateTimeNotSet
+        Just next -> validateUpdateTimes now thisUpdateTime next
+    pure $ Validated crlObject  
+    
 
 validateMft ::
   (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
@@ -310,10 +311,19 @@ validateMft ::
   PureValidatorT (Validated MftObject)
 validateMft now mft parentCert crl verifiedResources = do
     void $ validateCms now (cmsPayload mft) parentCert crl verifiedResources $ \mftCMS -> do
-        let cmsContent = getCMSContent mftCMS
-        void $ validateThisUpdate now $ thisTime cmsContent
-        void $ validateNextUpdate now $ Just $ nextTime cmsContent        
+        let Manifest {..} = getCMSContent mftCMS
+        validateUpdateTimes now thisTime nextTime
+
+        let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS mftCMS) ^. #resources
+        verifyInherit ipv4
+        verifyInherit ipv6
+        verifyInherit asns        
+
     pure $ Validated mft
+  where
+    verifyInherit = \case 
+        Inherit -> pure ()                        
+        RS _    -> vPureError ResourceSetMustBeInherit
 
 
 validateRoa ::
@@ -410,7 +420,7 @@ validateAspa now aspa parentCert crl verifiedResources = do
 
             let Aspa {..} = getCMSContent aspaCms         
 
-            when ((AS customerAsn) `IS.isInside` asnSet) $ 
+            unless ((AS customerAsn) `IS.isInside` asnSet) $ 
                 vError $ AspaAsNotOnEECert customerAsn (IS.toList asnSet)
 
             case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
@@ -454,27 +464,21 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
     void $ validateResources verifiedResources eeCert parentCert
     extraValidation cms
 
--- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
-validateNextUpdate :: Now -> Maybe Instant -> PureValidatorT Instant
-validateNextUpdate (Now now) nextUpdateTime =
-    case nextUpdateTime of
-        Nothing -> vPureError NextUpdateTimeNotSet
-        Just nextUpdate
-            | nextUpdate < now -> vPureError $ NextUpdateTimeIsInThePast nextUpdate now
-            | otherwise -> pure nextUpdate
 
--- | Validate the thisUpdateTeim for objects that have it (MFT, CRLs)
-validateThisUpdate :: Now -> Instant -> PureValidatorT Instant
-validateThisUpdate (Now now) thisUpdateTime
-    | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime now
-    | otherwise = pure thisUpdateTime
+validateUpdateTimes :: Now -> Instant -> Instant -> PureValidatorT ()
+validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
+    when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}
+    when (nextUpdateTime < now)  $ vPureError $ NextUpdateTimeIsInThePast {..}
+    when (nextUpdateTime <= thisUpdateTime) $ 
+        vPureError $ NextUpdateTimeBeforeThisUpdateTime {..}
+
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
-isRevoked (getSerial -> serial) (Validated crlObject) = 
-    Set.member serial revokenSerials
-  where
-    SignCRL{..} = signCrl crlObject
+isRevoked (getSerial -> serial) (Validated crlObject) = let
+        SignCRL{..} = signCrl crlObject 
+    in Set.member serial revokenSerials  
+    
 
 signatureCheck :: SignatureVerification -> PureValidatorT ()
 signatureCheck sv = case sv of

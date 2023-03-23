@@ -92,6 +92,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
+                        NextUpdateTimeBeforeThisUpdateTime  { nextUpdateTime :: Instant, thisUpdateTime :: Instant } |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture { before :: Instant, after :: Instant } |
                         CertificateIsExpired { before :: Instant, after :: Instant } |
@@ -99,6 +100,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ManifestEntryDoesn'tExist Hash Text |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
+                        ResourceSetMustBeInherit |
                         UnknownUriType URI | 
                         BrokenUri URI Text | 
                         CertificateDoesntHaveSIA | 
