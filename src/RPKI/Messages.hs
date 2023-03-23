@@ -243,6 +243,9 @@ toValidationMessage = \case
       ThisUpdateTimeIsInTheFuture {..} -> 
           [i|This update time #{thisUpdateTime} is in the future (current time is #{now}).|]
 
+      NextUpdateTimeBeforeThisUpdateTime {..} -> 
+          [i|Next update time #{nextUpdateTime} is before this update time #{thisUpdateTime}.|]
+
       RevokedResourceCertificate -> 
           [i|Object's EE certificate is revoked.|]
 
@@ -264,11 +267,10 @@ toValidationMessage = \case
       InheritWithoutParentResources -> 
           [i|Certificate has 'inherit' as resource set, but its parent doesn't have resources.|]
 
-      UnknownUriType url -> 
-          [i|URL type is neither rsync nor RRDP, #{url}.|]          
+      ResourceSetMustBeInherit -> [i|Resources set must be 'inherit'.|]
 
-      BrokenUri url e -> 
-          [i|Error #{e} parsing URL #{url}.|]          
+      UnknownUriType url -> [i|URL type is neither rsync nor RRDP, #{url}.|]          
+      BrokenUri url e    -> [i|Error #{e} parsing URL #{url}.|]          
 
       CertificateDoesntHaveSIA -> 
           [i|Certificate doesn't have SIA with publication point.|]
@@ -308,6 +310,12 @@ toValidationMessage = \case
       BGPCertIPv4Present -> [i|IPv4 extension is present on the BGPSec certificate.|]
       BGPCertIPv6Present -> [i|IPv6 extension is present on the BGPSec certificate.|]
       BGPCertBrokenASNs  -> [i|AS extension is not present on the BGPSec certificate.|]
+
+      AspaNoAsn       -> [i|ASN extension is not present on the ASPA EE certificate or has 'inherit' value.|]
+      AspaIPv4Present -> [i|IPv4 extension is present on the ASPA EE certificate.|]
+      AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
+      AspaAsNotOnEECert customerAsn eeAsns -> 
+        [i|Customer ASN (#{customerAsn}) is not in the EE certificate AS set (#{eeAsns}).|]      
 
   where
     fmtUrlList = mconcat . 

@@ -1,6 +1,7 @@
 # Contents 
 
 * [Introduction](#introduction)
+* [Features](#features)    
 * [Usage](#usage)    
   - [Static Liinux binary](#static-linux-binary)
   - [Docker image](#docker-image)
@@ -20,26 +21,21 @@ Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any q
 
 This implementation seeks to address potential security vulnerabilites by utilising process isolation, memory and time constraints and other ways of preventing resource exhaustion attacks and make sure that "it keeps going" regardless of unstable or potentially maliciouly constructed RPKI repositories.
 
-Implemented features are
+# Features <a name="features"></a>
 
 - Fetching from both rsync and RRDP repositories
 - X509 validation and validation of EE certificates 
 - Validation of resource sets, including support for RFC8360 "validation reconsidered"
-- Adjustment to the latest RFC 6486-bis: rrdp -> rsync fallback, "failed fetch" concept
-- Basic UI for reporting metrics and found problems
+- UI for reporting metrics and found problems
+- REST API for pretty much everything the validator does 
 - Output of VRPs in CSV and JSON formats
-- Support of SLURM (RFC 8416)
-- Basic support of ASPA object validation and output.
-- Cache cleanup, scheduled revalidation, cache compaction, so it can run unlimited time without draining resources
 - Support for RTR protocol, both version 0 and 1
+- Support of SLURM (RFC 8416)
+- Support of ASPA object validation and output
+- Support of BGPSec certificates validation and RTR
+- Support of RPKI Signed Checklists
 - Static binaries for Linux
-- Docker image.
-
-Current and future work
-- History of validations in UI
-- Ergonomics for long-running processes (more subtle automatic cleanups, cache DB migration, etc.)
-- CPU and memory optimisations 
-
+- Docker image
 
 # Usage <a name="usage"></a>
 

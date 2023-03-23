@@ -276,11 +276,13 @@ validateBgpCert now bgpCert parentCert validCrl = do
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
     let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
     pure BGPSecPayload {..}
-  where 
-    ipMustBeEmpty ips errConstructor = 
-        case ips of 
-            Inherit -> vError errConstructor
-            RS i    -> unless (IS.null i) $ vError errConstructor
+
+ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
+ipMustBeEmpty ips errConstructor = 
+    case ips of 
+        Inherit -> vError errConstructor
+        RS i    -> unless (IS.null i) $ vError errConstructor  
+    
 
 
 -- | Validate CRL object with the parent certificate
@@ -291,12 +293,13 @@ validateCrl ::
     c ->
     PureValidatorT (Validated CrlObject)
 validateCrl now crlObject parentCert = do
+    let SignCRL {..} = signCrl crlObject
     signatureCheck $ validateCRLSignature crlObject parentCert
-    void $ validateThisUpdate now thisUpdateTime
-    void $ validateNextUpdate now nextUpdateTime    
-    pure $ Validated crlObject
-  where
-    SignCRL {..} = signCrl crlObject
+    case nextUpdateTime of 
+        Nothing   -> vPureError NextUpdateTimeNotSet
+        Just next -> validateUpdateTimes now thisUpdateTime next
+    pure $ Validated crlObject  
+    
 
 validateMft ::
   (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
@@ -308,10 +311,19 @@ validateMft ::
   PureValidatorT (Validated MftObject)
 validateMft now mft parentCert crl verifiedResources = do
     void $ validateCms now (cmsPayload mft) parentCert crl verifiedResources $ \mftCMS -> do
-        let cmsContent = getCMSContent mftCMS
-        void $ validateThisUpdate now $ thisTime cmsContent
-        void $ validateNextUpdate now $ Just $ nextTime cmsContent        
+        let Manifest {..} = getCMSContent mftCMS
+        validateUpdateTimes now thisTime nextTime
+
+        let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS mftCMS) ^. #resources
+        verifyInherit ipv4
+        verifyInherit ipv6
+        verifyInherit asns        
+
     pure $ Validated mft
+  where
+    verifyInherit = \case 
+        Inherit -> pure ()                        
+        RS _    -> vPureError ResourceSetMustBeInherit
 
 
 validateRoa ::
@@ -395,12 +407,28 @@ validateAspa ::
     PureValidatorT (Validated AspaObject)
 validateAspa now aspa parentCert crl verifiedResources = do
     void $
-        validateCms now (cmsPayload aspa) parentCert crl verifiedResources $ \aspaCms -> do
-            let Aspa {..} = getCMSContent aspaCms            
+        validateCms now (aspa ^. #cmsPayload) parentCert crl verifiedResources $ \aspaCms -> do
+
+            -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
+            let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS aspaCms) ^. #resources
+            ipMustBeEmpty ipv4 AspaIPv4Present
+            ipMustBeEmpty ipv6 AspaIPv6Present
+
+            asnSet <- case asns of 
+                        Inherit -> vError AspaNoAsn
+                        RS s    -> pure s
+
+            let Aspa {..} = getCMSContent aspaCms         
+
+            unless ((AS customerAsn) `IS.isInside` asnSet) $ 
+                vError $ AspaAsNotOnEECert customerAsn (IS.toList asnSet)
+
             case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
                 []       -> pure ()
                 _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
+    
     pure $ Validated aspa
+    
 
 
 validateCms :: forall a c .
@@ -436,20 +464,14 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
     void $ validateResources verifiedResources eeCert parentCert
     extraValidation cms
 
--- | Validate the nextUpdateTime for objects that have it (MFT, CRLs)
-validateNextUpdate :: Now -> Maybe Instant -> PureValidatorT Instant
-validateNextUpdate (Now now) nextUpdateTime =
-    case nextUpdateTime of
-        Nothing -> vPureError NextUpdateTimeNotSet
-        Just nextUpdate
-            | nextUpdate < now -> vPureError $ NextUpdateTimeIsInThePast nextUpdate now
-            | otherwise -> pure nextUpdate
 
--- | Validate the thisUpdateTeim for objects that have it (MFT, CRLs)
-validateThisUpdate :: Now -> Instant -> PureValidatorT Instant
-validateThisUpdate (Now now) thisUpdateTime
-    | thisUpdateTime >= now = vPureError $ ThisUpdateTimeIsInTheFuture thisUpdateTime now
-    | otherwise = pure thisUpdateTime
+validateUpdateTimes :: Now -> Instant -> Instant -> PureValidatorT ()
+validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
+    when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}
+    when (nextUpdateTime < now)  $ vPureError $ NextUpdateTimeIsInThePast {..}
+    when (nextUpdateTime <= thisUpdateTime) $ 
+        vPureError $ NextUpdateTimeBeforeThisUpdateTime {..}
+
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
