@@ -50,7 +50,7 @@ applySlurmToVrps :: Slurm -> Vrps -> Vrps
 applySlurmToVrps slurm (Vrps vrps) = 
     Vrps $ filteredVrps vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
   where     
-    filteredVrps vrps_ = MonoidalMap.map (Set.filter filterFunc) vrps_
+    filteredVrps = MonoidalMap.map (Set.filter filterFunc)
 
     assertedVrps = Set.fromList 
         $ map toVrp 

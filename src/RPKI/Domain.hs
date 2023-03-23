@@ -95,7 +95,7 @@ newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
     deriving newtype Semigroup
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 newtype RrdpURL = RrdpURL URI
@@ -142,6 +142,9 @@ instance WithURL URI where
 instance Show RpkiURL where
     show (RsyncU u) = show u
     show (RrdpU u) = show u 
+
+instance Show RsyncURL where
+    show = show . getURL
   
 instance WithURL RsyncURL where
     getURL (RsyncURL (RsyncHost host) path) = 
