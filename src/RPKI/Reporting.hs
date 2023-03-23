@@ -92,6 +92,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
+                        NextUpdateTimeBeforeThisUpdateTime  { nextUpdateTime :: Instant, thisUpdateTime :: Instant } |
                         RevokedResourceCertificate |
                         CertificateIsInTheFuture { before :: Instant, after :: Instant } |
                         CertificateIsExpired { before :: Instant, after :: Instant } |
@@ -99,6 +100,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ManifestEntryDoesn'tExist Hash Text |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
+                        ResourceSetMustBeInherit |
                         UnknownUriType URI | 
                         BrokenUri URI Text | 
                         CertificateDoesntHaveSIA | 
@@ -112,11 +114,14 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
                         AspaOverlappingCustomerProvider ASN [ASN] | 
+                        AspaAsNotOnEECert ASN [AsResource] | 
+                        AspaNoAsn |
+                        AspaIPv4Present |
+                        AspaIPv6Present |      
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
-                        BGPCertBrokenASNs 
-
+                        BGPCertBrokenASNs
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     

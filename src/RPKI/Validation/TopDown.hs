@@ -514,8 +514,7 @@ validateCaCertificate
                                 -- version 02 (strict) and version 03 and later (more loose).                                                                                            
                                 let gatherMftEntryValidations = 
                                         case config ^. #validationConfig . #manifestProcessing of
-                                            {- 
-                                            The latest version so far of the 
+                                            {-                                             
                                             https://datatracker.ietf.org/doc/rfc9286/
                                             item 6.4 says
                                                 "If there are files listed in the manifest that cannot be retrieved 
