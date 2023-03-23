@@ -23,6 +23,7 @@ import           Data.Foldable (for_)
 import           Data.Int                         (Int64)
 import qualified Data.Text                        as Text
 import qualified Data.Map.Strict as Map
+import           Data.Maybe                       (fromMaybe)
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -200,21 +201,30 @@ runWorkflow appContext@AppContext {..} tals = do
         -- Delete objects in the store that were read by top-down validation 
         -- longer than `cacheLifeTime` hours ago.
         cacheGC sharedBetweenJobs worldVersion _ = do
-            database' <- readTVarIO database
+            db <- readTVarIO database
             executeOrDie
-                (cleanObjectCache database' $ versionIsOld (versionToMoment worldVersion) (config ^. #cacheLifeTime))
+                (cleanupUntochedObjects db)
                 (\CleanUpResult {..} elapsed -> do 
                     when (deletedObjects > 0) $ 
                         atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)
                     logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                       [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
+          where
+            cleanupUntochedObjects db = do 
+                -- Use the latest completed validation moment as a cutting point.
+                -- This is to prevent cleaning up objects if they were untouched 
+                -- because prover wasn't running for too long.
+                cutOffVersion <- roTx db $ \tx -> 
+                    fromMaybe worldVersion <$> getLastCompletedVersion db tx
+
+                cleanObjectCache db $ versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime)
 
         -- Delete oldest world versions and all the data related to them.
         cleanOldVersions sharedBetweenJobs worldVersion _ = do
             let now = versionToMoment worldVersion
-            database' <- readTVarIO database
+            db <- readTVarIO database
             executeOrDie
-                (deleteOldVersions database' $ versionIsOld now (config ^. #oldVersionsLifetime))
+                (deleteOldVersions db $ versionIsOld now (config ^. #oldVersionsLifetime))
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ do
                         atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)                        
