@@ -19,6 +19,7 @@ import           Data.Proxy
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
 
+import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Messages
@@ -234,6 +235,14 @@ objectToDto = \case
                             | extRawOID == id_ad_rpkiManifest ->
                                 maybe "undefined" (unURI . extractURI) 
                                     $ extractSiaValue extRawContent id_ad_rpkiManifest
+                            | extRawOID == id_subjectKeyId ->                                 
+                                    case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of 
+                                        (Left e, _)   -> Text.pack $ "Could not parse SKI: " <> show e
+                                        (Right ki, _) -> Text.pack $ show ki
+                            | extRawOID == id_authorityKeyId ->                                 
+                                    case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of 
+                                        (Left e, _)   -> Text.pack $ "Could not parse AKI: " <> show e
+                                        (Right ki, _) -> Text.pack $ show ki
                             | otherwise -> "Don't know"
 
                 in ExtensionDto {..}
