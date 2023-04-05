@@ -133,13 +133,16 @@ runWorkflow appContext@AppContext {..} tals = do
                                 `finally` (do
                                     Now endTime <- thisInstant
                                     -- re-read `db` since it could have been changed by the time the
-                                    -- job is finished (after compaction, for example)                            
+                                    -- job is finished (after compaction, in particular)                            
                                     db <- readTVarIO database
                                     rwTx db $ \tx -> setJobCompletionTime tx db job endTime)
 
                         in \queue -> do 
                             let delaySeconds = initialDelay `div` 1_000_000
-                            logDebug logger [i|Scheduling job '#{job}' with initial delay #{delaySeconds}s and interval #{interval}.|] 
+                            let delayText :: Text.Text = if initialDelay <= 0 
+                                    then [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
+                                    else [i|with initial delay #{delaySeconds}s|] 
+                            logDebug logger [i|Scheduling job '#{job}' #{delayText} and interval #{interval}.|] 
                             generatePeriodicJob initialDelay interval jobAction queue                        
     
         jobExecutor globalQueue = go
@@ -249,7 +252,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         -- Do no actually do anything at the very first run.
                         -- Statistically the first run would mean that the application 
                         -- just was installed and started working and it's not very likely 
-                        -- that there's already a lot of garbage in the rsync mirror difrectory.                        
+                        -- that there's already a lot of garbage in the rsync mirror directory.                        
                         pure ()
                     RanBefore -> do
                         let rsyncDir = config ^. #rsyncConf . #rsyncRoot
@@ -279,7 +282,10 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- Write an action to the global queue with given interval.
         generatePeriodicJob delay interval action globalQueue = do
-            threadDelay delay
+            -- Delay may be 0 or negative (the job is long overdue), 
+            -- don't wait for anything then
+            when (delay > 0) $
+                threadDelay delay
             periodically interval $ do                 
                 closed <- atomically $ isClosedCQueue globalQueue
                 unless closed $ writeQ globalQueue action
