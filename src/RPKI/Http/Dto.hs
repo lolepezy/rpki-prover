@@ -41,8 +41,8 @@ toVrpDtos :: Maybe Vrps -> [VrpDto]
 toVrpDtos = \case
     Nothing   -> []
     Just vrps -> [ VrpDto a p len (unTaName ta) |
-                        (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                        Vrp a p len  <- Set.toList vrpSet ]
+                    (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
+                    Vrp a p len  <- Set.toList vrpSet ]
 
 toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
 toVrpSet = maybe mempty uniqVrps
@@ -192,7 +192,7 @@ objectToDto = \case
 
             certSignatureAlg = Text.pack $ show $ x509cert ^. #certSignatureAlg
 
-            notValidBefore  = Instant $ fst $ x509cert ^. #certValidity
+            notValidBefore = Instant $ fst $ x509cert ^. #certValidity
             notValidAfter  = Instant $ snd $ x509cert ^. #certValidity
 
             pubKey = case x509cert ^. #certPubKey of
@@ -270,4 +270,4 @@ objectToDto = \case
                                 | IS.null r -> []
                                 | otherwise -> unwrapAsns $ IS.toList r
             bgpSecSki = getSKI bgpCert
-        in bgpSecToDto $ BGPSecPayload {..}
+        in bgpSecToDto BGPSecPayload {..}

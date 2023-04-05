@@ -17,6 +17,7 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 
 import           Data.ByteString.Base16   as Hex
+import qualified Data.String.Conversions  as SC
 
 import           Data.Hourglass
 import           Data.Foldable            as F
@@ -205,7 +206,7 @@ instance Show KI where
     show (KI b) = hexShow b
 
 hexShow :: BSS.ShortByteString -> String
-hexShow = show . Hex.encode . BSS.fromShort
+hexShow = SC.cs . Hex.encode . BSS.fromShort
 
 -- | Domain objects
 
