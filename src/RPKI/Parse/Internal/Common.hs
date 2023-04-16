@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Parse.Internal.Common where
 
@@ -38,13 +37,13 @@ import RPKI.Resources.Resources   as R
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_ipAddrBlocks_v2, id_pe_autonomousSysIds_v2 :: OID
-id_pe_sia, id_ad_rpki_notify, id_ad_rpki_repository :: OID
-id_ad_rpkiManifest :: OID
-id_kp_bgpsecRouter :: OID
+id_pe_sia, id_pe_aia, id_ad_rpki_notify, id_ad_rpki_repository, id_ad_caIssuers :: OID
+id_ad_rpkiManifest, id_kp_bgpsecRouter :: OID
 
 oid_pkix                  = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
 id_pe_sia                 = oid_pe <> [ 11 ]
+id_pe_aia                 = oid_pe <> [ 1 ]
 id_pe_ipAddrBlocks        = oid_pe <> [ 7 ]
 id_pe_autonomousSysIds    = oid_pe <> [ 8 ]
 id_pe_ipAddrBlocks_v2     = oid_pe <> [ 28 ]
@@ -53,6 +52,7 @@ id_pe_autonomousSysIds_v2 = oid_pe <> [ 29 ]
 id_ad_rpki_notify         = oid_pkix <> [ 48, 13 ]  
 id_ad_rpki_repository     = oid_pkix <> [ 48, 5 ]  
 id_ad_rpkiManifest        = oid_pkix <> [ 48, 10]
+id_ad_caIssuers           = oid_pkix <> [ 48, 2]
 
 id_kp_bgpsecRouter        = oid_pkix <> [3, 30]
 
@@ -258,6 +258,13 @@ extractCrlDistributionPoint crlDP = do
                     getNextContainer (Container Context 0) >>= \case 
                             [Other Context 6 value] -> pure $ Just $ URI $ decodeUtf8 value
                             _                       -> pure Nothing
+
+certificatePoliciesToText :: BS.ByteString -> Text.Text
+certificatePoliciesToText bs =
+    either asText asText $ decodeASN1' BER bs
+  where
+    asText = Text.pack . show
+
 
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just

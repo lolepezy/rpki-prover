@@ -5,6 +5,7 @@
 module RPKI.Http.Dto where
 
 import           Control.Lens
+import           Control.Applicative
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Builder          as BB
@@ -229,12 +230,17 @@ objectToDto = \case
                             | extRawOID == id_ad_rpki_notify ->
                                 maybe "undefined" (unURI . extractURI) 
                                     $ extractSiaValue extRawContent id_ad_rpki_notify
-                            | extRawOID == id_ad_rpki_repository ->
+                            | extRawOID == id_pe_sia -> 
                                 maybe "undefined" (unURI . extractURI) 
-                                    $ extractSiaValue extRawContent id_ad_rpki_repository
-                            | extRawOID == id_ad_rpkiManifest ->
+                                    $ extractSiaValue extRawContent id_ad_rpki_notify
+                                      <|> extractSiaValue extRawContent id_ad_rpki_repository
+                                      <|> extractSiaValue extRawContent id_ad_rpkiManifest
+                            | extRawOID == id_pe_aia -> 
                                 maybe "undefined" (unURI . extractURI) 
-                                    $ extractSiaValue extRawContent id_ad_rpkiManifest
+                                    $ extractSiaValue extRawContent id_ad_caIssuers
+                                      <|> extractSiaValue extRawContent id_ad_rpki_notify
+                                      <|> extractSiaValue extRawContent id_ad_rpki_repository
+                                      <|> extractSiaValue extRawContent id_ad_rpkiManifest
                             | extRawOID == id_subjectKeyId ->                                 
                                     case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of 
                                         (Left e, _)   -> Text.pack $ "Could not parse SKI: " <> show e
@@ -243,6 +249,12 @@ objectToDto = \case
                                     case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of 
                                         (Left e, _)   -> Text.pack $ "Could not parse AKI: " <> show e
                                         (Right ki, _) -> Text.pack $ show ki
+                            | extRawOID == id_pe_ipAddrBlocks    -> "IP resources (see 'ipv4', 'ipv6' fields)"
+                            | extRawOID == id_pe_ipAddrBlocks_v2 -> "IP resources (see 'ipv4', 'ipv6' fields)"
+                            | extRawOID == id_pe_autonomousSysIds    -> "ASN resources (see 'asn' field)"
+                            | extRawOID == id_pe_autonomousSysIds_v2 -> "ASN resources (see 'asn' field)"
+                            | extRawOID == id_ce_certificatePolicies -> certificatePoliciesToText extRawContent
+                                    
                             | otherwise -> "Don't know"
 
                 in ExtensionDto {..}
