@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.Store.MakeLmdb where
 
+import Control.Lens
 import Control.Monad
 import Control.Concurrent.STM
 
@@ -106,18 +108,21 @@ createDatabase e logger checkAction = do
     createJobStore = JobStore . SMap lmdb <$> createLmdbStore e    
     createMetadataStore = MetadataStore . SMap lmdb <$> createLmdbStore e    
     
-mkLmdb :: FilePath -> Size -> IO LmdbEnv
-mkLmdb fileName maxSizeMb = do 
+
+mkLmdb :: FilePath -> Config -> IO LmdbEnv
+mkLmdb fileName config = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
                     maxReaders maxDatabases fileName
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         createSemaphoreIO maxBottleNeck
   where    
-    mapSize = unSize maxSizeMb * 1024 * 1024
+    mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    
-    maxBottleNeck = maxReaders - 50
-    maxReaders = 500
+    maxBottleNeck = 64    
+    maxReaders = (maxBottleNeck + 1) * maxProcesses
+    -- main process + validator + fetchers
+    maxProcesses = 2 + fromIntegral (config ^. #parallelism . #fetchParallelism)
 
 closeLmdb :: LmdbEnv -> IO ()
 closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)

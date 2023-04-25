@@ -435,7 +435,7 @@ dbTestCase s f = ioTestCase s $ f . (snd <$>)
 makeLmdbStuff :: (LmdbEnv -> IO b) -> IO ((FilePath, LmdbEnv), b)
 makeLmdbStuff mkStore = do 
     dir <- createTempDirectory "/tmp" "lmdb-test"
-    e <- Lmdb.mkLmdb dir 1000
+    e <- Lmdb.mkLmdb dir defaultConfig
     store <- mkStore e
     pure ((dir, e), store)
 

@@ -55,8 +55,8 @@ maxReadersDefault = 500
 -- 
 --  In this case `lmdb.1605220697` contains LMDB files.
 --
-setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Size -> ValidatorT IO LmdbEnv
-setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do    
+setupLmdbCache :: LmdbFlow -> AppLogger -> FilePath -> Config -> ValidatorT IO LmdbEnv
+setupLmdbCache lmdbFlow logger cacheDir config = do    
     -- delete everything in `cache` if `reset` is present
     case lmdbFlow of 
         UseExisting -> pure ()
@@ -97,7 +97,7 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
             createLmdb currentCache
 
         createLmdb lmdbDir' =
-            fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdbDir' lmdbSize
+            fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdbDir' config
 
         removePossibleOtherLMDBCaches linkTarget = 
             cleanDirFiltered cacheDir $ \f -> 
@@ -107,8 +107,8 @@ setupLmdbCache lmdbFlow logger cacheDir lmdbSize = do
 -- | The same as `setupLmdbCache` but for the worker process.
 -- It does not do any cleanups and just expecets the proper layout to be in place.
 --
-setupWorkerLmdbCache :: AppLogger -> FilePath -> Size -> ValidatorT IO LmdbEnv
-setupWorkerLmdbCache logger cacheDir lmdbSize = do        
+setupWorkerLmdbCache :: AppLogger -> FilePath -> Config -> ValidatorT IO LmdbEnv
+setupWorkerLmdbCache logger cacheDir config = do        
     currentExists <- liftIO $ doesPathExist currentCache    
     if currentExists 
         then do    
@@ -124,11 +124,11 @@ setupWorkerLmdbCache logger cacheDir lmdbSize = do
             let message = [i|#{currentCache} doesn't exist, bailing out.|]
             logError logger message
             appError $ InternalE $ InternalError message
-    where        
+    where
         currentCache = cacheDir </> "current"
 
         createLmdb lmdbDir' =
-            fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdbDir' lmdbSize 
+            fromTry (InitE . InitError . fmtEx) $ mkLmdb lmdbDir' config 
         
 
 -- | De-fragment LMDB cache.
@@ -193,7 +193,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
-            newLmdb <- mkLmdb newLmdbDirName (config ^. #lmdbSizeMb)
+            newLmdb <- mkLmdb newLmdbDirName config
             newDB <- createDatabase newLmdb logger DontCheckVersion
             atomically $ do
                 newNative <- getNativeEnv newLmdb
@@ -248,7 +248,7 @@ closeLmdbStorage AppContext {..} =
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
     currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
-    newLmdb    <- mkLmdb targetLmdbPath (config ^. #lmdbSizeMb)
+    newLmdb    <- mkLmdb targetLmdbPath config
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
     void $ copyEnv currentNativeEnv newNativeEnv        

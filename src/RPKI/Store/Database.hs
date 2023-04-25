@@ -224,12 +224,12 @@ getByUri tx store@RpkiObjectStore {..} uri = liftIO $
 
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe RpkiObject)
-getObjectByKey tx RpkiObjectStore {..} k = liftIO $ 
+getObjectByKey tx RpkiObjectStore {..} k = liftIO $
     fmap (\(Compressed StorableObject{..}) -> object) <$> M.get tx objects k    
 
 getLocatedByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
-getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do     
+getLocatedByKey tx store k = liftIO $ runMaybeT $ do     
     object    <- MaybeT $ getObjectByKey tx store k    
     locations <- MaybeT $ getLocationsByKey tx store k                    
     pure $ Located locations object
