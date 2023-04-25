@@ -191,15 +191,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
 
     let defaults = defaultConfig
-
     let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
-    lmdbEnv <- setupLmdbCache
-                    (if resetCache then Reset else UseExisting)
-                    logger
-                    cached
-                    lmdbRealSize
-
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd
@@ -218,18 +210,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & #rtrLogFile .~ rtrLogFile
             else Nothing    
 
-    let readSlurms files = do
-            logDebug logger [i|Reading SLURM files: #{files}.|]
-            readSlurmFiles files
-
-    -- Read the files first to fail fast
-    unless (null localExceptions) $ do
-        void $ readSlurms localExceptions
-
-    database <- liftIO $ newTVarIO db    
-    appState <- createAppState logger localExceptions
-
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions
+    rsyncPrefetchUrls <- rsyncPrefetches cliOptions            
 
     let config = defaults
                 & #programBinaryPath .~ programPath
@@ -268,6 +249,25 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
                 & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
                 & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+
+    let readSlurms files = do
+            logDebug logger [i|Reading SLURM files: #{files}.|]
+            readSlurmFiles files
+
+    -- Read the files first to fail fast
+    unless (null localExceptions) $ do
+        void $ readSlurms localExceptions
+    
+    appState <- createAppState logger localExceptions    
+    
+    lmdbEnv <- setupLmdbCache
+                    (if resetCache then Reset else UseExisting)
+                    logger
+                    cached
+                    config
+
+    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
+    database <- liftIO $ newTVarIO db    
 
     let appContext = AppContext {..}
     logInfo logger [i|Created application context with configuration: 
@@ -431,7 +431,7 @@ createWorkerAppContext config logger = do
     lmdbEnv <- setupWorkerLmdbCache
                     logger
                     (config ^. #cacheDirectory)
-                    (config ^. #lmdbSizeMb)
+                    config
 
     db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
@@ -495,7 +495,7 @@ createVerifierContext cliOptions logger = do
     cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirN
 
     let config = defaultConfig
-    lmdbEnv <- setupWorkerLmdbCache logger cached (config ^. #lmdbSizeMb)
+    lmdbEnv <- setupWorkerLmdbCache logger cached config
 
     db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
