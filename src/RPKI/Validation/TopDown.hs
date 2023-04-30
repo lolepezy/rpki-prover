@@ -277,6 +277,8 @@ validateFromTACert
     initialRepos
     taCert 
   = do      
+    -- Add `initialRepos` (publication point that we get from the TA certificate) 
+    -- to the `repositoryProcessing`
     for_ (filterPPAccess config initialRepos) $ \filteredRepos -> do        
         liftIO $ atomically $ modifyTVar' 
                     (repositoryProcessing ^. #publicationPoints)

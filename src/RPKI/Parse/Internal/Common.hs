@@ -252,6 +252,9 @@ toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just
 
 
+oid2str :: OID -> String
+oid2str = List.intercalate "." . map show
+
 {-
   Parse IP address extension.
 

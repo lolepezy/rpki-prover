@@ -130,7 +130,7 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 newtype TAStore s = TAStore { 
     tas :: SMap "trust-anchors" s TaName StorableTA
 }
-
+    
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 

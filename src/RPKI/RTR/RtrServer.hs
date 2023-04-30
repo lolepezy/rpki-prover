@@ -33,6 +33,9 @@ import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
 import           Network.Socket                   
+import qualified Network.Simple.TCP               as TCP
+import qualified Network.Simple.TCP.TLS           as TLS
+import qualified Network.TLS                      as T
 import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 
 import           RPKI.AppContext
@@ -80,34 +83,70 @@ runRtrServer appContext RtrConfig {..} = do
     logger = getRtrLogger appContext
 
     -- | Handling TCP conections happens here
+    -- runSocketBusinessOld rtrState updateBroadcastChan = 
+    --     case rtrTlsConfig of 
+    --         Nothing -> 
+    --             withSocketsDo $ do                 
+    --                 address <- resolve (show rtrPort)
+    --                 bracket (open address) close loop
+    --         Just certFile -> do     
+    --             -- read certificate file
+    --             -- listen on TLS-secured connection
+    --             pure ()
+    --   where
+    --     resolve port = do
+    --         let hints = defaultHints {
+    --                 addrFlags = [AI_PASSIVE], 
+    --                 addrSocketType = Stream                                        
+    --             }
+    --         head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
+
+    --     open addr = do
+    --         sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+    --         setSocketOption sock ReuseAddr 1
+    --         withFdSocket sock setCloseOnExecIfNeeded
+    --         bind sock $ addrAddress addr
+    --         listen sock 1024
+    --         pure sock
+
+    --     loop sock = forever $ do
+    --         (conn, peer) <- accept sock
+    --         logInfo logger [i|Connection from #{peer}|]
+    --         void $ forkFinally 
+    --             (serveConnection conn peer updateBroadcastChan rtrState) 
+    --             (\_ -> do 
+    --                 logInfo logger [i|Closing connection with #{peer}|]
+    --                 close conn)
+
     runSocketBusiness rtrState updateBroadcastChan = 
-        withSocketsDo $ do                 
-            address <- resolve (show rtrPort)
-            bracket (open address) close loop
+        case rtrTlsConfig of 
+            Nothing      -> runPlainSocket                 
+            Just tlsConf -> runTlsSocket tlsConf
+                
       where
-        resolve port = do
-            let hints = defaultHints {
-                    addrFlags = [AI_PASSIVE], 
-                    addrSocketType = Stream                                        
-                }
-            head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
+        runPlainSocket = do 
+            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
+                forever $ catch
+                    (void $ TCP.acceptFork sock $ \(sock', peer') -> do
+                                logInfo logger [i|Connection from #{peer'}.|]
+                                serveConnection sock' peer' updateBroadcastChan rtrState
+                                logInfo logger [i|Connection from #{peer'} is closed.|])
+                    (\(e :: SomeException) -> 
+                        logError logger [i|Error when talking to #{peer}: #{e}|])  
+            
 
-        open addr = do
-            sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-            setSocketOption sock ReuseAddr 1
-            withFdSocket sock setCloseOnExecIfNeeded
-            bind sock $ addrAddress addr
-            listen sock 1024
-            pure sock
+        runTlsSocket RtrTlsConfig {..} = do                 
+            let credentials = T.credentialLoadX509FromMemory certificate privateKey
+            -- logDebug logger [i|TLS credentials = #{credentials}|]
+            TCP.listen (TCP.Host rtrAddress) (show rtrPort) $ \(sock, peer) ->
+                forever $ catch
+                    (void $ TCP.acceptFork sock $ \(sock', peer') -> do
+                                logInfo logger [i|Connection from #{peer'}.|]
+                                serveConnection sock' peer' updateBroadcastChan rtrState
+                                logInfo logger [i|Connection from #{peer'} is closed.|])
+                    (\(e :: SomeException) -> 
+                        logError logger [i|Error when talking to #{peer}: #{e}|])
 
-        loop sock = forever $ do
-            (conn, peer) <- accept sock
-            logInfo logger [i|Connection from #{peer}|]
-            void $ forkFinally 
-                (serveConnection conn peer updateBroadcastChan rtrState) 
-                (\_ -> do 
-                    logInfo logger [i|Closing connection with #{peer}|]
-                    close conn)
     
     -- | Block on updates on `appState` and when these update happen
     --
@@ -217,16 +256,24 @@ runRtrServer appContext RtrConfig {..} = do
 
                     withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
                         serveLoop session outboxQueue 
+                            `catches` [
+                                    Handler $ \(_ :: AsyncCancelled) -> pure (), -- that one is fine, don't log anything
+                                    Handler $ \(e :: SomeException)  -> logError logger [i|Connection to #{peer} terminated: #{e}|]
+                                ]
                             `finally` do 
-                                atomically (closeCQueue outboxQueue)
+                                atomically $ closeCQueue outboxQueue
                                 -- Wait before returning from this functions and thus getting the sender killed
                                 -- Let it first drain `outboxQueue` to the socket.
                                 void $ timeout 30_000_000 $ wait sender
         where
             -- | Wait for PDUs to appear in either broadcast chan or 
             -- in this session's outbox and send them to the socket.
-            sendFromQueuesToClient session outboxQueue =
-                loop =<< atomically (dupTChan updateBroadcastChan)
+            sendFromQueuesToClient session outboxQueue = do
+                chan <- atomically $ dupTChan updateBroadcastChan
+                loop chan 
+                    `catch` 
+                    (\(e :: SomeException) -> 
+                        logError logger [i|Connection to #{peer} terminated: #{e}|]) 
               where
                 loop stateUpdateChan = do                         
                     -- wait for queued PDUs or for state updates
@@ -525,3 +572,5 @@ bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
 bgpSecToPdu flags BGPSecPayload {..} = 
     let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text)
     in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+
+

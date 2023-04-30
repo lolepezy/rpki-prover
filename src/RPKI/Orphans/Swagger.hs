@@ -128,6 +128,10 @@ instance ToSchema ValidationConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
+
+instance ToSchema RtrTlsConfig where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+    
 instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 

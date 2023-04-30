@@ -358,6 +358,9 @@ instance ToJSON ManifestProcessing
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
+instance ToJSON RtrTlsConfig where
+    toJSON _ = toJSON ("Not exposing TLS config" :: Text)
+
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
