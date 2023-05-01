@@ -174,7 +174,7 @@ downloadAndUpdateRRDP
                             appWarn $ RrdpE $ DeltaUriHostname repoU deltaHostname
         pure notification
 
-    useSnapshot (SnapshotInfo uri hash) notification = do         
+    useSnapshot (SnapshotInfo uri expectedHash) notification = do         
         inSubObjectVScope (U.convert uri) $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
@@ -182,10 +182,10 @@ downloadAndUpdateRRDP
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> (& #downloadTimeMs %~ (<> t))) $ do     
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri hash                                    
+                        downloadHashedBS (appContext ^. typed @Config) uri expectedHash                                    
                             (\actualHash -> 
                                 Left $ RrdpE $ SnapshotHashMismatch { 
-                                    expectedHash = hash,
+                                    expectedHash = expectedHash,
                                     actualHash = actualHash                                            
                                 })                                
 
@@ -388,21 +388,20 @@ saveSnapshot
                     Right (DecodedBase64 decoded) -> do                             
                         case validateSizeOfBS validationConfig decoded of 
                             Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)
-                            Right _ -> 
-                                liftIO $ roTx objectStore $ \tx -> do     
-                                    let hash = U.sha256s decoded  
-                                    exists <- DB.hashExists tx objectStore hash
-                                    pure $! if exists 
-                                        -- The object is already in cache. Do not parse-serialise
-                                        -- anything, just skip it. We are not afraid of possible 
-                                        -- race-conditions here, it's not a problem to double-insert
-                                        -- an object and delete-insert race will never happen in practice
-                                        -- since deletion is never concurrent with insertion.
-                                        then HashExists rpkiURL hash
-                                        else 
-                                            case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL decoded) of 
-                                                (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e)
-                                                (Right ro, _) -> Success rpkiURL (toStorableObject ro)
+                            Right _ -> do
+                                let hash = U.sha256s decoded  
+                                exists <- liftIO $ roTx objectStore $ \tx -> DB.hashExists tx objectStore hash
+                                pure $! if exists 
+                                    -- The object is already in cache. Do not parse-serialise
+                                    -- anything, just skip it. We are not afraid of possible 
+                                    -- race-conditions here, it's not a problem to double-insert
+                                    -- an object and delete-insert race will never happen in practice
+                                    -- since deletion is never concurrent with insertion.
+                                    then HashExists rpkiURL hash
+                                    else 
+                                        case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL decoded) of 
+                                            (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e)
+                                            (Right ro, _) -> Success rpkiURL (toStorableObject ro)
                                     
     saveStorable _ _ (Left (e, uri)) = 
         inSubObjectVScope (unURI uri) $ appWarn e             
