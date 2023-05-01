@@ -9,7 +9,9 @@ type AppLmdbEnv = AppContext LmdbStorage
 class MaintainableStorage s where
     runMaintenance :: AppContext s -> IO ()
     closeStorage :: AppContext s -> IO ()
+    cleanUpStaleTx :: AppContext s -> IO Int
 
 instance MaintainableStorage LmdbStorage where
     runMaintenance = compactStorageWithTmpDir
     closeStorage = closeLmdbStorage
+    cleanUpStaleTx = cleanupReaders

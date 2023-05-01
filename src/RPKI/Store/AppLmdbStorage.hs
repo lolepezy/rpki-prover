@@ -36,6 +36,7 @@ import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.Posix.Files
 
+import           Lmdb.Connection
 
 data LmdbFlow = UseExisting | Reset
 
@@ -247,7 +248,7 @@ closeLmdbStorage AppContext {..} =
 -- 
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
-    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     newLmdb    <- mkLmdb targetLmdbPath config
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
@@ -292,3 +293,11 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
         Right WorkerResult { payload = CompactionResult _ } -> do
             pure ()            
             
+-- 
+cleanupReaders :: AppContext LmdbStorage -> IO Int
+cleanupReaders AppContext {..} = do 
+    -- eventually call `mdb_reader_check` and try to remove 
+    -- potentially dead readers from the reader table
+    env <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    native <- atomically $ getNativeEnv env
+    cleanReadersTable native
