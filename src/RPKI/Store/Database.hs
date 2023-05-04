@@ -761,11 +761,10 @@ getRtrPayloads tx db worldVersion =
             pure $ mkRtrPayloads vrps bgps
 
 getTotalDbStats :: (MonadIO m, Storage s) => 
-                    DB s -> m TotalDBStats
+                    DB s -> m (DBStats, SStats)
 getTotalDbStats db = do 
-    dbStats <- getDbStats db
-    let total = totalStats dbStats
-    pure TotalDBStats {..}
+    dbStats <- getDbStats db        
+    pure (dbStats, totalStats dbStats)
 
 -- Compute database stats
 getDbStats :: (MonadIO m, Storage s) => 

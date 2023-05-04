@@ -203,27 +203,33 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
             closeNativeLmdb oldNativeEnv
             removePathForcibly currentLinkTarget
-    
-    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
-    
-    lmdbFileSize <- fmap sum 
-                    $ mapM (getFileSize . (currentCache </>)) =<< listDirectory currentLinkTarget            
+        
+    Size lmdbFileSize <- cacheFsSize appContext 
     
     dbStats <- fmap DB.totalStats $ DB.getDbStats =<< readTVarIO database
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
-    let fileSizeMb :: Integer = lmdbFileSize `div` (1024 * 1024)
+    let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
-    if fileSizeMb > (2 * dataSizeMb)    
+    if fileSizeMb > (3 * dataSizeMb)    
         then do 
             logDebug logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
             copyToNewEnvironmentAndSwap dbStats `catch` (
                 \(e :: SomeException) -> do
                     logError logger [i|ERROR: #{e}.|]        
-                    cleanUpAfterException)            
+                    cleanUpAfterException)
         else 
             logDebug logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
         
+
+cacheFsSize :: AppContext s -> IO Size 
+cacheFsSize AppContext {..} = do 
+    let cacheDir = config ^. #cacheDirectory
+    let currentCache = cacheDir </> "current"
+    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+    fmap (Size . fromIntegral . sum) 
+        $ mapM (getFileSize . (currentCache </>)) 
+            =<< listDirectory currentLinkTarget    
 
 generateLmdbDir :: MonadIO m => FilePath -> m FilePath
 generateLmdbDir cacheDir = do 

@@ -18,6 +18,7 @@ import           RPKI.Time                (Instant)
 
 import           RPKI.Repository
 import           RPKI.AppTypes
+import           RPKI.Config
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
 
@@ -94,7 +95,12 @@ data DBStats = DBStats {
     slurmStats      :: SStats
 } deriving stock (Show, Eq, Generic)
 
+data DBFileStats = DBFileStats {
+    fileSize :: Size
+} deriving stock (Show, Eq, Generic)
+
 data TotalDBStats = TotalDBStats {
     dbStats :: DBStats,
-    total   :: SStats    
+    total   :: SStats,
+    fileStats :: DBFileStats
 } deriving stock (Show, Eq, Generic)

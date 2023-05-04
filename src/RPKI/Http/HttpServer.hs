@@ -44,15 +44,16 @@ import           RPKI.Http.Types
 import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage hiding (get)
 import           RPKI.Store.Database
+import           RPKI.Store.AppStorage
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
-import Data.Ord
-import RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
+import           Data.Ord
+import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
-httpApi :: Storage s => AppContext s -> Application
+httpApi :: (Storage s, MaintainableStorage s) => AppContext s -> Application
 httpApi appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
@@ -282,8 +283,13 @@ toVR (Scope scope, issues) = FullVDto {
         (VWarn (VWarning w)) -> WarningDto $ toMessage w
 
 
-getStats :: (MonadIO m, Storage s) => AppContext s -> m TotalDBStats
-getStats AppContext {..} = liftIO $ getTotalDbStats =<< readTVarIO database
+getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
+getStats appContext@AppContext {..} = liftIO $ do 
+    (dbStats, total) <- getTotalDbStats =<< readTVarIO database
+    fileSize <- getCacheFsSize appContext
+    let fileStats = DBFileStats {..}
+    pure TotalDBStats {..}
+
 
 getJobs :: (MonadIO m, Storage s) => AppContext s -> m JobsDto
 getJobs AppContext {..} = liftIO $ do
