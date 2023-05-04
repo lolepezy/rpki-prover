@@ -69,7 +69,7 @@ createDatabase e logger checkAction = do
                         --
                         -- This is obviously far from optimal, so it would make
                         -- sense to automate that part.
-                        logInfo logger [i|Cache version is #{version} and current version is #{currentDatabaseVersion}, dropping the cache.|]    
+                        logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, dropping the cache.|]    
                         (_, ms) <- timedMS $ emptyDBMaps tx db
                         logDebug logger [i|Erasing cache took #{ms}ms.|]
                         saveCurrentDatabaseVersion tx db
