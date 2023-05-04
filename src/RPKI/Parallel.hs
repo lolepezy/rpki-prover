@@ -171,9 +171,7 @@ readQueueChunked cq chunkSize f = go
 killAll :: MonadIO m => ClosableQueue t -> (t -> m a) -> m ()
 killAll queue kill = do
     a <- liftIO $ atomically $ readCQueue queue    
-    case a of   
-        Nothing -> pure ()
-        Just as -> kill as >> killAll queue kill
+    for_ a $ \as -> kill as >> killAll queue kill
 
 -- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
 data Semaphore = Semaphore Int (TVar Int)

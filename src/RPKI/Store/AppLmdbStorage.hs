@@ -36,6 +36,7 @@ import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.Posix.Files
 
+import           Lmdb.Connection
 
 data LmdbFlow = UseExisting | Reset
 
@@ -202,27 +203,33 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
             closeNativeLmdb oldNativeEnv
             removePathForcibly currentLinkTarget
-    
-    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
-    
-    lmdbFileSize <- fmap sum 
-                    $ mapM (getFileSize . (currentCache </>)) =<< listDirectory currentLinkTarget            
+        
+    Size lmdbFileSize <- cacheFsSize appContext 
     
     dbStats <- fmap DB.totalStats $ DB.getDbStats =<< readTVarIO database
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
-    let fileSizeMb :: Integer = lmdbFileSize `div` (1024 * 1024)
+    let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
     let dataSizeMb :: Integer = fromIntegral $ dataSize `div` (1024 * 1024)
-    if fileSizeMb > (2 * dataSizeMb)    
+    if fileSizeMb > (3 * dataSizeMb)    
         then do 
             logDebug logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, will perform compaction.|]
             copyToNewEnvironmentAndSwap dbStats `catch` (
                 \(e :: SomeException) -> do
                     logError logger [i|ERROR: #{e}.|]        
-                    cleanUpAfterException)            
+                    cleanUpAfterException)
         else 
             logDebug logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
         
+
+cacheFsSize :: AppContext s -> IO Size 
+cacheFsSize AppContext {..} = do 
+    let cacheDir = config ^. #cacheDirectory
+    let currentCache = cacheDir </> "current"
+    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+    fmap (Size . fromIntegral . sum) 
+        $ mapM (getFileSize . (currentCache </>)) 
+            =<< listDirectory currentLinkTarget    
 
 generateLmdbDir :: MonadIO m => FilePath -> m FilePath
 generateLmdbDir cacheDir = do 
@@ -247,7 +254,7 @@ closeLmdbStorage AppContext {..} =
 -- 
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
-    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     newLmdb    <- mkLmdb targetLmdbPath config
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
@@ -292,3 +299,11 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
         Right WorkerResult { payload = CompactionResult _ } -> do
             pure ()            
             
+-- 
+cleanupReaders :: AppContext LmdbStorage -> IO Int
+cleanupReaders AppContext {..} = do 
+    -- eventually call `mdb_reader_check` and try to remove 
+    -- potentially dead readers from the reader table
+    env <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    native <- atomically $ getNativeEnv env
+    cleanReadersTable native

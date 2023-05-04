@@ -177,7 +177,7 @@ runValidatorServer appContext@AppContext {..} = do
             vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
-runHttpApi :: Storage s => AppContext s -> IO ()
+runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext = let
     httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
     in Warp.run httpPort $ httpApi appContext

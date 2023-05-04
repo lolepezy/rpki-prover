@@ -113,6 +113,7 @@ instance ToSchema MaxMemory where
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
+instance ToSchema DBFileStats
 instance ToSchema TotalDBStats
 instance ToSchema DBStats
 instance ToSchema SStats

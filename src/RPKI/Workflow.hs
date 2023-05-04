@@ -65,7 +65,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- the DB for long time by a cleanup process).
     globalQueue <- newCQueueIO 10
 
-    -- Fill in the current state if it's not too old.
+    -- Fill in the current appState if it's not too old.
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
 
@@ -153,9 +153,9 @@ runWorkflow appContext@AppContext {..} tals = do
 
         validateAllTAs prometheusMetrics worldVersion = do
             logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
-            database' <- readTVarIO database
+            db <- readTVarIO database
             executeOrDie
-                (processTALs database' `finally` cleanupAfterValidation)
+                (processTALs db `finally` cleanupAfterValidation)
                 (\(rtrPayloads, slurmedPayloads) elapsed -> do 
                     let vrps = rtrPayloads ^. #vrps
                     let slurmedVrps = slurmedPayloads ^. #vrps
@@ -164,9 +164,19 @@ runWorkflow appContext@AppContext {..} tals = do
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where
                 cleanupAfterValidation = do
+                    -- Cleanupi tmp directory, if some fetchers died abruptly 
+                    -- there may be leftover files.
                     let tmpDir = config ^. #tmpDirectory
                     logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
                     listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
+                    
+                    -- Cleanup reader table of LMDB cache, it may get littered by 
+                    -- dead processes, unfinished/killed transaction, etc.
+                    -- All these transactions are essentially bugs, but it's 
+                    -- easier to just clean them up rather then prevent all 
+                    -- possible leakages.
+                    cleaned <- cleanUpStaleTx appContext
+                    logDebug logger [i|Cleaned #{cleaned} staled readers from LMDB cache.|]
 
                 processTALs db = do
                     (z, workerVS) <- runProcessTALsWorker worldVersion                    
