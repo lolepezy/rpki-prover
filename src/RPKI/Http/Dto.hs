@@ -12,8 +12,9 @@ import qualified Data.ByteString.Builder          as BB
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
+import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
-import qualified Data.Text                       as Text
+import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
 
@@ -139,7 +140,7 @@ objectToDto = \case
             ski  = Nothing,
             aki  = getAKI o,
             hash = getHash o,
-            payload = p,
+            objectPayload = p,
             eeCertificate = Nothing
         }
 
@@ -255,7 +256,7 @@ objectToDto = \case
                             | extRawOID == id_pe_autonomousSysIds_v2 -> "ASN resources (see 'asn' field)"
                             | extRawOID == id_ce_certificatePolicies -> certificatePoliciesToText extRawContent
                                     
-                            | otherwise -> "Don't know"
+                            | otherwise -> "Unrecognised extension"
 
                 in ExtensionDto {..}
 
@@ -269,7 +270,19 @@ objectToDto = \case
             rsc@RSC {..} = getCMSContent $ r ^. #cmsPayload
         in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, ..}
 
-    gbrDto g = GrbDto {}
+    gbrDto g = let 
+        Gbr vcardBS = getCMSContent $ g ^. #cmsPayload
+        vcardProperty = \case 
+            VCardVersion t -> ("Version", t) 
+            FN t  -> ("FN", t) 
+            ORG t -> ("ORG", t) 
+            ADR t -> ("ADR", t) 
+            TEL t -> ("TEL", t) 
+            EMAIL t -> ("EMAIL", t) 
+        vcard = case parseVCard $ toNormalBS vcardBS of
+                Left e           -> Map.singleton "error" ("Invalid VCard: " <> e)
+                Right (VCard ps) -> Map.fromList $ map vcardProperty ps
+        in GrbDto {..}
 
 
     bgpSecDto :: BgpCerObject -> BgpCertDto

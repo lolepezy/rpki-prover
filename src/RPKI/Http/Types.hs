@@ -126,7 +126,7 @@ data ObjectContentDto payload = ObjectContentDto {
         ski  :: Maybe SKI,
         aki  :: Maybe AKI,
         eeCertificate :: Maybe CertificateDto,          
-        payload       :: payload
+        objectPayload :: payload
     }
     deriving stock (Eq, Show, Generic)
 
@@ -217,7 +217,7 @@ data RoaPrefixDto = RoaPrefixDto {
 
 
 data GrbDto = GrbDto {
-
+        vcard :: Map.Map Text Text
     }  
     deriving stock (Eq, Show, Generic)
 
