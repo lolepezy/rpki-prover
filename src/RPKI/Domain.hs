@@ -662,7 +662,12 @@ data BriefType = RoaBrief
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary        
 
-
+{- 
+This is a short version of an object that is used as an optimisation 
+for leafs of the RPKI trae, i.e. ROAs, ASPAs and such. Once validated
+they can only expire or be revoked. If none of that happened, we can 
+safely assume that it can be used for extracting it's payload.
+-} 
 data EEBrief = EEBrief {
         briefType      :: BriefType,
         notValidBefore :: Instant,
