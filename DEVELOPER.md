@@ -5,7 +5,7 @@
 - Full build is done by `stack install rpki-prover:rpki-prover`, it should normally take 30-40 minutes on an average computer.
 - Tests can be run using `stack test rpki-prover:lib rpki-prover:test:rpki-prover-test`.
 - The command for using `ghcid` is `ghcid --command="stack repl rpki-prover:lib rpki-prover:rpki-prover"` 
-  or `ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test" ` for the set of modules includsing tests.
+  or `ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test" ` for the set of modules including tests.
  
 
 ## Docker build
