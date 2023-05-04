@@ -65,8 +65,8 @@ bgpSecToDto BGPSecPayload {..} = BgpCertDto {
 aspaToDto :: Aspa -> AspaDto
 aspaToDto aspa =
     AspaDto {
-        customerAsn = aspa ^. #customerAsn,
-        providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
+        customer = aspa ^. #customer,
+        providers = map (\(asn, afi) -> ProviderAsn {..}) $ aspa ^. #providers
     }
 
 toVR :: (Scope a, Set.Set VIssue) -> FullVDto

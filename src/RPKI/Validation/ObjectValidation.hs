@@ -420,12 +420,12 @@ validateAspa now aspa parentCert crl verifiedResources = do
 
             let Aspa {..} = getCMSContent aspaCms         
 
-            unless ((AS customerAsn) `IS.isInside` asnSet) $ 
-                vError $ AspaAsNotOnEECert customerAsn (IS.toList asnSet)
+            unless ((AS customer) `IS.isInside` asnSet) $ 
+                vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
 
-            case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
+            case filter (\(asn, _) -> asn == customer) providers of 
                 []       -> pure ()
-                _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
+                _overlap -> vError $ AspaOverlappingCustomerProvider customer (map fst providers)
     
     pure $ Validated aspa
     

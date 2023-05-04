@@ -301,8 +301,8 @@ toValidationMessage = \case
       RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp _ prefix maxLength) -> 
           [i|VRP is malformed, length of the prefix #{prefix} is bigger than #{maxLength}.|]
 
-      AspaOverlappingCustomerProvider customerAsn providerAsns -> 
-        [i|ASPA contains customer ASN #{customerAsn} in the list of provider ASNs #{providerAsns}.|]
+      AspaOverlappingCustomerProvider customer providers -> 
+        [i|ASPA contains customer ASN #{customer} in the list of provider ASNs #{providers}.|]
 
       BGPCertSIAPresent bs -> 
         [i|SIA extension is present on the BGPSec certificate: #{hex bs}.|]
@@ -314,8 +314,8 @@ toValidationMessage = \case
       AspaNoAsn       -> [i|ASN extension is not present on the ASPA EE certificate or has 'inherit' value.|]
       AspaIPv4Present -> [i|IPv4 extension is present on the ASPA EE certificate.|]
       AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
-      AspaAsNotOnEECert customerAsn eeAsns -> 
-        [i|Customer ASN (#{customerAsn}) is not in the EE certificate AS set (#{eeAsns}).|]      
+      AspaAsNotOnEECert customer eeAsns -> 
+        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]      
 
   where
     fmtUrlList = mconcat . 

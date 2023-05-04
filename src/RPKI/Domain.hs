@@ -477,8 +477,8 @@ data RSC = RSC {
 
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 data Aspa = Aspa {                
-        customerAsn  :: ASN,
-        providerAsns :: [(ASN, Maybe AddrFamily)]
+        customer  :: ASN,
+        providers :: [(ASN, Maybe AddrFamily)]
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary

@@ -45,8 +45,8 @@ parseAspa bs = do
     getVersion = getInteger (pure . fromInteger) "Wrong version"
 
     getAspa = do 
-        customerAsn <- getInteger (pure . ASN . fromInteger) "Wrong customer AS"
-        providerAsns <- onNextContainer Sequence $
+        customer  <- getInteger (pure . ASN . fromInteger) "Wrong customer AS"
+        providers <- onNextContainer Sequence $
                             getMany $ 
                                 onNextContainer Sequence $ do
                                     asn <- getInteger (pure . ASN . fromInteger) "Wrong customer AS" 

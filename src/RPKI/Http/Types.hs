@@ -88,14 +88,14 @@ data VrpMinimalDto = VrpMinimalDto {
     deriving stock (Eq, Show, Generic)
 
 data ProviderAsn = ProviderAsn {
-        asn      :: ASN, 
-        afiLimit :: Maybe AddrFamily
+        asn :: ASN, 
+        afi :: Maybe AddrFamily
     }
     deriving stock (Eq, Show, Generic)
 
 data AspaDto = AspaDto {
-        customerAsn  :: ASN,
-        providerAsns :: [ProviderAsn]        
+        customer  :: ASN,
+        providers :: [ProviderAsn]        
     } 
     deriving stock (Eq, Show, Generic)
 
