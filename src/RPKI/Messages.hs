@@ -202,7 +202,7 @@ toValidationMessage = \case
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
       NoMFT (AKI aki) _ -> 
-          [i|No manifest found for #{aki}.|]
+          [i|No manifest found for AKI #{aki}.|]
 
       NoCRLOnMFT (AKI aki) _ -> 
           [i|No CRL found on the manifest manifest found for AKI #{aki}.|]
