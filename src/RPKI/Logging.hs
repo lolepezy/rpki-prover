@@ -239,8 +239,8 @@ withLogger LogConfig {..} sysMetricCallback f = do
     finallyCloseQ queue g = 
         g `finally` atomically (closeCQueue queue)
 
-    messageToText LogMessage {..} = let
-            level = justifyLeft 6 ' ' [i|#{logLevel}|]
+    messageToText LogMessage { logLevel = logLevel', .. } = let
+            level = justifyLeft 6 ' ' [i|#{logLevel'}|]
             pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
         in [i|#{level}  #{pid}  #{timestamp}  #{message}|] 
 

@@ -85,7 +85,7 @@ overallHtml (Just worldVersion) = do
     let t = versionToMoment worldVersion
     H.div ! A.class_ "overall" $ do 
         H.text "Last validation: " >> space
-        H.text $ Text.pack $ uiDateFormat t
+        H.text $ Text.pack $ instantDateFormat t
         space >> H.text "(UTC)"
 
 

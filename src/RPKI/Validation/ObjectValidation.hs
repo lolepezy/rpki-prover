@@ -124,7 +124,7 @@ validateNoUnknownCriticalExtensions extensions =
 -- 
 validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CaCerObject
 validateTACert tal u (CerRO taCert) = do
-    let spki = subjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
+    let spki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
     let talSPKI = SPKI $ publicKeyInfo tal
     unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
@@ -274,7 +274,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
     let bgpSecSki = getSKI bgpCert
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
-    let bgpSecSpki = subjectPublicKeyInfo cwsX509
+    let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
     pure BGPSecPayload {..}
 
 ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
@@ -420,12 +420,12 @@ validateAspa now aspa parentCert crl verifiedResources = do
 
             let Aspa {..} = getCMSContent aspaCms         
 
-            unless ((AS customerAsn) `IS.isInside` asnSet) $ 
-                vError $ AspaAsNotOnEECert customerAsn (IS.toList asnSet)
+            unless ((AS customer) `IS.isInside` asnSet) $ 
+                vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
 
-            case filter (\(asn, _) -> asn == customerAsn) providerAsns of 
+            case filter (\(asn, _) -> asn == customer) providers of 
                 []       -> pure ()
-                _overlap -> vError $ AspaOverlappingCustomerProvider customerAsn (map fst providerAsns)
+                _overlap -> vError $ AspaOverlappingCustomerProvider customer (map fst providers)
     
     pure $ Validated aspa
     
@@ -475,10 +475,10 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
-isRevoked (getSerial -> serial) (Validated crlObject) = let
-        SignCRL{..} = signCrl crlObject 
-    in Set.member serial revokenSerials  
-    
+isRevoked (getSerial -> serial) (Validated crlObject) = 
+    Set.member serial revokedSerials
+  where
+    SignCRL{..} = signCrl crlObject
 
 signatureCheck :: SignatureVerification -> PureValidatorT ()
 signatureCheck sv = case sv of

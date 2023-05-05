@@ -12,11 +12,12 @@ import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Short       as BSS
 
 import           Data.Text                   (Text)
+import qualified Data.List                   as List
 import           Data.ByteArray              (convert)
 import           Data.Text.Encoding          (decodeUtf8)
 import           Data.Foldable               (toList)
 
-import           Data.Aeson                  hiding ((.=))
+import           Data.Aeson                  
 import qualified Data.Aeson                  as Json
 import           Data.Aeson.Types            (toJSONKeyText)
 import           Data.Aeson.TH
@@ -85,6 +86,9 @@ showHexL = decodeUtf8 . LBS.toStrict . HexLazy.encode
 shortBsJson :: BSS.ShortByteString -> Json.Value
 shortBsJson = toJSON . showHex . BSS.fromShort
 
+oid2text :: OID -> String
+oid2text oid = List.intercalate "." $ map show oid
+
 instance ToJSON Instant where
     toJSON = toJSON . show
 
@@ -114,7 +118,7 @@ instance ToJSON Domain.RsyncURL where
     toJSON = toJSON . Domain.getURL
 
 instance ToJSON Domain.Serial where
-    toJSON (Serial s) = toJSON s
+    toJSON (Serial s) = toJSON $ show s
 
 instance ToJSON Domain.EncodedBase64 where
     toJSON (EncodedBase64 bs) = toJSON (U.convert bs :: Text)
@@ -134,13 +138,15 @@ instance ToJSON a => ToJSON (IntervalSet a) where
 instance ToJSON a => ToJSON (RSet a)
    
 instance ToJSON Ipv4Prefix where
-    toJSON = toJSON . show
+    toJSON (Ipv4Prefix p) = toJSON $ show p
 
 instance ToJSON Ipv6Prefix where
-    toJSON = toJSON . show
+    toJSON (Ipv6Prefix p) = toJSON $ show p
 
 instance ToJSON AsResource where
-    toJSON = toJSON . show
+    toJSON = \case 
+        AS a        -> toJSON a 
+        ASRange a b -> toJSON $ show a <> "-" <> show b
 
 instance ToJSON AddrFamily where
     toJSON = \case 
@@ -151,7 +157,6 @@ instance ToJSON PrefixesAndAsns
 
 instance ToJSON Size where 
     toJSON (Size s) = toJSON s
-    
 
 instance ToJSON TaName where 
     toJSON (TaName t) = toJSON t
@@ -255,7 +260,8 @@ instance ToJSON C448.PublicKey where
 instance ToJSON E448.PublicKey where
     toJSON = toJSON . showHex . convert
 
-instance ToJSON ContentType    
+instance ToJSON ContentType where
+    toJSON (ContentType oid) = toJSON $ oid2text oid
 
 $(deriveToJSON defaultOptions ''PubKeyEC)
 $(deriveToJSON defaultOptions ''PubKeyALG)
@@ -263,15 +269,52 @@ $(deriveToJSON defaultOptions ''ExtensionRaw)
 $(deriveToJSON defaultOptions ''Extensions)
 $(deriveToJSON defaultOptions ''HashALG)
 $(deriveToJSON defaultOptions ''SignatureALG)
-$(deriveToJSON defaultOptions ''SignatureAlgorithmIdentifier)
+
+instance ToJSON SignatureAlgorithmIdentifier where
+    toJSON (SignatureAlgorithmIdentifier sai) = 
+        case sai of 
+            X509.SignatureALG_Unknown oid -> toJSON $ oid2text oid
+            _ -> toJSON $ show sai
+
 $(deriveToJSON defaultOptions ''PubKey)
+$(deriveToJSON defaultOptions ''Version)
 $(deriveToJSON defaultOptions ''CMSVersion)
 $(deriveToJSON defaultOptions ''SignerIdentifier)
 $(deriveToJSON defaultOptions ''SignatureValue)
-$(deriveToJSON defaultOptions ''Attribute)
-$(deriveToJSON defaultOptions ''SignedAttributes)
-$(deriveToJSON defaultOptions ''DigestAlgorithmIdentifier)
-$(deriveToJSON defaultOptions ''DigestAlgorithmIdentifiers)
+
+instance ToJSON Attribute where
+    toJSON = \case
+        ContentTypeAttr x -> Json.object [ 
+                "type" .= ("ContentType" :: Text),
+                "value" .= x 
+            ]
+        MessageDigest b -> Json.object [
+                "type" .= ("MessageDigest" :: Text),
+                "value" .= b
+            ]            
+        SigningTime dt tz -> Json.object [
+                "type" .= ("SigningTime" :: Text),
+                "value" .= (instantDateFormat $ Instant dt)                
+            ]
+        BinarySigningTime bst -> Json.object [
+                "type" .= ("BinarySigningTime" :: Text),
+                "value" .= bst 
+            ]
+        UnknownAttribute oid vals -> Json.object [
+                "type" .= ("UnknownAttribute" :: Text),
+                "oid" .= oid,
+                "asn1" .= vals
+            ]
+
+instance ToJSON SignedAttributes where
+    toJSON (SignedAttributes attrs _) = toJSON $ map toJSON attrs
+
+instance ToJSON DigestAlgorithmIdentifier where
+    toJSON (DigestAlgorithmIdentifier oid) = toJSON $ oid2text oid
+
+instance ToJSON DigestAlgorithmIdentifiers where
+    toJSON (DigestAlgorithmIdentifiers oids) = toJSON $ map oid2text oids
+
 $(deriveToJSON defaultOptions ''SignerInfos)
 $(deriveToJSON defaultOptions ''SignCRL)
 
@@ -291,10 +334,11 @@ $(deriveToJSON defaultOptions ''ResourceCertificate)
 instance ToJSON a => ToJSON (TypedCert a t)
 
 $(deriveToJSON defaultOptions ''EECerObject)
-$(deriveToJSON defaultOptions ''CaCerObject)
-$(deriveToJSON defaultOptions ''BgpCerObject)
-$(deriveToJSON defaultOptions ''CrlObject)
-$(deriveToJSON defaultOptions ''RpkiObject)
+
+-- $(deriveToJSON defaultOptions ''CaCerObject)
+-- $(deriveToJSON defaultOptions ''BgpCerObject)
+-- $(deriveToJSON defaultOptions ''CrlObject)
+-- $(deriveToJSON defaultOptions ''RpkiObject)
 
 instance ToJSON a => ToJSON (X509.SignedExact a)    
 instance ToJSON a => ToJSON (X509.Signed a) 

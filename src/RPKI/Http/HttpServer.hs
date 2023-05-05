@@ -16,13 +16,11 @@ import           Control.Monad.Error.Class
 import           FileEmbedLzma
 
 import           Servant.Server.Generic
-import           Servant
+import           Servant hiding (contentType)
 import           Servant.Swagger.UI
 
-import qualified Data.ByteString.Builder          as BS
-
+import           Data.Ord
 import           Data.List                        (sortBy)
-import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                         as List
@@ -35,12 +33,12 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Config
-import           RPKI.Messages
 import           RPKI.Metrics.Prometheus
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
 import           RPKI.Http.Types
+import           RPKI.Http.Dto
 import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage hiding (get)
 import           RPKI.Store.Database
@@ -158,32 +156,11 @@ getVRPs AppContext {..} version readVrps convertVrps = do
             [] -> throwError $ err404 { errBody = [i|Version #{worldVersion} doesn't exist.|] }
             _  -> liftIO $ roTx db $ \tx -> getVrps tx db worldVersion
 
-toVrpDtos :: Maybe Vrps -> [VrpDto]
-toVrpDtos = \case
-    Nothing   -> []
-    Just vrps -> [ VrpDto a p len (unTaName ta) |
-                        (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                        Vrp a p len  <- Set.toList vrpSet ]
-
-toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
-toVrpSet = maybe mempty uniqVrps
-
-toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
-toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
-  where
-    asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
-
 
 getASPAs :: Storage s => AppContext s -> IO [AspaDto]
 getASPAs AppContext {..} = do
     aspas <- getLatestAspas =<< readTVarIO database
-    pure $ map toDto $ Set.toList aspas
-  where
-    toDto aspa =
-        AspaDto {
-            customerAsn = aspa ^. #customerAsn,
-            providerAsns = map (\(asn, afiLimit) -> ProviderAsn {..}) $ aspa ^. #providerAsns
-        }
+    pure $ map aspaToDto $ Set.toList aspas
 
 getBGPCerts :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCerts AppContext {..} =
@@ -202,12 +179,7 @@ getBGPCertsFiltered AppContext {..} = do
                 pure $ map bgpSecToDto $ Set.toList $ applySlurmBgpSec slurm bgps    
   
 
-bgpSecToDto :: BGPSecPayload -> BgpCertDto
-bgpSecToDto BGPSecPayload {..} = BgpCertDto {
-        ski = bgpSecSki,
-        asns = bgpSecAsns,
-        subjectPublicKeyInfo = bgpSecSpki
-    }        
+
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
 getValidations AppContext {..} = do
@@ -271,18 +243,6 @@ getAllSlurms AppContext {..} = do
         pure [ (w, s) | (w, Just s) <- slurms ]
 
 
-toVR :: (Scope a, Set.Set VIssue) -> FullVDto
-toVR (Scope scope, issues) = FullVDto {
-        issues = map toDto $ Set.toList issues,
-        path   = NonEmpty.toList scope,
-        url    = NonEmpty.head scope
-    }
-  where
-    toDto = \case
-        VErr e               -> ErrorDto $ toMessage e
-        (VWarn (VWarning w)) -> WarningDto $ toMessage w
-
-
 getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
 getStats appContext@AppContext {..} = liftIO $ do 
     (dbStats, total) <- getTotalDbStats =<< readTVarIO database
@@ -321,7 +281,7 @@ getRpkiObject AppContext {..} uri hash =
                 Right rpkiUrl -> liftIO $ do
                     DB {..} <- readTVarIO database
                     roTx objectStore $ \tx ->
-                        (RObject <$>) <$> getByUri tx objectStore rpkiUrl
+                        (locatedDto <$>) <$> getByUri tx objectStore rpkiUrl
 
         (Nothing, Just hash') ->
             case parseHash hash' of
@@ -329,11 +289,14 @@ getRpkiObject AppContext {..} uri hash =
                 Right h -> liftIO $ do
                     db <- readTVarIO database
                     roTx db $ \tx -> 
-                        (RObject <$>) . maybeToList <$> getByHash tx db h
+                        (locatedDto <$>) . maybeToList <$> getByHash tx db h
 
         (Just _, Just _) ->
             throwError $ err400 { errBody =
                 "Only 'uri' or 'hash' must be provided, not both." }
+  where
+    locatedDto located = RObject $ located & #payload %~ objectToDto
+
 
 getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do
@@ -365,45 +328,3 @@ getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
     sortBy (flip compare) . map fst <$> roTx db (`allVersions` db)
-
-
-vrpDtosToCSV :: [VrpDto] -> RawCSV
-vrpDtosToCSV vrpDtos =
-    rawCSV 
-        (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
-        (mconcat $ map toBS vrpDtos)
-  where
-    toBS VrpDto {
-            asn = ASN as,
-            maxLength = PrefixLength ml,
-            ..
-        } = str "AS" <> str (show as) <> ch ',' <>
-            str (prefixStr prefix) <> ch ',' <>
-            str (show ml) <> ch ',' <>
-            str (convert ta) <> ch '\n'
-
-vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
-vrpSetToCSV vrpDtos =
-    rawCSV 
-        (str "ASN,IP Prefix,Max Length\n")
-        (mconcat $ map toBS $ Set.toList vrpDtos)
-  where
-    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) = 
-        str "AS" <> str (show asn) <> ch ',' <>
-        str (prefixStr prefix) <> ch ',' <>
-        str (show maxLength) <> ch '\n'
-
-
-rawCSV :: BS.Builder -> BS.Builder -> RawCSV
-rawCSV header body = RawCSV $ BS.toLazyByteString $ header <> body
-    
-
-prefixStr :: IpPrefix -> String
-prefixStr (Ipv4P (Ipv4Prefix p)) = show p
-prefixStr (Ipv6P (Ipv6Prefix p)) = show p
-
-str :: String -> BS.Builder
-str = BS.stringUtf8
-
-ch :: Char -> BS.Builder
-ch  = BS.charUtf8    

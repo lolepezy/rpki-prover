@@ -17,6 +17,7 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 
 import           Data.ByteString.Base16   as Hex
+import qualified Data.String.Conversions  as SC
 
 import           Data.Hourglass
 import           Data.Foldable            as F
@@ -205,7 +206,7 @@ instance Show KI where
     show (KI b) = hexShow b
 
 hexShow :: BSS.ShortByteString -> String
-hexShow = show . Hex.encode . BSS.fromShort
+hexShow = SC.cs . Hex.encode . BSS.fromShort
 
 -- | Domain objects
 
@@ -305,6 +306,9 @@ instance {-# OVERLAPPING #-} WithSerial (CMSBasedObject a) where
         Serial $ X509.certSerial $ cwsX509certificate $ getCertWithSignature 
             $ getEEResourceCert $ unCMS cmsPayload 
 
+instance WithRawResourceCertificate (CMSBasedObject a) where
+    getRawCert CMSBasedObject {..} = getRawCert $ getEEResourceCert $ unCMS cmsPayload 
+
 instance WithAKI EECerObject where
     getAKI EECerObject {..} = Just aki
 
@@ -316,6 +320,12 @@ instance WithSKI BgpCerObject where
 
 instance WithAKI BgpCerObject where
     getAKI BgpCerObject {..} = aki
+
+instance WithSKI EECerObject where
+    getSKI EECerObject {..} = ski
+
+instance WithSKI (CMSBasedObject a) where    
+    getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert $ unCMS cmsPayload 
 
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
@@ -423,9 +433,9 @@ newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificat
     deriving newtype (WithRFC)
 
 data Vrp = Vrp 
-    {-# UNPACK #-} !ASN 
-    !IpPrefix 
-    {-# UNPACK #-} !PrefixLength
+        {-# UNPACK #-} !ASN 
+        !IpPrefix 
+        {-# UNPACK #-} !PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -446,7 +456,7 @@ data SignCRL = SignCRL {
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
         crlNumber          :: Serial,
-        revokenSerials     :: Set Serial
+        revokedSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -467,8 +477,8 @@ data RSC = RSC {
 
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 data Aspa = Aspa {                
-        customerAsn  :: ASN,
-        providerAsns :: [(ASN, Maybe AddrFamily)]
+        customer  :: ASN,
+        providers :: [(ASN, Maybe AddrFamily)]
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -482,22 +492,23 @@ data BGPSecPayload = BGPSecPayload {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
--- | Types for the signed object template 
--- https://tools.ietf.org/html/rfc5652
-
-data SignedObject a = SignedObject {
-        soContentType :: ContentType, 
-        soContent     :: SignedData a
-    } 
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary
-
 
 data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
         cwsSignature          :: SignatureValue,
         cwsEncoded            :: BSS.ShortByteString
+    } 
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass TheBinary
+
+
+-- | Types for the signed object template 
+-- https://tools.ietf.org/html/rfc5652
+
+data SignedObject a = SignedObject {
+        soContentType :: ContentType, 
+        soContent     :: SignedData a
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -651,7 +662,12 @@ data BriefType = RoaBrief
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary        
 
-
+{- 
+This is a short version of an object that is used as an optimisation 
+for leafs of the RPKI trae, i.e. ROAs, ASPAs and such. Once validated
+they can only expire or be revoked. If none of that happened, we can 
+safely assume that it can be used for extracting it's payload.
+-} 
 data EEBrief = EEBrief {
         briefType      :: BriefType,
         notValidBefore :: Instant,

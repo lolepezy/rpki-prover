@@ -12,6 +12,7 @@ module RPKI.Http.Types where
 
 import           Control.Lens hiding ((.=))
 
+import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
@@ -32,6 +33,8 @@ import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Servant.API
 import           Data.Swagger hiding (url)
 import           Network.HTTP.Media ((//))
+
+import           Data.ASN1.OID
 
 import           RPKI.Config
 import           RPKI.AppTypes
@@ -85,14 +88,14 @@ data VrpMinimalDto = VrpMinimalDto {
     deriving stock (Eq, Show, Generic)
 
 data ProviderAsn = ProviderAsn {
-        asn      :: ASN, 
-        afiLimit :: Maybe AddrFamily
+        asn :: ASN, 
+        afi :: Maybe AddrFamily
     }
     deriving stock (Eq, Show, Generic)
 
 data AspaDto = AspaDto {
-        customerAsn  :: ASN,
-        providerAsns :: [ProviderAsn]        
+        customer  :: ASN,
+        providers :: [ProviderAsn]        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -104,8 +107,133 @@ data BgpCertDto = BgpCertDto {
     } 
     deriving stock (Eq, Show, Generic)
 
-newtype RObject = RObject (Located RpkiObject)
+newtype RObject = RObject (Located ObjectDto)
     deriving stock (Eq, Show, Generic)
+
+
+data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
+                | ManifestD (ObjectContentDto (CMSObjectDto ManifestDto))
+                | CRLD (ObjectContentDto CrlDto)
+                | BGPSecD (ObjectContentDto BgpCertDto)                
+                | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
+                | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
+                | GBRD (ObjectContentDto (CMSObjectDto GrbDto))
+                | RSCD (ObjectContentDto (CMSObjectDto RscDto))
+    deriving stock (Eq, Show, Generic)
+
+data ObjectContentDto payload = ObjectContentDto {
+        hash :: Hash,
+        ski  :: Maybe SKI,
+        aki  :: Maybe AKI,
+        eeCertificate :: Maybe CertificateDto,          
+        objectPayload :: payload
+    }
+    deriving stock (Eq, Show, Generic)
+
+
+data CMSObjectDto cmsPayload = CMSObjectDto {
+        cmsVersion         :: CMSVersion,
+        signedInfoVersion  :: CMSVersion,
+        contentType        :: ContentType,        
+        encapsulatedContentType :: ContentType,        
+        digestAlgorithms   :: DigestAlgorithmIdentifiers,
+        signatureAlgorithm :: SignatureAlgorithmIdentifier,
+        signerIdentifier   :: SignerIdentifier,        
+        signature          :: SignatureValue,
+        signedAttributes   :: SignedAttributes,
+        cmsPayload         :: cmsPayload
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ManifestDto = ManifestDto {
+        mftNumber   :: Serial, 
+        fileHashAlg :: Text, 
+        thisTime    :: Instant, 
+        nextTime    :: Instant, 
+        entries     :: [(Text, Hash)]
+    } 
+    deriving stock (Show, Eq, Generic)
+
+
+data CertificateDto = CertificateDto {
+        certVersion      :: Version,
+        certSerial       :: Serial,
+        certSignatureAlg :: Text,
+        certIssuerDN     :: Text,
+        certSubjectDN    :: Text,
+        notValidBefore   :: Instant,
+        notValidAfter    :: Instant,        
+        pubKey           :: Either Text PubKeyDto,
+        ipv4             :: IntervalSet Ipv4Prefix,        
+        ipv6             :: IntervalSet Ipv6Prefix,        
+        asn              :: IntervalSet AsResource,
+        extensions       :: ExtensionsDto
+    }
+    deriving stock (Eq, Show, Generic)
+
+data PubKeyDto = PubKeyDto {
+        pubKeySize :: Int,
+        pubKeyPQ   :: Integer,
+        pubKeyExp  :: Integer
+    }
+    deriving stock (Eq, Show, Generic)
+
+newtype OIDDto = OIDDto OID 
+    deriving stock (Eq, Show, Generic)
+
+data ExtensionDto = ExtensionDto {
+        oid      :: OIDDto,
+        bytes    :: BS.ByteString,
+        critical :: Bool,
+        value    :: Text
+    }
+    deriving stock (Eq, Show, Generic)
+
+newtype ExtensionsDto = ExtensionsDto [ExtensionDto]
+    deriving stock (Eq, Show, Generic)
+
+data CrlDto = CrlDto {
+        thisUpdateTime     :: Instant,
+        nextUpdateTime     :: Maybe Instant,
+        signatureAlgorithm :: SignatureAlgorithmIdentifier,
+        signatureValue     :: SignatureValue,
+        crlNumber          :: Serial,
+        revokedSerials     :: [Serial]        
+    }
+    deriving stock (Eq, Show, Generic)
+
+
+data RoaDto = RoaDto {
+        asn      :: ASN,
+        prefixes :: [RoaPrefixDto]
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data RoaPrefixDto = RoaPrefixDto {
+        prefix    :: IpPrefix,
+        maxLength :: PrefixLength        
+    }
+    deriving stock (Eq, Show, Generic)
+
+
+data GrbDto = GrbDto {
+        vcard :: Map.Map Text Text
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data RscDto = RscDto {
+        rscResources    :: PrefixesAndAsns,        
+        checkList       :: [CheckListDto],
+        digestAlgorithm :: DigestAlgorithmIdentifier
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data CheckListDto = CheckListDto {
+        fileName :: Maybe Text,
+        hash     :: Hash
+    }  
+    deriving stock (Eq, Show, Generic)
+
 
 data MetricsDto = MetricsDto {
         groupedValidations :: GroupedValidationMetric ValidationMetric,      
@@ -160,11 +288,43 @@ instance ToSchema RawCSV where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON RObject
+instance ToJSON ObjectDto where
+    toJSON = \case
+        CertificateD v -> object ["type" .= ("certificate" :: Text), "value" .= toJSON v]
+        ManifestD v    -> object ["type" .= ("manifest" :: Text), "value" .= toJSON v]
+        CRLD v         -> object ["type" .= ("CRL" :: Text), "value" .= toJSON v]
+        BGPSecD v      -> object ["type" .= ("BGPSec" :: Text), "value" .= toJSON v]
+        ROAD v  -> object ["type" .= ("ROA" :: Text), "value" .= toJSON v]
+        ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
+        GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
+        RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
+
+
+instance ToJSON a => ToJSON (ObjectContentDto a) where
+    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+
+instance ToJSON a => ToJSON (CMSObjectDto a)
+instance ToJSON CertificateDto
+instance ToJSON PubKeyDto
+instance ToJSON ExtensionDto where
+    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+instance ToJSON ExtensionsDto
+instance ToJSON OIDDto where
+    toJSON (OIDDto oid) = toJSON $ oid2text oid
+
+instance ToJSON ManifestDto
+instance ToJSON CrlDto
+instance ToJSON RoaDto
+instance ToJSON RoaPrefixDto
+instance ToJSON GrbDto
+instance ToJSON RscDto
+instance ToJSON CheckListDto
 instance ToJSON VrpDto     
 instance ToJSON VrpMinimalDto     
 instance ToJSON AspaDto
 instance ToJSON BgpCertDto
 instance ToJSON RtrDto
+
 instance ToSchema RObject
 instance ToSchema VrpDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -172,6 +332,22 @@ instance ToSchema VrpDto where
 instance ToSchema VrpMinimalDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
+instance ToSchema ObjectDto
+instance ToSchema a => ToSchema (ObjectContentDto a)
+instance ToSchema a => ToSchema (CMSObjectDto a)
+instance ToSchema CertificateDto
+instance ToSchema PubKeyDto
+instance ToSchema ExtensionDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ExtensionsDto
+instance ToSchema OIDDto
+instance ToSchema ManifestDto
+instance ToSchema CrlDto
+instance ToSchema RoaDto
+instance ToSchema RoaPrefixDto
+instance ToSchema GrbDto
+instance ToSchema RscDto
+instance ToSchema CheckListDto
 instance ToSchema AspaDto
 instance ToSchema BgpCertDto
 instance ToSchema RtrDto

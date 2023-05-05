@@ -65,7 +65,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 3
+currentDatabaseVersion = 5
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -229,7 +229,7 @@ getObjectByKey tx RpkiObjectStore {..} k = liftIO $
 
 getLocatedByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
-getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do     
+getLocatedByKey tx store k = liftIO $ runMaybeT $ do     
     object    <- MaybeT $ getObjectByKey tx store k    
     locations <- MaybeT $ getLocationsByKey tx store k                    
     pure $ Located locations object
@@ -237,7 +237,7 @@ getLocatedByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do
 
 getLocationsByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe Locations)
-getLocationsByKey tx store@RpkiObjectStore {..} k = liftIO $ runMaybeT $ do         
+getLocationsByKey tx RpkiObjectStore {..} k = liftIO $ runMaybeT $ do         
     uriKeys   <- MaybeT $ M.get tx objectKeyToUrlKeys k
     locations <- MaybeT 
                     $ (toNESet . catMaybes <$>)

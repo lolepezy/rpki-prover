@@ -59,7 +59,7 @@ parseCrl bs = do
                         Left e  -> throwParseError $ "Invalid CRL format: " <> e
                         Right c -> pure (asns, c)
 
-            let (thisUpdate, nextUpdate, extensions, revokedSerials) = z
+            let (thisUpdate, nextUpdate, extensions, revoked) = z
 
             signatureId :: SignatureALG <- getObject
             signatureVal <- parseSignature
@@ -72,7 +72,7 @@ parseCrl bs = do
                         (SignatureAlgorithmIdentifier signatureId) 
                         signatureVal (toShortBS encoded) 
                         crlNumber' 
-                        revokedSerials
+                        revoked
             pure (extensions, mkSignCRL)            
         
         getCrlContent = do        
@@ -83,11 +83,11 @@ parseCrl bs = do
             _ :: DistinguishedName <- getObject
             thisUpdate      <- getNext >>= getThisUpdate
             nextUpdate      <- getNextUpdate
-            revokedSerials  <- getRevokedSerials
+            revoked         <- getRevokedSerials
             _ :: Extensions <- getObject        
             extensions      <- onNextContainer (Container Context 0) $ 
                                     onNextContainer Sequence $ getMany getObject             
-            pure (thisUpdate, nextUpdate, extensions, revokedSerials)
+            pure (thisUpdate, nextUpdate, extensions, revoked)
             where 
                 getVersion (IntVal v) = pure $! fromIntegral v
                 getVersion _          = throwParseError "Unexpected type for version"
@@ -106,8 +106,8 @@ parseCrl bs = do
                     where
                         getCrlSerial = onNextContainer Sequence $ 
                             replicateM 2 getNext >>= \case 
-                                [IntVal serial, _] -> 
-                                    case makeSerial serial of 
+                                [IntVal serial', _] -> 
+                                    case makeSerial serial' of 
                                         Left e  -> throwParseError e
                                         Right s -> pure s
                                 s                  -> throwParseError $ "That's not a serial: " <> show s
