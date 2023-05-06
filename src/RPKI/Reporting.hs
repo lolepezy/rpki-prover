@@ -151,7 +151,9 @@ data RrdpError = BrokenXml Text |
                 CantDownloadFile Text |
                 CantDownloadNotification Text |
                 CantDownloadSnapshot Text |
+                FailedToParseSnapshotItem Text |
                 CantDownloadDelta Text |
+                FailedToParseDeltaItem Text |
                 SnapshotHashMismatch { actualHash :: Hash, expectedHash :: Hash } |
                 SnapshotSessionMismatch { actualSessionId :: SessionId, expectedSessionId :: SessionId } |
                 SnapshotSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
