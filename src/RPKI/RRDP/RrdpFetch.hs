@@ -9,7 +9,6 @@ module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
-import           Control.Exception
 import           Control.Lens
 import           Control.Monad.Except
 import           Data.Generics.Product.Typed
@@ -357,14 +356,14 @@ saveSnapshot
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-    let savingTx serial' f = 
+    let savingTx f = 
             rwAppTx objectStore $ \tx ->
-                f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
+                f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
     txFoldPipeline 
             cpuParallelism
             (S.mapM (newStorable objectStore) $ S.each snapshotItems)
-            (savingTx serial)
+            savingTx
             (saveStorable objectStore)            
   where        
 
