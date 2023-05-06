@@ -43,12 +43,9 @@ import           RPKI.Http.UI
 import           RPKI.Store.Base.Storage hiding (get)
 import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
-import           RPKI.Resources.Types
-import           RPKI.RTR.Types
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
-import           Data.Ord
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
 httpApi :: (Storage s, MaintainableStorage s) => AppContext s -> Application
