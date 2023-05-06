@@ -6,7 +6,6 @@
 module RPKI.Store.MakeLmdb where
 
 import Control.Lens
-import Control.Monad
 import Control.Concurrent.STM
 
 import           Data.String.Interpolate.IsString
@@ -28,8 +27,9 @@ import           RPKI.Store.Sequence
 
 
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
+data DbCheckResult = WasIncompatible | WasCompatible
 
-createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage)
+createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
 createDatabase e logger checkAction = do 
     sequences <- SMap lmdb <$> createLmdbStore e
     taStore          <- createTAStore
@@ -47,9 +47,12 @@ createDatabase e logger checkAction = do
     
     let db = DB {..}
     case checkAction of     
-        CheckVersion     -> verifyDBVersion db
-        DontCheckVersion -> pure ()
-    pure db 
+        CheckVersion -> do 
+            compatible <- verifyDBVersion db
+            pure (db, compatible)
+        DontCheckVersion -> 
+            pure (db, WasCompatible)
+    
   where
     lmdb = LmdbStorage e        
 
@@ -62,8 +65,9 @@ createDatabase e logger checkAction = do
                     (_, ms) <- timedMS $ emptyDBMaps tx db
                     logDebug logger  [i|Erasing cache took #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db
+                    pure WasIncompatible
                 Just version -> 
-                    when (version /= currentDatabaseVersion) $ do
+                    if (version /= currentDatabaseVersion) then do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
                         --
@@ -71,8 +75,11 @@ createDatabase e logger checkAction = do
                         -- sense to automate that part.
                         logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, dropping the cache.|]    
                         (_, ms) <- timedMS $ emptyDBMaps tx db
-                        logDebug logger [i|Erasing cache took #{ms}ms.|]
+                        logDebug logger [i|Erasing cache took #{ms}ms.|]                        
                         saveCurrentDatabaseVersion tx db
+                        pure WasIncompatible
+                    else
+                        pure WasCompatible
 
     createObjectStore seqMap = do 
         let keys = Sequence "object-key" seqMap

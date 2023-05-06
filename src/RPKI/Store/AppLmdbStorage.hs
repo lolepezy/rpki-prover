@@ -40,9 +40,6 @@ import           Lmdb.Connection
 
 data LmdbFlow = UseExisting | Reset
 
-maxReadersDefault :: Int
-maxReadersDefault = 500
-
 
 -- | Verify that the cache directory is consistent and use it as LMDB cache.
 -- 
@@ -195,7 +192,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             renamePath (cacheDir </> "current.new") currentCache
 
             newLmdb <- mkLmdb newLmdbDirName config
-            newDB <- createDatabase newLmdb logger DontCheckVersion
+            (newDB, _) <- createDatabase newLmdb logger DontCheckVersion
             atomically $ do
                 newNative <- getNativeEnv newLmdb
                 writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  

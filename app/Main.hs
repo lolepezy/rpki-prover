@@ -266,10 +266,18 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     cached
                     config
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
+    (db, compatible) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
 
     let appContext = AppContext {..}
+
+    -- If the DB version wasn't compatible with the expected version, all the data was erased 
+    -- and makes a lot of sense to perform compaction. Not performing it may potentially bloat 
+    -- the database until the next compaction that will happen probably in weeks.
+    case compatible of 
+        Lmdb.WasIncompatible -> liftIO $ runMaintenance appContext
+        Lmdb.WasCompatible   -> pure ()
+
     logInfo logger [i|Created application context with configuration: 
 #{shower (appContext ^. typed @Config)}|]
     pure appContext
@@ -433,7 +441,7 @@ createWorkerAppContext config logger = do
                     (config ^. #cacheDirectory)
                     config
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
     appState <- createAppState logger (config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
@@ -497,7 +505,7 @@ createVerifierContext cliOptions logger = do
     let config = defaultConfig
     lmdbEnv <- setupWorkerLmdbCache logger cached config
 
-    db <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
