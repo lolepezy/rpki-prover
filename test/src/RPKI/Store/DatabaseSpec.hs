@@ -97,8 +97,7 @@ txGroup :: TestTree
 txGroup = testGroup "App transaction test"
     [
         ioTestCase "Should rollback App transactions properly" shouldRollbackAppTx,        
-        ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx,
-        ioTestCase "Should attribute error to the right scope" shouldAttributeErrorsToTheRightScope
+        ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx
     ]
 
 
@@ -411,39 +410,6 @@ shouldPreserveStateInAppTx io = do
     HU.assertEqual "Nested validations should have 1 warning" 
         (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
-
-
-shouldAttributeErrorsToTheRightScope :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-shouldAttributeErrorsToTheRightScope io = do  
-    ((_, env), DB {..}) <- io
-
-    let storage' = LmdbStorage env
-    z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env    
-
-    (r, ValidationState { validations = Validations validationMap, .. }) 
-        <- runValidatorT (newScopes "root") $ do
-            timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
-                appWarn $ UnspecifiedE "Error0" "text 0"
-                inSubObjectVScope "snapshot.xml" $ do            
-                    timedMetric (Proxy :: Proxy RsyncMetric) $ do
-                        appWarn $ UnspecifiedE "ErrorX" "Before tx"
-                        rwAppTx storage' $ \tx -> do                                                 
-                            appWarn $ UnspecifiedE "Error1" "in tx"
-                            inSubObjectVScope "broken.roa" $ do                                        
-                                appError $ UnspecifiedE "Crash" "Crash it"
-                                -- just to have a transaction
-                                liftIO $ M.get tx z 0
-                                    
-
-    putStrLn $ "validationMap = " <> show validationMap
-
-    HU.assertEqual "Root validations should have 1 error"     
-        (Map.lookup (subScope "broken.roa" (subScope "snapshot.xml" (newScope "root"))) validationMap)
-        (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
-
-    HU.assertEqual "Nested validations should have 1 warning" 
-        (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
-        (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)        
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric

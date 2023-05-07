@@ -8,6 +8,7 @@ import           Control.Monad           (when, forM, unless)
 import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
 import qualified Data.Text               as Text
+import           Data.Proxy
 
 import           Test.QuickCheck.Monadic
 import           Test.Tasty
@@ -52,31 +53,31 @@ forMShouldSavesState = do
          VWarn (VWarning (UnspecifiedE "y" "y-bla")),
          VWarn (VWarning (UnspecifiedE "z" "z-bla"))])
 
--- scopesShouldBeProperlyNested :: HU.Assertion
--- scopesShouldBeProperlyNested = do
---     (r, ValidationState { validations = Validations validationMap, .. }) 
---         <- runValidatorT (newScopes "root") $ do
---             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
---                 appWarn $ UnspecifiedE "Error0" "text 0"
---                 inSubObjectVScope "snapshot.xml" $ do            
---                     -- timedMetric (Proxy :: Proxy RsyncMetric) $ do
---                         -- rwAppTx storage' $ \tx -> do                                                 
---                         appWarn $ UnspecifiedE "Error1" "text 1"
---                         inSubObjectVScope "broken.roa" $ do                                        
---                             appError $ UnspecifiedE "Crash" "Crash it"
---                                 -- just to have a transaction
---                                 -- liftIO $ M.get tx z 0
-                                    
+scopesShouldBeProperlyNested :: HU.Assertion
+scopesShouldBeProperlyNested = do
+    (r, ValidationState { validations = Validations validationMap, .. }) 
+        <- runValidatorT (newScopes "root") $ do
+            timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
+                appWarn $ UnspecifiedE "Error0" "text 0"
+                inSubObjectVScope "snapshot.xml" $ do            
+                    timedMetric (Proxy :: Proxy RsyncMetric) $ do                        
+                        appWarn $ UnspecifiedE "Error1" "text 1"
+                        inSubObjectVScope "broken.roa" $ do                                        
+                            appError $ UnspecifiedE "Crash" "Crash it"                                                                    
 
---     putStrLn $ "validationMap = " <> show validationMap
+    HU.assertEqual "Deepest scope should have 1 error"     
+        (Map.lookup (subScope' ObjectFocus "broken.roa" 
+                        $ subScope' ObjectFocus "snapshot.xml" 
+                        $ newScope "root") validationMap)
+        (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
 
---     HU.assertEqual "Root validations should have 1 error"     
---         (Map.lookup (subScope "broken.roa" (subScope "snapshot.xml" (newScope "root"))) validationMap)
---         (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
+    HU.assertEqual "Nested scope should have 1 warning"         
+        (Map.lookup (subScope' ObjectFocus "snapshot.xml" $ newScope "root") validationMap)
+        (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error1" "text 1"))])
 
---     HU.assertEqual "Nested validations should have 1 warning" 
---         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
---         (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)            
+    HU.assertEqual "Nested validations should have 1 warning"         
+        (Map.lookup (newScope "root") validationMap)
+        (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error0" "text 0"))])
 
 
 
@@ -85,11 +86,8 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty "ValidationState is a semigroup" (isSemigroup @ValidationState),
         QC.testProperty "RrdpSource is a semigroup" (isSemigroup @RrdpSource),
 
-        QC.testProperty
-            "runValidatorT . validatorT == id"
-            runValidatorTAndvalidatorTShouldBeId,
+        QC.testProperty "runValidatorT . validatorT == id" runValidatorTAndvalidatorTShouldBeId,
             
-        HU.testCase
-            "forM saves state"
-            forMShouldSavesState
+        HU.testCase "forM saves state" forMShouldSavesState,
+        HU.testCase "forM saves state" scopesShouldBeProperlyNested
     ]
