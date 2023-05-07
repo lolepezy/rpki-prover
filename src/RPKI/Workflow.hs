@@ -172,11 +172,11 @@ runWorkflow appContext@AppContext {..} tals = do
                     
                     -- Cleanup reader table of LMDB cache, it may get littered by 
                     -- dead processes, unfinished/killed transaction, etc.
-                    -- All these transactions are essentially bugs, but it's 
+                    -- All these stale transactions are essentially bugs, but it's 
                     -- easier to just clean them up rather then prevent all 
-                    -- possible leakages.
+                    -- possible leakages (even if it is possible).
                     cleaned <- cleanUpStaleTx appContext
-                    logDebug logger [i|Cleaned #{cleaned} staled readers from LMDB cache.|]
+                    logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
 
                 processTALs db = do
                     (z, workerVS) <- runProcessTALsWorker worldVersion                    
