@@ -39,15 +39,18 @@ type PureValidatorT r =
 vHoist :: Monad m => PureValidatorT r -> ValidatorT m r
 vHoist = hoist $ hoist $ hoist generalize
 
+fromValue :: Either AppError r -> PureValidatorT r
+fromValue r = lift $ ExceptT $ pure r
+
 fromEither :: Either AppError r -> PureValidatorT r
 fromEither z =
     case z of 
         Left e -> do 
             validationScope <- asks (^. typed)
             modify' $ typed %~ (mError validationScope e <>)
-            lift $ ExceptT $ pure z
+            fromValue z
         Right _ -> 
-            lift $ ExceptT $ pure z
+            fromValue z
 
 fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT m r
 fromEitherM s = embedValidatorT $ (, mempty) <$> s
@@ -215,7 +218,7 @@ timedMetric' _ f v = do
     ((r, vs), elapsed) <- appLift $ timedMS $ runValidatorT vp v          
     embedState vs
     updateMetric (f elapsed)
-    either appError pure r 
+    vHoist $ fromValue r
 
 
 getMetric :: forall metric m . 

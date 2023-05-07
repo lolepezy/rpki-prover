@@ -109,10 +109,9 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                             (RsyncFetchParams vp rsyncRepo worldVersion)                        
                             (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
                             arguments                        
-    let RsyncFetchResult (z, vs) = payload    
+    let RsyncFetchResult z = payload    
     pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
-    embedState vs
-    either appError pure z    
+    embedValidatorT $ pure z
     
 
 -- | Download one file using rsync

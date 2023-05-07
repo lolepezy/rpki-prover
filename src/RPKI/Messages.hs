@@ -117,6 +117,8 @@ toRrdpMessage = \case
 
     CantDownloadSnapshot e -> [i|Cannot download snapshot #{e}.|]  
     CantDownloadDelta e    -> [i|Cannot download delta #{e}.|]  
+    FailedToParseSnapshotItem e -> [i|Cannot process a snapshot item #{e}.|]  
+    FailedToParseDeltaItem e    -> [i|Cannot process a delta item #{e}.|]  
 
     SnapshotHashMismatch {..} -> 
         [i|Snapshot hash is #{actualHash} but required hash is #{expectedHash}.|]  
