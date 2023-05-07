@@ -444,7 +444,7 @@ saveDelta :: Storage s =>
             -> RrdpSerial             
             -> BS.ByteString 
             -> ValidatorT IO ()
-saveDelta appContext worldVersion repoUri notification currentSerial deltaContent = do                
+saveDelta appContext worldVersion repoUri notification expectedSerial deltaContent = do                
     db <- liftIO $ readTVarIO $ appContext ^. #database
     let objectStore     = db ^. #objectStore
     let repositoryStore = db ^. #repositoryStore   
@@ -460,12 +460,12 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     when (serial > notificationSerial) $ 
         appError $ RrdpE $ DeltaSerialTooHigh serial notificationSerial
 
-    when (currentSerial /= serial) $
+    when (expectedSerial /= serial) $
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
-    let savingTx serial' f = 
+    let savingTx f = 
             rwAppTx objectStore $ \tx -> 
-                f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial') repoUri 
+                f tx >> DB.updateRrdpMeta tx repositoryStore (sessionId, serial) repoUri 
 
     -- Propagate exceptions from here, anything that can happen here 
     -- (storage failure, file read failure) should stop the validation and 
@@ -473,7 +473,7 @@ saveDelta appContext worldVersion repoUri notification currentSerial deltaConten
     txFoldPipeline 
             cpuParallelism
             (S.mapM newStorable $ S.each deltaItems)
-            (savingTx serial)
+            savingTx
             (saveStorable objectStore)
   where        
 
