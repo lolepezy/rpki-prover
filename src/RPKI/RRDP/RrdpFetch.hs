@@ -539,13 +539,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             Success rpkiUrl so@StorableObject {..} -> do 
                 let hash' = getHash object
                 alreadyThere <- DB.hashExists tx objectStore hash'
-                if alreadyThere 
-                    then 
-                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                    else do                                    
-                        DB.putObject tx objectStore so worldVersion                      
-                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                        addedObject
+                unless alreadyThere $ do
+                    DB.putObject tx objectStore so worldVersion
+                    addedObject
+                DB.linkObjectToUrl tx objectStore rpkiUrl hash'                        
             other -> 
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
 
@@ -574,13 +571,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
                 let hash' = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx objectStore hash'
-                if newOneIsAlreadyThere
-                    then 
-                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                    else do                            
-                        DB.putObject tx objectStore so worldVersion
-                        DB.linkObjectToUrl tx objectStore rpkiUrl hash'
-                        addedObject
+                unless newOneIsAlreadyThere $ do 
+                    DB.putObject tx objectStore so worldVersion                        
+                    addedObject
+                DB.linkObjectToUrl tx objectStore rpkiUrl hash'                
 
             other -> 
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
