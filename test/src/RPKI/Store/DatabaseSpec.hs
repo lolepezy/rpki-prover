@@ -425,13 +425,14 @@ shouldAttributeErrorsToTheRightScope io = do
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
                 inSubObjectVScope "snapshot.xml" $ do            
-                    -- timedMetric (Proxy :: Proxy RsyncMetric) $ do
-                        -- rwAppTx storage' $ \tx -> do                                                 
-                        appWarn $ UnspecifiedE "Error1" "text 1"
-                        inSubObjectVScope "broken.roa" $ do                                        
-                            appError $ UnspecifiedE "Crash" "Crash it"
+                    timedMetric (Proxy :: Proxy RsyncMetric) $ do
+                        appWarn $ UnspecifiedE "ErrorX" "Before tx"
+                        rwAppTx storage' $ \tx -> do                                                 
+                            appWarn $ UnspecifiedE "Error1" "in tx"
+                            inSubObjectVScope "broken.roa" $ do                                        
+                                appError $ UnspecifiedE "Crash" "Crash it"
                                 -- just to have a transaction
-                                -- liftIO $ M.get tx z 0
+                                liftIO $ M.get tx z 0
                                     
 
     putStrLn $ "validationMap = " <> show validationMap

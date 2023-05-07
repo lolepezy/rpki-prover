@@ -52,6 +52,33 @@ forMShouldSavesState = do
          VWarn (VWarning (UnspecifiedE "y" "y-bla")),
          VWarn (VWarning (UnspecifiedE "z" "z-bla"))])
 
+-- scopesShouldBeProperlyNested :: HU.Assertion
+-- scopesShouldBeProperlyNested = do
+--     (r, ValidationState { validations = Validations validationMap, .. }) 
+--         <- runValidatorT (newScopes "root") $ do
+--             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
+--                 appWarn $ UnspecifiedE "Error0" "text 0"
+--                 inSubObjectVScope "snapshot.xml" $ do            
+--                     -- timedMetric (Proxy :: Proxy RsyncMetric) $ do
+--                         -- rwAppTx storage' $ \tx -> do                                                 
+--                         appWarn $ UnspecifiedE "Error1" "text 1"
+--                         inSubObjectVScope "broken.roa" $ do                                        
+--                             appError $ UnspecifiedE "Crash" "Crash it"
+--                                 -- just to have a transaction
+--                                 -- liftIO $ M.get tx z 0
+                                    
+
+--     putStrLn $ "validationMap = " <> show validationMap
+
+--     HU.assertEqual "Root validations should have 1 error"     
+--         (Map.lookup (subScope "broken.roa" (subScope "snapshot.xml" (newScope "root"))) validationMap)
+--         (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
+
+--     HU.assertEqual "Nested validations should have 1 warning" 
+--         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
+--         (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)            
+
+
 
 appMonadSpec :: TestTree
 appMonadSpec = testGroup "AppMonad" [

@@ -66,20 +66,19 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                 rtsAL "64m", 
                 rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ]
 
-    vp <- askScopes
+    scopes <- askScopes
 
     WorkerResult {..} <- runWorker
                             logger
                             config
                             workerId 
-                            (RrdpFetchParams vp repository worldVersion)                        
+                            (RrdpFetchParams scopes repository worldVersion)                        
                             (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
                             arguments  
     
-    let RrdpFetchResult (z, vs) = payload
+    let RrdpFetchResult z = payload
     pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
-    embedState vs    
-    either appError pure z    
+    embedValidatorT $ pure z
 
 
 -- | 
