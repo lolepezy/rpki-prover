@@ -163,21 +163,6 @@ runWorkflow appContext@AppContext {..} tals = do
                         [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where
-                cleanupAfterValidation = do
-                    -- Cleanupi tmp directory, if some fetchers died abruptly 
-                    -- there may be leftover files.
-                    let tmpDir = config ^. #tmpDirectory
-                    logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
-                    listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
-                    
-                    -- Cleanup reader table of LMDB cache, it may get littered by 
-                    -- dead processes, unfinished/killed transaction, etc.
-                    -- All these stale transactions are essentially bugs, but it's 
-                    -- easier to just clean them up rather then prevent all 
-                    -- possible leakages (even if it is possible).
-                    cleaned <- cleanUpStaleTx appContext
-                    logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
-
                 processTALs db = do
                     (z, workerVS) <- runProcessTALsWorker worldVersion                    
                     case z of 
@@ -201,7 +186,6 @@ runWorkflow appContext@AppContext {..} tals = do
                             
                             reReadAndUpdatePayloads maybeSlurm
                   where
-
                     reReadAndUpdatePayloads maybeSlurm = do 
                         roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
                             Nothing -> do 
@@ -210,6 +194,21 @@ runWorkflow appContext@AppContext {..} tals = do
                             Just rtrPayloads -> do                 
                                 slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
                                 pure (rtrPayloads, slurmedPayloads)                        
+
+                cleanupAfterValidation = do
+                    -- Cleanup tmp directory, if some fetchers died abruptly 
+                    -- there may be leftover files.
+                    let tmpDir = config ^. #tmpDirectory
+                    logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
+                    listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
+                    
+                    -- Cleanup reader table of LMDB cache, it may get littered by 
+                    -- dead processes, unfinished/killed transaction, etc.
+                    -- All these stale transactions are essentially bugs, but it's 
+                    -- easier to just clean them up rather then prevent all 
+                    -- possible leakages (even if it is possible).
+                    cleaned <- cleanUpStaleTx appContext
+                    logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]                                
 
         -- Delete objects in the store that were read by top-down validation 
         -- longer than `cacheLifeTime` hours ago.
