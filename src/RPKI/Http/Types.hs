@@ -117,7 +117,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | BGPSecD (ObjectContentDto BgpCertDto)                
                 | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
-                | GBRD (ObjectContentDto (CMSObjectDto GrbDto))
+                | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
     deriving stock (Eq, Show, Generic)
 
@@ -216,7 +216,7 @@ data RoaPrefixDto = RoaPrefixDto {
     deriving stock (Eq, Show, Generic)
 
 
-data GrbDto = GrbDto {
+data GbrDto = GbrDto {
         vcard :: Map.Map Text Text
     }  
     deriving stock (Eq, Show, Generic)
@@ -316,7 +316,7 @@ instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
 instance ToJSON RoaPrefixDto
-instance ToJSON GrbDto
+instance ToJSON GbrDto
 instance ToJSON RscDto
 instance ToJSON CheckListDto
 instance ToJSON VrpDto     
@@ -345,7 +345,7 @@ instance ToSchema ManifestDto
 instance ToSchema CrlDto
 instance ToSchema RoaDto
 instance ToSchema RoaPrefixDto
-instance ToSchema GrbDto
+instance ToSchema GbrDto
 instance ToSchema RscDto
 instance ToSchema CheckListDto
 instance ToSchema AspaDto

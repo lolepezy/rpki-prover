@@ -65,7 +65,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 6
+currentDatabaseVersion = 7
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -75,6 +75,7 @@ data DB s = DB {
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
+    gbrStore         :: GbrStore s,
     bgpStore         :: BgpStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
@@ -157,6 +158,12 @@ newtype VRPStore s = VRPStore {
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
         aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
+    } 
+    deriving stock (Generic)
+
+-- | GBR store
+newtype GbrStore s = GbrStore {    
+        aspas :: SMap "gbrs" s WorldVersion (Compressed (Set.Set Gbr))
     } 
     deriving stock (Generic)
 
@@ -449,6 +456,11 @@ getAspas :: (MonadIO m, Storage s) =>
 getAspas tx DB { aspaStore = AspaStore m } wv = 
     liftIO $ fmap unCompressed <$> M.get tx m wv    
 
+getGbrs :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Gbr))
+getGbrs tx DB { gbrStore = GbrStore m } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx m wv    
+
 deleteAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
@@ -457,6 +469,11 @@ putAspas :: (MonadIO m, Storage s) =>
             Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
 putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed aspas)
+
+putGbrs :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set Gbr -> WorldVersion -> m ()
+putGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
+    liftIO $ M.put tx m worldVersion (Compressed gbrs)
 
 putVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
@@ -736,19 +753,24 @@ getLatestVRPs db =
             MaybeT $ getVrps tx db version
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
-getLatestAspas db = 
-    roTx db $ \tx -> 
-        getLastCompletedVersion db tx >>= \case         
-            Nothing      -> pure mempty
-            Just version -> fromMaybe mempty <$> getAspas tx db version        
+getLatestAspas db = getLatestX db getAspas
+
+getLatestGbrs :: Storage s => DB s -> IO (Set.Set Gbr)
+getLatestGbrs db = getLatestX db getGbrs    
 
 getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
-getLatestBgps db = 
+getLatestBgps db = getLatestX db getBgps    
+    
+getLatestX :: (Storage s, Monoid a) =>
+               DB s 
+            -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe a)) 
+            -> IO a
+getLatestX db f = 
     roTx db $ \tx -> 
         getLastCompletedVersion db tx >>= \case         
             Nothing      -> pure mempty
-            Just version -> fromMaybe mempty <$> getBgps tx db version    
-    
+            Just version -> fromMaybe mempty <$> f tx db version    
+
 
 getRtrPayloads :: (MonadIO m, Storage s) => 
                    Tx s 'RO

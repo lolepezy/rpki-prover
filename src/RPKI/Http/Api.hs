@@ -50,6 +50,7 @@ data API api = API {
                                                 :> Get '[JSON] [VrpMinimalDto],
 
         aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
+        gbrs     :: api :- "gbrs" :> Get '[JSON] [GbrDto],
 
         bgpCerts :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
         bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
@@ -79,8 +80,8 @@ data API api = API {
     deriving (Generic)
 
 data HttpApi route = HttpApi {
-        api     :: route :- "api" :> ToServant API AsApi,
-        metrics :: route :- "metrics" :> Get '[PlainText] Text,
+        api           :: route :- "api" :> ToServant API AsApi,
+        metrics       :: route :- "metrics" :> Get '[PlainText] Text,
         staticContent :: route :- "static" :> Raw,
         ui            :: route :- Get '[HTML] Html,
         swagger       :: route :- SwaggerSchemaUI "swagger-ui" "swagger.json"
@@ -115,6 +116,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/vrps-unique", mempty & get ?~ jsonOn200 
                 "List of of unique VRPs with SLURM filtering applied to it"),
 
+            ("/gbr", mempty & get ?~ jsonOn200 "List of all valid GBR objects found in repositories"),
             ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
             ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
             ("/bgpsec-filtered", mempty & get ?~ jsonOn200 
