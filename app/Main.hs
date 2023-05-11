@@ -276,7 +276,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- the database until the next compaction that will happen probably in weeks.
     case compatible of 
         Lmdb.WasIncompatible -> liftIO $ runMaintenance appContext
-        Lmdb.WasCompatible   -> pure ()
+        _                    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
 #{shower (appContext ^. typed @Config)}|]

@@ -27,7 +27,7 @@ import           RPKI.Store.Sequence
 
 
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
-data DbCheckResult = WasIncompatible | WasCompatible
+data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
 createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
 createDatabase e logger checkAction = do 
@@ -66,9 +66,9 @@ createDatabase e logger checkAction = do
                     (_, ms) <- timedMS $ emptyDBMaps tx db
                     logDebug logger  [i|Erasing cache took #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db
-                    pure WasIncompatible
+                    pure DidntHaveVersion
                 Just version -> 
-                    if (version /= currentDatabaseVersion) then do
+                    if version /= currentDatabaseVersion then do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
                         --
