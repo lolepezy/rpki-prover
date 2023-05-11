@@ -163,7 +163,7 @@ newtype AspaStore s = AspaStore {
 
 -- | GBR store
 newtype GbrStore s = GbrStore {    
-        aspas :: SMap "gbrs" s WorldVersion (Compressed (Set.Set Gbr))
+        aspas :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (Hash, Gbr)))
     } 
     deriving stock (Generic)
 
@@ -457,7 +457,7 @@ getAspas tx DB { aspaStore = AspaStore m } wv =
     liftIO $ fmap unCompressed <$> M.get tx m wv    
 
 getGbrs :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Gbr))
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (Hash, Gbr)))
 getGbrs tx DB { gbrStore = GbrStore m } wv = 
     liftIO $ fmap unCompressed <$> M.get tx m wv    
 
@@ -471,7 +471,7 @@ putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion =
     liftIO $ M.put tx m worldVersion (Compressed aspas)
 
 putGbrs :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set Gbr -> WorldVersion -> m ()
+            Tx s 'RW -> DB s -> Set.Set (Hash, Gbr) -> WorldVersion -> m ()
 putGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed gbrs)
 
@@ -753,20 +753,23 @@ getLatestVRPs db =
             MaybeT $ getVrps tx db version
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
-getLatestAspas db = getLatestX db getAspas
+getLatestAspas db = roTx db $ \tx -> getLatestX tx db getAspas
 
-getLatestGbrs :: Storage s => DB s -> IO (Set.Set Gbr)
-getLatestGbrs db = getLatestX db getGbrs    
+getLatestGbrs :: Storage s => DB s -> IO [Located RpkiObject]
+getLatestGbrs db = 
+    roTx db $ \tx -> do 
+        gbrs <- Set.toList <$> getLatestX tx db getGbrs 
+        fmap catMaybes $ forM gbrs $ \(hash, _) -> getByHash tx db hash                       
+        
 
 getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
-getLatestBgps db = getLatestX db getBgps    
+getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    
     
-getLatestX :: (Storage s, Monoid a) =>
-               DB s 
-            -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe a)) 
-            -> IO a
-getLatestX db f = 
-    roTx db $ \tx -> 
+-- getLatestX :: (Storage s, Monoid a) =>
+--                DB s 
+--             -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe a)) 
+--             -> IO a
+getLatestX tx db f =      
         getLastCompletedVersion db tx >>= \case         
             Nothing      -> pure mempty
             Just version -> fromMaybe mempty <$> f tx db version    

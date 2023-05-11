@@ -169,7 +169,7 @@ getBGPCerts AppContext {..} =
 getBGPCertsFiltered :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCertsFiltered AppContext {..} = do
     db <- readTVarIO database
-    fmap (fromMaybe mempty) $ roTx db $ \tx -> do 
+    fmap (fromMaybe mempty) $ roTx db $ \tx ->
         getLastCompletedVersion db tx >>= \case      
             Nothing      -> pure mempty   
             Just version -> runMaybeT $ do 
@@ -177,10 +177,11 @@ getBGPCertsFiltered AppContext {..} = do
                 slurm <- MaybeT $ slurmForVersion tx db version                        
                 pure $ map bgpSecToDto $ Set.toList $ applySlurmBgpSec slurm bgps    
   
-getGBRs :: Storage s => AppContext s -> IO [GbrDto]
+getGBRs :: Storage s => AppContext s -> IO [Located GbrDto]
 getGBRs AppContext {..} = do
     gbrs <- getLatestGbrs =<< readTVarIO database
-    pure $ map gbrToDto $ Set.toList gbrs
+    pure [ Located { payload = gbrObjectToDto g, .. }
+            | Located { payload = GbrRO g, .. } <- gbrs ]    
 
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))

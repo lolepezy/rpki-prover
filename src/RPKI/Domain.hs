@@ -688,7 +688,7 @@ instance {-# OVERLAPPING #-} WithSerial EEBrief where
 data Payloads a = Payloads {
         vrps     :: a,
         aspas    :: Set.Set Aspa,
-        gbrs     :: Set.Set Gbr,
+        gbrs     :: Set.Set (Hash, Gbr),
         bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -759,6 +759,15 @@ locationsToText = F.fold
     . sortRrdpFirstNE
     . NESet.toList 
     . unLocations
+
+locationsToList :: Locations -> [Text]
+locationsToList =
+    toList 
+    . NonEmpty.map (unURI . getURL) 
+    . sortRrdpFirstNE
+    . NESet.toList 
+    . unLocations
+
 
 toNESet :: Ord a => [a] -> Maybe (NESet a)
 toNESet = (NESet.fromList <$>) . NonEmpty.nonEmpty

@@ -25,6 +25,7 @@ import qualified Data.HashMap.Strict.InsOrd as IOMap
 
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
@@ -50,7 +51,7 @@ data API api = API {
                                                 :> Get '[JSON] [VrpMinimalDto],
 
         aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
-        gbrs     :: api :- "gbrs" :> Get '[JSON] [GbrDto],
+        gbrs     :: api :- "gbrs" :> Get '[JSON] [Located GbrDto],
 
         bgpCerts :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
         bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
@@ -116,7 +117,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/vrps-unique", mempty & get ?~ jsonOn200 
                 "List of of unique VRPs with SLURM filtering applied to it"),
 
-            ("/gbr", mempty & get ?~ jsonOn200 "List of all valid GBR objects found in repositories"),
+            ("/gbrs", mempty & get ?~ jsonOn200 "List of all valid GBR objects found in repositories"),
             ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
             ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
             ("/bgpsec-filtered", mempty & get ?~ jsonOn200 
