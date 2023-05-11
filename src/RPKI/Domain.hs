@@ -15,6 +15,7 @@ module RPKI.Domain where
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
+import qualified Data.Text                as Text
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -85,8 +86,16 @@ newtype URI = URI { unURI :: Text }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newtype RsyncHost = RsyncHost { unRsyncHost :: Text }
+data RsyncHost = RsyncHost RsyncHostName (Maybe RsyncPort)
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+newtype RsyncHostName = RsyncHostName { unRsyncHostName :: Text }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+newtype RsyncPort = RsyncPort { unRsyncPort :: Int }
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
@@ -146,10 +155,16 @@ instance Show RpkiURL where
 
 instance Show RsyncURL where
     show = show . getURL
+
+instance Show RsyncPort where
+    show = show . unRsyncPort
   
 instance WithURL RsyncURL where
-    getURL (RsyncURL (RsyncHost host) path) = 
-        URI $ "rsync://" <> host <> mconcat (map (\(RsyncPathChunk p) -> "/" <> p) path)
+    getURL (RsyncURL (RsyncHost (RsyncHostName host) port) path) = 
+        URI $ "rsync://" <> 
+                host <>          
+                maybe "" (\p -> ":" <> Text.pack (show p)) port <>
+                mconcat (map (\(RsyncPathChunk p) -> "/" <> p) path)
 
 instance WithURL RrdpURL where
     getURL (RrdpURL u) = u

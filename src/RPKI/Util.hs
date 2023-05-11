@@ -131,7 +131,9 @@ parseRsyncURL t =
             case mu ^. uriAuthority of 
                 Left _  -> Left "No URL authority, i.e. host" 
                 Right a -> let                                         
-                    host = RsyncHost $ a ^. authHost . unRText
+                    hostName = RsyncHostName $ a ^. authHost . unRText
+                    port = RsyncPort . fromIntegral <$> a ^. authPort
+                    host = RsyncHost hostName port
                     path = map (RsyncPathChunk . (^. unRText)) $ mu ^. uriPath
                     in Right $ RsyncURL host path
 
