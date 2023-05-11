@@ -456,11 +456,6 @@ getAspas :: (MonadIO m, Storage s) =>
 getAspas tx DB { aspaStore = AspaStore m } wv = 
     liftIO $ fmap unCompressed <$> M.get tx m wv    
 
-getGbrs :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (Hash, Gbr)))
-getGbrs tx DB { gbrStore = GbrStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv    
-
 deleteAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
@@ -469,6 +464,15 @@ putAspas :: (MonadIO m, Storage s) =>
             Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
 putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed aspas)
+
+getGbrs :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (Hash, Gbr)))
+getGbrs tx DB { gbrStore = GbrStore m } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx m wv    
+
+deleteGbrs :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteGbrs tx DB { gbrStore = GbrStore m } wv = liftIO $ M.delete tx m wv
 
 putGbrs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set (Hash, Gbr) -> WorldVersion -> m ()
@@ -726,6 +730,7 @@ deleteOldVersions database tooOld =
                 deleteVersion tx database worldVersion
                 deleteValidations tx database worldVersion
                 deleteAspas tx database worldVersion            
+                deleteGbrs tx database worldVersion            
                 deleteBgps tx database worldVersion            
                 deleteVRPs tx database worldVersion            
                 deleteMetrics tx database worldVersion
@@ -744,7 +749,6 @@ getLastCompletedVersion database tx = do
             []  -> Nothing
             vs' -> Just $ maximum vs'
 
-
 getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
 getLatestVRPs db = 
     roTx db $ \tx ->        
@@ -760,7 +764,6 @@ getLatestGbrs db =
     roTx db $ \tx -> do 
         gbrs <- Set.toList <$> getLatestX tx db getGbrs 
         fmap catMaybes $ forM gbrs $ \(hash, _) -> getByHash tx db hash                       
-        
 
 getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
 getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    
