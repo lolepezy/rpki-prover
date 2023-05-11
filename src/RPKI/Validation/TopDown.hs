@@ -712,7 +712,9 @@ validateCaCertificate
                     allowRevoked $ do
                         void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                         oneMoreGbr
-                        pure $! Seq.singleton mempty
+                        let gbr' = getCMSContent $ cmsPayload gbr
+                        let payload = (mempty :: Payloads (Set Vrp)) { gbrs = Set.singleton (getHash gbr, gbr') }
+                        pure $! Seq.singleton $ payload
 
             AspaRO aspa -> do                
                 validateObjectLocations child

@@ -349,7 +349,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                             arguments                                        
 
-
+-- To be called by the validation worker process
 runValidation :: Storage s =>
                 AppContext s
             -> WorldVersion
@@ -382,6 +382,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         putMetrics tx database' worldVersion (topDownValidations ^. typed)
         putVrps tx database' (payloads ^. #vrps) worldVersion
         putAspas tx database' (payloads ^. #aspas) worldVersion
+        putGbrs tx database' (payloads ^. #gbrs) worldVersion
         putBgps tx database' (payloads ^. #bgpCerts) worldVersion
         for_ maybeSlurm $ putSlurm tx database' worldVersion
         completeWorldVersion tx database' worldVersion

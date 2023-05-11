@@ -343,7 +343,8 @@ $(deriveToJSON defaultOptions ''EECerObject)
 instance ToJSON a => ToJSON (X509.SignedExact a)    
 instance ToJSON a => ToJSON (X509.Signed a) 
 
-instance ToJSON Locations    
+instance ToJSON Locations where
+    toJSON = toJSON . locationsToList
 instance ToJSON a => ToJSON (Located a)
 instance ToJSON a => ToJSON (CMSBasedObject a)
 instance ToJSON a => ToJSON (CMS a)

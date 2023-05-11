@@ -23,9 +23,9 @@ import           Data.Ord
 import           Data.List                        (sortBy)
 import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
-import qualified Data.List                         as List
+import qualified Data.List                        as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
-import           Data.Text                       (Text)
+import           Data.Text                        (Text)
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -48,6 +48,7 @@ import           RPKI.SLURM.Types
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
+
 httpApi :: (Storage s, MaintainableStorage s) => AppContext s -> Application
 httpApi appContext = genericServe HttpApi {
         api     = apiServer,
@@ -67,6 +68,7 @@ httpApi appContext = genericServe HttpApi {
         vrpsCsvUnique = getVRPsUniqueRaw appContext,
         vrpsJsonUnique = getVRPsUnique appContext,
 
+        gbrs  = liftIO $ getGBRs appContext,
         aspas = liftIO $ getASPAs appContext,
         bgpCerts = liftIO $ getBGPCerts appContext,
         bgpCertsFiltered = liftIO $ getBGPCertsFiltered appContext,
@@ -167,7 +169,7 @@ getBGPCerts AppContext {..} =
 getBGPCertsFiltered :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCertsFiltered AppContext {..} = do
     db <- readTVarIO database
-    fmap (fromMaybe mempty) $ roTx db $ \tx -> do 
+    fmap (fromMaybe mempty) $ roTx db $ \tx ->
         getLastCompletedVersion db tx >>= \case      
             Nothing      -> pure mempty   
             Just version -> runMaybeT $ do 
@@ -175,7 +177,11 @@ getBGPCertsFiltered AppContext {..} = do
                 slurm <- MaybeT $ slurmForVersion tx db version                        
                 pure $ map bgpSecToDto $ Set.toList $ applySlurmBgpSec slurm bgps    
   
-
+getGBRs :: Storage s => AppContext s -> IO [Located GbrDto]
+getGBRs AppContext {..} = do
+    gbrs <- getLatestGbrs =<< readTVarIO database
+    pure [ Located { payload = gbrObjectToDto g, .. }
+            | Located { payload = GbrRO g, .. } <- gbrs ]    
 
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))

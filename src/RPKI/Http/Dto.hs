@@ -69,6 +69,24 @@ aspaToDto aspa =
         providers = map (\(asn, afi) -> ProviderAsn {..}) $ aspa ^. #providers
     }
 
+gbrObjectToDto :: GbrObject -> GbrDto
+gbrObjectToDto g = gbrToDto $ getCMSContent $ g ^. #cmsPayload
+
+gbrToDto :: Gbr -> GbrDto
+gbrToDto (Gbr vcardBS) = let    
+    vcardProperty = \case 
+        VCardVersion t -> ("Version", t) 
+        FN t  -> ("FN", t) 
+        ORG t -> ("ORG", t) 
+        ADR t -> ("ADR", t) 
+        TEL t -> ("TEL", t) 
+        EMAIL t -> ("EMAIL", t) 
+    vcard = case parseVCard $ toNormalBS vcardBS of
+            Left e           -> Map.singleton "error" ("Invalid VCard: " <> e)
+            Right (VCard ps) -> Map.fromList $ map vcardProperty ps
+    in GbrDto {..}
+
+
 toVR :: (Scope a, Set.Set VIssue) -> FullVDto
 toVR (Scope scope, issues) = FullVDto {
         issues = map toDto $ Set.toList issues,
@@ -131,7 +149,7 @@ objectToDto = \case
     -- CMS-based stuff
     MftRO m  -> ManifestD $ cmsDto m $ manifestDto m
     RoaRO r  -> ROAD $ cmsDto r $ roaDto r
-    GbrRO g  -> GBRD $ cmsDto g $ gbrDto g
+    GbrRO g  -> GBRD $ cmsDto g $ gbrObjectToDto g
     RscRO r  -> RSCD $ cmsDto r $ rscDto r
     AspaRO a -> ASPAD $ cmsDto a $ aspaDto a
 
@@ -269,21 +287,6 @@ objectToDto = \case
     rscDto r = let 
             rsc@RSC {..} = getCMSContent $ r ^. #cmsPayload
         in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, ..}
-
-    gbrDto g = let 
-        Gbr vcardBS = getCMSContent $ g ^. #cmsPayload
-        vcardProperty = \case 
-            VCardVersion t -> ("Version", t) 
-            FN t  -> ("FN", t) 
-            ORG t -> ("ORG", t) 
-            ADR t -> ("ADR", t) 
-            TEL t -> ("TEL", t) 
-            EMAIL t -> ("EMAIL", t) 
-        vcard = case parseVCard $ toNormalBS vcardBS of
-                Left e           -> Map.singleton "error" ("Invalid VCard: " <> e)
-                Right (VCard ps) -> Map.fromList $ map vcardProperty ps
-        in GrbDto {..}
-
 
     bgpSecDto :: BgpCerObject -> BgpCertDto
     bgpSecDto bgpCert = let

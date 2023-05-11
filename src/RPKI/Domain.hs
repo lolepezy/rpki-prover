@@ -688,6 +688,7 @@ instance {-# OVERLAPPING #-} WithSerial EEBrief where
 data Payloads a = Payloads {
         vrps     :: a,
         aspas    :: Set.Set Aspa,
+        gbrs     :: Set.Set (Hash, Gbr),
         bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -752,9 +753,14 @@ pickLocation :: Locations -> RpkiURL
 pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
 
 locationsToText :: Locations -> Text
-locationsToText = F.fold
-    . NonEmpty.intersperse ", " 
-    . NonEmpty.map (unURI . getURL) 
+locationsToText = F.fold . NonEmpty.intersperse ", " . locationsToNEList
+    
+locationsToList :: Locations -> [Text]
+locationsToList = toList . locationsToNEList    
+
+locationsToNEList :: Locations -> NonEmpty.NonEmpty Text
+locationsToNEList =    
+      NonEmpty.map (unURI . getURL) 
     . sortRrdpFirstNE
     . NESet.toList 
     . unLocations

@@ -65,7 +65,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 6
+currentDatabaseVersion = 7
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -75,6 +75,7 @@ data DB s = DB {
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
     aspaStore        :: AspaStore s,
+    gbrStore         :: GbrStore s,
     bgpStore         :: BgpStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
@@ -157,6 +158,12 @@ newtype VRPStore s = VRPStore {
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
         aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
+    } 
+    deriving stock (Generic)
+
+-- | GBR store
+newtype GbrStore s = GbrStore {    
+        aspas :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (Hash, Gbr)))
     } 
     deriving stock (Generic)
 
@@ -458,6 +465,20 @@ putAspas :: (MonadIO m, Storage s) =>
 putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed aspas)
 
+getGbrs :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (Hash, Gbr)))
+getGbrs tx DB { gbrStore = GbrStore m } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx m wv    
+
+deleteGbrs :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteGbrs tx DB { gbrStore = GbrStore m } wv = liftIO $ M.delete tx m wv
+
+putGbrs :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set (Hash, Gbr) -> WorldVersion -> m ()
+putGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
+    liftIO $ M.put tx m worldVersion (Compressed gbrs)
+
 putVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
 putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
@@ -709,6 +730,7 @@ deleteOldVersions database tooOld =
                 deleteVersion tx database worldVersion
                 deleteValidations tx database worldVersion
                 deleteAspas tx database worldVersion            
+                deleteGbrs tx database worldVersion            
                 deleteBgps tx database worldVersion            
                 deleteVRPs tx database worldVersion            
                 deleteMetrics tx database worldVersion
@@ -727,7 +749,6 @@ getLastCompletedVersion database tx = do
             []  -> Nothing
             vs' -> Just $ maximum vs'
 
-
 getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
 getLatestVRPs db = 
     roTx db $ \tx ->        
@@ -736,19 +757,27 @@ getLatestVRPs db =
             MaybeT $ getVrps tx db version
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
-getLatestAspas db = 
-    roTx db $ \tx -> 
-        getLastCompletedVersion db tx >>= \case         
-            Nothing      -> pure mempty
-            Just version -> fromMaybe mempty <$> getAspas tx db version        
+getLatestAspas db = roTx db $ \tx -> getLatestX tx db getAspas
+
+getLatestGbrs :: Storage s => DB s -> IO [Located RpkiObject]
+getLatestGbrs db = 
+    roTx db $ \tx -> do 
+        gbrs <- Set.toList <$> getLatestX tx db getGbrs 
+        fmap catMaybes $ forM gbrs $ \(hash, _) -> getByHash tx db hash                       
 
 getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
-getLatestBgps db = 
-    roTx db $ \tx -> 
+getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    
+    
+getLatestX :: (Storage s, Monoid b) =>
+            Tx s 'RO
+            -> DB s
+            -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
+            -> IO b
+getLatestX tx db f =      
         getLastCompletedVersion db tx >>= \case         
             Nothing      -> pure mempty
-            Just version -> fromMaybe mempty <$> getBgps tx db version    
-    
+            Just version -> fromMaybe mempty <$> f tx db version    
+
 
 getRtrPayloads :: (MonadIO m, Storage s) => 
                    Tx s 'RO

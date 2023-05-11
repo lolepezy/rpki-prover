@@ -38,6 +38,7 @@ createDatabase e logger checkAction = do
     validationsStore <- createValidationsStore
     vrpStore         <- createVRPStore    
     aspaStore        <- createAspaStore
+    gbrStore         <- createGbrStore
     bgpStore         <- createBgpStore
     versionStore     <- createVersionStore
     metricStore      <- createMetricsStore
@@ -107,6 +108,7 @@ createDatabase e logger checkAction = do
     createValidationsStore = ValidationsStore . SMap lmdb <$> createLmdbStore e
     createVRPStore = VRPStore . SMap lmdb <$> createLmdbStore e    
     createAspaStore = AspaStore . SMap lmdb <$> createLmdbStore e    
+    createGbrStore  = GbrStore . SMap lmdb <$> createLmdbStore e    
     createBgpStore = BgpStore . SMap lmdb <$> createLmdbStore e    
     createTAStore = TAStore . SMap lmdb <$> createLmdbStore e    
     createVersionStore = VersionStore . SMap lmdb <$> createLmdbStore e    
