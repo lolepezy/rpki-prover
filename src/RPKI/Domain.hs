@@ -753,21 +753,17 @@ pickLocation :: Locations -> RpkiURL
 pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
 
 locationsToText :: Locations -> Text
-locationsToText = F.fold
-    . NonEmpty.intersperse ", " 
-    . NonEmpty.map (unURI . getURL) 
-    . sortRrdpFirstNE
-    . NESet.toList 
-    . unLocations
-
+locationsToText = F.fold . NonEmpty.intersperse ", " . locationsToNEList
+    
 locationsToList :: Locations -> [Text]
-locationsToList =
-    toList 
-    . NonEmpty.map (unURI . getURL) 
+locationsToList = toList . locationsToNEList    
+
+locationsToNEList :: Locations -> NonEmpty.NonEmpty Text
+locationsToNEList =    
+      NonEmpty.map (unURI . getURL) 
     . sortRrdpFirstNE
     . NESet.toList 
     . unLocations
-
 
 toNESet :: Ord a => [a] -> Maybe (NESet a)
 toNESet = (NESet.fromList <$>) . NonEmpty.nonEmpty
