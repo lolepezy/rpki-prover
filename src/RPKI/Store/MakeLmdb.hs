@@ -49,8 +49,8 @@ createDatabase e logger checkAction = do
     let db = DB {..}
     case checkAction of     
         CheckVersion -> do 
-            compatible <- verifyDBVersion db
-            pure (db, compatible)
+            dbCheck <- verifyDBVersion db
+            pure (db, dbCheck)
         DontCheckVersion -> 
             pure (db, WasCompatible)
     

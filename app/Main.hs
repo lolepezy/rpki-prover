@@ -266,17 +266,29 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     cached
                     config
 
-    (db, compatible) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
+    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
 
     let appContext = AppContext {..}
 
-    -- If the DB version wasn't compatible with the expected version, all the data was erased 
-    -- and makes a lot of sense to perform compaction. Not performing it may potentially bloat 
-    -- the database until the next compaction that will happen probably in weeks.
-    case compatible of 
+    case dbCheck of 
+        -- If the DB version wasn't compatible with the expected version, 
+        -- all the data was erased and makes a lot of sense to perform 
+        -- compaction. Not performing it may potentially bloat the database 
+        -- (not sure why exactly but it was reproduced multiple times)
+        -- until the next compaction that will happen probably in weeks.
         Lmdb.WasIncompatible -> liftIO $ runMaintenance appContext
-        _                    -> pure ()
+
+        -- It may mean two different cases
+        --   * empty db
+        --   * old non-empty cache
+        -- In practice the hardly ever be a non-empty old cache, 
+        -- and even if it will be there, it will be compacted in 
+        -- a week or so. So don't compact,
+        Lmdb.DidntHaveVersion -> pure ()
+
+        -- Normal schedule
+        Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
 #{shower (appContext ^. typed @Config)}|]
