@@ -765,10 +765,11 @@ getLatestGbrs db =
 getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
 getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    
     
--- getLatestX :: (Storage s, Monoid a) =>
---                DB s 
---             -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe a)) 
---             -> IO a
+getLatestX :: (Storage s, Monoid b) =>
+            Tx s 'RO
+            -> DB s
+            -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
+            -> IO b
 getLatestX tx db f =      
         getLastCompletedVersion db tx >>= \case         
             Nothing      -> pure mempty
