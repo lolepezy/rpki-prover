@@ -377,7 +377,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    rwTx database' $ \tx -> do
+    (_, elapsed) <- timedMS $ rwTx database' $ \tx -> do
         putValidations tx database' worldVersion (updatedValidation ^. typed)
         putMetrics tx database' worldVersion (topDownValidations ^. typed)
         putVrps tx database' (payloads ^. #vrps) worldVersion
@@ -386,6 +386,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         putBgps tx database' (payloads ^. #bgpCerts) worldVersion
         for_ maybeSlurm $ putSlurm tx database' worldVersion
         completeWorldVersion tx database' worldVersion
+
+    logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]    
 
     pure (topDownValidations, maybeSlurm)
 

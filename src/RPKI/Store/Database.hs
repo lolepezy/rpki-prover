@@ -111,6 +111,8 @@ data RpkiObjectStore s = RpkiObjectStore {
         objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
         objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
 
+        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed [ObjectKey]),
+
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
@@ -357,6 +359,29 @@ markValidated :: (MonadIO m, Storage s) =>
 markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $    
     ifJustM (M.get tx hashToKey hash) $ \key -> 
         M.put tx objectValidatedBy key wv                                
+
+
+markValidated1 :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m ()
+markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes wv = liftIO $ do 
+    versions <- map fst <$> allVersions tx db    
+    
+    objectKeys <- fmap catMaybes $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h
+    M.put tx validatedByVersion wv (Compressed objectKeys)
+    
+    case versions of 
+        [] -> pure ()
+        _ -> do
+            -- This is just an optimisation, but a necessary one:
+            -- Delete 'validatedKeys' from the previous version if
+            -- they are present in the last one. In most cases it
+            -- will delete most of the entries.
+            let previousVersion = List.maximum versions 
+            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) -> do 
+                let previousKeys' = Set.fromList previousKeys `Set.difference` Set.fromList objectKeys
+                M.put tx validatedByVersion previousVersion (Compressed $ Set.toList previousKeys')
+
+    
 
 putObjectBrief :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()

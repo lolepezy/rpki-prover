@@ -97,6 +97,7 @@ createDatabase e logger checkAction = do
         objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
         certBySKI <- SMap lmdb <$> createLmdbStore e
         objectBriefs <- SMap lmdb <$> createLmdbStore e
+        validatedByVersion <- SMap lmdb <$> createLmdbStore e
         pure RpkiObjectStore {..}
             
     createRepositoryStore = 
