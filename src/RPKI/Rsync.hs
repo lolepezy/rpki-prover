@@ -280,8 +280,9 @@ rsyncProcess Config {..} rsyncURL destination rsyncMode =
             RsyncDirectory -> (addTrailingPathSeparator source, [ "--recursive", "--delete", "--copy-links" ])
 
 rsyncDestination :: RsyncMode -> FilePath -> RsyncURL -> IO FilePath
-rsyncDestination rsyncMode root (RsyncURL (RsyncHost host) path) = do 
-    let fullPath = (U.convert host :: String) :| map (U.convert . unRsyncPathChunk) path
+rsyncDestination rsyncMode root (RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
+    let portPath = maybe "" (\p -> "_" <> show p) port
+    let fullPath = ((U.convert host :: String) <> portPath) :| map (U.convert . unRsyncPathChunk) path
     let mkPath p = foldl (</>) root p
     let pathWithoutLast = NonEmpty.init fullPath
     let target = mkPath $ NonEmpty.toList fullPath
