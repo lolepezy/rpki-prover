@@ -5,6 +5,7 @@
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE DeriveAnyClass        #-}
 
 module RPKI.Store.Database where
 
@@ -47,6 +48,7 @@ import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
@@ -65,7 +67,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 8
+currentDatabaseVersion = 9
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -111,7 +113,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
         objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
 
-        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed [ObjectKey]),
+        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
 
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
@@ -362,12 +364,13 @@ markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $
 
 
 markValidated1 :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m ()
-markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes wv = liftIO $ do 
+                Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m (TimeMs, TimeMs)
+markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
     versions <- map fst <$> allVersions tx db    
-    
-    objectKeys <- fmap catMaybes $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h
-    M.put tx validatedByVersion wv (Compressed objectKeys)
+        
+    (!objectKeys, !ms1) <- timedMS $ fmap (Set.fromList . catMaybes) 
+            $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h    
+    (_, !ms2) <- timedMS $ M.put tx validatedByVersion worldVersion (Compressed objectKeys)
     
     case versions of 
         [] -> pure ()
@@ -377,9 +380,11 @@ markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes wv = liftI
             -- they are present in the last one. In most cases it
             -- will delete most of the entries.
             let previousVersion = List.maximum versions 
-            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) -> do 
-                let previousKeys' = Set.fromList previousKeys `Set.difference` Set.fromList objectKeys
-                M.put tx validatedByVersion previousVersion (Compressed $ Set.toList previousKeys')
+            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) -> do                 
+                M.put tx validatedByVersion previousVersion $ 
+                        Compressed $ previousKeys `Set.difference` objectKeys
+
+    pure (ms1, ms2)
 
     
 
@@ -656,6 +661,7 @@ data CleanUpResult = CleanUpResult {
         deletedURLs :: Int
     }
     deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
 
 -- Delete all the objects from the objectStore if they were 
 -- visited longer than certain time ago.
@@ -665,8 +671,7 @@ cleanObjectCache :: Storage s =>
                     IO CleanUpResult
 cleanObjectCache db@DB {..} tooOld = do
     kept        <- newIORef (0 :: Int)
-    deleted     <- newIORef (0 :: Int)
-    deletedURLs <- newIORef (0 :: Int)
+    deleted     <- newIORef (0 :: Int)    
     
     let readOldObjects queue =
             roTx objectStore $ \tx ->
@@ -694,41 +699,51 @@ cleanObjectCache db@DB {..} tooOld = do
                 (liftIO . deleteObjects)
                 (const $ pure ())    
                     
-    -- clean up URLs that don't have any objects referring to them
+    deletedURLs <- deleteDanglinUrls db
+
+    CleanUpResult <$> 
+        readIORef deleted <*> 
+        readIORef kept <*> 
+        pure deletedURLs
+
+
+deleteDanglinUrls :: (MonadIO m, Storage s) => DB s -> m Int
+deleteDanglinUrls db@DB { objectStore = RpkiObjectStore {..}} = do 
+    let chunkSize = 2000
+
+    deletedURLs <- liftIO $ newIORef (0 :: Int)
+
     mapException (AppException . storageError) 
         $ voidRun "cleanOrphanURLs" $ do 
             referencedUrlKeys <- liftIO 
-                $ roTx objectStore 
+                $ roTx db 
                 $ \tx ->                 
                     Set.fromList <$>
-                        M.fold tx (objectKeyToUrlKeys objectStore) 
+                        M.fold tx objectKeyToUrlKeys
                             (\allUrlKey _ urlKeys -> pure $! urlKeys <> allUrlKey)
                             mempty
 
             let readUrls queue = 
-                    roTx objectStore $ \tx ->
-                        M.traverse tx (uriKeyToUri objectStore) $ \urlKey url ->
+                    roTx db $ \tx ->
+                        M.traverse tx uriKeyToUri $ \urlKey url ->
                             when (urlKey `Set.notMember` referencedUrlKeys) $
                                 atomically (writeCQueue queue (urlKey, url))
 
             let deleteUrls queue = 
                     readQueueChunked queue chunkSize $ \quuElems ->
-                        rwTx objectStore $ \tx ->
+                        rwTx db $ \tx ->
                             forM_ quuElems $ \(urlKey, url) -> do 
-                                M.delete tx (uriKeyToUri objectStore) urlKey
-                                M.delete tx (uriToUriKey objectStore) (makeSafeUrl url)
+                                M.delete tx uriKeyToUri urlKey
+                                M.delete tx uriToUriKey (makeSafeUrl url)
                                 increment deletedURLs
 
-            bracketChanClosable 
-                (2 * chunkSize)
+            liftIO $ bracketChanClosable 
+                chunkSize
                 (liftIO . readUrls)
                 (liftIO . deleteUrls)
-                (const $ pure ())            
-
-    CleanUpResult <$> 
-        readIORef deleted <*> 
-        readIORef kept <*> 
-        readIORef deletedURLs
+                (const $ pure ())  
+        
+    liftIO $ readIORef deletedURLs
 
 
 -- Clean up older versions and delete everything associated with the version, i,e.
@@ -763,6 +778,84 @@ deleteOldVersions database tooOld =
         
             pure $! List.length toDel
 
+
+deleteOldContent :: (MonadIO m, Storage s) => 
+                    DB s -> 
+                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
+                    m CleanUpResult
+deleteOldContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = do
+    mapException (AppException . storageError) <$> liftIO $ do                
+
+        versions <- map fst <$> roTx db (\tx -> allVersions tx db)
+        let (toDelete, toScan) = List.partition tooOld versions
+        
+        if null toDelete then 
+            pure $ CleanUpResult 0 0 0
+        else do
+            rwTx db $ \tx -> 
+                -- delete versions and payloads associated with them, 
+                -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
+                forM_ toDelete $ deleteVersionAndPayloads tx db
+            
+            objectToKeep <- roTx db $ \tx -> do
+                -- Set of all objects touched by validation at all the versions
+                -- that are not "too old".
+                touchedObjectKeys <- foldM 
+                    (\allKeys version -> do 
+                        objecKeys <- fmap unCompressed <$> M.get tx validatedByVersion version
+                        let keySet = fromMaybe Set.empty objecKeys
+                        pure $! keySet <> allKeys)
+                    mempty
+                    toScan
+
+                -- Objects inserted by 
+                recentlyInsertedObjectKeys <- Set.fromList <$>
+                    M.fold tx objectInsertedBy (\keys key version -> 
+                        pure $! if tooOld version then keys else key : keys) mempty
+
+                pure $! touchedObjectKeys <> recentlyInsertedObjectKeys            
+
+            -- delete objects that are only touched by old versions
+            deleted <- newIORef (0 :: Int)        
+            let readOldObjects queue =
+                    roTx db $ \tx ->        
+                        M.traverse tx hashToKey $ \hash key -> do
+                            unless (key `Set.member` objectToKeep) $ do
+                                atomically (writeCQueue queue hash)
+                                increment deleted            
+
+            -- Don't lock the DB for potentially too long, use big but finite chunks
+            let chunkSize = 2000
+            let deleteObjects queue =
+                    readQueueChunked queue chunkSize $ \quuElems ->
+                        rwTx db $ \tx ->
+                            forM_ quuElems $ deleteObject tx db
+
+            mapException (AppException . storageError) 
+                $ voidRun "cleanObjectCache" 
+                $ bracketChanClosable 
+                        (2 * chunkSize)
+                        (liftIO . readOldObjects)
+                        (liftIO . deleteObjects)
+                        (const $ pure ())    
+                    
+            deleted'    <- liftIO $ readIORef deleted
+            deletedURLs <- deleteDanglinUrls db
+
+            pure $! CleanUpResult deleted' (Set.size objectToKeep) deletedURLs           
+
+
+deleteVersionAndPayloads :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteVersionAndPayloads tx db worldVersion = do
+    deleteVersion tx db worldVersion
+    deleteValidations tx db worldVersion
+    deleteAspas tx db worldVersion            
+    deleteGbrs tx db worldVersion            
+    deleteBgps tx db worldVersion            
+    deleteVRPs tx db worldVersion            
+    deleteMetrics tx db worldVersion
+    deleteSlurms tx db worldVersion
 
 -- | Find the latest completed world version 
 -- 
@@ -852,6 +945,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         objectInsertedByStats <- M.stats tx objectInsertedBy
         objectValidatedByStats <- M.stats tx objectValidatedBy            
         objecBriefStats <- M.stats tx objectBriefs
+        validatedByVersionStats <- M.stats tx validatedByVersion
         pure RpkiObjectStats {..}
 
     repositoryStats' tx = 

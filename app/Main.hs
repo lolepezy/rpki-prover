@@ -442,6 +442,8 @@ executeWorker input appContext =
                 CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
             ValidationParams {..} -> exec resultHandler $
                 uncurry ValidationResult <$> runValidation appContext worldVersion tals
+            CacheCleanupParams {..} -> exec resultHandler $
+                CacheCleanupResult <$> runCacheCleanup appContext worldVersion
   where
     exec resultHandler f = resultHandler =<< execWithTiming f
 

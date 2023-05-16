@@ -62,18 +62,23 @@ import           RPKI.Validation.Common
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
-data TopDownContext s = TopDownContext {    
+data TopDownContext = TopDownContext {    
         verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),    
         taName                  :: TaName,         
-        now                     :: Now,
-        worldVersion            :: WorldVersion,
-        validManifests          :: TVar (Map AKI Hash),
-        visitedHashes           :: TVar (Set Hash),        
-        repositoryProcessing    :: RepositoryProcessing,
+        allTas                  :: AllTasTopDownContext,
         currentPathDepth        :: Int,
         startingRepositoryCount :: Int,
-        interruptedByLimit      :: TVar Limited,                
-        briefs                  :: TVar [BriefUpdate]
+        interruptedByLimit      :: TVar Limited
+    }
+    deriving stock (Generic)    
+
+data AllTasTopDownContext = AllTasTopDownContext {                    
+        now                  :: Now,
+        worldVersion         :: WorldVersion,
+        validManifests       :: TVar (Map AKI Hash),
+        visitedHashes        :: TVar (Set Hash),        
+        repositoryProcessing :: RepositoryProcessing,        
+        briefs               :: TVar [BriefUpdate]
     }
     deriving stock (Generic)    
 
@@ -101,22 +106,29 @@ fromValidations = TopDownResult mempty
 
 
 newTopDownContext :: MonadIO m => 
-                    WorldVersion 
-                    -> TaName                     
-                    -> Now 
+                    TaName                     
                     -> CaCerObject 
-                    -> RepositoryProcessing
-                    -> m (TopDownContext s)
-newTopDownContext worldVersion taName now certificate repositoryProcessing = 
+                    -> AllTasTopDownContext
+                    -> m TopDownContext
+newTopDownContext taName certificate allTas = 
     liftIO $ atomically $ do    
         let verifiedResources = Just $ createVerifiedResources certificate        
         let currentPathDepth = 0        
-        startingRepositoryCount <- fmap repositoryCount $ readTVar $ repositoryProcessing ^. #publicationPoints  
-        visitedHashes           <- newTVar mempty
-        validManifests          <- newTVar mempty                
-        interruptedByLimit      <- newTVar CanProceed        
-        briefs                  <- newTVar []
+        startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints  
+        interruptedByLimit      <- newTVar CanProceed                
         pure $ TopDownContext {..}
+
+newAllTasTopDownContext :: MonadIO m => 
+                        WorldVersion                        
+                        -> Now 
+                        -> RepositoryProcessing                    
+                        -> m AllTasTopDownContext
+newAllTasTopDownContext worldVersion now repositoryProcessing = 
+    liftIO $ atomically $ do
+        visitedHashes  <- newTVar mempty
+        validManifests <- newTVar mempty
+        briefs         <- newTVar []
+        pure $ AllTasTopDownContext {..}
 
 newRepositoryContext :: PublicationPoints -> RepositoryContext
 newRepositoryContext publicationPoints = let 
@@ -150,34 +162,37 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                                     
     db <- readTVarIO database 
 
-    repositoryProcessing <- newRepositoryProcessingIO config    
+    repositoryProcessing <- newRepositoryProcessingIO config        
+    allTas <- newAllTasTopDownContext worldVersion 
+                (Now $ versionToMoment worldVersion) repositoryProcessing
     
-    validateThem db repositoryProcessing 
+    validateThem db allTas 
         `finally` 
-        cancelFetchTasks repositoryProcessing
-    
+            concurrently 
+                (applyValidationSideEffects appContext allTas)
+                (cancelFetchTasks repositoryProcessing)
   where
 
-    validateThem db repositoryProcessing = do 
+    validateThem db allTas = do 
         -- set initial publication point state
         mapException (AppException . storageError) $ do             
             pps <- roTx db $ \tx -> getPublicationPoints tx db
             let pps' = addRsyncPrefetchUrls config pps
-            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps'
+            atomically $ writeTVar (allTas ^. #repositoryProcessing . #publicationPoints) pps'
      
         rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $ 
-                    validateTA appContext tal worldVersion repositoryProcessing
+                    validateTA appContext tal worldVersion allTas
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r    
 
         -- save publication points state    
         mapException (AppException . storageError) $ do            
-            pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+            pps <- readTVarIO $ allTas ^. #repositoryProcessing . #publicationPoints    
             rwTx db $ \tx -> savePublicationPoints tx db pps            
 
         -- Get validations for all the fetches that happened during this top-down traversal
-        fetchValidation <- validationStateOfFetches repositoryProcessing
+        fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
         pure $ fromValidations fetchValidation : rs              
 
 --
@@ -185,9 +200,9 @@ validateTA :: Storage s =>
             AppContext s 
             -> TAL 
             -> WorldVersion             
-            -> RepositoryProcessing             
+            -> AllTasTopDownContext             
             -> IO TopDownResult
-validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do    
+validateTA appContext@AppContext{..} tal worldVersion allTas = do    
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
     (r, vs) <- runValidatorT taContext $ 
             timeoutVT 
@@ -210,13 +225,8 @@ validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do
         timedMetric (Proxy :: Proxy ValidationMetric) $ 
             inSubObjectVScope (toText $ getTaCertURL tal) $ do 
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-                -- this will be used as the "now" in all subsequent time and period validations 
-                let now = Now $ versionToMoment worldVersion
-                topDownContext <- newTopDownContext worldVersion 
-                                    taName
-                                    now  
-                                    (taCert ^. #payload)  
-                                    repositoryProcessing                                    
+                -- this will be used as the "now" in all subsequent time and period validations                 
+                topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
                 validateFromTACert appContext topDownContext repos taCert                
 
 
@@ -267,13 +277,13 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 -- | This function doesn't throw exceptions.
 validateFromTACert :: Storage s =>
                     AppContext s -> 
-                    TopDownContext s ->                                        
+                    TopDownContext ->  
                     PublicationPointAccess -> 
                     Located CaCerObject ->                     
                     ValidatorT IO (Payloads (Set Vrp))
 validateFromTACert 
     appContext@AppContext {..}
-    topDownContext@TopDownContext { .. } 
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. } 
     initialRepos
     taCert 
   = do      
@@ -301,28 +311,23 @@ validateFromTACert
 validateCA :: Storage s =>
             AppContext s 
             -> Scopes 
-            -> TopDownContext s 
+            -> TopDownContext 
             -> Located CaCerObject 
             -> IO (T2 (Seq (Payloads (Set Vrp))) ValidationState)
-validateCA appContext scopes topDownContext certificate =
-    validateCARecursively 
-        `finally`  
-        applyValidationSideEffects appContext topDownContext       
-  where
-    validateCARecursively = do             
-        (r, validations) <- runValidatorT scopes $
-                                validateCaCertificate appContext topDownContext certificate        
-        pure $! T2 (fromRight mempty r) validations
+validateCA appContext scopes topDownContext certificate = do             
+    (r, validations) <- runValidatorT scopes $
+                            validateCaCertificate appContext topDownContext certificate        
+    pure $! T2 (fromRight mempty r) validations
     
 
 validateCaCertificate :: Storage s =>
                         AppContext s ->
-                        TopDownContext s ->
+                        TopDownContext ->
                         Located CaCerObject ->                
                         ValidatorT IO (Seq (Payloads (Set Vrp)))
 validateCaCertificate 
     appContext@AppContext {..} 
-    topDownContext@TopDownContext {..} 
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. } 
     certificate = do          
     
     let validationConfig = config ^. typed @ValidationConfig
@@ -775,9 +780,11 @@ validateCaCertificate
 -- - save all the object validation briefs
 -- 
 applyValidationSideEffects :: (MonadIO m, Storage s) => 
-                        AppContext s -> TopDownContext s -> m ()
-applyValidationSideEffects AppContext { .. } TopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do 
+                             AppContext s -> AllTasTopDownContext -> m ()
+applyValidationSideEffects 
+    AppContext {..} 
+    AllTasTopDownContext {..} = liftIO $ do
+    ((visitedSize, validMftsSize, briefNumber, zz), elapsed) <- timedMS $ do 
             (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$> 
                                 readTVar visitedHashes <*> 
                                 readTVar validManifests <*>
@@ -785,21 +792,23 @@ applyValidationSideEffects AppContext { .. } TopDownContext {..} = liftIO $ do
                                 readTVar database
 
             briefCounter <- newIORef (0 :: Integer)
-            rwTx db $ \tx -> do 
-                for_ vhs $ \h -> 
-                    markValidated tx db h worldVersion 
-                for_ (Map.toList vmfts) $ \(aki, h) -> 
-                    markLatestValidMft tx db aki h                
-                for_ briefs' $ \(BriefUpdate h brief) -> do 
-                    putObjectBrief tx db h brief
-                    modifyIORef' briefCounter (+1)
+            zz <- rwTx db $ \tx -> do 
+                    zz <- markValidated1 tx db vhs worldVersion 
+                    -- for_ vhs $ \h -> 
+                    --     markValidated tx db h worldVersion 
+                    for_ (Map.toList vmfts) $ \(aki, h) -> 
+                        markLatestValidMft tx db aki h                
+                    for_ briefs' $ \(BriefUpdate h brief) -> do 
+                        putObjectBrief tx db h brief
+                        modifyIORef' briefCounter (+1)
+                    pure zz
 
             c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size vmfts, c)
+            pure (Set.size vhs, Map.size vmfts, c, zz)
 
     logInfo logger $
         [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <> 
-        [i|saved #{briefNumber} brief objects for TA #{unTaName taName}, took #{elapsed}ms.|]
+        [i|saved #{briefNumber} brief objects, took #{elapsed}ms, zz = #{zz}.|]
 
     
 
@@ -809,19 +818,18 @@ applyValidationSideEffects AppContext { .. } TopDownContext {..} = liftIO $ do
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
 visitObject :: (MonadIO m, WithHash ro, Storage s) => 
-                AppContext s -> TopDownContext s -> ro -> m ()
+                AppContext s -> TopDownContext -> ro -> m ()
 visitObject _ topDownContext ro = 
     visitObjects topDownContext [getHash ro]    
 
-visitObjects :: MonadIO m => TopDownContext s -> [Hash] -> m ()
-visitObjects TopDownContext {..} hashes =
+visitObjects :: MonadIO m => TopDownContext -> [Hash] -> m ()
+visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
     liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
         
 
 -- Add manifest to the map of the valid ones
-addValidMft :: (MonadIO m, Storage s) => 
-                TopDownContext s -> AKI -> MftObject -> m ()
-addValidMft TopDownContext {..} aki mft = 
+addValidMft :: MonadIO m => TopDownContext -> AKI -> MftObject -> m ()
+addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mft = 
     liftIO $ atomically $ modifyTVar' 
                 validManifests (<> Map.singleton aki (getHash mft))    
                 

@@ -22,7 +22,6 @@ import           RPKI.Config
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
 
-
 data StorableTA = StorableTA {
     tal                 :: TAL,
     taCert              :: CaCerObject,
@@ -68,7 +67,8 @@ data RpkiObjectStats = RpkiObjectStats {
     objectKeyToUrlKeysStat :: SStats,
     objectInsertedByStats  :: SStats,
     objectValidatedByStats  :: SStats,
-    objecBriefStats         :: SStats
+    objecBriefStats         :: SStats,
+    validatedByVersionStats :: SStats
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     

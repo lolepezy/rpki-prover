@@ -45,6 +45,7 @@ import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
+import           RPKI.Store.Database
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -87,7 +88,10 @@ data WorkerParams = RrdpFetchParams {
             ValidationParams {                 
                 worldVersion :: WorldVersion,
                 tals         :: [TAL]
-            } 
+            } | 
+            CacheCleanupParams { 
+                worldVersion :: WorldVersion
+            }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -120,6 +124,10 @@ newtype CompactionResult = CompactionResult ()
     deriving anyclass (TheBinary)
 
 data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data CacheCleanupResult = CacheCleanupResult CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
