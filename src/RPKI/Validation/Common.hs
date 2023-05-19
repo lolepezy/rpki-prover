@@ -16,10 +16,13 @@ import           Control.Monad.Except
 import           Control.Lens
 import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
+import           GHC.Generics (Generic)
 
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Set                         as Set
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
@@ -36,6 +39,18 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Util                        (fmtLocations)
 
+
+data ValidManifests'State = FillingUp | FetchingFromDB | Merged 
+    deriving stock (Generic)
+
+data ValidManifests = ValidManifests {
+        state  :: ValidManifests'State,
+        valids :: Map AKI Hash
+    }
+    deriving stock (Generic)
+
+makeValidManifests :: ValidManifests 
+makeValidManifests = ValidManifests FillingUp mempty
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources certificate = 
@@ -68,12 +83,12 @@ findLatestMft database childrenAki = liftIO $ do
     roTx objectStore' $ \tx -> 
         findLatestMftByAKI tx objectStore' childrenAki
 
-findLatestCachedValidMft :: (MonadIO m, HasField' "objectStore" s1 (RpkiObjectStore s), Storage s) =>
-                TVar s1 -> AKI -> m (Maybe (Located MftObject))
-findLatestCachedValidMft database childrenAki = liftIO $ do 
-    objectStore' <- (^. #objectStore) <$> readTVarIO database
-    roTx objectStore' $ \tx -> 
-        getLatestValidMftByAKI tx objectStore' childrenAki
+-- findLatestCachedValidMft :: (MonadIO m, HasField' "objectStore" s1 (RpkiObjectStore s), Storage s) =>
+--                 TVar s1 -> AKI -> m (Maybe (Located MftObject))
+-- findLatestCachedValidMft database childrenAki = liftIO $ do 
+--     objectStore' <- (^. #objectStore) <$> readTVarIO database
+--     roTx objectStore' $ \tx -> 
+--         getLatestValidMftByAKI tx objectStore' childrenAki
 
 
 -- 
@@ -88,16 +103,25 @@ tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
         AppContext s
     -> (Located MftObject -> AKI -> Locations -> ValidatorT m b)
     -> Maybe mft
+    -> TVar ValidManifests
     -> AKI
     -> Locations
     -> AppError
     -> ValidatorT m b
-tryLatestValidCachedManifest AppContext{..} useManifest latestMft childrenAki certLocations e =
-    findLatestCachedValidMft database childrenAki >>= \case
-        Nothing             -> throwError e
-        Just latestValidMft ->             
+tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests childrenAki certLocations e = do
+    db <- liftIO $ readTVarIO database
+    -- z <- roTx objectStore' $ \tx -> 
+    --         getLatestValidMftByAKI tx objectStore' childrenAki
+    validMfts <- loadValidManifests db validManifests    
+    case Map.lookup childrenAki validMfts of
+        Nothing   -> throwError e
+        Just hash -> do                        
+            z <- liftIO $ roTx db $ \tx -> getByHash tx db hash
+            latestValidMft <- case z of 
+                                Just (Located loc (MftRO mft)) -> pure $ Located loc mft
+                                _                              -> throwError e                
             let mftLoc = fmtLocations $ getLocations latestValidMft            
-            in case latestMft of 
+            case latestMft of 
                 Nothing -> do 
                     appWarn e      
                     logWarn logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
@@ -110,8 +134,26 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft childrenAki ce
                     | otherwise -> do 
                         appWarn e                                    
                         logWarn logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
-                                            [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
+                                         [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
                         useManifest latestValidMft childrenAki certLocations
+
+
+loadValidManifests :: (MonadIO m, Storage s) => 
+                    DB s -> TVar ValidManifests -> m (Map AKI Hash) 
+loadValidManifests db validManifests = liftIO $ do 
+    join $ atomically $ do 
+        vm <- readTVar validManifests
+        case vm ^. #state of 
+            FetchingFromDB  -> retry
+            Merged          -> pure $ pure $ vm ^. #valids
+            FillingUp       -> do 
+                writeTVar validManifests $ vm & #state .~ FetchingFromDB
+                pure $ do 
+                    validMfts <- roTx db $ \tx -> getLatestValidMfts tx db
+                    atomically $ do                                             
+                        let v' = Map.unionWith (\a _ -> a) (vm ^. #valids) validMfts
+                        writeTVar validManifests $ ValidManifests Merged v'
+                        pure v'                                                                                                
 
 
 -- TODO Is there a more reliable way to find it?

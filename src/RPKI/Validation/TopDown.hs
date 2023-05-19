@@ -24,7 +24,6 @@ import           Data.Either                      (fromRight, partitionEithers)
 import           Data.Foldable
 import           Data.IORef 
 import qualified Data.Set.NonEmpty                as NESet
-import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Monoid.Generic
@@ -72,10 +71,11 @@ data TopDownContext = TopDownContext {
     }
     deriving stock (Generic)    
 
+
 data AllTasTopDownContext = AllTasTopDownContext {                    
         now                  :: Now,
         worldVersion         :: WorldVersion,
-        validManifests       :: TVar (Map AKI Hash),
+        validManifests       :: TVar ValidManifests,
         visitedHashes        :: TVar (Set Hash),        
         repositoryProcessing :: RepositoryProcessing,        
         briefs               :: TVar [BriefUpdate]
@@ -126,7 +126,7 @@ newAllTasTopDownContext :: MonadIO m =>
 newAllTasTopDownContext worldVersion now repositoryProcessing = 
     liftIO $ atomically $ do
         visitedHashes  <- newTVar mempty
-        validManifests <- newTVar mempty
+        validManifests <- newTVar makeValidManifests
         briefs         <- newTVar []
         pure $ AllTasTopDownContext {..}
 
@@ -433,7 +433,8 @@ validateCaCertificate
         -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-6486bis-11#section-6.2
         -- 
         maybeMft <- findLatestMft database childrenAki
-        let goForLatestValid = tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
+        let goForLatestValid = tryLatestValidCachedManifest appContext 
+                                useManifest maybeMft validManifests childrenAki certLocations
         case maybeMft of                        
             Nothing -> 
                 -- Use awkward vError + catchError to force the error to 
@@ -796,15 +797,16 @@ applyValidationSideEffects
                     zz <- markValidated1 tx db vhs worldVersion 
                     -- for_ vhs $ \h -> 
                     --     markValidated tx db h worldVersion 
-                    for_ (Map.toList vmfts) $ \(aki, h) -> 
-                        markLatestValidMft tx db aki h                
+                    saveLatestValidMfts tx db (vmfts ^. #valids)
+                    -- for_ (Map.toList vmfts) $ \(aki, h) -> 
+                    --     markLatestValidMft tx db aki h                
                     for_ briefs' $ \(BriefUpdate h brief) -> do 
                         putObjectBrief tx db h brief
                         modifyIORef' briefCounter (+1)
                     pure zz
 
             c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size vmfts, c, zz)
+            pure (Set.size vhs, Map.size (vmfts ^. #valids), c, zz)
 
     logInfo logger $
         [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <> 
@@ -831,7 +833,7 @@ visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
 addValidMft :: MonadIO m => TopDownContext -> AKI -> MftObject -> m ()
 addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mft = 
     liftIO $ atomically $ modifyTVar' 
-                validManifests (<> Map.singleton aki (getHash mft))    
+                validManifests (& #valids %~ (<> Map.singleton aki (getHash mft)))
                 
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()

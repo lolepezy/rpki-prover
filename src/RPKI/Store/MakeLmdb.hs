@@ -89,7 +89,7 @@ createDatabase e logger checkAction = do
         objectInsertedBy <- SMap lmdb <$> createLmdbStore e
         objectValidatedBy <- SMap lmdb <$> createLmdbStore e        
         hashToKey   <- SMap lmdb <$> createLmdbStore e
-        lastValidMft <- SMap lmdb <$> createLmdbStore e
+        lastValidMfts <- SMap lmdb <$> createLmdbStore e
 
         uriToUriKey <- SMap lmdb <$> createLmdbStore e
         uriKeyToUri <- SMap lmdb <$> createLmdbStore e
@@ -97,7 +97,7 @@ createDatabase e logger checkAction = do
         objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
         certBySKI <- SMap lmdb <$> createLmdbStore e
         objectBriefs <- SMap lmdb <$> createLmdbStore e
-        validatedByVersion <- SMap lmdb <$> createLmdbStore e
+        validatedByVersion <- SMap lmdb <$> createLmdbStore e        
         pure RpkiObjectStore {..}
             
     createRepositoryStore = 

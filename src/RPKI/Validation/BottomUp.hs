@@ -54,13 +54,14 @@ validateBottomUp
                 Nothing -> appError $ ValidationE ParentCertificateNotFound
                 Just pc  -> do                                        
                     certPath <- reverse . (pc :) <$> findPathToRoot db pc                    
-                    validateTopDownAlongPath db certPath         
+                    vaildManifests <- liftIO $ newTVarIO makeValidManifests
+                    validateTopDownAlongPath db certPath vaildManifests         
                     pure $ Validated object    
   where
     {- Given a chain of certificatees from a TA to the object, 
        proceed with top-down validation along this chain only.
     -}
-    validateTopDownAlongPath db certPath = do
+    validateTopDownAlongPath db certPath vaildManifests = do
         -- TODO Make it NonEmpty?
         let taCert = head certPath        
         let locations = getLocations taCert
@@ -73,7 +74,7 @@ validateBottomUp
 
         go verifiedResources [bottomCert] = do            
             inSubObjectVScope (locationsToText $ getLocations bottomCert) $ do
-                (mft, crl) <- validateManifest db bottomCert
+                (mft, crl) <- validateManifest db bottomCert vaildManifests
 
                 -- RSC objects are not supposed to be on a manifest
                 case object of
@@ -84,7 +85,7 @@ validateBottomUp
 
         go verifiedResources (cert : certs) = do            
             inSubObjectVScope (locationsToText $ getLocations cert) $ do
-                (mft, crl) <- validateManifest db cert            
+                (mft, crl) <- validateManifest db cert vaildManifests            
                 let childCert = head certs                
                 validateOnMft mft childCert                            
                 Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
@@ -109,6 +110,8 @@ validateBottomUp
                     void $ vHoist $ validateRoa now roa bottomCert crl (Just verifiedResources)
                 GbrRO gbr -> 
                     void $ vHoist $ validateGbr now gbr bottomCert crl (Just verifiedResources)
+                AspaRO rsc -> 
+                    void $ vHoist $ validateAspa now rsc bottomCert crl (Just verifiedResources)                    
                 RscRO rsc -> 
                     void $ vHoist $ validateRsc now rsc bottomCert crl (Just verifiedResources)
                 _somethingElse -> do 
@@ -140,7 +143,7 @@ validateBottomUp
                             (pc :) <$> go taCerts pc
 
 
-    validateManifest db certificate = do
+    validateManifest db certificate validManifests = do
         {- This resembles `validateThisCertAndGoDown` from TopDown.hs 
            but the difference is that we don't do any descent down the tree
            and don't track visited object or metrics.
@@ -148,7 +151,8 @@ validateBottomUp
         let childrenAki   = toAKI $ getSKI certificate
         let certLocations = getLocations certificate                
         maybeMft <- findLatestMft database childrenAki           
-        let tryLatestValid = tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
+        let tryLatestValid = tryLatestValidCachedManifest appContext useManifest 
+                                maybeMft validManifests childrenAki certLocations
         case maybeMft of 
             Nothing -> 
                 vError (NoMFT childrenAki certLocations) `catchError` tryLatestValid                
