@@ -83,14 +83,6 @@ findLatestMft database childrenAki = liftIO $ do
     roTx objectStore' $ \tx -> 
         findLatestMftByAKI tx objectStore' childrenAki
 
--- findLatestCachedValidMft :: (MonadIO m, HasField' "objectStore" s1 (RpkiObjectStore s), Storage s) =>
---                 TVar s1 -> AKI -> m (Maybe (Located MftObject))
--- findLatestCachedValidMft database childrenAki = liftIO $ do 
---     objectStore' <- (^. #objectStore) <$> readTVarIO database
---     roTx objectStore' $ \tx -> 
---         getLatestValidMftByAKI tx objectStore' childrenAki
-
-
 -- 
 -- Reusable piece for the cases when a "fetch" has failed so we are falling 
 -- back to a latest valid cached manifest for this CA
@@ -109,9 +101,7 @@ tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
     -> AppError
     -> ValidatorT m b
 tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests childrenAki certLocations e = do
-    db <- liftIO $ readTVarIO database
-    -- z <- roTx objectStore' $ \tx -> 
-    --         getLatestValidMftByAKI tx objectStore' childrenAki
+    db        <- liftIO $ readTVarIO database
     validMfts <- loadValidManifests db validManifests    
     case Map.lookup childrenAki validMfts of
         Nothing   -> throwError e
