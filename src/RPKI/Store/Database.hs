@@ -434,24 +434,6 @@ getMftTimingMark mft = let
     in MftTimingMark (thisTime m) (nextTime m)
 
 
--- markLatestValidMft :: (MonadIO m, Storage s) => 
---                     Tx s 'RW -> DB s -> AKI -> Hash -> m ()
--- markLatestValidMft tx DB { objectStore = RpkiObjectStore {..}} aki hash = liftIO $ do 
---     k <- M.get tx hashToKey hash
---     for_ k $ M.put tx lastValidMft aki
-
-
--- getLatestValidMftByAKI :: (MonadIO m, Storage s) => 
---                         Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe (Located MftObject))
--- getLatestValidMftByAKI tx store@RpkiObjectStore {..} aki = liftIO $
---     M.get tx lastValidMft aki >>= \case 
---         Nothing -> pure Nothing 
---         Just k -> do 
---             o <- getLocatedByKey tx store k
---             pure $! case o of 
---                 Just (Located loc (MftRO mft)) -> Just $ Located loc mft
---                 _                              -> Nothing
-
 cleanupLatestValidMfts :: (MonadIO m, Storage s) => 
                         Tx s 'RW -> DB s -> m ()
 cleanupLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} = liftIO $ do
@@ -789,7 +771,7 @@ deleteOldVersions :: (MonadIO m, Storage s) =>
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m Int
-deleteOldVersions database tooOld = 
+deleteOldVersions db tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do
     
         let toDelete versions = 
@@ -800,19 +782,10 @@ deleteOldVersions database tooOld =
                         let lastFinished = List.maximum finished 
                         in filter ( /= lastFinished) $ filter tooOld versions
 
-        rwTx database $ \tx -> do 
-            versions <- map fst <$> allVersions tx database    
+        rwTx db $ \tx -> do 
+            versions <- map fst <$> allVersions tx db    
             let toDel = toDelete versions
-            forM_ toDel $ \worldVersion -> do
-                deleteVersion tx database worldVersion
-                deleteValidations tx database worldVersion
-                deleteAspas tx database worldVersion            
-                deleteGbrs tx database worldVersion            
-                deleteBgps tx database worldVersion            
-                deleteVRPs tx database worldVersion            
-                deleteMetrics tx database worldVersion
-                deleteSlurms tx database worldVersion
-        
+            forM_ toDel $ deleteVersionAndPayloads tx db        
             pure $! List.length toDel
 
 
