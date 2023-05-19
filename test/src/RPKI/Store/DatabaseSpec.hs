@@ -119,7 +119,6 @@ shouldMergeObjectLocations io = do
 
     let getIt hash = roTx objectStore $ \tx -> getByHash tx db hash    
 
-
     storeIt ro1 url1
     storeIt ro1 url2
     storeIt ro1 url3
@@ -132,17 +131,17 @@ shouldMergeObjectLocations io = do
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 2" loc2 (toLocations url3)    
 
-    verifyUrlCount objectStore "1" 3    
+    verifyUrlCount objectStore "case 1" 3    
 
-    rwTx objectStore $ \tx ->
-        deleteObject tx db (getHash ro1)    
+    rwTx objectStore $ \tx -> deleteObject tx db (getHash ro1)    
 
-    verifyUrlCount objectStore "2" 3
+    verifyUrlCount objectStore "case 2" 3
 
     -- should only clean up URLs
-    cleanObjectCache db (const False)
+    deletedUrls <- deleteDanglinUrls db
+    HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
-    verifyUrlCount objectStore "3" 1
+    verifyUrlCount objectStore "case 3" 1
 
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
@@ -261,7 +260,7 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
 
     world <- getOrCreateWorldVerion =<< newAppState
 
-    rwTx validationsStore $ \tx -> putValidations tx db world vrs
+    rwTx validationsStore $ \tx -> saveValidations tx db world vrs
     vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world
 
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'

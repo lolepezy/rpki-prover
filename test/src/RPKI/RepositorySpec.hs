@@ -107,6 +107,6 @@ generateRsyncUrl = do
     let level3 = replicate 10 Nothing <> map Just levelChunks
     host <- elements hosts
     pathLevels <- catMaybes <$> mapM elements [level1, level2, level3]
-    let rsyncHost = RsyncHost host
+    let rsyncHost = RsyncHost (RsyncHostName host) Nothing
     let path = map (RsyncPathChunk . convert) pathLevels
     pure $ RsyncURL rsyncHost path

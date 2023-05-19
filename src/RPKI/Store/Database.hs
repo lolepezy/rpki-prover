@@ -358,19 +358,12 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
             Nothing                       -> Just (k, timingMark)
             Just (_, latestMark) 
                 | timingMark > latestMark -> Just (k, timingMark)
-                | otherwise               -> latest    
+                | otherwise               -> latest                                  
 
 
-markValidated :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Hash -> WorldVersion -> m ()
-markValidated tx DB { objectStore = RpkiObjectStore {..} } hash wv = liftIO $    
-    ifJustM (M.get tx hashToKey hash) $ \key -> 
-        M.put tx objectValidatedBy key wv                                
-
-
-markValidated1 :: (MonadIO m, Storage s) => 
+markAsValidated :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m (TimeMs, TimeMs)
-markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
+markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
     versions <- map fst <$> allVersions tx db    
         
     (!objectKeys, !ms1) <- timedMS $ M.fold tx hashToKey (
@@ -391,7 +384,7 @@ markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersi
             -- they are present in the last one. In most cases it
             -- will delete most of the entries.
             let previousVersion = List.maximum versions 
-            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) -> do                 
+            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) ->                
                 M.put tx validatedByVersion previousVersion $ 
                         Compressed $ previousKeys `Set.difference` objectKeys
 
@@ -399,9 +392,9 @@ markValidated1 tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersi
 
     
 
-putObjectBrief :: (MonadIO m, Storage s) => 
+saveObjectBrief :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()
-putObjectBrief tx DB {         
+saveObjectBrief tx DB {         
         objectStore = RpkiObjectStore {..} } 
     hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
         M.put tx objectBriefs key (Compressed brief)
@@ -468,8 +461,8 @@ getBySKI tx DB { objectStore = store@RpkiObjectStore {..} } ski = liftIO $ runMa
 
 -- TA store functions
 
-putTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> StorableTA -> m ()
-putTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
+saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> StorableTA -> m ()
+saveTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 
 getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe StorableTA)
 getTA tx (TAStore s) name = liftIO $ M.get tx s name
@@ -477,9 +470,9 @@ getTA tx (TAStore s) name = liftIO $ M.get tx s name
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> m [(TaName, StorableTA)]
 getTAs tx (TAStore s) = liftIO $ M.all tx s
 
-putValidations :: (MonadIO m, Storage s) => 
+saveValidations :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
-putValidations tx DB { validationsStore = ValidationsStore s } wv validations = 
+saveValidations tx DB { validationsStore = ValidationsStore s } wv validations = 
     liftIO $ M.put tx s wv (Compressed validations)
 
 validationsForVersion :: (MonadIO m, Storage s) => 
@@ -510,9 +503,9 @@ deleteAspas :: (MonadIO m, Storage s) =>
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
 
-putAspas :: (MonadIO m, Storage s) => 
+saveAspas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
-putAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
+saveAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed aspas)
 
 getGbrs :: (MonadIO m, Storage s) => 
@@ -524,19 +517,19 @@ deleteGbrs :: (MonadIO m, Storage s) =>
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteGbrs tx DB { gbrStore = GbrStore m } wv = liftIO $ M.delete tx m wv
 
-putGbrs :: (MonadIO m, Storage s) => 
+saveGbrs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set (Hash, Gbr) -> WorldVersion -> m ()
-putGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
+saveGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed gbrs)
 
-putVrps :: (MonadIO m, Storage s) => 
+saveVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
-putVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
+saveVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
     liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
 
-putBgps :: (MonadIO m, Storage s) => 
+saveBgps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set BGPSecPayload -> WorldVersion -> m ()
-putBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion = 
+saveBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion = 
     liftIO $ M.put tx bgpMap worldVersion (Compressed bgps)
 
 deleteBgps :: (MonadIO m, Storage s) => 
@@ -548,9 +541,9 @@ getBgps :: (MonadIO m, Storage s) =>
 getBgps tx DB { bgpStore = BgpStore m } wv = 
     liftIO $ fmap unCompressed <$> M.get tx m wv    
 
-putVersion :: (MonadIO m, Storage s) => 
+saveVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionState -> m ()
-putVersion tx DB { versionStore = VersionStore s } wv versionState = 
+saveVersion tx DB { versionStore = VersionStore s } wv versionState = 
     liftIO $ M.put tx s wv versionState
 
 allVersions :: (MonadIO m, Storage s) => 
@@ -564,12 +557,12 @@ deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx 
 completeWorldVersion :: Storage s => 
                         Tx s 'RW -> DB s -> WorldVersion -> IO ()
 completeWorldVersion tx database worldVersion =    
-    putVersion tx database worldVersion $ VersionState "stub"
+    saveVersion tx database worldVersion $ VersionState "stub"
 
 
-putMetrics :: (MonadIO m, Storage s) => 
+saveMetrics :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
-putMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
+saveMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
     liftIO $ M.put tx s wv (Compressed appMetric)
 
 metricsForVersion :: (MonadIO m, Storage s) => 
@@ -581,9 +574,9 @@ deleteMetrics :: (MonadIO m, Storage s) =>
         Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteMetrics tx DB { metricStore = MetricStore s } wv = liftIO $ M.delete tx s wv
 
-putSlurm :: (MonadIO m, Storage s) => 
+saveSlurm :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
-putSlurm tx DB { slurmStore = SlurmStore s } wv slurm = 
+saveSlurm tx DB { slurmStore = SlurmStore s } wv slurm = 
     liftIO $ M.put tx s wv (Compressed slurm)
 
 slurmForVersion :: (MonadIO m, Storage s) => 
@@ -680,49 +673,6 @@ data CleanUpResult = CleanUpResult {
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
--- Delete all the objects from the objectStore if they were 
--- visited longer than certain time ago.
-cleanObjectCache :: Storage s => 
-                    DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that decides if the object is too old to stay in cache
-                    IO CleanUpResult
-cleanObjectCache db@DB {..} tooOld = do
-    kept        <- newIORef (0 :: Int)
-    deleted     <- newIORef (0 :: Int)    
-    
-    let readOldObjects queue =
-            roTx objectStore $ \tx ->
-                M.traverse tx (hashToKey objectStore) $ \hash key -> do
-                    z <- M.get tx (objectValidatedBy objectStore) key >>= \case 
-                            Just validatedBy -> pure $ Just validatedBy
-                            Nothing          -> M.get tx (objectInsertedBy objectStore) key                                                                        
-                    for_ z $ \cutoffVersion -> 
-                        if tooOld cutoffVersion
-                            then increment deleted >> atomically (writeCQueue queue hash)
-                            else increment kept
-
-    -- Don't lock the DB for potentially too long, use big but finite chunks
-    let chunkSize = 2000
-    let deleteObjects queue =
-            readQueueChunked queue chunkSize $ \quuElems ->
-                rwTx objectStore $ \tx ->
-                    forM_ quuElems $ deleteObject tx db
-
-    mapException (AppException . storageError) 
-        $ voidRun "cleanObjectCache" 
-        $ bracketChanClosable 
-                (2 * chunkSize)
-                (liftIO . readOldObjects)
-                (liftIO . deleteObjects)
-                (const $ pure ())    
-                    
-    deletedURLs <- deleteDanglinUrls db
-
-    CleanUpResult <$> 
-        readIORef deleted <*> 
-        readIORef kept <*> 
-        pure deletedURLs
-
 
 deleteDanglinUrls :: (MonadIO m, Storage s) => DB s -> m Int
 deleteDanglinUrls db@DB { objectStore = RpkiObjectStore {..}} = do 
@@ -755,7 +705,7 @@ deleteDanglinUrls db@DB { objectStore = RpkiObjectStore {..}} = do
                                 increment deletedURLs
 
             liftIO $ bracketChanClosable 
-                chunkSize
+                (2 * chunkSize)
                 (liftIO . readUrls)
                 (liftIO . deleteUrls)
                 (const $ pure ())  
@@ -763,13 +713,13 @@ deleteDanglinUrls db@DB { objectStore = RpkiObjectStore {..}} = do
     liftIO $ readIORef deletedURLs
 
 
--- Clean up older versions and delete everything associated with the version, i,e.
--- VRPs and validation results.
-deleteOldVersions :: (MonadIO m, Storage s) => 
+-- Clean up older version payloads, e.g. VRPs, ASPAs, validation results, etc.
+-- 
+deleteOldPayloads :: (MonadIO m, Storage s) => 
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m Int
-deleteOldVersions db tooOld = 
+deleteOldPayloads db tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do
     
         let toDelete versions = 
@@ -783,15 +733,15 @@ deleteOldVersions db tooOld =
         rwTx db $ \tx -> do 
             versions <- map fst <$> allVersions tx db    
             let toDel = toDelete versions
-            forM_ toDel $ deleteVersionAndPayloads tx db        
+            forM_ toDel $ deletePayloads tx db        
             pure $! List.length toDel
 
 
-deleteOldContent :: (MonadIO m, Storage s) => 
+deleteStaleContent :: (MonadIO m, Storage s) => 
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
                     m CleanUpResult
-deleteOldContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = do
+deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do                
 
         versions <- map fst <$> roTx db (\tx -> allVersions tx db)
@@ -804,7 +754,9 @@ deleteOldContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = do
             rwTx db $ \tx -> 
                 -- delete versions and payloads associated with them, 
                 -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
-                forM_ toDelete $ deleteVersionAndPayloads tx db
+                forM_ toDelete $ \worldVersion -> do 
+                    deleteVersion tx db worldVersion
+                    deletePayloads tx db worldVersion
             
             objectToKeep <- roTx db $ \tx -> do
                 -- Set of all objects touched by validation at all the versions
@@ -828,7 +780,7 @@ deleteOldContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = do
             deleted <- newIORef (0 :: Int)        
             let readOldObjects queue =
                     roTx db $ \tx ->        
-                        M.traverse tx hashToKey $ \hash key -> do
+                        M.traverse tx hashToKey $ \hash key ->
                             unless (key `Set.member` objectToKeep) $ do
                                 atomically (writeCQueue queue hash)
                                 increment deleted            
@@ -857,10 +809,9 @@ deleteOldContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = do
             pure $! CleanUpResult deleted' (Set.size objectToKeep) deletedURLs           
 
 
-deleteVersionAndPayloads :: (MonadIO m, Storage s) => 
+deletePayloads :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersionAndPayloads tx db worldVersion = do
-    deleteVersion tx db worldVersion
+deletePayloads tx db worldVersion = do    
     deleteValidations tx db worldVersion
     deleteAspas tx db worldVersion            
     deleteGbrs tx db worldVersion            

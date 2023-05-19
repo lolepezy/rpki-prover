@@ -109,7 +109,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     -- These initial delay numbers are pretty arbitrary and chosen based 
                     -- on reasonable order of the jobs.
                     ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC sharedBetweenJobs),
-                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions sharedBetweenJobs),
+                    ("cleanOldPayloadsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldPayloads sharedBetweenJobs),
                     ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedBetweenJobs),
                     ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
                     ]  
@@ -169,15 +169,15 @@ runWorkflow appContext@AppContext {..} tals = do
                         Left e -> do 
                             logError logger [i|Validator process failed: #{e}.|]
                             rwTx db $ \tx -> do
-                                putValidations tx db worldVersion (workerVS ^. typed)
-                                putMetrics tx db worldVersion (workerVS ^. typed)
+                                saveValidations tx db worldVersion (workerVS ^. typed)
+                                saveMetrics tx db worldVersion (workerVS ^. typed)
                                 completeWorldVersion tx db worldVersion                            
                             updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                             pure (mempty, mempty)            
                         Right WorkerResult {..} -> do                              
                             let ValidationResult vs maybeSlurm = payload
                             
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory                            
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 
@@ -228,15 +228,16 @@ runWorkflow appContext@AppContext {..} tals = do
                 (z, _) <- runCleapUpWorker worldVersion      
                 case z of 
                     Left e                  -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
-                    Right WorkerResult {..} -> pure $ Right payload                 
-                                       
+                    Right WorkerResult {..} -> do 
+                        pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
+                        pure $ Right payload                                       
 
         -- Delete oldest world versions and all the data related to them.
-        cleanOldVersions sharedBetweenJobs worldVersion _ = do
+        cleanOldPayloads sharedBetweenJobs worldVersion _ = do
             let now = versionToMoment worldVersion
             db <- readTVarIO database
             executeOrDie
-                (deleteOldVersions db $ versionIsOld now (config ^. #oldVersionsLifetime))
+                (deleteOldPayloads db $ versionIsOld now (config ^. #oldVersionsLifetime))
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ do
                         atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)                        
@@ -393,13 +394,13 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
     (_, elapsed) <- timedMS $ rwTx db $ \tx -> do
-        putValidations tx db worldVersion (updatedValidation ^. typed)
-        putMetrics tx db worldVersion (topDownValidations ^. typed)
-        putVrps tx db (payloads ^. #vrps) worldVersion
-        putAspas tx db (payloads ^. #aspas) worldVersion
-        putGbrs tx db (payloads ^. #gbrs) worldVersion
-        putBgps tx db (payloads ^. #bgpCerts) worldVersion
-        for_ maybeSlurm $ putSlurm tx db worldVersion
+        saveValidations tx db worldVersion (updatedValidation ^. typed)
+        saveMetrics tx db worldVersion (topDownValidations ^. typed)
+        saveVrps tx db (payloads ^. #vrps) worldVersion
+        saveAspas tx db (payloads ^. #aspas) worldVersion
+        saveGbrs tx db (payloads ^. #gbrs) worldVersion
+        saveBgps tx db (payloads ^. #bgpCerts) worldVersion
+        for_ maybeSlurm $ saveSlurm tx db worldVersion
         completeWorldVersion tx db worldVersion
 
     logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]    
@@ -422,7 +423,7 @@ runCacheCleanup AppContext {..} worldVersion = do
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> getLastCompletedVersion db tx
 
-    deleteOldContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
+    deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
 
 
 -- | Load the state corresponding to the last completed version.

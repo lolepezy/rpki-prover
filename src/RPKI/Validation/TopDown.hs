@@ -266,7 +266,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             Left e         -> appError $ ValidationE e
             Right ppAccess -> 
                 rwAppTxEx taStore storageError $ \tx -> do 
-                    putTA tx taStore (StorableTA tal actualCert (FetchedAt moment) ppAccess)
+                    saveTA tx taStore (StorableTA tal actualCert (FetchedAt moment) ppAccess)
                     pure (locatedTaCert uri' actualCert, ppAccess, Updated)
             
     locatedTaCert url cert = Located (toLocations url) cert
@@ -794,14 +794,10 @@ applyValidationSideEffects
 
             briefCounter <- newIORef (0 :: Integer)
             zz <- rwTx db $ \tx -> do 
-                    zz <- markValidated1 tx db vhs worldVersion 
-                    -- for_ vhs $ \h -> 
-                    --     markValidated tx db h worldVersion 
+                    zz <- markAsValidated tx db vhs worldVersion 
                     saveLatestValidMfts tx db (vmfts ^. #valids)
-                    -- for_ (Map.toList vmfts) $ \(aki, h) -> 
-                    --     markLatestValidMft tx db aki h                
                     for_ briefs' $ \(BriefUpdate h brief) -> do 
-                        putObjectBrief tx db h brief
+                        saveObjectBrief tx db h brief
                         modifyIORef' briefCounter (+1)
                     pure zz
 
