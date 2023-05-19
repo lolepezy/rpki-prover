@@ -114,7 +114,6 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
-        -- lastValidMft   :: SMap "last-valid-mft" s AKI ObjectKey,    
         lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI Hash)),    
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
@@ -337,8 +336,7 @@ deleteObject tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $
                 forM_ urlKeys $ \urlKey ->
                     MM.delete tx urlKeyToObjectKey urlKey objectKey                
             
-            for_ (getAKI ro) $ \aki' -> do 
-                -- M.delete tx lastValidMft aki'
+            for_ (getAKI ro) $ \aki' -> 
                 case ro of
                     MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
                     _         -> pure ()        
@@ -949,7 +947,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         objectsStats  <- M.stats tx objects
         mftByAKIStats <- MM.stats tx mftByAKI                                    
         hashToKeyStats  <- M.stats tx hashToKey
-        lastValidMftStats <- M.stats tx lastValidMfts
+        lastValidMftsStats <- M.stats tx lastValidMfts
 
         uriToUriKeyStat <- M.stats tx uriToUriKey
         uriKeyToUriStat <- M.stats tx uriKeyToUri
@@ -990,7 +988,7 @@ totalStats DBStats {..} =
     <> (let RpkiObjectStats {..} = rpkiObjectStats
         in objectsStats <> mftByAKIStats 
         <> objectInsertedByStats <> objectValidatedByStats 
-        <> hashToKeyStats <> lastValidMftStats)
+        <> hashToKeyStats <> lastValidMftsStats)
     <> resultsStats vResultStats 
     <> vrpStats 
     <> versionStats 

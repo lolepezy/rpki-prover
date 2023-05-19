@@ -60,7 +60,7 @@ data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,
     mftByAKIStats      :: SStats,    
     hashToKeyStats     :: SStats,
-    lastValidMftStats  :: SStats,
+    lastValidMftsStats :: SStats,
     uriToUriKeyStat    :: SStats,
     uriKeyToUriStat    :: SStats,
     uriKeyToObjectKeyStat  :: SStats,
