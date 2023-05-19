@@ -232,7 +232,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
                         pure $ Right payload                                       
 
-        -- Delete oldest world versions and all the data related to them.
+        -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
         cleanOldPayloads sharedBetweenJobs worldVersion _ = do
             let now = versionToMoment worldVersion
             db <- readTVarIO database
@@ -243,7 +243,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)                        
                         logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
-        -- Do the custom LMDB compaction
+        -- Do the LMDB compaction
         compact sharedBetweenJobs worldVersion _ = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
