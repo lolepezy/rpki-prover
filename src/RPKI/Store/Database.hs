@@ -68,7 +68,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 9
+currentDatabaseVersion = 11
 
 databaseVersionKey :: Text
 databaseVersionKey = "database-version"
@@ -117,10 +117,8 @@ data RpkiObjectStore s = RpkiObjectStore {
         lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI Hash)),    
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
-        objectInsertedBy  :: SMap "object-inserted-by" s ObjectKey WorldVersion,
-        objectValidatedBy :: SMap "object-validated-by" s ObjectKey WorldVersion,
-
-        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
+        objectInsertedBy   :: SMap "object-inserted-by" s ObjectKey WorldVersion,
+        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set Hash)),
 
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
@@ -325,7 +323,6 @@ deleteObject tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $
         ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
             M.delete tx objects objectKey
             M.delete tx objectInsertedBy objectKey        
-            M.delete tx objectValidatedBy objectKey        
             M.delete tx hashToKey h        
             M.delete tx objectBriefs objectKey    
             case ro of 
@@ -362,35 +359,23 @@ findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $
 
 
 markAsValidated :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m (TimeMs, TimeMs)
+                Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m ()
 markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
-    versions <- map fst <$> allVersions tx db    
+    exisingVersions <- map fst <$> allVersions tx db    
         
-    (!objectKeys, !ms1) <- timedMS $ M.fold tx hashToKey (
-                        \keys h k -> if (h `Set.member` hashes) then 
-                                        pure $! k `Set.insert` keys
-                                     else pure $! keys) 
-                    Set.empty
-
-    -- (!objectKeys, !ms1) <- timedMS $ fmap (Set.fromList . catMaybes) 
-    --         $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h    
-    (_, !ms2) <- timedMS $ M.put tx validatedByVersion worldVersion (Compressed objectKeys)
+    M.put tx validatedByVersion worldVersion (Compressed hashes)
     
-    case versions of 
+    case exisingVersions of 
         [] -> pure ()
         _ -> do
-            -- This is just an optimisation, but a necessary one:
+            -- This is an optimisation, but a necessary one:
             -- Delete 'validatedKeys' from the previous version if
             -- they are present in the last one. In most cases it
             -- will delete most of the entries.
-            let previousVersion = List.maximum versions 
-            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) ->                
+            let previousVersion = List.maximum exisingVersions 
+            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousHashes) ->                
                 M.put tx validatedByVersion previousVersion $ 
-                        Compressed $ previousKeys `Set.difference` objectKeys
-
-    pure (ms1, ms2)
-
-    
+                        Compressed $ previousHashes `Set.difference` hashes
 
 saveObjectBrief :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()
@@ -762,17 +747,21 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                 -- Set of all objects touched by validation at all the versions
                 -- that are not "too old".
                 touchedObjectKeys <- foldM 
-                    (\allKeys version -> do 
-                        objecKeys <- fmap unCompressed <$> M.get tx validatedByVersion version
-                        let keySet = fromMaybe Set.empty objecKeys
-                        pure $! keySet <> allKeys)
-                    mempty
-                    toScan
+                    (\allHashes version ->
+                        M.get tx validatedByVersion version >>= \case                        
+                            Nothing                  -> pure $! allHashes
+                            Just (Compressed hashes) -> foldM 
+                                (\allKeys h ->
+                                    M.get tx hashToKey h >>= \case
+                                        Nothing -> pure $! allKeys
+                                        Just k  -> pure $! k `Set.insert` allKeys)
+                                mempty hashes)
+                    mempty toScan
 
                 -- Objects inserted by 
                 recentlyInsertedObjectKeys <- Set.fromList <$>
-                    M.fold tx objectInsertedBy (\keys key version -> 
-                        pure $! if tooOld version then keys else key : keys) mempty
+                    M.fold tx objectInsertedBy (\allKeys key version -> 
+                        pure $! if tooOld version then allKeys else key : allKeys) mempty
 
                 pure $! touchedObjectKeys <> recentlyInsertedObjectKeys            
 
@@ -906,7 +895,6 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
 
         objectInsertedByStats <- M.stats tx objectInsertedBy
-        objectValidatedByStats <- M.stats tx objectValidatedBy            
         objecBriefStats <- M.stats tx objectBriefs
         validatedByVersionStats <- M.stats tx validatedByVersion
         pure RpkiObjectStats {..}
@@ -937,9 +925,11 @@ totalStats DBStats {..} =
     <> (let RepositoryStats{..} = repositoryStats 
         in rrdpStats <> rsyncStats <> lastSStats) 
     <> (let RpkiObjectStats {..} = rpkiObjectStats
-        in objectsStats <> mftByAKIStats 
-        <> objectInsertedByStats <> objectValidatedByStats 
-        <> hashToKeyStats <> lastValidMftsStats)
+        in objectsStats <> mftByAKIStats <> hashToKeyStats
+        <> lastValidMftsStats <> uriToUriKeyStat <> uriKeyToUriStat
+        <> uriKeyToObjectKeyStat <> objectKeyToUrlKeysStat
+        <> objectInsertedByStats <> objecBriefStats 
+        <> validatedByVersionStats)
     <> resultsStats vResultStats 
     <> vrpStats 
     <> versionStats 
@@ -967,8 +957,8 @@ emptyDBMaps tx DB {..} = liftIO $ do
         MM.erase tx mftByAKI
         M.erase tx lastValidMfts
         M.erase tx certBySKI
-        M.erase tx objectInsertedBy
-        M.erase tx objectValidatedBy
+        M.erase tx objectInsertedBy        
+        M.erase tx validatedByVersion
         M.erase tx uriToUriKey
         M.erase tx uriKeyToUri
         MM.erase tx urlKeyToObjectKey

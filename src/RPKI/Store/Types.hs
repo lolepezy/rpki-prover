@@ -65,8 +65,7 @@ data RpkiObjectStats = RpkiObjectStats {
     uriKeyToUriStat    :: SStats,
     uriKeyToObjectKeyStat  :: SStats,
     objectKeyToUrlKeysStat :: SStats,
-    objectInsertedByStats  :: SStats,
-    objectValidatedByStats  :: SStats,
+    objectInsertedByStats  :: SStats,    
     objecBriefStats         :: SStats,
     validatedByVersionStats :: SStats
 } deriving stock (Show, Eq, Generic)

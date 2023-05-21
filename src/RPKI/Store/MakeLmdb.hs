@@ -86,8 +86,7 @@ createDatabase e logger checkAction = do
         let keys = Sequence "object-key" seqMap
         objects  <- SMap lmdb <$> createLmdbStore e
         mftByAKI <- SMultiMap lmdb <$> createLmdbMultiStore e
-        objectInsertedBy <- SMap lmdb <$> createLmdbStore e
-        objectValidatedBy <- SMap lmdb <$> createLmdbStore e        
+        objectInsertedBy <- SMap lmdb <$> createLmdbStore e        
         hashToKey   <- SMap lmdb <$> createLmdbStore e
         lastValidMfts <- SMap lmdb <$> createLmdbStore e
 

@@ -785,7 +785,7 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
 applyValidationSideEffects 
     AppContext {..} 
     AllTasTopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize, briefNumber, zz), elapsed) <- timedMS $ do 
+    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do 
             (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$> 
                                 readTVar visitedHashes <*> 
                                 readTVar validManifests <*>
@@ -793,20 +793,19 @@ applyValidationSideEffects
                                 readTVar database
 
             briefCounter <- newIORef (0 :: Integer)
-            zz <- rwTx db $ \tx -> do 
-                    zz <- markAsValidated tx db vhs worldVersion 
-                    saveLatestValidMfts tx db (vmfts ^. #valids)
-                    for_ briefs' $ \(BriefUpdate h brief) -> do 
-                        saveObjectBrief tx db h brief
-                        modifyIORef' briefCounter (+1)
-                    pure zz
+            rwTx db $ \tx -> do 
+                markAsValidated tx db vhs worldVersion 
+                saveLatestValidMfts tx db (vmfts ^. #valids)
+                for_ briefs' $ \(BriefUpdate h brief) -> do 
+                    saveObjectBrief tx db h brief
+                    modifyIORef' briefCounter (+1)                    
 
             c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size (vmfts ^. #valids), c, zz)
+            pure (Set.size vhs, Map.size (vmfts ^. #valids), c)
 
     logInfo logger $
         [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <> 
-        [i|saved #{briefNumber} brief objects, took #{elapsed}ms, zz = #{zz}.|]
+        [i|saved #{briefNumber} brief objects, took #{elapsed}ms.|]
 
     
 
