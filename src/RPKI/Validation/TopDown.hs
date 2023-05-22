@@ -431,10 +431,12 @@ validateCaCertificate
 
         -- first try to use the latest manifest 
         -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-6486bis-11#section-6.2
-        -- 
-        maybeMft <- findLatestMft database childrenAki
+        --         
+        maybeMft <- liftIO $ do 
+                        db <- readTVarIO database
+                        roTx db $ \tx -> findLatestMftByAKI tx db childrenAki
         let goForLatestValid = tryLatestValidCachedManifest appContext 
-                                useManifest maybeMft validManifests childrenAki certLocations
+                                useManifest (fst <$> maybeMft) validManifests childrenAki certLocations
         case maybeMft of                        
             Nothing -> 
                 -- Use awkward vError + catchError to force the error to 
@@ -454,10 +456,10 @@ validateCaCertificate
             validateManifestAndItsChildren mft childrenAki certLocations
                 `recover`
                 -- manifest should be marked as visited regardless of its validitity
-                visitObject appContext topDownContext mft               
+                visitObject appContext topDownContext (fst mft)
 
 
-        validateManifestAndItsChildren locatedMft childrenAki certLocations = do                         
+        validateManifestAndItsChildren (locatedMft, mftKey) childrenAki certLocations = do                         
             let mft = locatedMft ^. #payload            
 
             visitedObjects <- liftIO $ readTVarIO visitedHashes            
@@ -551,7 +553,7 @@ validateCaCertificate
                         vError $ CRLHashPointsToAnotherObject crlHash certLocations   
 
             oneMoreMft
-            addValidMft topDownContext childrenAki mft
+            addValidMft topDownContext childrenAki mftKey
             pure manifestResult            
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
@@ -825,10 +827,10 @@ visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
         
 
 -- Add manifest to the map of the valid ones
-addValidMft :: MonadIO m => TopDownContext -> AKI -> MftObject -> m ()
-addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mft = 
+addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
+addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey = 
     liftIO $ atomically $ modifyTVar' 
-                validManifests (& #valids %~ (<> Map.singleton aki (getHash mft)))
+                validManifests (& #valids %~ Map.insert aki mftKey)
                 
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()

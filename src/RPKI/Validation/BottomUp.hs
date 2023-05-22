@@ -150,9 +150,9 @@ validateBottomUp
          -}
         let childrenAki   = toAKI $ getSKI certificate
         let certLocations = getLocations certificate                
-        maybeMft <- findLatestMft database childrenAki           
+        maybeMft <- liftIO $ roTx db $ \tx -> findLatestMftByAKI tx db childrenAki
         let tryLatestValid = tryLatestValidCachedManifest appContext useManifest 
-                                maybeMft validManifests childrenAki certLocations
+                                (fst <$> maybeMft) validManifests childrenAki certLocations
         case maybeMft of 
             Nothing -> 
                 vError (NoMFT childrenAki certLocations) `catchError` tryLatestValid                
@@ -161,7 +161,7 @@ validateBottomUp
       where 
         -- TODO Decide what to do with nested scopes (we go bottom up, 
         -- so nesting doesn't work the same way).
-        useManifest locatedMft childrenAki certLocations = do 
+        useManifest (locatedMft, _) childrenAki certLocations = do 
             let mft = locatedMft ^. #payload            
             validateObjectLocations locatedMft
             validateMftLocation locatedMft certificate

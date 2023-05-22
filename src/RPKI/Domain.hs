@@ -405,7 +405,7 @@ instance WithHash RpkiObject where
     getHash (BgpRO c) = getHash c
 
 data Located a = Located { 
-        locations :: Locations,
+        locations :: Locations,        
         payload   :: a
     }
     deriving stock (Show, Eq, Generic)

@@ -68,7 +68,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 11
+currentDatabaseVersion = 12
 
 databaseVersionKey :: Text
 databaseVersionKey = "database-version"
@@ -114,7 +114,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
-        lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI Hash)),    
+        lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI ObjectKey)),    
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
         objectInsertedBy   :: SMap "object-inserted-by" s ObjectKey WorldVersion,
@@ -222,38 +222,38 @@ getByHash tx db h = (snd <$>) <$> getByHash_ tx db h
 
 getByHash_ :: (MonadIO m, Storage s) => 
               Tx s mode -> DB s -> Hash -> m (Maybe (ObjectKey, Located RpkiObject))
-getByHash_ tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
+getByHash_ tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx hashToKey h
-    z         <- MaybeT $ getLocatedByKey tx store objectKey
+    z         <- MaybeT $ getLocatedByKey tx db objectKey
     pure (objectKey, z)
             
 getByUri :: (MonadIO m, Storage s) => 
-            Tx s mode -> RpkiObjectStore s -> RpkiURL -> m [Located RpkiObject]
-getByUri tx store@RpkiObjectStore {..} uri = liftIO $
+            Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
+getByUri tx db@DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
     M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
         Nothing -> pure []
         Just uriKey ->         
             fmap catMaybes $ 
                 MM.allForKey tx urlKeyToObjectKey uriKey >>=
-                mapM (getLocatedByKey tx store)
+                mapM (getLocatedByKey tx db)
 
 
 getObjectByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe RpkiObject)
-getObjectByKey tx RpkiObjectStore {..} k = liftIO $
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObject)
+getObjectByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $
     fmap (\(Compressed StorableObject{..}) -> object) <$> M.get tx objects k    
 
 getLocatedByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe (Located RpkiObject))
-getLocatedByKey tx store k = liftIO $ runMaybeT $ do     
-    object    <- MaybeT $ getObjectByKey tx store k    
-    locations <- MaybeT $ getLocationsByKey tx store k                    
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Located RpkiObject))
+getLocatedByKey tx db k = liftIO $ runMaybeT $ do     
+    object    <- MaybeT $ getObjectByKey tx db k    
+    locations <- MaybeT $ getLocationsByKey tx db k                    
     pure $ Located locations object
 
 
 getLocationsByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> RpkiObjectStore s -> ObjectKey -> m (Maybe Locations)
-getLocationsByKey tx RpkiObjectStore {..} k = liftIO $ runMaybeT $ do         
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe Locations)
+getLocationsByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $ runMaybeT $ do         
     uriKeys   <- MaybeT $ M.get tx objectKeyToUrlKeys k
     locations <- MaybeT 
                     $ (toNESet . catMaybes <$>)
@@ -318,9 +318,9 @@ hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
-deleteObject tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $
+deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey ->             
-        ifJustM (getObjectByKey tx store objectKey) $ \ro -> do 
+        ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
             M.delete tx objects objectKey
             M.delete tx objectInsertedBy objectKey        
             M.delete tx hashToKey h        
@@ -340,14 +340,14 @@ deleteObject tx DB { objectStore = store@RpkiObjectStore {..} } h = liftIO $
 
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> RpkiObjectStore s -> AKI -> m (Maybe (Located MftObject))
-findLatestMftByAKI tx store@RpkiObjectStore {..} aki' = liftIO $ 
+                    Tx s mode -> DB s -> AKI -> m (Maybe (Located MftObject, ObjectKey))
+findLatestMftByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ 
     MM.foldS tx mftByAKI aki' chooseLatest Nothing >>= \case
         Nothing     -> pure Nothing
         Just (k, _) -> do 
-            o <- getLocatedByKey tx store k
+            o <- getLocatedByKey tx db k
             pure $! case o of 
-                Just (Located loc (MftRO mft)) -> Just $ Located loc mft
+                Just (Located loc (MftRO mft)) -> Just (Located loc mft, k)
                 _                              -> Nothing
   where
     chooseLatest latest _ (k, timingMark) = 
@@ -387,19 +387,19 @@ saveObjectBrief tx DB {
 
 getOjectBrief :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> Hash -> m (Maybe (Located EEBrief))
-getOjectBrief tx DB { objectStore = store@RpkiObjectStore {..} } h =  
+getOjectBrief tx db@DB { objectStore = RpkiObjectStore {..} } h =  
     liftIO $ runMaybeT $ do 
         objectKey <- MaybeT $ M.get tx hashToKey h
         brief <- unCompressed <$> MaybeT (M.get tx objectBriefs objectKey)        
-        locations <- MaybeT $ getLocationsByKey tx store objectKey
+        locations <- MaybeT $ getLocationsByKey tx db objectKey
         pure $ Located locations brief
 
 
 -- This is for testing purposes mostly
-getAll :: (MonadIO m, Storage s) => Tx s mode -> RpkiObjectStore s -> m [Located RpkiObject]
-getAll tx store = liftIO $ do 
-    keys <- M.keys tx (objects store)
-    catMaybes <$> forM keys (\k -> getLocatedByKey tx store k)    
+getAll :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [Located RpkiObject]
+getAll tx db@DB { objectStore = RpkiObjectStore {..} } = liftIO $ do 
+    allKeys <- M.keys tx objects
+    catMaybes <$> forM allKeys (\k -> getLocatedByKey tx db k)    
 
 
 -- | Get something from the manifest that would allow us to judge 
@@ -415,12 +415,12 @@ cleanupLatestValidMfts :: (MonadIO m, Storage s) =>
 cleanupLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} = liftIO $ do
     z <- M.get tx lastValidMfts lastValidMftKey
     for_ z $ \(Compressed valids) -> do
-        exisingHashes <- M.fold tx hashToKey (\hashes h _ -> pure $! h `Set.insert` hashes) Set.empty
-        let valids' = Map.filter (\h -> h `Set.member` exisingHashes) valids    
+        exisingKeys <- M.fold tx hashToKey (\allKeys _ k -> pure $! k `Set.insert` allKeys) Set.empty
+        let valids' = Map.filter (\k -> k `Set.member` exisingKeys) valids    
         M.put tx lastValidMfts lastValidMftKey (Compressed valids')
 
 saveLatestValidMfts :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> Map AKI Hash -> m ()
+                        Tx s 'RW -> DB s -> Map AKI ObjectKey -> m ()
 saveLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} valids = liftIO $ do
     z <- M.get tx lastValidMfts lastValidMftKey
     let valids' = case z of 
@@ -430,7 +430,7 @@ saveLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} valids = liftIO 
 
 
 getLatestValidMfts :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> m (Map AKI Hash)
+                        Tx s mode -> DB s -> m (Map AKI ObjectKey)
 getLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} = liftIO $ do
     z <- M.get tx lastValidMfts lastValidMftKey
     pure $ case z of 
@@ -439,9 +439,9 @@ getLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} = liftIO $ do
 
 
 getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
-getBySKI tx DB { objectStore = store@RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
+getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx certBySKI ski
-    located   <- MaybeT $ getLocatedByKey tx store objectKey
+    located   <- MaybeT $ getLocatedByKey tx db objectKey
     pure $ located & #payload %~ (\(CerRO c) -> c)
 
 -- TA store functions

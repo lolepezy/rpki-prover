@@ -56,6 +56,10 @@ newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
+data Keyed a = Keyed a ObjectKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)        
+
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,
     mftByAKIStats      :: SStats,    

@@ -15,7 +15,6 @@ import           Control.Monad.Except
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
-import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
 
 import           Data.Foldable
@@ -35,6 +34,7 @@ import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
+import           RPKI.Store.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
 import           RPKI.Util                        (fmtLocations)
@@ -45,7 +45,7 @@ data ValidManifests'State = FillingUp | FetchingFromDB | Merged
 
 data ValidManifests = ValidManifests {
         state  :: ValidManifests'State,
-        valids :: Map AKI Hash
+        valids :: Map AKI ObjectKey
     }
     deriving stock (Generic)
 
@@ -76,13 +76,6 @@ validateMftFileName filename =
             vError $ BadFileNameOnMFT filename 
                         "Filename doesn't have exactly one DOT"      
 
-findLatestMft :: (MonadIO m, HasField' "objectStore" s1 (RpkiObjectStore s), Storage s) =>
-                TVar s1 -> AKI -> m (Maybe (Located MftObject))
-findLatestMft database childrenAki = liftIO $ do 
-    objectStore' <- (^. #objectStore) <$> readTVarIO database
-    roTx objectStore' $ \tx -> 
-        findLatestMftByAKI tx objectStore' childrenAki
-
 -- 
 -- Reusable piece for the cases when a "fetch" has failed so we are falling 
 -- back to a latest valid cached manifest for this CA
@@ -93,7 +86,7 @@ findLatestMft database childrenAki = liftIO $ do
 -- 
 tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
         AppContext s
-    -> (Located MftObject -> AKI -> Locations -> ValidatorT m b)
+    -> ((Located MftObject, ObjectKey) -> AKI -> Locations -> ValidatorT m b)
     -> Maybe mft
     -> TVar ValidManifests
     -> AKI
@@ -105,8 +98,8 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests
     validMfts <- loadValidManifests db validManifests    
     case Map.lookup childrenAki validMfts of
         Nothing   -> throwError e
-        Just hash -> do                        
-            z <- liftIO $ roTx db $ \tx -> getByHash tx db hash
+        Just key -> do                        
+            z <- liftIO $ roTx db $ \tx -> getLocatedByKey tx db key
             latestValidMft <- case z of 
                                 Just (Located loc (MftRO mft)) -> pure $ Located loc mft
                                 _                              -> throwError e                
@@ -115,9 +108,9 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests
                 Nothing -> do 
                     appWarn e      
                     logWarn logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
-                    useManifest latestValidMft childrenAki certLocations                                
+                    useManifest (latestValidMft, key) childrenAki certLocations                                
                 Just latestMft'
-                    | getHash latestMft' == getHash latestValidMft 
+                    | getHash latestMft' == getHash latestValidMft
                         -- it doesn't make sense to try the same manifest again
                         -- just re-trow the error
                         -> throwError e
@@ -125,11 +118,11 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests
                         appWarn e                                    
                         logWarn logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
                                          [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
-                        useManifest latestValidMft childrenAki certLocations
+                        useManifest (latestValidMft, key) childrenAki certLocations
 
 
 loadValidManifests :: (MonadIO m, Storage s) => 
-                    DB s -> TVar ValidManifests -> m (Map AKI Hash) 
+                        DB s -> TVar ValidManifests -> m (Map AKI ObjectKey) 
 loadValidManifests db validManifests = liftIO $ do 
     join $ atomically $ do 
         vm <- readTVar validManifests

@@ -282,9 +282,9 @@ getRpkiObject AppContext {..} uri hash =
                     throwError $ err400 { errBody = "'uri' is not a valid object URL." }
 
                 Right rpkiUrl -> liftIO $ do
-                    DB {..} <- readTVarIO database
-                    roTx objectStore $ \tx ->
-                        (locatedDto <$>) <$> getByUri tx objectStore rpkiUrl
+                    db <- readTVarIO database
+                    roTx db $ \tx ->
+                        (locatedDto <$>) <$> getByUri tx db rpkiUrl
 
         (Nothing, Just hash') ->
             case parseHash hash' of
