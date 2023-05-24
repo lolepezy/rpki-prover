@@ -842,6 +842,10 @@ addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey =
     liftIO $ atomically $ modifyTVar' 
                 validManifests (& #valids %~ Map.insert aki mftKey)
                 
+-- Cache hash-to-objectKey mapping to speed up getting object key 
+-- by hash. It is done to save some extra 100-150ms of CPU time 
+-- of fetching this information from the database.
+-- 
 cacheH2K :: MonadIO m => TopDownContext -> Hash -> ObjectKey -> m ()
 cacheH2K TopDownContext { allTas = AllTasTopDownContext {..}} hash key = 
     liftIO $ atomically $ modifyTVar' hash2Key $ Map.insert hash key

@@ -404,7 +404,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         completeWorldVersion tx db worldVersion
 
     logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]    
-    threadDelay 30_000_000
+    -- threadDelay 30_000_000
 
     pure (updatedValidation, maybeSlurm)
 
