@@ -796,7 +796,7 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
 applyValidationSideEffects 
     AppContext {..} 
     AllTasTopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize, h2ksize, briefNumber), elapsed) <- timedMS $ do 
+    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do 
             (vhs, h2k, vmfts, briefs', db) <- atomically $ (,,,,) <$> 
                                 readTVar visitedHashes <*> 
                                 readTVar hash2Key <*> 
@@ -806,7 +806,6 @@ applyValidationSideEffects
 
             briefCounter <- newIORef (0 :: Integer)
             rwTx db $ \tx -> do 
-                -- let fasterMap = HashMap.fromList $ Map.toList h2k
                 markAsValidated tx db vhs h2k worldVersion 
                 saveLatestValidMfts tx db (vmfts ^. #valids)
                 for_ briefs' $ \(BriefUpdate h brief) -> do 
@@ -814,11 +813,11 @@ applyValidationSideEffects
                     modifyIORef' briefCounter (+1)                    
 
             c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size (vmfts ^. #valids), Map.size h2k, c)
+            pure (Set.size vhs, Map.size (vmfts ^. #valids), c)
 
     logInfo logger $
         [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <> 
-        [i|saved #{briefNumber} brief objects, took #{elapsed}ms, mapping size = #{h2ksize}.|]
+        [i|saved #{briefNumber} brief objects, took #{elapsed}ms.|]
 
     
 
