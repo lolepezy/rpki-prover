@@ -42,10 +42,10 @@ instance Storage s => WithStorage s s where
     storage = id
 
 roTx :: WithStorage s ws => ws -> (Tx s 'RO -> IO a) -> IO a
-roTx s = readOnlyTx (storage s)
+roTx = readOnlyTx . storage
 
 rwTx :: WithStorage s ws => ws -> (Tx s 'RW -> IO a) -> IO a
-rwTx s = readWriteTx (storage s)
+rwTx = readWriteTx . storage
 
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx    

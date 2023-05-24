@@ -429,7 +429,7 @@ validateCaCertificate
         validateObjectLocations certificate
 
         oneMoreCert            
-        visitObject appContext topDownContext (CerRO $ certificate ^. #payload)                                                    
+        visitObject topDownContext (CerRO $ certificate ^. #payload)                                                    
 
         -- first try to use the latest manifest 
         -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-6486bis-11#section-6.2
@@ -458,7 +458,7 @@ validateCaCertificate
             validateManifestAndItsChildren mft childrenAki certLocations
                 `recover` do
                     -- manifest should be marked as visited regardless of its validitity
-                    visitObject appContext topDownContext (mft ^. #object)
+                    visitObject topDownContext (mft ^. #object)
                     cacheH2K topDownContext (getHash $ mft ^. #object) (mft ^. #key)
 
 
@@ -490,14 +490,15 @@ validateCaCertificate
                         [crl] -> pure crl
                         crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
 
-                db <- liftIO $ readTVarIO database
-                crlKeyed <- liftIO $ roTx db $ \tx -> getKeyedByHash tx db crlHash                
+                crlKeyed <- liftIO $ do 
+                        db <- readTVarIO database
+                        roTx db $ \tx -> getKeyedByHash tx db crlHash
                 case crlKeyed of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations    
 
                     Just (Keyed foundCrl@(Located crlLocations (CrlRO crl)) crlKey) -> do      
-                        visitObject appContext topDownContext foundCrl       
+                        visitObject topDownContext foundCrl       
                         cacheH2K topDownContext (getHash crl) crlKey                 
                         validateObjectLocations foundCrl
                         validCrl <- inSubObjectVScope (locationsToText crlLocations) $ 
@@ -826,15 +827,14 @@ applyValidationSideEffects
 -- we read it from the database and looked at it. It will be used to decide when 
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
-visitObject :: (MonadIO m, WithHash ro, Storage s) => 
-                AppContext s -> TopDownContext -> ro -> m ()
-visitObject _ topDownContext ro = 
+visitObject :: (MonadIO m, WithHash ro) => 
+                TopDownContext -> ro -> m ()
+visitObject topDownContext ro = 
     visitObjects topDownContext [getHash ro]    
 
 visitObjects :: MonadIO m => TopDownContext -> [Hash] -> m ()
 visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
-    liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
-        
+    liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)    
 
 -- Add manifest to the map of the valid ones
 addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
@@ -845,10 +845,6 @@ addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey =
 cacheH2K :: MonadIO m => TopDownContext -> Hash -> ObjectKey -> m ()
 cacheH2K TopDownContext { allTas = AllTasTopDownContext {..}} hash key = 
     liftIO $ atomically $ modifyTVar' hash2Key $ Map.insert hash key
-
-cacheH2Ks :: MonadIO m => TopDownContext -> [(Hash, ObjectKey)] -> m ()
-cacheH2Ks TopDownContext { allTas = AllTasTopDownContext {..}} h2ks = 
-    liftIO $ atomically $ modifyTVar' hash2Key (<> Map.fromList h2ks)
                 
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()

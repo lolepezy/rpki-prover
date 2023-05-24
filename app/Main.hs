@@ -160,8 +160,8 @@ runValidatorServer appContext@AppContext {..} = do
 
     logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
 
-    database' <- readTVarIO database
-    rwTx database' $ \tx -> saveValidations tx database' worldVersion (vs ^. typed)
+    db <- readTVarIO database
+    rwTx db $ \tx -> saveValidations tx db worldVersion (vs ^. typed)
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]

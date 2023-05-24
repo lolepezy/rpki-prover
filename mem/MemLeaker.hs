@@ -61,9 +61,9 @@ main = do
             
         (Right appContext, _) -> do             
 
-            database' <- readTVarIO (appContext ^. #database)
+            db <- readTVarIO (appContext ^. #database)
             worldVersion <- updateWorldVersion (appContext ^. #appState)
-            storedPubPoints   <- roTx database' $ \tx -> getPublicationPoints tx (repositoryStore database')
+            storedPubPoints   <- roTx db $ \tx -> getPublicationPoints tx (repositoryStore db)
 
             forConcurrently_ sources $ \(repository, _) -> do
                     runValidatorT (newScopes "download-rrdp") 
@@ -86,7 +86,7 @@ main = do
 
                 let TopDownResult {..} = mconcat results
                 logInfo logger [i|Validated GC, #{Set.size vrps} VRPs, took #{elapsed}ms|]
-                (cleanup, elapsed2) <- timedMS $ cleanObjectCache database' $ versionIsOld now cacheLifeTime
+                (cleanup, elapsed2) <- timedMS $ cleanObjectCache db $ versionIsOld now cacheLifeTime
                 logInfo logger [i|Done with cache GC, #{cleanup}, took #{elapsed2}ms|]
 
     where
