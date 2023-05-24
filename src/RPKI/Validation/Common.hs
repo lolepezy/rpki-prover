@@ -86,7 +86,7 @@ validateMftFileName filename =
 -- 
 tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
         AppContext s
-    -> ((Located MftObject, ObjectKey) -> AKI -> Locations -> ValidatorT m b)
+    -> (Keyed (Located MftObject) -> AKI -> Locations -> ValidatorT m b)
     -> Maybe mft
     -> TVar ValidManifests
     -> AKI
@@ -108,7 +108,7 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests
                 Nothing -> do 
                     appWarn e      
                     logWarn logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
-                    useManifest (latestValidMft, key) childrenAki certLocations                                
+                    useManifest (Keyed latestValidMft key) childrenAki certLocations                                
                 Just latestMft'
                     | getHash latestMft' == getHash latestValidMft
                         -- it doesn't make sense to try the same manifest again
@@ -118,7 +118,7 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests
                         appWarn e                                    
                         logWarn logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
                                          [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
-                        useManifest (latestValidMft, key) childrenAki certLocations
+                        useManifest (Keyed latestValidMft key) childrenAki certLocations
 
 
 loadValidManifests :: (MonadIO m, Storage s) => 

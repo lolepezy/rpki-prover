@@ -56,7 +56,10 @@ newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
-data Keyed a = Keyed a ObjectKey
+data Keyed a = Keyed { 
+        object :: a,
+        key    :: ObjectKey
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 

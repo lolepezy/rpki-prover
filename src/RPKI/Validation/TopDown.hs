@@ -77,6 +77,7 @@ data AllTasTopDownContext = AllTasTopDownContext {
         worldVersion         :: WorldVersion,
         validManifests       :: TVar ValidManifests,
         visitedHashes        :: TVar (Set Hash),        
+        hash2Key             :: TVar (Map.Map Hash ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,        
         briefs               :: TVar [BriefUpdate]
     }
@@ -126,6 +127,7 @@ newAllTasTopDownContext :: MonadIO m =>
 newAllTasTopDownContext worldVersion now repositoryProcessing = 
     liftIO $ atomically $ do
         visitedHashes  <- newTVar mempty
+        hash2Key       <- newTVar mempty
         validManifests <- newTVar makeValidManifests
         briefs         <- newTVar []
         pure $ AllTasTopDownContext {..}
@@ -434,9 +436,9 @@ validateCaCertificate
         --         
         maybeMft <- liftIO $ do 
                         db <- readTVarIO database
-                        roTx db $ \tx -> findLatestMftByAKI tx db childrenAki
-        let goForLatestValid = tryLatestValidCachedManifest appContext 
-                                useManifest (fst <$> maybeMft) validManifests childrenAki certLocations
+                        roTx db $ \tx -> findLatestMftByAKI tx db childrenAki                        
+        let goForLatestValid = tryLatestValidCachedManifest appContext useManifest 
+                                ((^. #object) <$> maybeMft) validManifests childrenAki certLocations
         case maybeMft of                        
             Nothing -> 
                 -- Use awkward vError + catchError to force the error to 
@@ -454,12 +456,14 @@ validateCaCertificate
 
         useManifest mft childrenAki certLocations = do             
             validateManifestAndItsChildren mft childrenAki certLocations
-                `recover`
-                -- manifest should be marked as visited regardless of its validitity
-                visitObject appContext topDownContext (fst mft)
+                `recover` do
+                    -- manifest should be marked as visited regardless of its validitity
+                    visitObject appContext topDownContext (mft ^. #object)
+                    cacheH2K topDownContext (getHash $ mft ^. #object) (mft ^. #key)
 
 
-        validateManifestAndItsChildren (locatedMft, mftKey) childrenAki certLocations = do                         
+        validateManifestAndItsChildren keyedMft childrenAki certLocations = do                         
+            let locatedMft = keyedMft ^. #object
             let mft = locatedMft ^. #payload            
 
             visitedObjects <- liftIO $ readTVarIO visitedHashes            
@@ -487,13 +491,14 @@ validateCaCertificate
                         crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
 
                 db <- liftIO $ readTVarIO database
-                crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
-                case crlObject of 
+                crlKeyed <- liftIO $ roTx db $ \tx -> getKeyedByHash tx db crlHash                
+                case crlKeyed of 
                     Nothing -> 
                         vError $ NoCRLExists childrenAki certLocations    
 
-                    Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
-                        visitObject appContext topDownContext foundCrl                        
+                    Just (Keyed foundCrl@(Located crlLocations (CrlRO crl)) crlKey) -> do      
+                        visitObject appContext topDownContext foundCrl       
+                        cacheH2K topDownContext (getHash crl) crlKey                 
                         validateObjectLocations foundCrl
                         validCrl <- inSubObjectVScope (locationsToText crlLocations) $ 
                                         vHoist $ do        
@@ -511,11 +516,11 @@ validateCaCertificate
                         nonCrlChildren <- validateMftEntries mft (getHash crl)
 
                         -- Mark all manifest entries as visited to avoid the situation
-                        -- when some of the children are deleted from the cache and some
-                        -- are still there. Do it both in case of successful validation
-                        -- or a validation error.
+                        -- when some of the children are garbage-collected from the cache 
+                        -- and some are still there. Do it both in case of successful 
+                        -- validation or a validation error.
                         let markAllEntriesAsVisited = 
-                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
+                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                
                                                 
                         let processChildren = do 
                                 -- this indicates the difeerence between RFC9286-bis 
@@ -553,7 +558,7 @@ validateCaCertificate
                         vError $ CRLHashPointsToAnotherObject crlHash certLocations   
 
             oneMoreMft
-            addValidMft topDownContext childrenAki mftKey
+            addValidMft topDownContext childrenAki (keyedMft ^. #key)
             pure manifestResult            
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
@@ -618,17 +623,21 @@ validateCaCertificate
     getManifestEntry hash' filename = do
         ro <- liftIO $ do 
             db <- readTVarIO database
-            roTx db $ \tx -> getByHash tx db hash'
+            roTx db $ \tx -> getKeyedByHash tx db hash'
         case ro of 
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
-            Just ro' -> pure ro'        
+            Just (Keyed object key) -> do 
+                cacheH2K topDownContext (getHash object) key
+                pure object        
 
     findManifestEntryObject filename hash' = do                    
         validateMftFileName filename        
         db    <- liftIO $ readTVarIO database
         brief <- liftIO $ roTx db $ \tx -> getOjectBrief tx db hash'
         case brief of 
-            Just b  -> pure $! RBrief b hash'
+            Just b -> do 
+                cacheH2K topDownContext hash' (b ^. #key)
+                pure $! RBrief (b ^. #object) hash'
             Nothing -> RObject <$> getManifestEntry hash' filename
 
 
@@ -787,27 +796,29 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
 applyValidationSideEffects 
     AppContext {..} 
     AllTasTopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do 
-            (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$> 
+    ((visitedSize, validMftsSize, h2ksize, briefNumber), elapsed) <- timedMS $ do 
+            (vhs, h2k, vmfts, briefs', db) <- atomically $ (,,,,) <$> 
                                 readTVar visitedHashes <*> 
+                                readTVar hash2Key <*> 
                                 readTVar validManifests <*>
                                 readTVar briefs <*>
                                 readTVar database
 
             briefCounter <- newIORef (0 :: Integer)
             rwTx db $ \tx -> do 
-                markAsValidated tx db vhs worldVersion 
+                -- let fasterMap = HashMap.fromList $ Map.toList h2k
+                markAsValidated tx db vhs h2k worldVersion 
                 saveLatestValidMfts tx db (vmfts ^. #valids)
                 for_ briefs' $ \(BriefUpdate h brief) -> do 
                     saveObjectBrief tx db h brief
                     modifyIORef' briefCounter (+1)                    
 
             c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size (vmfts ^. #valids), c)
+            pure (Set.size vhs, Map.size (vmfts ^. #valids), Map.size h2k, c)
 
     logInfo logger $
         [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <> 
-        [i|saved #{briefNumber} brief objects, took #{elapsed}ms.|]
+        [i|saved #{briefNumber} brief objects, took #{elapsed}ms, mapping size = #{h2ksize}.|]
 
     
 
@@ -831,6 +842,14 @@ addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
 addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey = 
     liftIO $ atomically $ modifyTVar' 
                 validManifests (& #valids %~ Map.insert aki mftKey)
+                
+cacheH2K :: MonadIO m => TopDownContext -> Hash -> ObjectKey -> m ()
+cacheH2K TopDownContext { allTas = AllTasTopDownContext {..}} hash key = 
+    liftIO $ atomically $ modifyTVar' hash2Key $ Map.insert hash key
+
+cacheH2Ks :: MonadIO m => TopDownContext -> [(Hash, ObjectKey)] -> m ()
+cacheH2Ks TopDownContext { allTas = AllTasTopDownContext {..}} h2ks = 
+    liftIO $ atomically $ modifyTVar' hash2Key (<> Map.fromList h2ks)
                 
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()

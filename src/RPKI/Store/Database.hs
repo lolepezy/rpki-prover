@@ -68,7 +68,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 12
+currentDatabaseVersion = 13
 
 databaseVersionKey :: Text
 databaseVersionKey = "database-version"
@@ -118,7 +118,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
         objectInsertedBy   :: SMap "object-inserted-by" s ObjectKey WorldVersion,
-        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set Hash)),
+        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
 
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
@@ -218,14 +218,14 @@ newtype MetadataStore s = MetadataStore {
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> Hash -> m (Maybe (Located RpkiObject))
-getByHash tx db h = (snd <$>) <$> getByHash_ tx db h    
+getByHash tx db h = ((^. #object) <$>) <$> getKeyedByHash tx db h    
 
-getByHash_ :: (MonadIO m, Storage s) => 
-              Tx s mode -> DB s -> Hash -> m (Maybe (ObjectKey, Located RpkiObject))
-getByHash_ tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
+getKeyedByHash :: (MonadIO m, Storage s) => 
+              Tx s mode -> DB s -> Hash -> m (Maybe (Keyed (Located RpkiObject)))
+getKeyedByHash tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx hashToKey h
     z         <- MaybeT $ getLocatedByKey tx db objectKey
-    pure (objectKey, z)
+    pure $ Keyed z objectKey
             
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
@@ -340,14 +340,14 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
 
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> DB s -> AKI -> m (Maybe (Located MftObject, ObjectKey))
+                    Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
 findLatestMftByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ 
     MM.foldS tx mftByAKI aki' chooseLatest Nothing >>= \case
         Nothing     -> pure Nothing
         Just (k, _) -> do 
             o <- getLocatedByKey tx db k
             pure $! case o of 
-                Just (Located loc (MftRO mft)) -> Just (Located loc mft, k)
+                Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
                 _                              -> Nothing
   where
     chooseLatest latest _ (k, timingMark) = 
@@ -359,11 +359,20 @@ findLatestMftByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO
 
 
 markAsValidated :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Set.Set Hash -> WorldVersion -> m ()
-markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
+                    Tx s 'RW -> DB s 
+                -> Set.Set Hash 
+                -> Map.Map Hash ObjectKey 
+                -> WorldVersion -> m ()
+markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes hash2keys worldVersion = liftIO $ do 
     exisingVersions <- map fst <$> allVersions tx db    
         
-    M.put tx validatedByVersion worldVersion (Compressed hashes)
+    allKeys <- fmap (Set.fromList . catMaybes) 
+            $ forM (Set.toList hashes) $ \h -> 
+                case Map.lookup h hash2keys of
+                    Nothing -> M.get tx hashToKey h
+                    Just k  -> pure $! Just k
+
+    M.put tx validatedByVersion worldVersion (Compressed allKeys)
     
     case exisingVersions of 
         [] -> pure ()
@@ -373,9 +382,9 @@ markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVers
             -- they are present in the last one. In most cases it
             -- will delete most of the entries.
             let previousVersion = List.maximum exisingVersions 
-            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousHashes) ->                
+            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) ->                
                 M.put tx validatedByVersion previousVersion $ 
-                        Compressed $ previousHashes `Set.difference` hashes
+                        Compressed $ previousKeys `Set.difference` allKeys
 
 saveObjectBrief :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()
@@ -386,13 +395,13 @@ saveObjectBrief tx DB {
 
 
 getOjectBrief :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> Hash -> m (Maybe (Located EEBrief))
+            Tx s mode -> DB s -> Hash -> m (Maybe (Keyed (Located EEBrief)))
 getOjectBrief tx db@DB { objectStore = RpkiObjectStore {..} } h =  
     liftIO $ runMaybeT $ do 
         objectKey <- MaybeT $ M.get tx hashToKey h
         brief <- unCompressed <$> MaybeT (M.get tx objectBriefs objectKey)        
         locations <- MaybeT $ getLocationsByKey tx db objectKey
-        pure $ Located locations brief
+        pure $ Keyed (Located locations brief) objectKey
 
 
 -- This is for testing purposes mostly
@@ -747,15 +756,10 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                 -- Set of all objects touched by validation at all the versions
                 -- that are not "too old".
                 touchedObjectKeys <- foldM 
-                    (\allHashes version ->
+                    (\allKeys version ->
                         M.get tx validatedByVersion version >>= \case                        
-                            Nothing                  -> pure $! allHashes
-                            Just (Compressed hashes) -> foldM 
-                                (\allKeys h ->
-                                    M.get tx hashToKey h >>= \case
-                                        Nothing -> pure $! allKeys
-                                        Just k  -> pure $! k `Set.insert` allKeys)
-                                mempty hashes)
+                            Nothing                 -> pure $! allKeys
+                            Just (Compressed keys') -> pure $! allKeys <> keys')
                     mempty toScan
 
                 -- Objects inserted by 
