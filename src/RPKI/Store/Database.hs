@@ -9,14 +9,12 @@
 
 module RPKI.Store.Database where
 
-import           Control.Concurrent.STM   (atomically)
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
 import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
-import           Data.IORef.Lifted
 import           Data.Foldable            (for_)
 
 import qualified Data.ByteString          as BS
@@ -53,8 +51,7 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
-import           RPKI.Parallel
-import           RPKI.Util                (increment, ifJustM)
+import           RPKI.Util                (ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -370,7 +367,7 @@ markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes hash2keys
             $ forM (Set.toList hashes) $ \h -> 
                 case Map.lookup h hash2keys of
                     Nothing -> M.get tx hashToKey h
-                    Just k  -> pure $! Just k
+                    Just k  -> pure $ Just k
 
     M.put tx validatedByVersion worldVersion (Compressed allKeys)
     
@@ -408,7 +405,7 @@ getOjectBrief tx db@DB { objectStore = RpkiObjectStore {..} } h =
 getAll :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [Located RpkiObject]
 getAll tx db@DB { objectStore = RpkiObjectStore {..} } = liftIO $ do 
     allKeys <- M.keys tx objects
-    catMaybes <$> forM allKeys (\k -> getLocatedByKey tx db k)    
+    catMaybes <$> forM allKeys (getLocatedByKey tx db)    
 
 
 -- | Get something from the manifest that would allow us to judge 
@@ -418,15 +415,6 @@ getMftTimingMark mft = let
     m = getCMSContent $ cmsPayload mft 
     in MftTimingMark (thisTime m) (nextTime m)
 
-
-cleanupLatestValidMfts :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> m ()
-cleanupLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} = liftIO $ do
-    z <- M.get tx lastValidMfts lastValidMftKey
-    for_ z $ \(Compressed valids) -> do
-        exisingKeys <- M.fold tx hashToKey (\allKeys _ k -> pure $! k `Set.insert` allKeys) Set.empty
-        let valids' = Map.filter (\k -> k `Set.member` exisingKeys) valids    
-        M.put tx lastValidMfts lastValidMftKey (Compressed valids')
 
 saveLatestValidMfts :: (MonadIO m, Storage s) => 
                         Tx s 'RW -> DB s -> Map AKI ObjectKey -> m ()
@@ -668,45 +656,6 @@ data CleanUpResult = CleanUpResult {
     deriving anyclass (TheBinary)
 
 
-deleteDanglinUrls :: (MonadIO m, Storage s) => DB s -> m Int
-deleteDanglinUrls db@DB { objectStore = RpkiObjectStore {..}} = do 
-    let chunkSize = 2000
-
-    deletedURLs <- liftIO $ newIORef (0 :: Int)
-
-    mapException (AppException . storageError) 
-        $ voidRun "cleanOrphanURLs" $ do 
-            referencedUrlKeys <- liftIO 
-                $ roTx db 
-                $ \tx ->                 
-                    Set.fromList <$>
-                        M.fold tx objectKeyToUrlKeys
-                            (\allUrlKey _ urlKeys -> pure $! urlKeys <> allUrlKey)
-                            mempty
-
-            let readUrls queue = 
-                    roTx db $ \tx ->
-                        M.traverse tx uriKeyToUri $ \urlKey url ->
-                            when (urlKey `Set.notMember` referencedUrlKeys) $
-                                atomically (writeCQueue queue (urlKey, url))
-
-            let deleteUrls queue = 
-                    readQueueChunked queue chunkSize $ \quuElems ->
-                        rwTx db $ \tx ->
-                            forM_ quuElems $ \(urlKey, url) -> do 
-                                M.delete tx uriKeyToUri urlKey
-                                M.delete tx uriToUriKey (makeSafeUrl url)
-                                increment deletedURLs
-
-            liftIO $ bracketChanClosable 
-                (2 * chunkSize)
-                (liftIO . readUrls)
-                (liftIO . deleteUrls)
-                (const $ pure ())  
-        
-    liftIO $ readIORef deletedURLs
-
-
 -- Clean up older version payloads, e.g. VRPs, ASPAs, validation results, etc.
 -- 
 deleteOldPayloads :: (MonadIO m, Storage s) => 
@@ -739,70 +688,91 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
     mapException (AppException . storageError) <$> liftIO $ do                
 
         versions <- map fst <$> roTx db (`allVersions` db)
-        let (toDelete, toScan) = List.partition tooOld versions
+        let (toDelete, toKeep) = List.partition tooOld versions
         
         if null toDelete then do 
             kept <- roTx db $ \tx -> M.fold tx hashToKey (\n _ _ -> pure $! n + 1) 0
             pure $ CleanUpResult 0 kept 0
         else do
-            rwTx db $ \tx -> 
+            rwTx db $ \tx -> do
                 -- delete versions and payloads associated with them, 
                 -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
                 forM_ toDelete $ \version -> do 
                     deleteVersion tx db version                    
                     deletePayloads tx db version
                     M.delete tx validatedByVersion version
-            
-            objectToKeep <- roTx db $ \tx -> do
-                -- Set of all objects touched by validation at all the versions
-                -- that are not "too old".
-                touchedObjectKeys <- foldM 
-                    (\allKeys version ->
-                        M.get tx validatedByVersion version >>= \case                        
-                            Nothing                 -> pure $! allKeys
-                            Just (Compressed keys') -> pure $! allKeys <> keys')
-                    mempty toScan
+                        
+                (deleted, kept) <- deleteStaleObjects tx toKeep
+                                                        
+                -- Clean up the association between AKI and last valid manifest hash            
+                cleanupLatestValidMfts tx
 
-                -- Objects inserted by 
-                recentlyInsertedObjectKeys <- M.fold tx objectInsertedBy 
-                    (\allKeys key version -> 
-                        pure $! if tooOld version 
-                            then allKeys 
-                            else key `Set.insert` allKeys) mempty
+                -- Delete URLs that are now not referred by any object
+                deletedUrs <- deleteDanglingUrls tx
 
-                pure $! touchedObjectKeys <> recentlyInsertedObjectKeys            
+                pure $! CleanUpResult deleted kept deletedUrs
+  where
 
-            -- delete objects that are only touched by old versions
-            deleted <- newIORef (0 :: Int)        
-            let readOldObjects queue =
-                    roTx db $ \tx ->        
-                        M.traverse tx hashToKey $ \hash key ->
-                            unless (key `Set.member` objectToKeep) $ do
-                                atomically (writeCQueue queue hash)
-                                increment deleted            
+    cleanupLatestValidMfts tx = liftIO $ do
+        z <- M.get tx lastValidMfts lastValidMftKey
+        for_ z $ \(Compressed valids) -> do
+            exisingKeys <- M.fold tx hashToKey (\allKeys _ k -> pure $! k `Set.insert` allKeys) Set.empty
+            let existingValids = Map.filter (`Set.member` exisingKeys) valids    
+            M.put tx lastValidMfts lastValidMftKey (Compressed existingValids)
 
-            -- Don't lock the DB for potentially too long, use big but finite chunks
-            let chunkSize = 2000
-            let deleteObjects queue =
-                    readQueueChunked queue chunkSize $ \quuElems ->
-                        rwTx db $ \tx ->
-                            forM_ quuElems $ deleteObject tx db
+    deleteStaleObjects tx versionsToKeep = do 
+        -- Set of all objects touched by validation with versions
+        -- that are not "too old".
+        touchedObjectKeys <- foldM 
+            (\allKeys version ->
+                M.get tx validatedByVersion version >>= \case                        
+                    Nothing                 -> pure $! allKeys
+                    Just (Compressed keys') -> pure $! allKeys <> keys')
+            mempty 
+            versionsToKeep
 
-            mapException (AppException . storageError) 
-                $ voidRun "cleanObjectCache" 
-                $ bracketChanClosable 
-                        (2 * chunkSize)
-                        (liftIO . readOldObjects)
-                        (liftIO . deleteObjects)
-                        (const $ pure ())    
-                    
-            deleted'    <- liftIO $ readIORef deleted
-            deletedURLs <- deleteDanglinUrls db
+        -- Objects inserted by validation with version that is not too old.
+        -- We want to preseve these objects in the cache even if they are 
+        -- never used, they may still be used later. That may happens if
+        -- a repository updates a manifest aftert updating its children.
+        recentlyInsertedObjectKeys <- M.fold tx objectInsertedBy 
+            (\allKeys key version -> 
+                pure $! if tooOld version 
+                    then allKeys 
+                    else key `Set.insert` allKeys) mempty
 
-            -- Also clean up the association between AKI and last valid manifest hash            
-            rwTx db $ \tx -> cleanupLatestValidMfts tx db
+        let keysToKeep = touchedObjectKeys <> recentlyInsertedObjectKeys            
 
-            pure $! CleanUpResult deleted' (Set.size objectToKeep) deletedURLs           
+        -- Everything else must be purged
+        hashesToDelete <- M.fold tx hashToKey 
+            (\allHashes hash key ->
+                if key `Set.member` keysToKeep
+                    then pure $! allHashes
+                    else pure $! hash `Set.insert` allHashes) mempty 
+        
+        forM_ hashesToDelete $ deleteObject tx db        
+        pure (Set.size hashesToDelete, Set.size keysToKeep)
+
+
+    deleteDanglingUrls tx = do 
+        referencedUrlKeys <- M.fold tx objectKeyToUrlKeys
+                (\allUrlKey _ urlKeys -> pure $! Set.fromList urlKeys <> allUrlKey)
+                mempty
+    
+        urlsToDelete <- M.fold tx uriKeyToUri 
+                (\result urlKey url -> 
+                    pure $! 
+                        if urlKey `Set.notMember` referencedUrlKeys
+                            then (urlKey, url) : result
+                            else result)
+                mempty
+
+    
+        forM_ urlsToDelete $ \(urlKey, url) -> do 
+            M.delete tx uriKeyToUri urlKey
+            M.delete tx uriToUriKey (makeSafeUrl url)           
+
+        pure $ length urlsToDelete
 
 
 deletePayloads :: (MonadIO m, Storage s) => 
