@@ -139,7 +139,7 @@ shouldMergeObjectLocations io = do
     verifyUrlCount objectStore "case 2" 3
 
     -- should only clean up URLs
-    deletedUrls <- deleteDanglinUrls db
+    CleanUpResult _ _ deletedUrls <- deleteStaleContent db (const True)
     HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
     verifyUrlCount objectStore "case 3" 1
