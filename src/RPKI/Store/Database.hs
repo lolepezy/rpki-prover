@@ -738,7 +738,7 @@ deleteStaleContent :: (MonadIO m, Storage s) =>
 deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do                
 
-        versions <- map fst <$> roTx db (\tx -> allVersions tx db)
+        versions <- map fst <$> roTx db (`allVersions` db)
         let (toDelete, toScan) = List.partition tooOld versions
         
         if null toDelete then do 
@@ -748,9 +748,10 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
             rwTx db $ \tx -> 
                 -- delete versions and payloads associated with them, 
                 -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
-                forM_ toDelete $ \worldVersion -> do 
-                    deleteVersion tx db worldVersion
-                    deletePayloads tx db worldVersion
+                forM_ toDelete $ \version -> do 
+                    deleteVersion tx db version                    
+                    deletePayloads tx db version
+                    M.delete tx validatedByVersion version
             
             objectToKeep <- roTx db $ \tx -> do
                 -- Set of all objects touched by validation at all the versions
@@ -763,9 +764,11 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                     mempty toScan
 
                 -- Objects inserted by 
-                recentlyInsertedObjectKeys <- Set.fromList <$>
-                    M.fold tx objectInsertedBy (\allKeys key version -> 
-                        pure $! if tooOld version then allKeys else key : allKeys) mempty
+                recentlyInsertedObjectKeys <- M.fold tx objectInsertedBy 
+                    (\allKeys key version -> 
+                        pure $! if tooOld version 
+                            then allKeys 
+                            else key `Set.insert` allKeys) mempty
 
                 pure $! touchedObjectKeys <> recentlyInsertedObjectKeys            
 
