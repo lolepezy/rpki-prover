@@ -37,6 +37,7 @@ import           RPKI.Resources.Types
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Time
 import           RPKI.Util                        (fmtLocations)
 
 
@@ -94,8 +95,9 @@ tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
     -> AppError
     -> ValidatorT m b
 tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests childrenAki certLocations e = do
-    db        <- liftIO $ readTVarIO database
-    validMfts <- loadValidManifests db validManifests    
+    db <- liftIO $ readTVarIO database    
+    (validMfts, elapsed) <- timedMS $ loadValidManifests db validManifests    
+    logInfo logger [i|Loaded latest valid manifests from the cache in #{elapsed}ms.|]
     case Map.lookup childrenAki validMfts of
         Nothing   -> throwError e
         Just key -> do                        
@@ -134,9 +136,9 @@ loadValidManifests db validManifests = liftIO $ do
                 pure $ do 
                     validMfts <- roTx db $ \tx -> getLatestValidMfts tx db
                     atomically $ do                                             
-                        let v' = Map.unionWith (\a _ -> a) (vm ^. #valids) validMfts
-                        writeTVar validManifests $ ValidManifests Merged v'
-                        pure v'                                                                                                
+                        let valids = Map.unionWith (\a _ -> a) (vm ^. #valids) validMfts
+                        writeTVar validManifests $ ValidManifests Merged valids
+                        pure valids                                                                                                
 
 
 -- TODO Is there a more reliable way to find it?
