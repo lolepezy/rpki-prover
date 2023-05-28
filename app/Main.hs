@@ -103,7 +103,7 @@ executeMainProcess cliOptions = do
     withLogConfig cliOptions $ \logConfig -> do
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
-        let bumpSysMetric = \sm -> do 
+        let bumpSysMetric sm = do 
                 z <- readTVarIO appStateHolder
                 for_ z $ mergeSystemMetrics sm
 

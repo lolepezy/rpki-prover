@@ -96,8 +96,7 @@ tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
     -> ValidatorT m b
 tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests childrenAki certLocations e = do
     db <- liftIO $ readTVarIO database    
-    (validMfts, elapsed) <- timedMS $ loadValidManifests db validManifests    
-    logInfo logger [i|Loaded latest valid manifests from the cache in #{elapsed}ms.|]
+    validMfts <- loadValidManifests db logger validManifests        
     case Map.lookup childrenAki validMfts of
         Nothing   -> throwError e
         Just key -> do                        
@@ -124,8 +123,8 @@ tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests
 
 
 loadValidManifests :: (MonadIO m, Storage s) => 
-                        DB s -> TVar ValidManifests -> m (Map AKI ObjectKey) 
-loadValidManifests db validManifests = liftIO $ do 
+                        DB s -> AppLogger -> TVar ValidManifests -> m (Map AKI ObjectKey) 
+loadValidManifests db logger validManifests = liftIO $ do 
     join $ atomically $ do 
         vm <- readTVar validManifests
         case vm ^. #state of 
@@ -134,11 +133,14 @@ loadValidManifests db validManifests = liftIO $ do
             FillingUp       -> do 
                 writeTVar validManifests $ vm & #state .~ FetchingFromDB
                 pure $ do 
-                    validMfts <- roTx db $ \tx -> getLatestValidMfts tx db
-                    atomically $ do                                             
-                        let valids = Map.unionWith (\a _ -> a) (vm ^. #valids) validMfts
-                        writeTVar validManifests $ ValidManifests Merged valids
-                        pure valids                                                                                                
+                    (z, elapsed) <- timedMS $ do 
+                        validMfts <- roTx db $ \tx -> getLatestValidMfts tx db
+                        atomically $ do                                             
+                            let valids = Map.unionWith (\a _ -> a) (vm ^. #valids) validMfts
+                            writeTVar validManifests $ ValidManifests Merged valids
+                            pure valids
+                    logInfo logger [i|Loaded latest valid manifests from the cache in #{elapsed}ms.|]
+                    pure z
 
 
 -- TODO Is there a more reliable way to find it?

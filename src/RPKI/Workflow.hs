@@ -164,7 +164,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where
                 processTALs db = do
-                    (z, workerVS) <- runProcessTALsWorker worldVersion                    
+                    ((z, workerVS), workerId) <- runProcessTALsWorker worldVersion                    
                     case z of 
                         Left e -> do 
                             logError logger [i|Validator process failed: #{e}.|]
@@ -174,9 +174,10 @@ runWorkflow appContext@AppContext {..} tals = do
                                 completeWorldVersion tx db worldVersion                            
                             updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                             pure (mempty, mempty)            
-                        Right WorkerResult {..} -> do                              
+                        Right wr@WorkerResult {..} -> do                              
                             let ValidationResult vs maybeSlurm = payload
                             
+                            logWorkerDone logger workerId wr
                             pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
                         
                             let topDownState = workerVS <> vs
@@ -225,10 +226,11 @@ runWorkflow appContext@AppContext {..} tals = do
                                             [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
           where
             cleanupUntochedObjects = do                 
-                (z, _) <- runCleapUpWorker worldVersion      
+                ((z, _), workerId) <- runCleapUpWorker worldVersion      
                 case z of 
-                    Left e                  -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
-                    Right WorkerResult {..} -> do 
+                    Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                    Right wr@WorkerResult {..} -> do 
+                        logWorkerDone logger workerId wr
                         pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
                         pure $ Right payload                                       
 
@@ -340,12 +342,13 @@ runWorkflow appContext@AppContext {..} tals = do
                         rtsAL "128m", 
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
             
-            runValidatorT 
+            r <- runValidatorT 
                     (newScopes "validator") $ 
                         runWorker logger config workerId 
                             (ValidationParams worldVersion tals)                        
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                             arguments                                        
+            pure (r, workerId)
 
         runCleapUpWorker worldVersion = do             
             let workerId = WorkerId "cache-clean-up"
@@ -358,12 +361,13 @@ runWorkflow appContext@AppContext {..} tals = do
                         rtsAL "64m", 
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
             
-            runValidatorT 
+            r <- runValidatorT             
                     (newScopes "cache-clean-up") $ 
                         runWorker logger config workerId 
                             (CacheCleanupParams worldVersion)
                             (Timebox 300)
-                            arguments                                        
+                            arguments                                                                    
+            pure (r, workerId)                            
 
 -- To be called by the validation worker process
 runValidation :: Storage s =>

@@ -27,9 +27,12 @@ data VersionState = VersionState Text
 
 
 -- TODO Probably move it to some other module
-newtype MaxMemory = MaxMemory { unMaxMemory :: Int }
-    deriving stock (Show, Eq, Ord, Generic)
+newtype MaxMemory = MaxMemory Int
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
     deriving newtype (Num, Bounded)
     deriving Semigroup via Max MaxMemory
     deriving Monoid via Max MaxMemory    
+
+instance Show MaxMemory where 
+    show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"

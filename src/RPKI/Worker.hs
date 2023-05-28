@@ -133,7 +133,7 @@ data CacheCleanupResult = CacheCleanupResult CleanUpResult
 
 
 data WorkerResult r = WorkerResult {
-        payload   :: r,
+        payload   :: r,        
         cpuTime   :: CPUTime,
         clockTime :: TimeMs,
         maxMemory :: MaxMemory
@@ -298,3 +298,8 @@ runWorker logger config workerId params timeout extraCli = do
     complain message = do 
         logError logger message
         appError $ InternalE $ InternalError message
+
+logWorkerDone :: (Logger logger, MonadIO m) =>
+                logger -> WorkerId -> WorkerResult r -> m ()
+logWorkerDone logger workerId WorkerResult {..} =     
+    logDebug logger [i|Worker '#{workerId}' finished, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|]

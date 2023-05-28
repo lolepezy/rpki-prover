@@ -295,7 +295,8 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
             logError logger message            
             throwIO $ AppException $ InternalE $ InternalError message
-        Right WorkerResult { payload = CompactionResult _, .. } -> do
+        Right wr@WorkerResult { payload = CompactionResult _, .. } -> do
+            logWorkerDone logger workerId wr
             pushSystem logger $ cpuMemMetric "compaction" cpuTime maxMemory                     
             
 -- 
