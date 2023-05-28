@@ -77,7 +77,6 @@ data AllTasTopDownContext = AllTasTopDownContext {
         worldVersion         :: WorldVersion,
         validManifests       :: TVar ValidManifests,
         visitedHashes        :: TVar (Set Hash),
-        hash2Key             :: TVar (Map.Map Hash ObjectKey),
         repositoryProcessing :: RepositoryProcessing,
         briefs               :: TVar [BriefUpdate]
     }
@@ -127,7 +126,6 @@ newAllTasTopDownContext :: MonadIO m =>
 newAllTasTopDownContext worldVersion now repositoryProcessing =
     liftIO $ atomically $ do
         visitedHashes  <- newTVar mempty
-        hash2Key       <- newTVar mempty
         validManifests <- newTVar makeValidManifests
         briefs         <- newTVar []
         pure $ AllTasTopDownContext {..}
@@ -776,16 +774,15 @@ applyValidationSideEffects
     AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do
     ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do
-            (vhs, h2k, vmfts, briefs', db) <- atomically $ (,,,,) <$>
-                                readTVar visitedHashes <*>
-                                readTVar hash2Key <*>
+            (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$>
+                                readTVar visitedHashes <*>                                
                                 readTVar validManifests <*>
                                 readTVar briefs <*>
                                 readTVar database
 
             briefCounter <- newIORef (0 :: Integer)
             rwTx db $ \tx -> do
-                markAsValidated tx db vhs h2k worldVersion
+                markAsValidated tx db vhs worldVersion
                 saveLatestValidMfts tx db (vmfts ^. #valids)
                 for_ briefs' $ \(BriefUpdate h brief) -> do
                     saveObjectBrief tx db h brief

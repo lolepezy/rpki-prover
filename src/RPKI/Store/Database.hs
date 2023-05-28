@@ -358,16 +358,12 @@ findLatestMftByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
                 -> Set.Set Hash 
-                -> Map.Map Hash ObjectKey 
                 -> WorldVersion -> m ()
-markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes hash2keys worldVersion = liftIO $ do 
+markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
     exisingVersions <- map fst <$> allVersions tx db    
         
     allKeys <- fmap (Set.fromList . catMaybes) 
-            $ forM (Set.toList hashes) $ \h -> 
-                case Map.lookup h hash2keys of
-                    Nothing -> M.get tx hashToKey h
-                    Just k  -> pure $ Just k
+                $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h                    
 
     M.put tx validatedByVersion worldVersion (Compressed allKeys)
     
@@ -664,20 +660,17 @@ deleteOldPayloads :: (MonadIO m, Storage s) =>
                     m Int
 deleteOldPayloads db tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do
-    
-        let toDelete versions = 
-                case versions of            
-                    []       -> []                
-                    finished -> 
-                        -- delete all too old except for the last finished one    
-                        let lastFinished = List.maximum finished 
-                        in filter ( /= lastFinished) $ filter tooOld versions
-
         rwTx db $ \tx -> do 
             versions <- map fst <$> allVersions tx db    
-            let toDel = toDelete versions
-            forM_ toDel $ deletePayloads tx db        
-            pure $! List.length toDel
+            let toDelete = 
+                    case versions of            
+                        []       -> []                
+                        finished -> 
+                            -- delete all too old except for the last finished one    
+                            let lastFinished = List.maximum finished 
+                            in filter ( /= lastFinished) $ filter tooOld versions            
+            forM_ toDelete $ deletePayloads tx db        
+            pure $! List.length toDelete
 
 
 deleteStaleContent :: (MonadIO m, Storage s) => 
