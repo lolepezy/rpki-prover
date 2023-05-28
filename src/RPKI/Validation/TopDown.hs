@@ -440,10 +440,9 @@ validateCa
 
         useManifest mft childrenAki certLocations = do
             validateManifestAndItsChildren mft childrenAki certLocations
-                `recover` do
+                `recover` 
                     -- manifest should be marked as visited regardless of its validitity
-                    visitObject topDownContext (mft ^. #object)
-                    cacheH2K topDownContext (getHash $ mft ^. #object) (mft ^. #key)
+                    visitObject topDownContext (mft ^. #object)                    
 
 
         validateManifestAndItsChildren keyedMft childrenAki certLocations = do
@@ -481,9 +480,8 @@ validateCa
                     Nothing ->
                         vError $ NoCRLExists childrenAki certLocations
 
-                    Just (Keyed foundCrl@(Located crlLocations (CrlRO crl)) crlKey) -> do
-                        visitObject topDownContext foundCrl
-                        cacheH2K topDownContext (getHash crl) crlKey
+                    Just (Keyed foundCrl@(Located crlLocations (CrlRO crl)) _) -> do
+                        visitObject topDownContext foundCrl                        
                         validateObjectLocations foundCrl
                         validCrl <- inSubObjectVScope (locationsToText crlLocations) $
                                         vHoist $ do
@@ -611,18 +609,14 @@ validateCa
             roTx db $ \tx -> getKeyedByHash tx db hash'
         case ro of
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
-            Just (Keyed object key) -> do
-                cacheH2K topDownContext (getHash object) key
-                pure object
+            Just (Keyed object _) -> pure object
 
     findManifestEntryObject filename hash' = do
         validateMftFileName filename
         db    <- liftIO $ readTVarIO database
         brief <- liftIO $ roTx db $ \tx -> getOjectBrief tx db hash'
         case brief of
-            Just b -> do
-                cacheH2K topDownContext hash' (b ^. #key)
-                pure $! RBrief (b ^. #object) hash'
+            Just b  -> pure $! RBrief (b ^. #object) hash'
             Nothing -> RObject <$> getManifestEntry hash' filename
 
 
@@ -817,23 +811,15 @@ visitObject topDownContext ro =
     visitObjects topDownContext [getHash ro]
 
 visitObjects :: MonadIO m => TopDownContext -> [Hash] -> m ()
-visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
-    liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
+visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes = 
+    liftIO $ forM_ hashes $ \h -> 
+                atomically $ modifyTVar' visitedHashes (Set.insert h)
 
 -- Add manifest to the map of the valid ones
 addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
 addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey =
     liftIO $ atomically $ modifyTVar'
                 validManifests (& #valids %~ Map.insert aki mftKey)
-
--- Cache hash-to-objectKey mapping to speed up getting object key 
--- by hash. It is done to save some extra 100-150ms of CPU time 
--- of fetching this information from the database.
--- 
-cacheH2K :: MonadIO m => TopDownContext -> Hash -> ObjectKey -> m ()
-cacheH2K TopDownContext { allTas = AllTasTopDownContext {..}} hash key =
-    liftIO $ atomically $ modifyTVar' hash2Key $ Map.insert hash key
-
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreBrief :: Monad m => ValidatorT m ()
