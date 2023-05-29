@@ -408,7 +408,7 @@ instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
 
-instance ToJSON VersionState
+instance ToJSON VersionKind
 instance ToJSON VIssue
 instance ToJSON VWarning
 instance ToJSON AppError

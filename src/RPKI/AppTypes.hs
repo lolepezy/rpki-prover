@@ -1,8 +1,9 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.AppTypes where
     
@@ -21,7 +22,7 @@ newtype WorldVersion = WorldVersion Int64
 
 -- Keep it just text for now since we don't
 -- know what may be needed there in the future.
-data VersionState = VersionState Text
+data VersionKind = VersionKind Text
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -36,3 +37,8 @@ newtype MaxMemory = MaxMemory Int
 
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
+
+
+validationKind, generalKind :: VersionKind
+validationKind = VersionKind "validation"
+generalKind = VersionKind "general"

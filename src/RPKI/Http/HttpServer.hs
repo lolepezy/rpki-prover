@@ -241,8 +241,8 @@ getAllSlurms :: (MonadIO m, Storage s, MonadError ServerError m) =>
 getAllSlurms AppContext {..} = do
     db <- liftIO $ readTVarIO database
     liftIO $ roTx db $ \tx -> do
-        versions <- List.sortOn Down <$> allVersions tx db
-        slurms   <- mapM (\(wv, _) -> (wv, ) <$> slurmForVersion tx db wv) versions        
+        versions <- List.sortOn Down <$> validationVersions tx db
+        slurms   <- mapM (\wv -> (wv, ) <$> slurmForVersion tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
 
 

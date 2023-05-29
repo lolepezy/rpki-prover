@@ -156,17 +156,18 @@ runValidatorServer appContext@AppContext {..} = do
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
             inSubVScope' TAFocus (convert taName) $
-                parseTALFromFile talFilePath (Text.pack taName)
-
-    logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
+                parseTALFromFile talFilePath (Text.pack taName)    
 
     db <- readTVarIO database
-    rwTx db $ \tx -> saveValidations tx db worldVersion (vs ^. typed)
+    rwTx db $ \tx -> do 
+        generalWorldVersion tx db worldVersion
+        saveValidations tx db worldVersion (vs ^. typed)
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
+            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
