@@ -247,16 +247,13 @@ objectToDto = \case
                             | extRawOID == id_ce_CRLDistributionPoints ->
                                 maybe "undefined" unURI (extractCrlDistributionPoint extRawContent)
                             | extRawOID == id_ad_rpki_notify ->
-                                maybe "undefined" (unURI . extractURI) 
-                                    $ extractSiaValue extRawContent id_ad_rpki_notify
+                                urlText $ extractSiaValue extRawContent id_ad_rpki_notify
                             | extRawOID == id_pe_sia -> 
-                                maybe "undefined" (unURI . extractURI) 
-                                    $ extractSiaValue extRawContent id_ad_rpki_notify
+                                urlText $ extractSiaValue extRawContent id_ad_rpki_notify
                                       <|> extractSiaValue extRawContent id_ad_rpki_repository
                                       <|> extractSiaValue extRawContent id_ad_rpkiManifest
                             | extRawOID == id_pe_aia -> 
-                                maybe "undefined" (unURI . extractURI) 
-                                    $ extractSiaValue extRawContent id_ad_caIssuers
+                                urlText $ extractSiaValue extRawContent id_ad_caIssuers
                                       <|> extractSiaValue extRawContent id_ad_rpki_notify
                                       <|> extractSiaValue extRawContent id_ad_rpki_repository
                                       <|> extractSiaValue extRawContent id_ad_rpkiManifest
@@ -280,6 +277,11 @@ objectToDto = \case
 
             strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text.Text
             strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
+
+            urlText :: Maybe BS.ByteString -> Text.Text
+            urlText = \case 
+                Nothing -> "undefined"
+                Just bs -> either id unURI $ extractURI bs
 
 
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
