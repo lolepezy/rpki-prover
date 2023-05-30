@@ -12,6 +12,7 @@ import qualified Data.ByteString as BS
 
 import Control.DeepSeq
 import Codec.Compression.LZ4
+
 import GHC.Generics
 
 import Data.Maybe (fromMaybe)
@@ -83,7 +84,7 @@ data SStats = SStats {
         statMaxValueBytes :: Size
     } 
     deriving stock (Show, Eq, Generic)    
-    deriving Monoid    via GenericMonoid SStats
+    deriving Monoid via GenericMonoid SStats
 
 instance Semigroup SStats where
     ss1 <> ss2 = 

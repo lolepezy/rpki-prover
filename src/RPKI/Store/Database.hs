@@ -28,8 +28,7 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
-import           Data.Typeable
-
+import           Data.Generics.Product.Types
 import           GHC.Generics
 import           Text.Read
 
@@ -65,13 +64,17 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 15
+currentDatabaseVersion = 16
+
 
 databaseVersionKey :: Text
 databaseVersionKey = "database-version"
 
 lastValidMftKey :: Text
 lastValidMftKey = "last-valid-mft"
+
+data EraseWrapper s where 
+    EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -88,7 +91,8 @@ data DB s = DB {
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
     sequences        :: SequenceMap s,
-    metadataStore    :: MetadataStore s
+    metadataStore    :: MetadataStore s,
+    erasables        :: [EraseWrapper s]
 } deriving stock (Generic)
 
 instance Storage s => WithStorage s (DB s) where
@@ -126,7 +130,7 @@ data RpkiObjectStore s = RpkiObjectStore {
 
         objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed EEBrief)
     } 
-    deriving stock (Generic, Typeable)
+    deriving stock (Generic)
 
 
 instance Storage s => WithStorage s (RpkiObjectStore s) where
@@ -135,22 +139,25 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 -- | TA Store 
 newtype TAStore s = TAStore { 
-    tas :: SMap "trust-anchors" s TaName StorableTA
-}
+        tas :: SMap "trust-anchors" s TaName StorableTA
+    }
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
 newtype ValidationsStore s = ValidationsStore { 
-    results :: SMap "validations" s WorldVersion (Compressed Validations) 
-}
+        results :: SMap "validations" s WorldVersion (Compressed Validations) 
+    }
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricStore s = MetricStore {
-    metrics :: SMap "metrics" s WorldVersion (Compressed RawMetric)
-}
+        metrics :: SMap "metrics" s WorldVersion (Compressed RawMetric)
+    }    
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (MetricStore s) where
     storage (MetricStore s) = storage s
@@ -158,8 +165,9 @@ instance Storage s => WithStorage s (MetricStore s) where
 
 -- | VRP store
 newtype VRPStore s = VRPStore {    
-    vrps :: SMap "vrps" s WorldVersion (Compressed Vrps)
-} deriving Generic
+        vrps :: SMap "vrps" s WorldVersion (Compressed Vrps)
+    }
+    deriving stock (Generic)
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
@@ -169,14 +177,15 @@ newtype AspaStore s = AspaStore {
 
 -- | GBR store
 newtype GbrStore s = GbrStore {    
-        aspas :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (Hash, Gbr)))
+        gbrs :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (Hash, Gbr)))
     } 
     deriving stock (Generic)
 
 -- | BGP certificate store
 newtype BgpStore s = BgpStore {    
-    bgps :: SMap "bgps" s WorldVersion (Compressed (Set.Set BGPSecPayload))
-}
+        bgps :: SMap "bgps" s WorldVersion (Compressed (Set.Set BGPSecPayload))
+    }
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (VRPStore s) where
     storage (VRPStore s) = storage s
@@ -184,33 +193,38 @@ instance Storage s => WithStorage s (VRPStore s) where
 
 -- Version store
 newtype VersionStore s = VersionStore {
-    versions :: SMap "versions" s WorldVersion VersionKind
-}
+        versions :: SMap "versions" s WorldVersion VersionKind
+    }
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (VersionStore s) where
     storage (VersionStore s) = storage s
 
 
 newtype SlurmStore s = SlurmStore {
-    slurms :: SMap "slurms" s WorldVersion (Compressed Slurm)
-}
+        slurms :: SMap "slurms" s WorldVersion (Compressed Slurm)
+    }
+    deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-    rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-    rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-    lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
-}
+        rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
+    }
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (RepositoryStore s) where
     storage (RepositoryStore s _ _) = storage s
 
 newtype JobStore s = JobStore {
-    jobs :: SMap "jobs" s Text Instant
-}
+        jobs :: SMap "jobs" s Text Instant
+    }
+    deriving stock (Generic)
 
 newtype MetadataStore s = MetadataStore {
-    metadata :: SMap "metadata" s Text Text
-}
+        metadata :: SMap "metadata" s Text Text
+    }
+    deriving stock (Generic)
 
 
 getByHash :: (MonadIO m, Storage s) => 
@@ -878,62 +892,13 @@ totalSpace stats =
     let SStats {..} = totalStats stats
     in statKeyBytes + statValueBytes
 
-
+-- Get all SStats and `<>` them
 totalStats :: DBStats -> SStats
-totalStats DBStats {..} = 
-       taStats 
-    <> (let RepositoryStats{..} = repositoryStats 
-        in rrdpStats <> rsyncStats <> lastSStats) 
-    <> (let RpkiObjectStats {..} = rpkiObjectStats
-        in objectsStats <> mftByAKIStats <> hashToKeyStats
-        <> lastValidMftsStats <> uriToUriKeyStat <> uriKeyToUriStat
-        <> uriKeyToObjectKeyStat <> objectKeyToUrlKeysStat
-        <> objectInsertedByStats <> objecBriefStats 
-        <> validatedByVersionStats)
-    <> vResultStats ^. #resultsStats
-    <> vrpStats 
-    <> aspaStats 
-    <> bgpStats 
-    <> gbrStats 
-    <> metricsStats 
-    <> versionStats 
-    <> sequenceStats
-    <> slurmStats
+totalStats = foldOf (types @SStats)
 
--- TODO This is a terribly slow implementation, use
--- drop-based implemntation.
 emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
-emptyDBMaps tx DB {..} = liftIO $ do     
-    M.erase tx $ tas taStore
-    emptyRepositoryStore repositoryStore    
-    emptyObjectStore objectStore        
-    M.erase tx $ results validationsStore
-    M.erase tx $ vrpStore ^. #vrps 
-    M.erase tx $ aspaStore ^. #aspas
-    M.erase tx $ versions versionStore
-    M.erase tx $ metrics metricStore
-    M.erase tx $ slurms slurmStore
-    M.erase tx $ jobs jobStore    
-  where
-    emptyObjectStore RpkiObjectStore {..} = do   
-        M.erase tx objects
-        M.erase tx hashToKey
-        MM.erase tx mftByAKI
-        M.erase tx lastValidMfts
-        M.erase tx certBySKI
-        M.erase tx objectInsertedBy        
-        M.erase tx validatedByVersion
-        M.erase tx uriToUriKey
-        M.erase tx uriKeyToUri
-        MM.erase tx urlKeyToObjectKey
-        M.erase tx objectKeyToUrlKeys
-        M.erase tx objectBriefs
-
-    emptyRepositoryStore RepositoryStore {..} = do   
-        M.erase tx rrdpS
-        M.erase tx rsyncS
-        M.erase tx lastS
-
+emptyDBMaps tx DB {..} = liftIO $ 
+    forM_ erasables $ \(EraseWrapper t) -> erase tx t
 
 
 -- Utilities to have storage transaction in ValidatorT monad.

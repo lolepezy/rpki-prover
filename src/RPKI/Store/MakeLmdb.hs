@@ -8,7 +8,10 @@ module RPKI.Store.MakeLmdb where
 import Control.Lens
 import Control.Concurrent.STM
 
+import           Data.IORef
 import           Data.String.Interpolate.IsString
+
+import           GHC.TypeLits
 
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -31,22 +34,10 @@ data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
 createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
 createDatabase e logger checkAction = do 
-    sequences <- SMap lmdb <$> createLmdbStore e
-    taStore          <- createTAStore
-    repositoryStore  <- createRepositoryStore
-    objectStore      <- createObjectStore sequences    
-    validationsStore <- createValidationsStore
-    vrpStore         <- createVRPStore    
-    aspaStore        <- createAspaStore
-    gbrStore         <- createGbrStore
-    bgpStore         <- createBgpStore
-    versionStore     <- createVersionStore
-    metricStore      <- createMetricsStore
-    slurmStore       <- createSlurmStore
-    jobStore         <- createJobStore        
-    metadataStore    <- createMetadataStore
+
+    erasables <- newIORef []
+    db :: DB LmdbStorage <- doCreate erasables
     
-    let db = DB {..}
     case checkAction of     
         CheckVersion -> do 
             dbCheck <- verifyDBVersion db
@@ -82,41 +73,58 @@ createDatabase e logger checkAction = do
                     else
                         pure WasCompatible
 
-    createObjectStore seqMap = do 
-        let keys = Sequence "object-key" seqMap
-        objects  <- SMap lmdb <$> createLmdbStore e
-        mftByAKI <- SMultiMap lmdb <$> createLmdbMultiStore e
-        objectInsertedBy <- SMap lmdb <$> createLmdbStore e        
-        hashToKey   <- SMap lmdb <$> createLmdbStore e
-        lastValidMfts <- SMap lmdb <$> createLmdbStore e
+    doCreate :: IORef [EraseWrapper LmdbStorage] -> IO (DB LmdbStorage)
+    doCreate erasablesRef = do 
+        sequences        <- createMap
+        taStore          <- TAStore <$> createMap        
+        validationsStore <- ValidationsStore <$> createMap
+        vrpStore         <- VRPStore <$> createMap    
+        aspaStore        <- AspaStore <$> createMap    
+        gbrStore         <- GbrStore <$> createMap 
+        bgpStore         <- BgpStore <$> createMap
+        versionStore     <- VersionStore <$> createMap
+        metricStore      <- MetricStore <$> createMap
+        slurmStore       <- SlurmStore <$> createMap
+        jobStore         <- JobStore <$> createMap        
+        metadataStore    <- MetadataStore <$> createMap          
+        repositoryStore  <- createRepositoryStore
+        objectStore      <- createObjectStore sequences            
 
-        uriToUriKey <- SMap lmdb <$> createLmdbStore e
-        uriKeyToUri <- SMap lmdb <$> createLmdbStore e
-        urlKeyToObjectKey  <- SMultiMap lmdb <$> createLmdbMultiStore e
-        objectKeyToUrlKeys <- SMap lmdb <$> createLmdbStore e
-        certBySKI <- SMap lmdb <$> createLmdbStore e
-        objectBriefs <- SMap lmdb <$> createLmdbStore e
-        validatedByVersion <- SMap lmdb <$> createLmdbStore e        
-        pure RpkiObjectStore {..}
+        erasables <- readIORef erasablesRef
+
+        pure DB {..}
+      where
+
+        createObjectStore seqMap = do 
+            let keys = Sequence "object-key" seqMap
+            objects          <- createMap
+            mftByAKI         <- createMultiMap
+            objectInsertedBy <- createMap        
+            hashToKey        <- createMap
+            lastValidMfts    <- createMap
+            uriToUriKey      <- createMap
+            uriKeyToUri      <- createMap
+            urlKeyToObjectKey  <- createMultiMap
+            objectKeyToUrlKeys <- createMap
+            certBySKI          <- createMap
+            objectBriefs       <- createMap
+            validatedByVersion <- createMap        
+            pure RpkiObjectStore {..}
             
-    createRepositoryStore = 
-        RepositoryStore <$>
-            (SMap lmdb <$> createLmdbStore e) <*>
-            (SMap lmdb <$> createLmdbStore e) <*>
-            (SMap lmdb <$> createLmdbStore e)        
-    
-    createValidationsStore = ValidationsStore . SMap lmdb <$> createLmdbStore e
-    createVRPStore = VRPStore . SMap lmdb <$> createLmdbStore e    
-    createAspaStore = AspaStore . SMap lmdb <$> createLmdbStore e    
-    createGbrStore  = GbrStore . SMap lmdb <$> createLmdbStore e    
-    createBgpStore = BgpStore . SMap lmdb <$> createLmdbStore e    
-    createTAStore = TAStore . SMap lmdb <$> createLmdbStore e    
-    createVersionStore = VersionStore . SMap lmdb <$> createLmdbStore e    
-    createMetricsStore = MetricStore . SMap lmdb <$> createLmdbStore e    
-    createSlurmStore = SlurmStore . SMap lmdb <$> createLmdbStore e    
-    createJobStore = JobStore . SMap lmdb <$> createLmdbStore e    
-    createMetadataStore = MetadataStore . SMap lmdb <$> createLmdbStore e    
-    
+        createRepositoryStore = RepositoryStore <$> createMap <*> createMap <*> createMap      
+        
+        createMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
+        createMap = do 
+            sm <- SMap lmdb <$> createLmdbStore e
+            modifyIORef' erasablesRef (EraseWrapper sm :)
+            pure sm
+
+        createMultiMap :: forall k v name . (KnownSymbol name) => IO (SMultiMap name LmdbStorage k v)
+        createMultiMap = do 
+            sm <- SMultiMap lmdb <$> createLmdbMultiStore e
+            modifyIORef' erasablesRef (EraseWrapper sm :)
+            pure sm
+        
 
 mkLmdb :: FilePath -> Config -> IO LmdbEnv
 mkLmdb fileName config = do 
