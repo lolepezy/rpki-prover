@@ -512,7 +512,7 @@ saveBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion =
 
 deleteBgps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteBgps tx DB { bgpStore = BgpStore m } wv = liftIO $ M.delete tx m wv
+deleteBgps tx DB { bgpStore = BgpStore bgpMap } wv = liftIO $ M.delete tx bgpMap wv
 
 getBgps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
@@ -835,6 +835,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
     vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
     aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
     bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
+    gbrStats        <- let GbrStore sm = gbrStore in M.stats tx sm
     metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
     versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
     sequenceStats   <- M.stats tx sequences
