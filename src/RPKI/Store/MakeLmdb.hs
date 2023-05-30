@@ -33,20 +33,17 @@ data IncompatibleDbCheck = CheckVersion | DontCheckVersion
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
 createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
-createDatabase e logger checkAction = do 
+createDatabase env logger checkAction = do 
 
     erasables <- newIORef []
-    db :: DB LmdbStorage <- doCreate erasables
+    db <- doCreateDb erasables
     
     case checkAction of     
-        CheckVersion -> do 
-            dbCheck <- verifyDBVersion db
-            pure (db, dbCheck)
+        CheckVersion -> 
+            (db, ) <$> verifyDBVersion db            
         DontCheckVersion -> 
-            pure (db, WasCompatible)
-    
-  where
-    lmdb = LmdbStorage e        
+            pure (db, WasCompatible)    
+  where    
 
     verifyDBVersion db =
         rwTx db $ \tx -> do     
@@ -73,8 +70,7 @@ createDatabase e logger checkAction = do
                     else
                         pure WasCompatible
 
-    doCreate :: IORef [EraseWrapper LmdbStorage] -> IO (DB LmdbStorage)
-    doCreate erasablesRef = do 
+    doCreateDb erasablesRef = do 
         sequences        <- createMap
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap
@@ -111,17 +107,20 @@ createDatabase e logger checkAction = do
             validatedByVersion <- createMap        
             pure RpkiObjectStore {..}
             
-        createRepositoryStore = RepositoryStore <$> createMap <*> createMap <*> createMap      
+        createRepositoryStore = 
+            RepositoryStore <$> createMap <*> createMap <*> createMap      
         
+        lmdb = LmdbStorage env
+
         createMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
         createMap = do 
-            sm <- SMap lmdb <$> createLmdbStore e
+            sm <- SMap lmdb <$> createLmdbStore env
             modifyIORef' erasablesRef (EraseWrapper sm :)
             pure sm
 
         createMultiMap :: forall k v name . (KnownSymbol name) => IO (SMultiMap name LmdbStorage k v)
         createMultiMap = do 
-            sm <- SMultiMap lmdb <$> createLmdbMultiStore e
+            sm <- SMultiMap lmdb <$> createLmdbMultiStore env
             modifyIORef' erasablesRef (EraseWrapper sm :)
             pure sm
         
