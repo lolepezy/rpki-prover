@@ -890,10 +890,15 @@ totalStats DBStats {..} =
         <> uriKeyToObjectKeyStat <> objectKeyToUrlKeysStat
         <> objectInsertedByStats <> objecBriefStats 
         <> validatedByVersionStats)
-    <> resultsStats vResultStats 
+    <> vResultStats ^. #resultsStats
     <> vrpStats 
+    <> aspaStats 
+    <> bgpStats 
+    <> gbrStats 
+    <> metricsStats 
     <> versionStats 
     <> sequenceStats
+    <> slurmStats
 
 -- TODO This is a terribly slow implementation, use
 -- drop-based implemntation.
