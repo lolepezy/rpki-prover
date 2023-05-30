@@ -50,3 +50,5 @@ rwTx = readWriteTx . storage
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx    
 
+class WithTx s => CanErase s a where
+    erase :: Tx s 'RW -> a -> IO ()
