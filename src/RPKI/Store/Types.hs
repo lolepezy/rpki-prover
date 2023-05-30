@@ -95,6 +95,7 @@ data DBStats = DBStats {
     vrpStats        :: SStats,        
     aspaStats       :: SStats,        
     bgpStats        :: SStats,        
+    gbrStats        :: SStats,        
     metricsStats    :: SStats,    
     versionStats    :: SStats,    
     sequenceStats   :: SStats,
