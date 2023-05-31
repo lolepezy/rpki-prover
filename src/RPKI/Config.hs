@@ -141,7 +141,8 @@ data RtrConfig = RtrConfig {
 data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
-        validationWorkerMemoryMb :: Int
+        validationWorkerMemoryMb :: Int,
+        cleanupWorkerMemoryMb    :: Int
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -203,8 +204,9 @@ defaultConfig = Config {
     },    
     systemConfig = SystemConfig {
         rsyncWorkerMemoryMb      = 1024,
-        rrdpWorkerMemoryMb       = 1024,
-        validationWorkerMemoryMb = 2048
+        rrdpWorkerMemoryMb       = 1024,        
+        validationWorkerMemoryMb = 2048,
+        cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
     cacheCleanupInterval      = Seconds $ 60 * 60 * 12,

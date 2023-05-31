@@ -45,6 +45,7 @@ import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
+import           RPKI.Store.Database
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -87,7 +88,10 @@ data WorkerParams = RrdpFetchParams {
             ValidationParams {                 
                 worldVersion :: WorldVersion,
                 tals         :: [TAL]
-            } 
+            } | 
+            CacheCleanupParams { 
+                worldVersion :: WorldVersion
+            }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -123,9 +127,13 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+data CacheCleanupResult = CacheCleanupResult CleanUpResult
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 
 data WorkerResult r = WorkerResult {
-        payload   :: r,
+        payload   :: r,        
         cpuTime   :: CPUTime,
         clockTime :: TimeMs,
         maxMemory :: MaxMemory
@@ -290,3 +298,8 @@ runWorker logger config workerId params timeout extraCli = do
     complain message = do 
         logError logger message
         appError $ InternalE $ InternalError message
+
+logWorkerDone :: (Logger logger, MonadIO m) =>
+                logger -> WorkerId -> WorkerResult r -> m ()
+logWorkerDone logger workerId WorkerResult {..} =     
+    logDebug logger [i|Worker '#{workerId}' finished, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|]

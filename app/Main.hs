@@ -103,7 +103,7 @@ executeMainProcess cliOptions = do
     withLogConfig cliOptions $ \logConfig -> do
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
-        let bumpSysMetric = \sm -> do 
+        let bumpSysMetric sm = do 
                 z <- readTVarIO appStateHolder
                 for_ z $ mergeSystemMetrics sm
 
@@ -156,17 +156,18 @@ runValidatorServer appContext@AppContext {..} = do
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
             inSubVScope' TAFocus (convert taName) $
-                parseTALFromFile talFilePath (Text.pack taName)
+                parseTALFromFile talFilePath (Text.pack taName)    
 
-    logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
-
-    database' <- readTVarIO database
-    rwTx database' $ \tx -> putValidations tx database' worldVersion (vs ^. typed)
+    db <- readTVarIO database
+    rwTx db $ \tx -> do 
+        generalWorldVersion tx db worldVersion
+        saveValidations tx db worldVersion (vs ^. typed)
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
+            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
@@ -442,6 +443,8 @@ executeWorker input appContext =
                 CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
             ValidationParams {..} -> exec resultHandler $
                 uncurry ValidationResult <$> runValidation appContext worldVersion tals
+            CacheCleanupParams {..} -> exec resultHandler $
+                CacheCleanupResult <$> runCacheCleanup appContext worldVersion
   where
     exec resultHandler f = resultHandler =<< execWithTiming f
 

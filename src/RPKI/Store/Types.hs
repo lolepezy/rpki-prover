@@ -22,7 +22,6 @@ import           RPKI.Config
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
 
-
 data StorableTA = StorableTA {
     tal                 :: TAL,
     taCert              :: CaCerObject,
@@ -57,18 +56,25 @@ newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
+data Keyed a = Keyed { 
+        object :: a,
+        key    :: ObjectKey
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)        
+
 data RpkiObjectStats = RpkiObjectStats {
     objectsStats       :: SStats,
     mftByAKIStats      :: SStats,    
     hashToKeyStats     :: SStats,
-    lastValidMftStats  :: SStats,
+    lastValidMftsStats :: SStats,
     uriToUriKeyStat    :: SStats,
     uriKeyToUriStat    :: SStats,
     uriKeyToObjectKeyStat  :: SStats,
     objectKeyToUrlKeysStat :: SStats,
-    objectInsertedByStats  :: SStats,
-    objectValidatedByStats  :: SStats,
-    objecBriefStats         :: SStats
+    objectInsertedByStats  :: SStats,    
+    objecBriefStats         :: SStats,
+    validatedByVersionStats :: SStats
 } deriving stock (Show, Eq, Generic)
 
 data VResultStats = VResultStats {     
@@ -89,6 +95,7 @@ data DBStats = DBStats {
     vrpStats        :: SStats,        
     aspaStats       :: SStats,        
     bgpStats        :: SStats,        
+    gbrStats        :: SStats,        
     metricsStats    :: SStats,    
     versionStats    :: SStats,    
     sequenceStats   :: SStats,

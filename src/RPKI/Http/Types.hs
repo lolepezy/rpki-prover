@@ -25,6 +25,7 @@ import           Data.Proxy
 import           GHC.Generics                (Generic)
 import qualified Data.Vector                 as V
 import qualified Data.List.NonEmpty          as NonEmpty
+import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
 import           Data.Map.Monoidal.Strict (MonoidalMap)
@@ -217,7 +218,7 @@ data RoaPrefixDto = RoaPrefixDto {
 
 
 data GbrDto = GbrDto {
-        vcard :: Map.Map Text Text
+        vcard :: Map Text Text
     }  
     deriving stock (Eq, Show, Generic)
 

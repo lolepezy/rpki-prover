@@ -22,9 +22,8 @@ import           GHC.Generics (Generic)
 
 import           Data.Either                      (fromRight, partitionEithers)
 import           Data.Foldable
-import           Data.IORef 
+import           Data.IORef
 import qualified Data.Set.NonEmpty                as NESet
-import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Monoid.Generic
@@ -62,20 +61,26 @@ import           RPKI.Validation.Common
 
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
-data TopDownContext s = TopDownContext {    
-        verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),    
-        taName                  :: TaName,         
-        now                     :: Now,
-        worldVersion            :: WorldVersion,
-        validManifests          :: TVar (Map AKI Hash),
-        visitedHashes           :: TVar (Set Hash),        
-        repositoryProcessing    :: RepositoryProcessing,
+data TopDownContext = TopDownContext {
+        verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),
+        taName                  :: TaName,
+        allTas                  :: AllTasTopDownContext,
         currentPathDepth        :: Int,
         startingRepositoryCount :: Int,
-        interruptedByLimit      :: TVar Limited,                
-        briefs                  :: TVar [BriefUpdate]
+        interruptedByLimit      :: TVar Limited
     }
-    deriving stock (Generic)    
+    deriving stock (Generic)
+
+
+data AllTasTopDownContext = AllTasTopDownContext {
+        now                  :: Now,
+        worldVersion         :: WorldVersion,
+        validManifests       :: TVar ValidManifests,
+        visitedHashes        :: TVar (Set Hash),
+        repositoryProcessing :: RepositoryProcessing,
+        briefs               :: TVar [BriefUpdate]
+    }
+    deriving stock (Generic)
 
 
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
@@ -88,136 +93,141 @@ data ObjectOrBrief = RObject (Located RpkiObject) | RBrief (Located EEBrief) Has
     deriving stock (Show, Eq, Generic)
 
 data TopDownResult = TopDownResult {
-        payloads           :: Payloads Vrps,        
+        payloads           :: Payloads Vrps,
         topDownValidations :: ValidationState
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving Semigroup via GenericSemigroup TopDownResult   
-    deriving Monoid    via GenericMonoid TopDownResult       
+    deriving Semigroup via GenericSemigroup TopDownResult
+    deriving Monoid    via GenericMonoid TopDownResult
 
 
 fromValidations :: ValidationState -> TopDownResult
 fromValidations = TopDownResult mempty
 
 
-newTopDownContext :: MonadIO m => 
-                    WorldVersion 
-                    -> TaName                     
-                    -> Now 
-                    -> CaCerObject 
-                    -> RepositoryProcessing
-                    -> m (TopDownContext s)
-newTopDownContext worldVersion taName now certificate repositoryProcessing = 
-    liftIO $ atomically $ do    
-        let verifiedResources = Just $ createVerifiedResources certificate        
-        let currentPathDepth = 0        
-        startingRepositoryCount <- fmap repositoryCount $ readTVar $ repositoryProcessing ^. #publicationPoints  
-        visitedHashes           <- newTVar mempty
-        validManifests          <- newTVar mempty                
-        interruptedByLimit      <- newTVar CanProceed        
-        briefs                  <- newTVar []
+newTopDownContext :: MonadIO m =>
+                    TaName
+                    -> CaCerObject
+                    -> AllTasTopDownContext
+                    -> m TopDownContext
+newTopDownContext taName certificate allTas =
+    liftIO $ atomically $ do
+        let verifiedResources = Just $ createVerifiedResources certificate
+        let currentPathDepth = 0
+        startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
+        interruptedByLimit      <- newTVar CanProceed
         pure $ TopDownContext {..}
 
+newAllTasTopDownContext :: MonadIO m =>
+                        WorldVersion
+                        -> Now
+                        -> RepositoryProcessing
+                        -> m AllTasTopDownContext
+newAllTasTopDownContext worldVersion now repositoryProcessing =
+    liftIO $ atomically $ do
+        visitedHashes  <- newTVar mempty
+        validManifests <- newTVar makeValidManifests
+        briefs         <- newTVar []
+        pure $ AllTasTopDownContext {..}
+
 newRepositoryContext :: PublicationPoints -> RepositoryContext
-newRepositoryContext publicationPoints = let 
-    takenCareOf = Set.empty 
+newRepositoryContext publicationPoints = let
+    takenCareOf = Set.empty
     in RepositoryContext {..}
 
 
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited
 verifyLimit hitTheLimit limit =
-    readTVar limit >>= \case    
-        CanProceed -> do 
+    readTVar limit >>= \case
+        CanProceed -> do
             h <- hitTheLimit
             if h then do
                 writeTVar limit FirstToHitLimit
                 pure FirstToHitLimit
-            else 
+            else
                 pure CanProceed
-        FirstToHitLimit -> do 
+        FirstToHitLimit -> do
             writeTVar limit AlreadyReportedLimit
             pure AlreadyReportedLimit
-        AlreadyReportedLimit -> 
+        AlreadyReportedLimit ->
             pure AlreadyReportedLimit
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
-validateMutlipleTAs :: Storage s => 
-                    AppContext s 
-                    -> WorldVersion 
+validateMutlipleTAs :: Storage s =>
+                    AppContext s
+                    -> WorldVersion
                     -> [TAL]
                     -> IO [TopDownResult]
-validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do                                     
-    db <- readTVarIO database 
+validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
+    db <- readTVarIO database
 
-    repositoryProcessing <- newRepositoryProcessingIO config    
-    
-    validateThem db repositoryProcessing 
-        `finally` 
-        cancelFetchTasks repositoryProcessing
-    
+    repositoryProcessing <- newRepositoryProcessingIO config
+    allTas <- newAllTasTopDownContext worldVersion
+                (Now $ versionToMoment worldVersion) repositoryProcessing
+
+    validateThem db allTas
+        `finally`
+            concurrently
+                (applyValidationSideEffects appContext allTas)
+                (cancelFetchTasks repositoryProcessing)
   where
 
-    validateThem db repositoryProcessing = do 
+    validateThem db allTas = do
         -- set initial publication point state
-        mapException (AppException . storageError) $ do             
+        mapException (AppException . storageError) $ do
             pps <- roTx db $ \tx -> getPublicationPoints tx db
             let pps' = addRsyncPrefetchUrls config pps
-            atomically $ writeTVar (repositoryProcessing ^. #publicationPoints) pps'
-     
-        rs <- liftIO $ pooledForConcurrently tals $ \tal -> do           
-            (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $ 
-                    validateTA appContext tal worldVersion repositoryProcessing
+            atomically $ writeTVar (allTas ^. #repositoryProcessing . #publicationPoints) pps'
+
+        rs <- liftIO $ pooledForConcurrently tals $ \tal -> do
+            (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
+                    validateTA appContext tal worldVersion allTas
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
-            pure r    
+            pure r
 
         -- save publication points state    
-        mapException (AppException . storageError) $ do            
-            pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-            rwTx db $ \tx -> savePublicationPoints tx db pps            
+        mapException (AppException . storageError) $ do
+            pps <- readTVarIO $ allTas ^. #repositoryProcessing . #publicationPoints
+            rwTx db $ \tx -> savePublicationPoints tx db pps
 
         -- Get validations for all the fetches that happened during this top-down traversal
-        fetchValidation <- validationStateOfFetches repositoryProcessing
-        pure $ fromValidations fetchValidation : rs              
+        fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
+        pure $ fromValidations fetchValidation : rs
 
 --
-validateTA :: Storage s => 
-            AppContext s 
-            -> TAL 
-            -> WorldVersion             
-            -> RepositoryProcessing             
+validateTA :: Storage s =>
+            AppContext s
+            -> TAL
+            -> WorldVersion
+            -> AllTasTopDownContext
             -> IO TopDownResult
-validateTA appContext@AppContext{..} tal worldVersion repositoryProcessing = do    
+validateTA appContext@AppContext{..} tal worldVersion allTas = do
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
-    (r, vs) <- runValidatorT taContext $ 
-            timeoutVT 
+    (r, vs) <- runValidatorT taContext $
+            timeoutVT
                 maxDuration
                 validateFromTAL
-                (do 
+                (do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
-                    appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration) 
-    
-    let payloads = case r of 
+                    appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration)
+
+    let payloads = case r of
                     Left _  -> mempty
                     Right p -> p & #vrps %~ newVrps taName
-    
+
     pure $ TopDownResult payloads vs
   where
     taName = getTaName tal
     taContext = newScopes' TAFocus $ unTaName taName
 
-    validateFromTAL = do 
-        timedMetric (Proxy :: Proxy ValidationMetric) $ 
-            inSubObjectVScope (toText $ getTaCertURL tal) $ do 
+    validateFromTAL = do
+        timedMetric (Proxy :: Proxy ValidationMetric) $
+            inSubObjectVScope (toText $ getTaCertURL tal) $ do
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-                -- this will be used as the "now" in all subsequent time and period validations 
-                let now = Now $ versionToMoment worldVersion
-                topDownContext <- newTopDownContext worldVersion 
-                                    taName
-                                    now  
-                                    (taCert ^. #payload)  
-                                    repositoryProcessing                                    
-                validateFromTACert appContext topDownContext repos taCert                
+                -- this will be used as the "now" in all subsequent time and period validations                 
+                topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
+                validateFromTACert appContext topDownContext repos taCert
 
 
 data TACertStatus = Existing | Updated
@@ -225,14 +235,14 @@ data TACertStatus = Existing | Updated
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
 -- | This function doesn't throw exceptions.
-validateTACertificateFromTAL :: Storage s => 
-                                AppContext s 
-                                -> TAL 
-                                -> WorldVersion 
+validateTACertificateFromTAL :: Storage s =>
+                                AppContext s
+                                -> TAL
+                                -> WorldVersion
                                 -> ValidatorT IO (Located CaCerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
-    let validationConfig = config ^. typed @ValidationConfig    
+    let validationConfig = config ^. typed @ValidationConfig
 
     taStore  <- taStore <$> liftIO (readTVarIO database)
     taByName <- roAppTxEx taStore storageError $ \tx -> getTA tx taStore (getTaName tal)
@@ -245,20 +255,20 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
   where
-    fetchValidateAndStore taStore (Now moment) previousCert = do 
+    fetchValidateAndStore taStore (Now moment) previousCert = do
         (uri', ro) <- fetchTACertificate appContext tal
-        cert       <- vHoist $ validateTACert tal uri' ro            
+        cert       <- vHoist $ validateTACert tal uri' ro
         -- Check for replay attacks
-        actualCert <- case previousCert of 
+        actualCert <- case previousCert of
                         Nothing       -> pure cert
                         Just previous -> vHoist $ validateTACertWithPreviousCert cert previous
         case publicationPointsFromTAL tal actualCert of
             Left e         -> appError $ ValidationE e
-            Right ppAccess -> 
-                rwAppTxEx taStore storageError $ \tx -> do 
-                    putTA tx taStore (StorableTA tal actualCert (FetchedAt moment) ppAccess)
+            Right ppAccess ->
+                rwAppTxEx taStore storageError $ \tx -> do
+                    saveTA tx taStore (StorableTA tal actualCert (FetchedAt moment) ppAccess)
                     pure (locatedTaCert uri' actualCert, ppAccess, Updated)
-            
+
     locatedTaCert url cert = Located (toLocations url) cert
 
 
@@ -266,65 +276,44 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 -- | 
 -- | This function doesn't throw exceptions.
 validateFromTACert :: Storage s =>
-                    AppContext s -> 
-                    TopDownContext s ->                                        
-                    PublicationPointAccess -> 
-                    Located CaCerObject ->                     
+                    AppContext s ->
+                    TopDownContext ->
+                    PublicationPointAccess ->
+                    Located CaCerObject ->
                     ValidatorT IO (Payloads (Set Vrp))
-validateFromTACert 
+validateFromTACert
     appContext@AppContext {..}
-    topDownContext@TopDownContext { .. } 
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     initialRepos
-    taCert 
-  = do      
-    for_ (filterPPAccess config initialRepos) $ \filteredRepos -> do        
-        liftIO $ atomically $ modifyTVar' 
+    taCert
+  = do
+    for_ (filterPPAccess config initialRepos) $ \filteredRepos -> do
+        liftIO $ atomically $ modifyTVar'
                     (repositoryProcessing ^. #publicationPoints)
-                    (\pubPoints -> foldr mergePP pubPoints $ unPublicationPointAccess filteredRepos) 
-        
+                    (\pubPoints -> foldr mergePP pubPoints $ unPublicationPointAccess filteredRepos)
+
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
         void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
-        
-    -- Do the tree descend, gather validation results and VRPs            
-    vp <- askScopes
-    T2 payloads validationState <- fromTry 
-                (\e -> UnspecifiedE (unTaName taName) (fmtEx e)) 
-                (validateCA appContext vp topDownContext taCert)
 
-    embedState validationState    
+    -- Do the tree descend, gather validation results and VRPs                
+    payloads <- fromTryM
+                (UnspecifiedE (unTaName taName) . fmtEx)
+                (validateCa appContext topDownContext taCert)
+
     pure $! foldr (<>) mempty payloads
-         
 
--- | Validate CA starting from its certificate.
--- 
-validateCA :: Storage s =>
-            AppContext s 
-            -> Scopes 
-            -> TopDownContext s 
-            -> Located CaCerObject 
-            -> IO (T2 (Seq (Payloads (Set Vrp))) ValidationState)
-validateCA appContext scopes topDownContext certificate =
-    validateCARecursively 
-        `finally`  
-        applyValidationSideEffects appContext topDownContext       
-  where
-    validateCARecursively = do             
-        (r, validations) <- runValidatorT scopes $
-                                validateCaCertificate appContext topDownContext certificate        
-        pure $! T2 (fromRight mempty r) validations
-    
 
-validateCaCertificate :: Storage s =>
+validateCa :: Storage s =>
                         AppContext s ->
-                        TopDownContext s ->
-                        Located CaCerObject ->                
+                        TopDownContext ->
+                        Located CaCerObject ->
                         ValidatorT IO (Seq (Payloads (Set Vrp)))
-validateCaCertificate 
-    appContext@AppContext {..} 
-    topDownContext@TopDownContext {..} 
-    certificate = do          
-    
+validateCa
+    appContext@AppContext {..}
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
+    certificate = do
+
     let validationConfig = config ^. typed @ValidationConfig
 
     -- First check if we have reached some limit for the total depth of the CA tree
@@ -333,55 +322,55 @@ validateCaCertificate
     -- Check and report for the maximal tree depth
     let treeDepthLimit = (
             pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
-            do 
+            do
                 logError logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum tree depth is reached.|]
-                vError $ CertificatePathTooDeep 
-                            (getLocations certificate) 
+                vError $ CertificatePathTooDeep
+                            (getLocations certificate)
                             (validationConfig ^. #maxCertificatePathDepth)
             )
 
     -- Check and report for the maximal number of objects in the tree
     let visitedObjectCountLimit = (
             (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes,
-            do 
+            do
                 logError logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total object number in the tree is reached.|]
-                vError $ TreeIsTooBig 
-                            (getLocations certificate) 
+                vError $ TreeIsTooBig
+                            (getLocations certificate)
                             (validationConfig ^. #maxTotalTreeSize)
             )
 
     -- Check and report for the maximal increase in the repository number
     let repositoryCountLimit = (
-            do 
+            do
                 pps <- readTVar $ repositoryProcessing ^. #publicationPoints
                 pure $ repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
-            do 
+            do
                 logError logger [i|Interrupting validation on #{fmtLocations $ getLocations certificate}, maximum total new repository count is reached.|]
-                vError $ TooManyRepositories 
-                            (getLocations certificate) 
+                vError $ TooManyRepositories
+                            (getLocations certificate)
                             (validationConfig ^. #maxTaRepositories)
             )
-                
-    let actuallyValidate = 
-            case getPublicationPointsFromCertObject (certificate ^. #payload) of            
+
+    let actuallyValidate =
+            case getPublicationPointsFromCertObject (certificate ^. #payload) of
                 Left e         -> vError e
-                Right ppAccess ->   
-                    case filterPPAccess config ppAccess of 
-                        Nothing -> 
+                Right ppAccess ->
+                    case filterPPAccess config ppAccess of
+                        Nothing ->
                             -- Both rrdp and rsync (and whatever else in the future?) are
                             -- disabled, don't fetch at all.
                             validateThisCertAndGoDown
-                        Just filteredPPAccess -> do 
+                        Just filteredPPAccess -> do
                             fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
                             primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
-                            let goFurther = 
-                                    if anySuccess fetches                    
-                                        then validateThisCertAndGoDown                            
-                                        else do                             
-                                            fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case                        
+                            let goFurther =
+                                    if anySuccess fetches
+                                        then validateThisCertAndGoDown
+                                        else do
+                                            fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case
                                                 Never       -> pure mempty
-                                                AtLeastOnce -> validateThisCertAndGoDown                            
-                            case primaryUrl of 
+                                                AtLeastOnce -> validateThisCertAndGoDown
+                            case primaryUrl of
                                 Nothing -> goFurther
                                 Just rp -> inSubMetricScope' PPFocus rp goFurther
 
@@ -389,19 +378,19 @@ validateCaCertificate
     -- is reported only by the thread that first hits it
     let checkAndReport (condition, report) nextOne = do
             z <- liftIO $ atomically $ verifyLimit condition interruptedByLimit
-            case z of 
+            case z of
                 CanProceed           -> nextOne
                 FirstToHitLimit      -> report
                 AlreadyReportedLimit -> pure mempty
 
-    checkAndReport treeDepthLimit 
-        $ checkAndReport visitedObjectCountLimit 
+    checkAndReport treeDepthLimit
+        $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
         $ actuallyValidate
 
-  where    
-    
-    validateThisCertAndGoDown = do            
+  where
+
+    validateThisCertAndGoDown = do
         -- Here we do the following
         -- 
         --  1) get the latest manifest (latest by the validity period)
@@ -417,45 +406,49 @@ validateCaCertificate
         -- Everything else is either extra checks or metrics.
         --         
         let childrenAki   = toAKI $ getSKI certificate
-        let certLocations = getLocations certificate        
-        
+        let certLocations = getLocations certificate
+
         validateObjectLocations certificate
 
-        oneMoreCert            
-        visitObject appContext topDownContext (CerRO $ certificate ^. #payload)                                                    
+        oneMoreCert
+        visitObject topDownContext (CerRO $ certificate ^. #payload)
 
         -- first try to use the latest manifest 
         -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-6486bis-11#section-6.2
-        -- 
-        maybeMft <- findLatestMft database childrenAki
-        let goForLatestValid = tryLatestValidCachedManifest appContext useManifest maybeMft childrenAki certLocations
-        case maybeMft of                        
-            Nothing -> 
+        --         
+        maybeMft <- liftIO $ do
+                        db <- readTVarIO database
+                        roTx db $ \tx -> findLatestMftByAKI tx db childrenAki
+        let goForLatestValid = tryLatestValidCachedManifest appContext useManifest
+                                ((^. #object) <$> maybeMft) validManifests childrenAki certLocations
+        case maybeMft of
+            Nothing ->
                 -- Use awkward vError + catchError to force the error to 
                 -- get into the Validations in the state.
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     goForLatestValid
-                
-            Just mft -> 
+
+            Just mft ->
                 useManifest mft childrenAki certLocations
-                    `catchError` 
+                    `catchError`
                     goForLatestValid
 
-      where                       
+      where
 
-        useManifest mft childrenAki certLocations = do             
+        useManifest mft childrenAki certLocations = do
             validateManifestAndItsChildren mft childrenAki certLocations
-                `recover`
-                -- manifest should be marked as visited regardless of its validitity
-                visitObject appContext topDownContext mft               
+                `recover` 
+                    -- manifest should be marked as visited regardless of its validitity
+                    visitObject topDownContext (mft ^. #object)                    
 
 
-        validateManifestAndItsChildren locatedMft childrenAki certLocations = do                         
-            let mft = locatedMft ^. #payload            
+        validateManifestAndItsChildren keyedMft childrenAki certLocations = do
+            let locatedMft = keyedMft ^. #object
+            let mft = locatedMft ^. #payload
 
-            visitedObjects <- liftIO $ readTVarIO visitedHashes            
-            when (getHash mft `Set.member` visitedObjects) $                 
+            visitedObjects <- liftIO $ readTVarIO visitedHashes
+            when (getHash mft `Set.member` visitedObjects) $
                 -- We have already visited this manifest before, so 
                 -- there're some circular references in the objects.
                 -- 
@@ -472,23 +465,24 @@ validateCaCertificate
             validateMftLocation locatedMft certificate
 
             manifestResult <- inSubObjectVScope (locationsToText $ locatedMft ^. #locations) $ do
-                T2 _ crlHash <- 
-                    case findCrlOnMft mft of 
+                T2 _ crlHash <-
+                    case findCrlOnMft mft of
                         []    -> vError $ NoCRLOnMFT childrenAki certLocations
                         [crl] -> pure crl
                         crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
 
-                db <- liftIO $ readTVarIO database
-                crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
-                case crlObject of 
-                    Nothing -> 
-                        vError $ NoCRLExists childrenAki certLocations    
+                crlKeyed <- liftIO $ do
+                        db <- readTVarIO database
+                        roTx db $ \tx -> getKeyedByHash tx db crlHash
+                case crlKeyed of
+                    Nothing ->
+                        vError $ NoCRLExists childrenAki certLocations
 
-                    Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
-                        visitObject appContext topDownContext foundCrl                        
+                    Just (Keyed foundCrl@(Located crlLocations (CrlRO crl)) _) -> do
+                        visitObject topDownContext foundCrl                        
                         validateObjectLocations foundCrl
-                        validCrl <- inSubObjectVScope (locationsToText crlLocations) $ 
-                                        vHoist $ do        
+                        validCrl <- inSubObjectVScope (locationsToText crlLocations) $
+                                        vHoist $ do
                                             let mftEECert = getEECert $ unCMS $ cmsPayload mft
                                             checkCrlLocation foundCrl mftEECert
                                             validateCrl now crl certificate
@@ -496,23 +490,23 @@ validateCaCertificate
 
                         -- MFT can be revoked by the CRL that is on this MFT -- detect 
                         -- revocation as well                               
-                        void $ vHoist $ validateMft now mft 
+                        void $ vHoist $ validateMft now mft
                                             certificate validCrl verifiedResources
-                                            
+
                         -- Validate entry list and filter out CRL itself
                         nonCrlChildren <- validateMftEntries mft (getHash crl)
 
                         -- Mark all manifest entries as visited to avoid the situation
-                        -- when some of the children are deleted from the cache and some
-                        -- are still there. Do it both in case of successful validation
-                        -- or a validation error.
-                        let markAllEntriesAsVisited = 
-                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren                                        
-                                                
-                        let processChildren = do 
+                        -- when some of the children are garbage-collected from the cache 
+                        -- and some are still there. Do it both in case of successful 
+                        -- validation or a validation error.
+                        let markAllEntriesAsVisited =
+                                visitObjects topDownContext $ map (\(T2 _ h) -> h) nonCrlChildren
+
+                        let processChildren = do
                                 -- this indicates the difeerence between RFC9286-bis 
                                 -- version 02 (strict) and version 03 and later (more loose).                                                                                            
-                                let gatherMftEntryValidations = 
+                                let gatherMftEntryValidations =
                                         case config ^. #validationConfig . #manifestProcessing of
                                             {-                                             
                                             https://datatracker.ietf.org/doc/rfc9286/
@@ -537,47 +531,47 @@ validateCaCertificate
                                             -}
                                             RFC6486_Strict -> allOrNothingMftChildrenResults
 
-                                gatherMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl                                                                       
+                                gatherMftEntryResults =<< gatherMftEntryValidations nonCrlChildren validCrl
 
-                        foldr (<>) mempty <$> processChildren `recover` markAllEntriesAsVisited                                                
+                        foldr (<>) mempty <$> processChildren `recover` markAllEntriesAsVisited
 
-                    Just _ -> 
-                        vError $ CRLHashPointsToAnotherObject crlHash certLocations   
+                    Just _ ->
+                        vError $ CRLHashPointsToAnotherObject crlHash certLocations
 
             oneMoreMft
-            addValidMft topDownContext childrenAki mft
-            pure manifestResult            
+            addValidMft topDownContext childrenAki (keyedMft ^. #key)
+            pure manifestResult
 
     allOrNothingMftChildrenResults nonCrlChildren validCrl = do
         vp <- askScopes
         liftIO $ pooledForConcurrently
             nonCrlChildren
-            $ \(T2 filename hash') -> runValidatorT vp $ do 
-                    ro <- findManifestEntryObject filename hash' 
+            $ \(T2 filename hash') -> runValidatorT vp $ do
+                    ro <- findManifestEntryObject filename hash'
                     -- if failed this one interrupts the whole MFT valdiation
-                    validateMftChild ro filename validCrl                
+                    validateMftChild ro filename validCrl
 
     independentMftChildrenResults nonCrlChildren validCrl = do
         vp <- askScopes
         liftIO $ pooledForConcurrently
             nonCrlChildren
-            $ \(T2 filename hash') -> do 
-                (r, vs) <- runValidatorT vp $ findManifestEntryObject filename hash' 
-                case r of 
+            $ \(T2 filename hash') -> do
+                (r, vs) <- runValidatorT vp $ findManifestEntryObject filename hash'
+                case r of
                     Left e   -> pure (Left e, vs)
-                    Right ro -> do 
+                    Right ro -> do
                         -- We are cheating here a little by faking the empty VRP set.
                         -- 
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
                         (z, vs') <- runValidatorT vp $ validateMftChild ro filename validCrl
-                        pure $ case z of                             
+                        pure $ case z of
                             Left _ -> (Right mempty, vs')
-                            _      -> (z, vs')     
+                            _      -> (z, vs')
 
-    gatherMftEntryResults mftEntryResults = do                 
+    gatherMftEntryResults mftEntryResults = do
         -- gather all the validation states from every MFT entry
-        mapM_ (embedState . snd) mftEntryResults                
+        mapM_ (embedState . snd) mftEntryResults
 
         case partitionEithers $ map fst mftEntryResults of
             ([], payloads) -> pure payloads
@@ -585,20 +579,20 @@ validateCaCertificate
 
     -- Check manifest entries as a whole, without doing anything 
     -- with the objects they are pointing to.    
-    validateMftEntries mft crlHash = do         
+    validateMftEntries mft crlHash = do
         let mftChildren = mftEntries $ getCMSContent $ cmsPayload mft
-        when (null mftChildren) $ 
+        when (null mftChildren) $
             vError ZeroManifestEntries
 
         let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') mftChildren
-                    
+
         -- Make sure all the entries are unique
         let entryMap = Map.fromListWith (<>) $ map (\(T2 f h) -> (h, [f])) nonCrlChildren
         let nonUniqueEntries = Map.filter longerThanOne entryMap
 
         -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
         -- about uniqueness of manifest entries.
-        unless (Map.null nonUniqueEntries) $ 
+        unless (Map.null nonUniqueEntries) $
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
         pure nonCrlChildren
@@ -608,58 +602,58 @@ validateCaCertificate
             longerThanOne _   = True
 
     getManifestEntry hash' filename = do
-        ro <- liftIO $ do 
+        ro <- liftIO $ do
             db <- readTVarIO database
-            roTx db $ \tx -> getByHash tx db hash'
-        case ro of 
+            roTx db $ \tx -> getKeyedByHash tx db hash'
+        case ro of
             Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename
-            Just ro' -> pure ro'        
+            Just (Keyed object _) -> pure object
 
-    findManifestEntryObject filename hash' = do                    
-        validateMftFileName filename        
+    findManifestEntryObject filename hash' = do
+        validateMftFileName filename
         db    <- liftIO $ readTVarIO database
         brief <- liftIO $ roTx db $ \tx -> getOjectBrief tx db hash'
-        case brief of 
-            Just b  -> pure $! RBrief b hash'
+        case brief of
+            Just b  -> pure $! RBrief (b ^. #object) hash'
             Nothing -> RObject <$> getManifestEntry hash' filename
 
 
     validateMftChild child filename validCrl = do
         -- warn about names on the manifest mismatching names in the object URLs
-        let objectLocations = case child of 
+        let objectLocations = case child of
                 RObject o  -> getLocations o
                 RBrief o _ -> getLocations o
 
         let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
-        when (null nameMatches) $ 
+        when (null nameMatches) $
             vWarn $ ManifestLocationMismatch filename objectLocations
 
-        case child of             
-            RBrief ((^. #payload) -> brief) h                
+        case child of
+            RBrief ((^. #payload) -> brief) h
                 | getHash certificate == brief ^. #parentHash ->
                     -- It's under the same parent, so it's definitely the same object.
                     validateBrief brief validCrl
-                | otherwise -> do 
+                | otherwise -> do
                     -- oops, brief is not as we expected it to be, switch to the real object
                     me <- getManifestEntry h filename
                     validateRealObject me validCrl
-            RObject o -> 
+            RObject o ->
                 validateRealObject o validCrl
 
     {- 
         There's a brief for the already validated object, so only check, 
         validity period and if it wasn't revoked.             
-    -}    
+    -}
     validateBrief brief validCrl = do
         vHoist $ do
-            validateCertValidityPeriod brief now        
+            validateCertValidityPeriod brief now
             if (isRevoked brief validCrl) then do
                 void $ vPureWarning RevokedResourceCertificate
                 pure $! mempty
-            else do 
+            else do
                 oneMoreBrief
-                case brief ^. #briefType of 
-                    RoaBrief  -> do 
+                case brief ^. #briefType of
+                    RoaBrief  -> do
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ Set.size $ brief ^. #payload . #vrps
                     AspaBrief -> oneMoreAspa
@@ -670,45 +664,45 @@ validateCaCertificate
     {-         
         Validate manifest children according to 
         https://datatracker.ietf.org/doc/rfc9286/
-    -}                    
-    validateRealObject child validCrl = do        
+    -}
+    validateRealObject child validCrl = do
         let locations = getLocations child
         case child ^. #payload of
-            CerRO childCert -> do 
+            CerRO childCert -> do
                 parentContext <- ask
                 {- 
                     Note that recursive validation of the child CA happens in the separate   
                     runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
                     It is done to prevent child CAs short-circuiting and breaking validation of parents.
-                -}                
-                (r, validationState) <- liftIO $ runValidatorT parentContext $                     
+                -}
+                (r, validationState) <- liftIO $ runValidatorT parentContext $
                         inSubObjectVScope (toText $ pickLocation locations) $ do
-                            childVerifiedResources <- vHoist $ do                 
-                                    Validated validCert <- validateResourceCert @_ @_ @'CACert 
+                            childVerifiedResources <- vHoist $ do
+                                    Validated validCert <- validateResourceCert @_ @_ @'CACert
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
-                            let childTopDownContext = topDownContext 
-                                    & #verifiedResources ?~ childVerifiedResources  
-                                    & #currentPathDepth %~ (+ 1)                            
-                            validateCaCertificate appContext childTopDownContext (Located locations childCert)                            
+                            let childTopDownContext = topDownContext
+                                    & #verifiedResources ?~ childVerifiedResources
+                                    & #currentPathDepth %~ (+ 1)
+                            validateCa appContext childTopDownContext (Located locations childCert)
 
                 embedState validationState
-                pure $! fromRight mempty r                
+                pure $! fromRight mempty r
 
-            RoaRO roa -> do 
+            RoaRO roa -> do
                 validateObjectLocations child
-                inSubObjectVScope (locationsToText locations) $ 
+                inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
                         void $ vHoist $ validateRoa now roa certificate validCrl verifiedResources
-                        let vrpList = getCMSContent $ cmsPayload roa                            
-                        oneMoreRoa                            
+                        let vrpList = getCMSContent $ cmsPayload roa
+                        oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
-                        updateEEBrief roa RoaBrief payload                        
+                        updateEEBrief roa RoaBrief payload
 
-            GbrRO gbr -> do                
+            GbrRO gbr -> do
                 validateObjectLocations child
-                inSubObjectVScope (locationsToText locations) $ 
+                inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
                         void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                         oneMoreGbr
@@ -716,37 +710,37 @@ validateCaCertificate
                         let payload = (mempty :: Payloads (Set Vrp)) { gbrs = Set.singleton (getHash gbr, gbr') }
                         pure $! Seq.singleton $ payload
 
-            AspaRO aspa -> do                
+            AspaRO aspa -> do
                 validateObjectLocations child
-                inSubObjectVScope (locationsToText locations) $ 
+                inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
                         void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
-                        oneMoreAspa            
+                        oneMoreAspa
                         let aspa' = getCMSContent $ cmsPayload aspa
                         let payload = (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
-                        updateEEBrief aspa AspaBrief payload                        
+                        updateEEBrief aspa AspaBrief payload
 
-            BgpRO bgpCert -> do                
+            BgpRO bgpCert -> do
                 validateObjectLocations child
-                inSubObjectVScope (locationsToText locations) $ 
+                inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
                         bgpPayload <- vHoist $ validateBgpCert now bgpCert certificate validCrl
                         oneMoreBgp
                         let payload = (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
-                        updateEEBrief bgpCert BgpBrief payload                        
-                            
+                        updateEEBrief bgpCert BgpBrief payload
+
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
-            _somethingElse -> do 
+            _somethingElse -> do
                 logWarn logger [i|Unsupported type of object: #{locations}.|]
                 pure $! Seq.singleton mempty
 
-        where                
-              
-            updateEEBrief :: (MonadIO m, WithHash object, WithValidityPeriod object, WithSerial object) => 
+        where
+
+            updateEEBrief :: (MonadIO m, WithHash object, WithValidityPeriod object, WithSerial object) =>
                             object -> BriefType -> Payloads (Set.Set Vrp) -> m (Seq (Payloads (Set Vrp)))
-            updateEEBrief object briefType payload = liftIO $ do 
+            updateEEBrief object briefType payload = liftIO $ do
                 let (notValidBefore, notValidAfter) = getValidityPeriod object
                 let parentHash = getHash certificate
                 let serial = getSerial object
@@ -759,14 +753,14 @@ validateCaCertificate
             -- Replace RevokedResourceCertificate error with a warmning and don't break the 
             -- validation process.            
             -- This is a slightly ad-hoc code, but works fine.
-            allowRevoked f =                
-                catchAndEraseError f isRevokedCertError $ do 
+            allowRevoked f =
+                catchAndEraseError f isRevokedCertError $ do
                     vWarn RevokedResourceCertificate
                     pure mempty
-                where                 
+                where
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
-   
+
 
 -- Mark validated objects in the database, i.e.
 -- 
@@ -774,57 +768,55 @@ validateCaCertificate
 -- - save all the valid manifests for each CA/AKI
 -- - save all the object validation briefs
 -- 
-applyValidationSideEffects :: (MonadIO m, Storage s) => 
-                        AppContext s -> TopDownContext s -> m ()
-applyValidationSideEffects AppContext { .. } TopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do 
-            (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$> 
-                                readTVar visitedHashes <*> 
+applyValidationSideEffects :: (MonadIO m, Storage s) =>
+                             AppContext s -> AllTasTopDownContext -> m ()
+applyValidationSideEffects
+    AppContext {..}
+    AllTasTopDownContext {..} = liftIO $ do
+    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do
+            (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$>
+                                readTVar visitedHashes <*>                                
                                 readTVar validManifests <*>
                                 readTVar briefs <*>
                                 readTVar database
 
             briefCounter <- newIORef (0 :: Integer)
-            rwTx db $ \tx -> do 
-                for_ vhs $ \h -> 
-                    markValidated tx db h worldVersion 
-                for_ (Map.toList vmfts) $ \(aki, h) -> 
-                    markLatestValidMft tx db aki h                
-                for_ briefs' $ \(BriefUpdate h brief) -> do 
-                    putObjectBrief tx db h brief
+            rwTx db $ \tx -> do
+                markAsValidated tx db vhs worldVersion
+                saveLatestValidMfts tx db (vmfts ^. #valids)
+                for_ briefs' $ \(BriefUpdate h brief) -> do
+                    saveObjectBrief tx db h brief
                     modifyIORef' briefCounter (+1)
 
             c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size vmfts, c)
+            pure (Set.size vhs, Map.size (vmfts ^. #valids), c)
 
     logInfo logger $
-        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <> 
-        [i|saved #{briefNumber} brief objects for TA #{unTaName taName}, took #{elapsed}ms.|]
+        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <>
+        [i|saved #{briefNumber} brief objects, took #{elapsed}ms.|]
 
-    
+
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 
 -- we read it from the database and looked at it. It will be used to decide when 
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
-visitObject :: (MonadIO m, WithHash ro, Storage s) => 
-                AppContext s -> TopDownContext s -> ro -> m ()
-visitObject _ topDownContext ro = 
-    visitObjects topDownContext [getHash ro]    
+visitObject :: (MonadIO m, WithHash ro) =>
+                TopDownContext -> ro -> m ()
+visitObject topDownContext ro =
+    visitObjects topDownContext [getHash ro]
 
-visitObjects :: MonadIO m => TopDownContext s -> [Hash] -> m ()
-visitObjects TopDownContext {..} hashes =
-    liftIO $ atomically $ modifyTVar' visitedHashes (<> Set.fromList hashes)
-        
+visitObjects :: MonadIO m => TopDownContext -> [Hash] -> m ()
+visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes = 
+    liftIO $ forM_ hashes $ \h -> 
+                atomically $ modifyTVar' visitedHashes (Set.insert h)
 
 -- Add manifest to the map of the valid ones
-addValidMft :: (MonadIO m, Storage s) => 
-                TopDownContext s -> AKI -> MftObject -> m ()
-addValidMft TopDownContext {..} aki mft = 
-    liftIO $ atomically $ modifyTVar' 
-                validManifests (<> Map.singleton aki (getHash mft))    
-                
+addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
+addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey =
+    liftIO $ atomically $ modifyTVar'
+                validManifests (& #valids %~ Map.insert aki mftKey)
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreBrief :: Monad m => ValidatorT m ()
@@ -844,9 +836,9 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 -- Number of unique VRPs requires explicit counting of the VRP set sizes, 
 -- so just counting the number of VRPs in ROAs in not enough
 addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payloads Vrps)) => s -> s
-addUniqueVRPCount s = let 
+addUniqueVRPCount s = let
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
-    in s & vrpCountLens . #totalUnique .~ 
+    in s & vrpCountLens . #totalUnique .~
                 Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
          & vrpCountLens . #perTaUnique .~
-                MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)    
+                MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)   

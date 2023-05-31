@@ -102,14 +102,15 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                 rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
 
     vp <- askScopes
-    WorkerResult {..} <- runWorker 
-                            logger
-                            config
-                            workerId 
-                            (RsyncFetchParams vp rsyncRepo worldVersion)                        
-                            (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
-                            arguments                        
-    let RsyncFetchResult z = payload    
+    wr@WorkerResult {..} <- runWorker 
+                                logger
+                                config
+                                workerId 
+                                (RsyncFetchParams vp rsyncRepo worldVersion)                        
+                                (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
+                                arguments                        
+    let RsyncFetchResult z = payload        
+    logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
     embedValidatorT $ pure z
     

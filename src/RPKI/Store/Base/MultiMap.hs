@@ -14,6 +14,9 @@ data SMultiMap (name :: Symbol) s k v where
 instance Storage s => WithStorage s (SMultiMap name s k v) where
     storage (SMultiMap s _) = s
 
+instance WithTx s => CanErase s (SMultiMap name s k v) where
+    erase tx (SMultiMap _ s) = S.clearMu tx s
+
 put :: (AsStorable k, AsStorable v) =>
         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
 put tx (SMultiMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
@@ -50,12 +53,8 @@ all tx (SMultiMap _ s) = reverse <$> S.foldMu tx s f []
   where
     f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
-stats :: (AsStorable k, AsStorable v) =>
-        Tx s m -> SMultiMap name s k v -> IO SStats
+stats :: Tx s m -> SMultiMap name s k v -> IO SStats
 stats tx (SMultiMap _ s) = S.foldMu tx s f mempty
   where
     f stat skey svalue = pure $! incrementStats stat skey svalue
 
-erase :: (AsStorable k, AsStorable v) =>
-        Tx s 'RW -> SMultiMap name s k v -> IO ()
-erase tx (SMultiMap _ s) = S.clearMu tx s

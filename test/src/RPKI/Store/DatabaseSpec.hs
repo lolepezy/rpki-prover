@@ -51,6 +51,7 @@ import qualified RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Store.Types
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
 
@@ -119,7 +120,6 @@ shouldMergeObjectLocations io = do
 
     let getIt hash = roTx objectStore $ \tx -> getByHash tx db hash    
 
-
     storeIt ro1 url1
     storeIt ro1 url2
     storeIt ro1 url3
@@ -132,17 +132,17 @@ shouldMergeObjectLocations io = do
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 2" loc2 (toLocations url3)    
 
-    verifyUrlCount objectStore "1" 3    
+    verifyUrlCount objectStore "case 1" 3    
 
-    rwTx objectStore $ \tx ->
-        deleteObject tx db (getHash ro1)    
+    rwTx objectStore $ \tx -> deleteObject tx db (getHash ro1)    
 
-    verifyUrlCount objectStore "2" 3
+    verifyUrlCount objectStore "case 2" 3
 
     -- should only clean up URLs
-    cleanObjectCache db (const False)
+    deletedUrls <- rwTx db $ deleteDanglingUrls db
+    HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
-    verifyUrlCount objectStore "3" 1
+    verifyUrlCount objectStore "case 3" 1
 
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
@@ -197,23 +197,23 @@ shouldInsertAndGetAllBackFromObjectStore io = do
             forM_ locations $ \url -> 
                 linkObjectToUrl tx objectStore url (getHash ro)
 
-    allObjects <- roTx objectStore $ \tx -> getAll tx objectStore
+    allObjects <- roTx objectStore $ \tx -> getAll tx db
     HU.assertEqual 
         "Not the same objects" 
         (List.sortOn (getHash . (^. #payload)) allObjects) 
         (List.sortOn (getHash . (^. #payload)) ros')
         
-    compareLatestMfts objectStore ros1 aki1    
-    compareLatestMfts objectStore ros2 aki2  
+    compareLatestMfts db ros1 aki1    
+    compareLatestMfts db ros2 aki2  
     
     let (toDelete, toKeep) = List.splitAt (List.length ros1 `div` 2) ros1
 
-    rwTx objectStore $ \tx -> 
+    rwTx db $ \tx -> 
         forM_ toDelete $ \(Located _ ro) -> 
             deleteObject tx db (getHash ro)
     
-    compareLatestMfts objectStore ros2 aki2      
-    compareLatestMfts objectStore toKeep aki1
+    compareLatestMfts db ros2 aki2      
+    compareLatestMfts db toKeep aki1
     
   where
     removeMftNumberDuplicates = List.nubBy $ \ro1 ro2 ->
@@ -229,12 +229,12 @@ shouldInsertAndGetAllBackFromObjectStore io = do
         let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
         
-        HU.assertEqual "Not the same manifests" ((^. #payload) <$> mftLatest) mftLatest'                    
+        HU.assertEqual "Not the same manifests" ((^. #object . #payload) <$> mftLatest) mftLatest'                    
 
 
 shouldOrderManifests :: Storage s => IO (DB s) -> HU.Assertion
 shouldOrderManifests io = do  
-    DB {..} <- io
+    db@DB {..} <- io
     (Right (url1, mft1), _) <- runValidatorT (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
     (Right (url2, mft2), _) <- runValidatorT (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
 
@@ -249,7 +249,7 @@ shouldOrderManifests io = do
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
-    Just (Located _ mftLatest) <- roTx objectStore $ \tx -> findLatestMftByAKI tx objectStore aki1
+    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> findLatestMftByAKI tx db aki1
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
@@ -261,7 +261,7 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
 
     world <- getOrCreateWorldVerion =<< newAppState
 
-    rwTx validationsStore $ \tx -> putValidations tx db world vrs
+    rwTx validationsStore $ \tx -> saveValidations tx db world vrs
     vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world
 
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'

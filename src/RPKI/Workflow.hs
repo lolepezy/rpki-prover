@@ -109,7 +109,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     -- These initial delay numbers are pretty arbitrary and chosen based 
                     -- on reasonable order of the jobs.
                     ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC sharedBetweenJobs),
-                    ("cleanOldVersionsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldVersions sharedBetweenJobs),
+                    ("cleanOldPayloadsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldPayloads sharedBetweenJobs),
                     ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact sharedBetweenJobs),
                     ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
                     ]  
@@ -164,20 +164,21 @@ runWorkflow appContext@AppContext {..} tals = do
                         [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
             where
                 processTALs db = do
-                    (z, workerVS) <- runProcessTALsWorker worldVersion                    
+                    ((z, workerVS), workerId) <- runProcessTALsWorker worldVersion                    
                     case z of 
                         Left e -> do 
                             logError logger [i|Validator process failed: #{e}.|]
                             rwTx db $ \tx -> do
-                                putValidations tx db worldVersion (workerVS ^. typed)
-                                putMetrics tx db worldVersion (workerVS ^. typed)
+                                saveValidations tx db worldVersion (workerVS ^. typed)
+                                saveMetrics tx db worldVersion (workerVS ^. typed)
                                 completeWorldVersion tx db worldVersion                            
                             updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                             pure (mempty, mempty)            
-                        Right WorkerResult {..} -> do                              
+                        Right wr@WorkerResult {..} -> do                              
                             let ValidationResult vs maybeSlurm = payload
                             
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory                            
+                            logWorkerDone logger workerId wr
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 
@@ -212,37 +213,39 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- Delete objects in the store that were read by top-down validation 
         -- longer than `cacheLifeTime` hours ago.
-        cacheGC sharedBetweenJobs worldVersion _ = do
-            db <- readTVarIO database
+        cacheGC sharedBetweenJobs worldVersion _ = do            
             executeOrDie
-                (cleanupUntochedObjects db)
-                (\CleanUpResult {..} elapsed -> do 
-                    when (deletedObjects > 0) $ 
-                        atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)
-                    logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
-                                      [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
+                cleanupUntochedObjects
+                (\z elapsed -> 
+                    case z of 
+                        Left message -> logError logger message
+                        Right CleanUpResult {..} -> do 
+                            when (deletedObjects > 0) $ 
+                                atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)
+                            logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                                            [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
           where
-            cleanupUntochedObjects db = do 
-                -- Use the latest completed validation moment as a cutting point.
-                -- This is to prevent cleaning up objects if they were untouched 
-                -- because prover wasn't running for too long.
-                cutOffVersion <- roTx db $ \tx -> 
-                    fromMaybe worldVersion <$> getLastCompletedVersion db tx
+            cleanupUntochedObjects = do                 
+                ((z, _), workerId) <- runCleapUpWorker worldVersion      
+                case z of 
+                    Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                    Right wr@WorkerResult {..} -> do 
+                        logWorkerDone logger workerId wr
+                        pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
+                        pure $ Right payload                                       
 
-                cleanObjectCache db $ versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime)
-
-        -- Delete oldest world versions and all the data related to them.
-        cleanOldVersions sharedBetweenJobs worldVersion _ = do
+        -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
+        cleanOldPayloads sharedBetweenJobs worldVersion _ = do
             let now = versionToMoment worldVersion
             db <- readTVarIO database
             executeOrDie
-                (deleteOldVersions db $ versionIsOld now (config ^. #oldVersionsLifetime))
+                (deleteOldPayloads db $ versionIsOld now (config ^. #oldVersionsLifetime))
                 (\deleted elapsed -> do 
                     when (deleted > 0) $ do
                         atomically $ modifyTVar' sharedBetweenJobs (#deletedAnythingFromDb .~ True)                        
                         logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
-        -- Do the custom LMDB compaction
+        -- Do the LMDB compaction
         compact sharedBetweenJobs worldVersion _ = do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
@@ -258,7 +261,7 @@ runWorkflow appContext@AppContext {..} tals = do
             executeOrDie
                 (case jobRun of 
                     FirstRun -> 
-                        -- Do no actually do anything at the very first run.
+                        -- Do not actually do anything at the very first run.
                         -- Statistically the first run would mean that the application 
                         -- just was installed and started working and it's not very likely 
                         -- that there's already a lot of garbage in the rsync mirror directory.                        
@@ -339,15 +342,32 @@ runWorkflow appContext@AppContext {..} tals = do
                         rtsAL "128m", 
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
             
-            runValidatorT 
+            r <- runValidatorT 
                     (newScopes "validator") $ 
-                        runWorker
-                            logger
-                            config
-                            workerId 
+                        runWorker logger config workerId 
                             (ValidationParams worldVersion tals)                        
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                             arguments                                        
+            pure (r, workerId)
+
+        runCleapUpWorker worldVersion = do             
+            let workerId = WorkerId "cache-clean-up"
+            
+            let arguments = 
+                    [ worderIdS workerId ] <>
+                    rtsArguments [ 
+                        rtsN 2, 
+                        rtsA "24m", 
+                        rtsAL "64m", 
+                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
+            
+            r <- runValidatorT             
+                    (newScopes "cache-clean-up") $ 
+                        runWorker logger config workerId 
+                            (CacheCleanupParams worldVersion)
+                            (Timebox 300)
+                            arguments                                                                    
+            pure (r, workerId)                            
 
 -- To be called by the validation worker process
 runValidation :: Storage s =>
@@ -356,7 +376,7 @@ runValidation :: Storage s =>
             -> [TAL]
             -> IO (ValidationState, Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion tals = do       
-    database' <- readTVarIO database
+    db <- readTVarIO database
 
     TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
                 validateMutlipleTAs appContext worldVersion tals
@@ -377,17 +397,37 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    rwTx database' $ \tx -> do
-        putValidations tx database' worldVersion (updatedValidation ^. typed)
-        putMetrics tx database' worldVersion (topDownValidations ^. typed)
-        putVrps tx database' (payloads ^. #vrps) worldVersion
-        putAspas tx database' (payloads ^. #aspas) worldVersion
-        putGbrs tx database' (payloads ^. #gbrs) worldVersion
-        putBgps tx database' (payloads ^. #bgpCerts) worldVersion
-        for_ maybeSlurm $ putSlurm tx database' worldVersion
-        completeWorldVersion tx database' worldVersion
+    (_, elapsed) <- timedMS $ rwTx db $ \tx -> do
+        saveValidations tx db worldVersion (updatedValidation ^. typed)
+        saveMetrics tx db worldVersion (topDownValidations ^. typed)
+        saveVrps tx db (payloads ^. #vrps) worldVersion
+        saveAspas tx db (payloads ^. #aspas) worldVersion
+        saveGbrs tx db (payloads ^. #gbrs) worldVersion
+        saveBgps tx db (payloads ^. #bgpCerts) worldVersion
+        for_ maybeSlurm $ saveSlurm tx db worldVersion
+        completeWorldVersion tx db worldVersion
 
-    pure (topDownValidations, maybeSlurm)
+    logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]    
+    -- threadDelay 30_000_000
+
+    pure (updatedValidation, maybeSlurm)
+
+
+-- To be called from the cache cleanup worker
+-- 
+runCacheCleanup :: Storage s =>
+                AppContext s
+                -> WorldVersion                
+                -> IO CleanUpResult
+runCacheCleanup AppContext {..} worldVersion = do        
+    db <- readTVarIO database
+    -- Use the latest completed validation moment as a cutting point.
+    -- This is to prevent cleaning up objects if they were untouched 
+    -- because prover wasn't running for too long.
+    cutOffVersion <- roTx db $ \tx -> 
+        fromMaybe worldVersion <$> getLastCompletedVersion db tx
+
+    deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
 
 
 -- | Load the state corresponding to the last completed version.
@@ -396,9 +436,9 @@ loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-    database' <- readTVarIO database
-    roTx database' $ \tx ->
-        getLastCompletedVersion database' tx >>= \case
+    db <- readTVarIO database
+    roTx db $ \tx ->
+        getLastCompletedVersion db tx >>= \case
             Nothing          -> pure Nothing
 
             Just lastVersion
@@ -408,8 +448,8 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- slurmForVersion tx database' lastVersion
-                        payloads <- getRtrPayloads tx database' lastVersion                        
+                        slurm    <- slurmForVersion tx db lastVersion
+                        payloads <- getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> 
                             void $ atomically $ completeVersion appState lastVersion payloads' slurm
                         pure payloads

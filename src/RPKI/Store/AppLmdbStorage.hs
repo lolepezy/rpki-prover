@@ -20,6 +20,7 @@ import           Data.Hourglass
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.Config
 import           RPKI.Logging
 import           RPKI.Worker
 import           RPKI.Reporting
@@ -29,9 +30,10 @@ import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.MakeLmdb
 import           RPKI.Store.Base.Storable
 import           RPKI.Time
+import           RPKI.Metrics.System
 import           RPKI.Util
 
-import           RPKI.Config
+
 import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.Posix.Files
@@ -293,8 +295,9 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
             logError logger message            
             throwIO $ AppException $ InternalE $ InternalError message
-        Right WorkerResult { payload = CompactionResult _ } -> do
-            pure ()            
+        Right wr@WorkerResult { payload = CompactionResult _, .. } -> do
+            logWorkerDone logger workerId wr
+            pushSystem logger $ cpuMemMetric "compaction" cpuTime maxMemory                     
             
 -- 
 cleanupReaders :: AppContext LmdbStorage -> IO Int

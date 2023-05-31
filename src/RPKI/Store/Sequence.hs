@@ -1,5 +1,7 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE DeriveDataTypeable    #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
@@ -22,9 +24,10 @@ newtype SequenceValue = SequenceValue Int64
 type SequenceMap s = SMap "sequences" s Text SequenceValue
 
 data Sequence s = Sequence {
-    sequenceName :: Text,
-    sequenceMap :: SMap "sequences" s Text SequenceValue
-}
+        sequenceName :: Text,
+        sequenceMap :: SMap "sequences" s Text SequenceValue
+    } 
+    deriving stock (Generic)
 
 instance Storage s => WithStorage s (Sequence s) where
     storage (Sequence _ s) = storage s

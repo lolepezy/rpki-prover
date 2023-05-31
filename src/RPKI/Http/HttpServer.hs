@@ -241,8 +241,8 @@ getAllSlurms :: (MonadIO m, Storage s, MonadError ServerError m) =>
 getAllSlurms AppContext {..} = do
     db <- liftIO $ readTVarIO database
     liftIO $ roTx db $ \tx -> do
-        versions <- List.sortOn Down <$> allVersions tx db
-        slurms   <- mapM (\(wv, _) -> (wv, ) <$> slurmForVersion tx db wv) versions        
+        versions <- List.sortOn Down <$> validationVersions tx db
+        slurms   <- mapM (\wv -> (wv, ) <$> slurmForVersion tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
 
 
@@ -282,9 +282,9 @@ getRpkiObject AppContext {..} uri hash =
                     throwError $ err400 { errBody = "'uri' is not a valid object URL." }
 
                 Right rpkiUrl -> liftIO $ do
-                    DB {..} <- readTVarIO database
-                    roTx objectStore $ \tx ->
-                        (locatedDto <$>) <$> getByUri tx objectStore rpkiUrl
+                    db <- readTVarIO database
+                    roTx db $ \tx ->
+                        (locatedDto <$>) <$> getByUri tx db rpkiUrl
 
         (Nothing, Just hash') ->
             case parseHash hash' of

@@ -68,15 +68,16 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
 
     scopes <- askScopes
 
-    WorkerResult {..} <- runWorker
+    wr@WorkerResult {..} <- runWorker
                             logger
                             config
                             workerId 
                             (RrdpFetchParams scopes repository worldVersion)                        
                             (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
                             arguments  
-    
+        
     let RrdpFetchResult z = payload
+    logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
     embedValidatorT $ pure z
 

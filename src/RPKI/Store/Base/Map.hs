@@ -1,11 +1,12 @@
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE DeriveDataTypeable    #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Store.Base.Map where
 
 import           GHC.TypeLits
-import           Data.Typeable
 
 import           Data.Maybe               (isJust)
 import           RPKI.Store.Base.Storable
@@ -17,7 +18,8 @@ data SMap (name :: Symbol) s k v where
 instance Storage s => WithStorage s (SMap name s k v) where
     storage (SMap s _) = s
 
-deriving instance (Typeable k, Typeable v) => Typeable (SMap name s k v)
+instance WithTx s => CanErase s (SMap name s k v) where
+    erase tx (SMap _ s) = S.clear tx s
 
 put :: (AsStorable k, AsStorable v) =>
         Tx s 'RW -> SMap name s k v -> k -> v -> IO ()
@@ -29,12 +31,10 @@ get tx (SMap _ s) k = do
     msv <- S.get tx s (storableKey k)
     pure $! fromStorable . unSValue <$> msv
 
-exists :: (AsStorable k) =>
-        Tx s m -> SMap name s k v -> k -> IO Bool
+exists :: AsStorable k => Tx s m -> SMap name s k v -> k -> IO Bool
 exists tx (SMap _ s) k = isJust <$> S.get tx s (storableKey k)    
 
-delete :: (AsStorable k, AsStorable v) =>
-            Tx s 'RW -> SMap name s k v -> k -> IO ()
+delete :: AsStorable k => Tx s 'RW -> SMap name s k v -> k -> IO ()
 delete tx (SMap _ s) k = S.delete tx s (storableKey k)
 
 fold :: (AsStorable k, AsStorable v) =>
@@ -53,18 +53,13 @@ all tx (SMap _ s) = S.foldS tx s f []
   where
     f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
-keys :: (AsStorable k, AsStorable v) =>
-        Tx s m -> SMap name s k v -> IO [k]
+keys :: AsStorable k => Tx s m -> SMap name s k v -> IO [k]
 keys tx (SMap _ s) = S.foldS tx s f []
   where
     f z (SKey sk) _ = pure $! fromStorable sk : z
 
-stats :: (AsStorable k, AsStorable v) =>
-        Tx s m -> SMap name s k v -> IO SStats
+stats :: Tx s m -> SMap name s k v -> IO SStats
 stats tx (SMap _ s) = S.foldS tx s f mempty
   where
     f stat skey svalue = pure $! incrementStats stat skey svalue
 
-erase :: (AsStorable k, AsStorable v) =>
-        Tx s 'RW -> SMap name s k v -> IO ()
-erase tx (SMap _ s) = S.clear tx s
