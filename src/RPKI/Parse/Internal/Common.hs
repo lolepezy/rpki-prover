@@ -10,7 +10,7 @@ import Data.Bits
 
 import qualified Data.ByteString as BS  
 import qualified Data.Text as Text  
-import Data.Text.Encoding (decodeUtf8)
+import Data.Text.Encoding (decodeUtf8')
 
 import qualified Data.List as List
 
@@ -31,6 +31,7 @@ import RPKI.Resources.Types
 import RPKI.AppMonad
 import RPKI.Reporting
 import RPKI.Domain
+import RPKI.Util (fmtGen)
 
 import RPKI.Resources.Resources   as R
 
@@ -232,16 +233,16 @@ getSiaExt :: Certificate -> Maybe BS.ByteString
 getSiaExt c = extVal (getExts c) id_pe_sia
 
 getRrdpNotifyUri :: Certificate -> Maybe URI
-getRrdpNotifyUri c = extractURI <$> getSiaValue c id_ad_rpki_notify
+getRrdpNotifyUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_notify
 
 getRepositoryUri :: Certificate -> Maybe URI
-getRepositoryUri c = extractURI <$> getSiaValue c id_ad_rpki_repository
+getRepositoryUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_repository
 
 getManifestUri :: Certificate -> Maybe URI
-getManifestUri c = extractURI <$> getSiaValue c id_ad_rpkiManifest
+getManifestUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpkiManifest
 
-extractURI :: BS.ByteString -> URI
-extractURI =  URI . decodeUtf8
+extractURI :: BS.ByteString -> Either Text.Text URI
+extractURI u =  fmap URI $ first fmtGen $ decodeUtf8' u
 
 getCrlDistributionPoint :: Certificate -> Maybe URI
 getCrlDistributionPoint c = do
@@ -256,8 +257,10 @@ extractCrlDistributionPoint crlDP = do
             onNextContainer Sequence $ 
                 onNextContainer (Container Context 0) $ 
                     getNextContainer (Container Context 0) >>= \case 
-                            [Other Context 6 value] -> pure $ Just $ URI $ decodeUtf8 value
-                            _                       -> pure Nothing
+                            [Other Context 6 value] -> 
+                                pure $ toMaybe $ extractURI value
+                            _   -> 
+                                pure Nothing
 
 certificatePoliciesToText :: BS.ByteString -> Text.Text
 certificatePoliciesToText bs =

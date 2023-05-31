@@ -277,6 +277,9 @@ toValidationMessage = \case
       CertificateDoesntHaveSIA -> 
           [i|Certificate doesn't have SIA with publication point.|]
 
+      AIANotSameAsParentLocation aiaUrl locations -> 
+          [i|AIA of the child #{aiaUrl} does not point to the real parent location #{fmtLocations locations}.|]          
+
       CircularReference hash locations ->
           [i|Object with hash #{hash} and location #{fmtLocations locations} creates reference cycle.|]
 

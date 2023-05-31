@@ -285,7 +285,7 @@ publicationPointsFromCert cert =
         (Nothing, Just repositoryUri) 
             | isRsyncURI repositoryUri -> 
                     case parseRsyncURL (unURI repositoryUri) of 
-                        Left e   -> Left $ BrokenUri repositoryUri e
+                        Left e   -> Left $ BrokenUri (unURI repositoryUri) e
                         Right rr -> Right (RsyncU rr, rsyncPP rr)
             | otherwise                -> Left $ UnknownUriType repositoryUri
         (Nothing, Nothing)             -> Left CertificateDoesntHaveSIA 
@@ -311,7 +311,7 @@ getPublicationPointsFromCert cert = do
                 Just repositoryUri
                     | isRsyncURI repositoryUri -> 
                         case parseRsyncURL (unURI repositoryUri) of 
-                            Left e   -> Left $ BrokenUri repositoryUri e
+                            Left e   -> Left $ BrokenUri (unURI repositoryUri) e
                             Right rr -> Right [rsyncPP rr]                        
                     | otherwise -> Left $ UnknownUriType repositoryUri
                 Nothing -> Right []

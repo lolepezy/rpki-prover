@@ -19,7 +19,6 @@ import           Data.Generics.Product.Typed
 import qualified Data.ByteString                    as BS
 import qualified Data.Text                          as Text
 import           Data.Foldable (for_)
-
 import qualified Data.Set                           as Set
 
 import           Data.Proxy
@@ -277,13 +276,13 @@ validateBgpCert now bgpCert parentCert validCrl = do
     let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
     pure BGPSecPayload {..}
 
+
 ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
 ipMustBeEmpty ips errConstructor = 
     case ips of 
         Inherit -> vError errConstructor
         RS i    -> unless (IS.null i) $ vError errConstructor  
     
-
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
@@ -471,6 +470,24 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
     when (nextUpdateTime < now)  $ vPureError $ NextUpdateTimeIsInThePast {..}
     when (nextUpdateTime <= thisUpdateTime) $ 
         vPureError $ NextUpdateTimeBeforeThisUpdateTime {..}
+
+
+validateAIA :: forall child parent (childCertType :: CertType) .
+    (WithRawResourceCertificate child
+    , OfCertType parent 'CACert
+    , OfCertType child childCertType) =>    
+    child  ->
+    Located parent ->
+    PureValidatorT ()
+validateAIA cert parentCert =    
+    for_ (getSiaExt $ cwsX509certificate $ getCertWithSignature cert) $ \sia -> do 
+        for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
+            let locations = parentCert ^. #locations
+            case extractURI ext of 
+                Left e            -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
+                Right (URI siaUrl) -> do                     
+                    unless (siaUrl `elem` locationsToList locations) $                         
+                        vPureWarning $ AIANotSameAsParentLocation siaUrl locations
 
 
 -- | Check if CMS is on the revocation list

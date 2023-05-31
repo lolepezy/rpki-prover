@@ -102,8 +102,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InheritWithoutParentResources |
                         ResourceSetMustBeInherit |
                         UnknownUriType URI | 
-                        BrokenUri URI Text | 
+                        BrokenUri Text Text | 
                         CertificateDoesntHaveSIA | 
+                        AIANotSameAsParentLocation Text Locations | 
                         CircularReference Hash Locations |
                         CertificatePathTooDeep Locations Int |
                         TreeIsTooBig Locations Int |

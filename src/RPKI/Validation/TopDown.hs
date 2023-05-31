@@ -669,21 +669,29 @@ validateCa
         let locations = getLocations child
         case child ^. #payload of
             CerRO childCert -> do
-                parentContext <- ask
+                parentScope <- ask
                 {- 
                     Note that recursive validation of the child CA happens in the separate   
-                    runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT.
-                    It is done to prevent child CAs short-circuiting and breaking validation of parents.
+                    runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT:
+                    an error in child validation would interrupt validation of the parent with
+                    ExceptT's exception logic.
                 -}
-                (r, validationState) <- liftIO $ runValidatorT parentContext $
+                (r, validationState) <- liftIO $ runValidatorT parentScope $
                         inSubObjectVScope (toText $ pickLocation locations) $ do
                             childVerifiedResources <- vHoist $ do
                                     Validated validCert <- validateResourceCert @_ @_ @'CACert
                                             now childCert (certificate ^. #payload) validCrl
                                     validateResources verifiedResources childCert validCert
+
+                            -- Check that AIA of the child points to the correct location of the parent
+                            -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
+                            --                             
+                            vHoist $ validateAIA @_ @_ @'CACert childCert certificate
+
                             let childTopDownContext = topDownContext
                                     & #verifiedResources ?~ childVerifiedResources
                                     & #currentPathDepth %~ (+ 1)
+
                             validateCa appContext childTopDownContext (Located locations childCert)
 
                 embedState validationState
