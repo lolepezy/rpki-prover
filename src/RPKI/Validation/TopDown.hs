@@ -752,8 +752,16 @@ validateCa
                 let (notValidBefore, notValidAfter) = getValidityPeriod object
                 let parentHash = getHash certificate
                 let serial = getSerial object
-                let !brief = EEBrief {..}
-                atomically $ modifyTVar' briefs $ \b -> let !z = BriefUpdate (getHash object) brief in z : b
+                let brief = EEBrief {..}
+                -- Only save briefs for strict classical validation, 
+                -- for reconsidered there will be potentially arbitrary verified resource set
+                -- so we have to revalidate resource sets every time.
+                case getRFC certificate of
+                    StrictRFC -> 
+                        atomically $ modifyTVar' briefs $ \b -> 
+                            let !z = BriefUpdate (getHash object) brief in z : b
+                    ReconsideredRFC -> 
+                        pure ()
                 pure $! Seq.singleton $ payload
 
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
