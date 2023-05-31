@@ -2,28 +2,21 @@
 
 module RPKI.Parse.Internal.GBR where
 
-import qualified Data.ByteString as BS  
-
+import Data.ASN1.BinaryEncoding
+import Data.ASN1.Encoding
+import Data.ASN1.Parse
+import Data.Bifunctor
+import qualified Data.ByteString as BS
+import qualified Data.List as List
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TE
-
-import qualified Data.List as List
-
 import GHC.Generics
-
-import Data.ASN1.Encoding
-import Data.ASN1.BinaryEncoding
-import Data.ASN1.Parse
-
-import Data.Bifunctor
-
 import RPKI.AppMonad
-import RPKI.Domain 
+import RPKI.Domain
 import RPKI.Parse.Internal.Common
-import RPKI.Parse.Internal.SignedObject 
-
-import qualified RPKI.Util                  as U
+import RPKI.Parse.Internal.SignedObject
+import qualified RPKI.Util as U
 
 
 -- | Parse Ghostbusters record (https://tools.ietf.org/html/rfc6493)
@@ -108,20 +101,21 @@ parseVCard bs = do
         whateverElse -> Left $ Text.pack $ 
                             "Doesn't begin with BEGIN:VCARD, begins with " <> show whateverElse    
   where
-      parseFields fs =
-        VCard <$> sequence [
-                getField [ VCardVersion version | ["VERSION", version ] <- fs, version `elem` ["3.0", "4.0"] ] "VERSION",
-                getField [ FN  $ mconcat fn   | "FN"  : fn    <- fs ] "FN",
-                getField [ ORG $ mconcat fn   | "ORG" : fn    <- fs ] "ORG",
-                getField [ ADR $ mconcat fn   | adr : fn      <- fs, "ADR" `Text.isPrefixOf` adr ] "ADR" ,
-                getField [ TEL $ mconcat fn   | tel : fn      <- fs, "TEL" `Text.isPrefixOf` tel ] "TEL" ,
-                getField [ EMAIL $ mconcat fn | "EMAIL" : fn  <- fs ] "EMAIL" 
-            ]
-        
-      getField fieldValues fieldName = 
-          case fieldValues of 
-              []  -> Left $ "Not found field '" <> fieldName <> "'"
-              [f] -> Right f
-              _   -> Left $ "Multiple fields '" <> fieldName <> "'"
+      parseFields fs = let 
 
+        f_FN    = [ FN  $ mconcat fn | "FN"  : fn <- fs ]
+        f_ADR   = [ ADR $ mconcat fn   | adr : fn      <- fs, "ADR" `Text.isPrefixOf` adr ]
+        f_TEL   = [ TEL $ mconcat fn   | tel : fn      <- fs, "TEL" `Text.isPrefixOf` tel ]
+        f_EMAIL = [ EMAIL $ mconcat fn | "EMAIL" : fn  <- fs ]
 
+        -- Validate according to https://www.rfc-editor.org/rfc/rfc6493.html#section-7
+        -- 
+        -- Here we intentionally ignore the "Other properties MUST NOT be included" part.
+        -- It will make existing GBRs invalid and it's not something anyone wants to care about.
+        in case f_FN of
+            [] -> Left "FN MUST be included"
+            _ | null f_ADR && null f_TEL && null f_EMAIL -> 
+                    Left "At least one of ADR, TEL, and EMAIL MUST be included"
+              | otherwise -> 
+                    Right $ VCard $ f_FN <> f_ADR <> f_TEL <> f_EMAIL  
+                        
