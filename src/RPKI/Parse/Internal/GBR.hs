@@ -79,7 +79,7 @@ EMAIL:job@sobornost.net
 END:VCARD
 -}
 
-data VCardProperty = VCardVersion Text | FN Text | ORG Text | ADR Text | TEL Text | EMAIL Text
+data VCardProperty = VCardVersion Text | FN Text | ADR Text | TEL Text | EMAIL Text
     deriving (Show, Eq, Ord, Generic)
 
 newtype VCard = VCard [VCardProperty]
@@ -87,7 +87,7 @@ newtype VCard = VCard [VCardProperty]
 
 -- | Some primitive parsing of VCARD, not based on the proper RFC, 
 -- but checking for the necessary fields.
-parseVCard :: BS.ByteString -> Either Text VCard
+parseVCard :: BS.ByteString -> Either Text (VCard, Maybe Text)
 parseVCard bs = do
     t <- first (Text.pack . show) $ TE.decodeUtf8' bs
     let linez = map (Text.split (==':') . Text.strip) $ Text.lines t
@@ -101,12 +101,12 @@ parseVCard bs = do
         whateverElse -> Left $ Text.pack $ 
                             "Doesn't begin with BEGIN:VCARD, begins with " <> show whateverElse    
   where
-      parseFields fs = let 
-
+    parseFields fs = let 
         f_FN    = [ FN  $ mconcat fn | "FN"  : fn <- fs ]
         f_ADR   = [ ADR $ mconcat fn   | adr : fn      <- fs, "ADR" `Text.isPrefixOf` adr ]
         f_TEL   = [ TEL $ mconcat fn   | tel : fn      <- fs, "TEL" `Text.isPrefixOf` tel ]
         f_EMAIL = [ EMAIL $ mconcat fn | "EMAIL" : fn  <- fs ]
+        f_OTHER = [ f <> " " <> mconcat fn | f : fn  <- fs, f `elem` ["ORG", "N"]]
 
         -- Validate according to https://www.rfc-editor.org/rfc/rfc6493.html#section-7
         -- 
@@ -116,6 +116,9 @@ parseVCard bs = do
             [] -> Left "FN MUST be included"
             _ | null f_ADR && null f_TEL && null f_EMAIL -> 
                     Left "At least one of ADR, TEL, and EMAIL MUST be included"
-              | otherwise -> 
-                    Right $ VCard $ f_FN <> f_ADR <> f_TEL <> f_EMAIL  
+              | otherwise -> let
+                    warnings = case f_OTHER of
+                        [] -> Nothing
+                        _  -> Just $ "Other properties MUST NOT be included, but they were '" <> mconcat f_OTHER <> "'"
+                    in Right (VCard $ f_FN <> f_ADR <> f_TEL <> f_EMAIL, warnings)
                         

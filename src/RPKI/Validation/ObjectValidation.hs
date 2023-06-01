@@ -374,7 +374,8 @@ validateGbr now gbr parentCert crl verifiedResources = do
         validateCms now (cmsPayload gbr) parentCert crl verifiedResources $ \gbrCms -> do
             let Gbr vcardBS = getCMSContent gbrCms
             case parseVCard $ toNormalBS vcardBS of
-                Left e -> vPureError $ InvalidVCardFormatInGbr e
+                Left e                   -> vPureError $ InvalidVCardFormatInGbr e
+                Right (_, Just warnings) -> vPureWarning $ InvalidVCardFormatInGbr warnings
                 Right _ -> pure ()
     pure $ Validated gbr
 

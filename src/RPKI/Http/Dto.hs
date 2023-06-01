@@ -76,14 +76,15 @@ gbrToDto :: Gbr -> GbrDto
 gbrToDto (Gbr vcardBS) = let    
     vcardProperty = \case 
         VCardVersion t -> ("Version", t) 
-        FN t  -> ("FN", t) 
-        ORG t -> ("ORG", t) 
+        FN t  -> ("FN", t)         
         ADR t -> ("ADR", t) 
         TEL t -> ("TEL", t) 
         EMAIL t -> ("EMAIL", t) 
     vcard = case parseVCard $ toNormalBS vcardBS of
-            Left e           -> Map.singleton "error" ("Invalid VCard: " <> e)
-            Right (VCard ps) -> Map.fromList $ map vcardProperty ps
+            Left e                     -> Map.singleton "error" ("Invalid VCard: " <> e)
+            Right (VCard ps, warnings) -> 
+                Map.fromList (map vcardProperty ps) <>
+                maybe mempty (Map.singleton "warnings") warnings
     in GbrDto {..}
 
 

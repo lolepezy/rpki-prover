@@ -298,7 +298,7 @@ toValidationMessage = \case
       ManifestLocationMismatch filename locations -> 
           [i|Object has manifest entry #{filename}, but was found at the different location #{fmtLocations locations}.|]
 
-      InvalidVCardFormatInGbr e -> [i|Invalid VCard format: #{e}.|]
+      InvalidVCardFormatInGbr e -> [i|Broken VCard or invalid VCard properties: #{e}.|]
 
       RoaPrefixIsOutsideOfResourceSet roaPrefix resources -> 
           [i|ROA prefix #{roaPrefix} is not inside of the EE certificate resources #{resources}.|]
