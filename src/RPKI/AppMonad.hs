@@ -133,8 +133,8 @@ pureWarning warning = do
 vPureError :: ValidationError -> PureValidatorT r
 vPureError = pureError . ValidationE
 
-vPureWarning :: ValidationError -> PureValidatorT r
-vPureWarning e = pureError $ ValidationE e    
+vPureWarning :: ValidationError -> PureValidatorT ()
+vPureWarning e = pureWarning $ VWarning $ ValidationE e    
 
 pureError :: AppError -> PureValidatorT r
 pureError e = do
