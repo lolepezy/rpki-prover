@@ -209,8 +209,8 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    cacheCleanupInterval      = Seconds $ 60 * 60 * 12,
-    cacheLifeTime             = Seconds $ 60 * 60 * 72,
+    cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
+    cacheLifeTime             = Seconds $ 60 * 60 * 24,
     oldVersionsLifetime       = Seconds $ 60 * 60 * 24,
     storageCompactionInterval = Seconds $ 60 * 60 * 120,
     rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
