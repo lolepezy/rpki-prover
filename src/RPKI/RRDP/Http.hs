@@ -189,10 +189,11 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
     httpStatus  <- liftIO $ newIORef mempty
     newETag <- liftIO $ newIORef Nothing
     let getSrc r = do         
-            liftIO $ writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
-            case getResponseHeader "ETag" r of
-                []    -> pure ()
-                e : _ -> liftIO $ writeIORef newETag $ Just $ ETag e
+            liftIO $ do 
+                writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
+                case getResponseHeader "ETag" r of
+                    []    -> pure ()
+                    e : _ -> writeIORef newETag $ Just $ ETag e
             getResponseBody r
 
     (z, _) <- runConduitRes 
