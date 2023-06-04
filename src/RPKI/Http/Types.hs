@@ -46,6 +46,7 @@ import           RPKI.Orphans.Json
 import           RPKI.Orphans.Swagger
 import           RPKI.Reporting
 
+import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import           RPKI.Time
@@ -394,11 +395,14 @@ newtype DtoScope (s :: ScopeKind) = DtoScope (Scope s)
 instance ToJSON MetricsDto
 instance ToJSON RrdpURL
 instance ToJSON FetchStatus
+instance ToJSON ETag
 instance ToJSON RrdpRepository
 instance ToJSON PublicationPointDto
 
 instance ToSchema MetricsDto
 instance ToSchema FetchStatus where     
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ETag where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RrdpRepository
 instance ToSchema PublicationPointDto

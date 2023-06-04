@@ -48,7 +48,6 @@ instance Semigroup FetchEverSucceeded where
     Never       <> Never       = Never
     _           <> _           = AtLeastOnce    
     
-
 data FetchStatus
   = Pending
   | FetchedAt Instant
@@ -63,6 +62,7 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
 data RrdpRepository = RrdpRepository {
         uri         :: RrdpURL,
         rrdpMeta    :: Maybe (SessionId, RrdpSerial),
+        eTag        :: Maybe ETag,
         status      :: FetchStatus
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -148,14 +148,14 @@ instance WithURL RsyncRepository where
     
 
 instance Semigroup RrdpRepository where
-    RrdpRepository { uri = u1, rrdpMeta = m1, status = s1 } <> 
-        RrdpRepository { rrdpMeta = m2, status = s2 } = 
-        RrdpRepository u1 resultMeta resultStatus
+    RrdpRepository { uri = u1, rrdpMeta = m1, eTag = e1, status = s1 } <> 
+        RrdpRepository { rrdpMeta = m2, eTag = e2, status = s2 } = 
+        RrdpRepository u1 resultMeta resultETag resultStatus
       where
-        (resultStatus, resultMeta) = 
+        (resultStatus, resultMeta, resultETag) = 
             if s1 >= s2 
-                then (s1, m1)
-                else (s2, m2)
+                then (s1, m1, e1)
+                else (s2, m2, e2)
 
 -- always use the latest one
 instance Ord FetchStatus where
@@ -199,10 +199,10 @@ newRepositoryProcessingIO = atomically . newRepositoryProcessing
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
-rrdpPP u = RrdpPP $ RrdpRepository u Nothing Pending
+rrdpPP u = RrdpPP $ RrdpRepository u Nothing Nothing Pending
 
 rrdpR  :: RrdpURL  -> Repository
-rrdpR u = RrdpR $ RrdpRepository u Nothing Pending 
+rrdpR u = RrdpR $ RrdpRepository u Nothing Nothing Pending 
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository (PublicationPoints (RrdpMap rrdps) _ _) u = Map.lookup u rrdps        
