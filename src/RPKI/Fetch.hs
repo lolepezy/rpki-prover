@@ -380,3 +380,22 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
     pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
     let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
     pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
+
+
+filterOutSlow :: MonadIO m => RepositoryProcessing -> PublicationPointAccess -> m (Maybe PublicationPointAccess)
+filterOutSlow repositoryProcessing ppAccess = liftIO $ do
+    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+    pure $ fmap PublicationPointAccess $ 
+            NonEmpty.nonEmpty $ 
+            NonEmpty.filter (filter_ pps) $ 
+            unPublicationPointAccess ppAccess
+  where
+    filter_ pps pp = let
+        r = repositoryFromPP (mergePP pp pps) (getRpkiURL pp)    
+        in case r of 
+            Nothing -> False
+            Just (getSpeed -> speed) ->
+                case speed of 
+                    Quick -> True
+                    _      -> False
+

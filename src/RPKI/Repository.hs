@@ -47,7 +47,13 @@ instance Monoid FetchEverSucceeded where
 instance Semigroup FetchEverSucceeded where
     Never       <> Never       = Never
     _           <> _           = AtLeastOnce    
-    
+
+   
+data Speed = Quick | Slow | Timedout 
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary
+
+
 data FetchStatus
   = Pending
   | FetchedAt Instant
@@ -63,7 +69,8 @@ data RrdpRepository = RrdpRepository {
         uri         :: RrdpURL,
         rrdpMeta    :: Maybe (SessionId, RrdpSerial),
         eTag        :: Maybe ETag,
-        status      :: FetchStatus
+        status      :: FetchStatus,
+        speed       :: Speed
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -92,7 +99,8 @@ data Repository = RrdpR RrdpRepository |
 
 data RsyncRepository = RsyncRepository {
         repoPP      :: RsyncPublicationPoint,
-        status      :: FetchStatus
+        status      :: FetchStatus,
+        speed       :: Speed
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -148,14 +156,10 @@ instance WithURL RsyncRepository where
     
 
 instance Semigroup RrdpRepository where
-    RrdpRepository { uri = u1, rrdpMeta = m1, eTag = e1, status = s1 } <> 
-        RrdpRepository { rrdpMeta = m2, eTag = e2, status = s2 } = 
-        RrdpRepository u1 resultMeta resultETag resultStatus
-      where
-        (resultStatus, resultMeta, resultETag) = 
-            if s1 >= s2 
-                then (s1, m1, e1)
-                else (s2, m2, e2)
+    r1 <> r2 = 
+        if r1 ^. #status >= r2 ^. #status
+            then r1 
+            else r2 & #uri .~ r1 ^. #uri
 
 -- always use the latest one
 instance Ord FetchStatus where
@@ -178,6 +182,10 @@ getFetchStatus :: Repository -> FetchStatus
 getFetchStatus (RrdpR r)  = r ^. #status
 getFetchStatus (RsyncR r) = r ^. #status
 
+getSpeed :: Repository -> Speed
+getSpeed (RrdpR r)  = r ^. #speed
+getSpeed (RsyncR r) = r ^. #speed
+
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty
 
@@ -199,17 +207,26 @@ newRepositoryProcessingIO = atomically . newRepositoryProcessing
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
-rrdpPP u = RrdpPP $ RrdpRepository u Nothing Nothing Pending
+rrdpPP = RrdpPP . mkRrdp
 
 rrdpR  :: RrdpURL  -> Repository
-rrdpR u = RrdpR $ RrdpRepository u Nothing Nothing Pending 
+rrdpR = RrdpR . mkRrdp
+
+mkRrdp :: RrdpURL -> RrdpRepository
+mkRrdp u = RrdpRepository {
+        uri      = u,
+        rrdpMeta = Nothing,
+        eTag     = Nothing,
+        status   = Pending,
+        speed    = Quick 
+    }
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository (PublicationPoints (RrdpMap rrdps) _ _) u = Map.lookup u rrdps        
 
 rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
 rsyncRepository (PublicationPoints _ rsyncs _) u = 
-    (\(u', status) -> RsyncRepository (RsyncPublicationPoint u') status) 
+    (\(u', status) -> RsyncRepository (RsyncPublicationPoint u') status Quick) 
                     <$> statusInRsyncTree u rsyncs    
 
 repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
@@ -248,8 +265,6 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
--- | URI of the repository is supposed to be a "real" one, i.e. where
--- | repository can actually be downloaded from.
 publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
 publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
     case tal of 
@@ -374,7 +389,7 @@ updateStatuses
                     rsyncs', 
                     status2Success (RrdpU uri) newStatus lastS)
 
-        foldRepos (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newStatus) (rrdps', rsyncs', lastS) = 
+        foldRepos (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _ _), newStatus) (rrdps', rsyncs', lastS) = 
                     (rrdps', 
                     toRsyncTree uri newStatus rsyncs', 
                     status2Success (RsyncU uri) newStatus lastS)

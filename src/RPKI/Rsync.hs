@@ -150,7 +150,7 @@ updateObjectForRsyncRepository :: Storage s =>
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
     worldVersion
-    repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
+    repo@(RsyncRepository (RsyncPublicationPoint uri) _ _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath

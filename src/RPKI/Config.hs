@@ -119,7 +119,11 @@ data ValidationConfig = ValidationConfig {
         maxObjectSize                  :: Integer,
 
         -- Manimal allowed size of an individual object 
-        minObjectSize                  :: Integer
+        minObjectSize                  :: Integer,
+
+        -- Maximal download time of a repository beyond 
+        -- which it is considered slow.
+        slowRepositoryThreshold        :: Maybe Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -197,7 +201,8 @@ defaultConfig = Config {
         -- every object contains at least 256 bytes of RSA key, 
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
-        maxTaRepositories              = 3000
+        maxTaRepositories              = 3000,
+        slowRepositoryThreshold        = Nothing
     },
     httpApiConf = HttpApiConfig {
         port = 9999

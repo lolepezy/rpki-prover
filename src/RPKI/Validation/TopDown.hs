@@ -360,19 +360,24 @@ validateCa
                             -- Both rrdp and rsync (and whatever else in the future?) are
                             -- disabled, don't fetch at all.
                             validateThisCertAndGoDown
-                        Just filteredPPAccess -> do
-                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
-                            primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
-                            let goFurther =
-                                    if anySuccess fetches
-                                        then validateThisCertAndGoDown
-                                        else do
-                                            fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case
-                                                Never       -> pure mempty
-                                                AtLeastOnce -> validateThisCertAndGoDown
-                            case primaryUrl of
-                                Nothing -> goFurther
-                                Just rp -> inSubMetricScope' PPFocus rp goFurther
+                        Just ppAccess' -> do
+                            -- Skip repositories that are known to be too slow 
+                            -- or timed out (i.e. unavailable)
+                            filterOutSlow repositoryProcessing ppAccess' >>= \case
+                                Nothing               -> validateThisCertAndGoDown
+                                Just filteredPPAccess -> do 
+                                    fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
+                                    primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
+                                    let goFurther =
+                                            if anySuccess fetches
+                                                then validateThisCertAndGoDown
+                                                else do
+                                                    fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case
+                                                        Never       -> pure mempty
+                                                        AtLeastOnce -> validateThisCertAndGoDown
+                                    case primaryUrl of
+                                        Nothing -> goFurther
+                                        Just rp -> inSubMetricScope' PPFocus rp goFurther
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
