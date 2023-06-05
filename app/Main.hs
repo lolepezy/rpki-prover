@@ -274,7 +274,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     case dbCheck of 
         -- If the DB version wasn't compatible with the expected version, 
-        -- all the data was erased and makes a lot of sense to perform 
+        -- all the data was erased and it makes a lot of sense to perform 
         -- compaction. Not performing it may potentially bloat the database 
         -- (not sure why exactly but it was reproduced multiple times)
         -- until the next compaction that will happen probably in weeks.
@@ -283,12 +283,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- It may mean two different cases
         --   * empty db
         --   * old non-empty cache
-        -- In practice the hardly ever be a non-empty old cache, 
+        -- In practice there hardly ever be a non-empty old cache, 
         -- and even if it will be there, it will be compacted in 
         -- a week or so. So don't compact,
         Lmdb.DidntHaveVersion -> pure ()
 
-        -- Normal schedule
+        -- Nothing special, the cache is totally normal
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 

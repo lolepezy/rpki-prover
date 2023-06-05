@@ -187,7 +187,7 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
         }
 
     httpStatus  <- liftIO $ newIORef mempty
-    newETag <- liftIO $ newIORef Nothing
+    newETag     <- liftIO $ newIORef Nothing
     let getSrc r = do         
             liftIO $ do 
                 writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
