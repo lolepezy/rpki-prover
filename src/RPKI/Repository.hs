@@ -16,6 +16,7 @@ import           Data.Ord
 
 import           Data.X509                   (Certificate)
 
+import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
@@ -245,53 +246,33 @@ mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
 mergePP (RrdpPP r) = mergeRrdp r
 mergePP (RsyncPP r) = mergeRsyncPP r    
 
+    
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
--- | URI of the repository is supposed to be a "real" one, i.e. where
--- | repository can actually be downloaded from.
 publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
 publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
     case tal of 
         PropertiesTAL {..} -> do 
-            (certUri, publicationPoint) <- publicationPointsFromCert cert
-            let uniquePrefetchRepos :: [PublicationPoint] = map 
-                    (snd . fromURI) $ filter (/= certUri) prefetchUris
+
+            PublicationPointAccess ppsFromCert <- getPublicationPointsFromCert cert
+            
+            let uniquePrefetchRepos = map (snd . fromURI) prefetchUris
 
             let prefetchReposToUse = 
-                    case [ r | r@(RrdpPP _) <- uniquePrefetchRepos ] of
-                        []    -> uniquePrefetchRepos
-                        rrdps -> rrdps
+                    List.sort [ r | r@(RrdpPP _) <- uniquePrefetchRepos ] <>
+                    List.sort [ r | r@(RsyncPP _) <- uniquePrefetchRepos ]
+            
+            pure $ PublicationPointAccess $ 
+                maybe ppsFromCert (ppsFromCert <>) $ 
+                nonEmpty prefetchReposToUse
 
-            pure $ PublicationPointAccess $ publicationPoint :| prefetchReposToUse 
-
-        RFC_TAL {} -> do 
-            (_, pp) <- publicationPointsFromCert cert            
-            pure $ PublicationPointAccess $ pp :| []
+        RFC_TAL {} -> getPublicationPointsFromCert cert
   where        
     fromURI r = 
         case r of
             RrdpU u  -> (r, rrdpPP u)
-            RsyncU u -> (r, rsyncPP u)    
-        
-
--- | Create repository from the publication points of the certificate.
-publicationPointsFromCert :: Certificate -> Either ValidationError (RpkiURL, PublicationPoint)
-publicationPointsFromCert cert = 
-    case (getRrdpNotifyUri cert, getRepositoryUri cert) of
-        (Just rrdpNotifyUri, _) 
-            | isRrdpURI rrdpNotifyUri -> let rr = RrdpURL rrdpNotifyUri in Right (RrdpU rr, rrdpPP rr)
-            | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
-        (Nothing, Just repositoryUri) 
-            | isRsyncURI repositoryUri -> 
-                    case parseRsyncURL (unURI repositoryUri) of 
-                        Left e   -> Left $ BrokenUri (unURI repositoryUri) e
-                        Right rr -> Right (RsyncU rr, rsyncPP rr)
-            | otherwise                -> Left $ UnknownUriType repositoryUri
-        (Nothing, Nothing)             -> Left CertificateDoesntHaveSIA 
-
-publicationPointsFromCertObject :: CaCerObject -> Either ValidationError (RpkiURL, PublicationPoint)
-publicationPointsFromCertObject = publicationPointsFromCert . cwsX509certificate . getCertWithSignature
+            RsyncU u -> (r, rsyncPP u)           
 
 
 -- | Get publication points of the certificate.
