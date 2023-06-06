@@ -237,7 +237,7 @@ defaultRtrConfig = RtrConfig {
     
 defaulPrefetchURLs :: [String]
 defaulPrefetchURLs = [
-        "rsync://rpki.afrinic.net/repository/member_repository",
+        "rsync://rpki.afrinic.net/repository",
         "rsync://rpki.apnic.net/member_repository",
         "rsync://rpki-repo.registro.br/repo/",
         "rsync://repo-rpki.idnic.net/repo/",
