@@ -444,6 +444,14 @@ instance Arbitrary RsyncRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ETag where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Speed where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
