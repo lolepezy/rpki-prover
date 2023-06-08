@@ -200,7 +200,7 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
                     $ httpSource req' getSrc
                     .| zipSinks extraSink (sinkHandle fileHandle)    
 
-    (z,,) <$> liftIO (readIORef httpStatus) <*> liftIO (readIORef newETag)
+    liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
 
 userAgent :: BS.ByteString
 userAgent = U.convert getVersion
