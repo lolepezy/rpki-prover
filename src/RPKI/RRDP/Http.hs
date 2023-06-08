@@ -74,7 +74,7 @@ downloadToBS config uri@(URI u) eTag = liftIO $ do
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = config ^. #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((_, size), status, headers) <- 
+        ((_, size), status, newETag) <- 
                 downloadConduit uri eTag fd 
                     (sinkGenSize 
                         uri
@@ -84,7 +84,7 @@ downloadToBS config uri@(URI u) eTag = liftIO $ do
                         id)
         hClose fd                    
         content <- readB name size
-        pure (content, size, status, headers)
+        pure (content, size, status, newETag)
 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
@@ -103,7 +103,7 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = config ^. #tmpDirectory  
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((actualHash, size), status, headers) <- 
+        ((actualHash, size), status, newETag) <- 
                 downloadConduit uri eTag fd 
                     (sinkGenSize                     
                        uri    
@@ -116,7 +116,7 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
             else do
                 hClose fd
                 content <- readB name size
-                pure $ Right (content, size, status, headers)
+                pure $ Right (content, size, status, newETag)
                 
 
 -- | Fetch arbitrary file using the streaming implementation
