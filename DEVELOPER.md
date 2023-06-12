@@ -16,7 +16,11 @@ There is a value `currentDatabaseVersion` definted in `Database.hs`, that needs 
 ## Docker build
 
 ```
-docker build . --file Dockerfile.prover --tag rpki-prover 
+export RELEASE=X.Y.Z 
+docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:${RELEASE} && \
+docker tag lolepezy/rpki-prover:${RELEASE} lolepezy/rpki-prover:latest && \
+docker push lolepezy/rpki-prover:${RELEASE} && \
+docker push lolepezy/rpki-prover:latest
 ```
 
 ## Building static Linux executable
