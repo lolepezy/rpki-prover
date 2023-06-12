@@ -115,44 +115,60 @@ downloadAndUpdateRRDP :: AppContext s ->
                         -> ValidatorT IO RrdpRepository
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
-        repo@(RrdpRepository repoUri _ _)      
+        repo@RrdpRepository { uri = repoUri, .. }
         handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
         handleDeltaBS =                        -- ^ function to handle delta bytecontents
-  do                                
-    (notificationXml, _, _) <- 
+  do                                   
+
+    for_ eTag $ \et -> 
+        logDebug logger [i|Existing eTag for #{repoUri} is #{et}.|]
+
+    (notificationXml, _, httpStatus, newETag) <- 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> (& #downloadTimeMs %~ (<> t))) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
-                    $ downloadToBS (appContext ^. typed) (getURL repoUri)         
+                    $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag
     
-    notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
-    nextStep     <- vHoist $ rrdpNextStep repo notification
+    for_ newETag $ \et -> 
+        logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
 
-    case nextStep of
-        NothingToDo message -> do 
+    case httpStatus of 
+        HttpStatus 304 -> bumpETag newETag $ do 
             usedSource RrdpNoUpdate
-            logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
+            logDebug logger [i|Nothing to update for #{repoUri} based on ETag comparison.|]
             pure repo
 
-        UseSnapshot snapshotInfo message -> do 
-            usedSource RrdpSnapshot
-            logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
-            useSnapshot snapshotInfo notification
+        _ -> do 
+            notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
+            nextStep     <- vHoist $ rrdpNextStep repo notification
 
-        UseDeltas sortedDeltas snapshotInfo message -> 
-            (do 
-                usedSource RrdpDelta
-                logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
-                useDeltas sortedDeltas notification)
-                `catchError` 
-            \e -> do         
-                -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
-                -- some of the deltas
-                usedSource RrdpSnapshot
-                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                useSnapshot snapshotInfo notification            
+            bumpETag newETag $ 
+                case nextStep of
+                    NothingToDo message -> do 
+                        usedSource RrdpNoUpdate
+                        logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
+                        pure repo
+
+                    UseSnapshot snapshotInfo message -> do 
+                        usedSource RrdpSnapshot
+                        logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
+                        useSnapshot snapshotInfo notification                        
+
+                    UseDeltas sortedDeltas snapshotInfo message -> 
+                        (do 
+                            usedSource RrdpDelta
+                            logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
+                            useDeltas sortedDeltas notification                            
+                            `catchError` 
+                        \e -> do         
+                            -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
+                            -- some of the deltas
+                            usedSource RrdpSnapshot
+                            logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
+                            useSnapshot snapshotInfo notification)
   where
-    
+    bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
+
     usedSource z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)        
     hoistHere    = vHoist . fromEither . first RrdpE
 
@@ -177,17 +193,16 @@ downloadAndUpdateRRDP
         inSubObjectVScope (U.convert uri) $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
-            (rawContent, _, httpStatus') <- 
+            (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> (& #downloadTimeMs %~ (<> t))) $ do     
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri expectedHash                                    
+                        downloadHashedBS (appContext ^. typed @Config) uri Nothing expectedHash                                    
                             (\actualHash -> 
                                 Left $ RrdpE $ SnapshotHashMismatch { 
                                     expectedHash = expectedHash,
                                     actualHash = actualHash                                            
-                                })                                
-
+                                })                                            
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
@@ -228,16 +243,16 @@ downloadAndUpdateRRDP
       where        
         downloadDelta (DeltaInfo uri hash serial) = do
             let deltaUri = U.convert uri 
-            (rawContent, _, httpStatus') <- 
+            (rawContent, _, httpStatus', _) <- 
                 inSubVScope deltaUri $ do
                     fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri hash
+                        downloadHashedBS (appContext ^. typed @Config) uri Nothing hash
                             (\actualHash -> 
                                 Left $ RrdpE $ DeltaHashMismatch {
                                     actualHash = actualHash,
                                     expectedHash = hash,
                                     serial = serial
-                                })
+                                })            
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
             pure (rawContent, serial, deltaUri)
 
@@ -264,10 +279,10 @@ data NextStep
 -- | and the parsed notification file
 rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT NextStep
 
-rrdpNextStep (RrdpRepository _ Nothing _) Notification{..} = 
+rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
     pure $ UseSnapshot snapshotInfo "Unknown repository"
 
-rrdpNextStep (RrdpRepository _ (Just (repoSessionId, repoSerial)) _) Notification{..} =
+rrdpNextStep RrdpRepository { rrdpMeta = Just (repoSessionId, repoSerial) } Notification{..} =
 
     if  | sessionId /= repoSessionId -> 
             pure $ UseSnapshot snapshotInfo [i|Resetting RRDP session from #{repoSessionId} to #{sessionId}|]

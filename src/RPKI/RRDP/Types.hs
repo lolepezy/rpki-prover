@@ -1,9 +1,10 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE StrictData #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.RRDP.Types where
 
+import qualified Data.ByteString as BS
 import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Store.Base.Serialisation
@@ -49,4 +50,8 @@ data DeltaWithdraw = DeltaWithdraw URI Hash
 
 data Delta = Delta Version SessionId RrdpSerial [DeltaItem]
     deriving stock (Show, Eq, Ord, Generic)
+
+newtype ETag = ETag BS.ByteString
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary        
 

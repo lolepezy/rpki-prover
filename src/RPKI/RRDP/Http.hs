@@ -7,7 +7,7 @@
 module RPKI.RRDP.Http where
 
 import Control.Exception.Lifted
-import Control.Lens ((^.))
+import Control.Lens
 import Control.Monad.Except
 
 import Conduit
@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
-import Network.HTTP.Simple (getResponseBody, getResponseStatusCode, httpSource)
+import Network.HTTP.Simple (getResponseBody, getResponseStatusCode, getResponseHeader, httpSource)
 
 import RPKI.AppContext
 import RPKI.AppMonad
@@ -34,6 +34,7 @@ import RPKI.Config
 import RPKI.Domain
 import RPKI.Parse.Parse
 import RPKI.Reporting
+import RPKI.RRDP.Types
 import qualified RPKI.Util as U
 
 import qualified Crypto.Hash.SHA256 as S256
@@ -67,13 +68,14 @@ instance Blob BS.ByteString where
 downloadToBS :: (Blob bs, MonadIO m) => 
                 Config ->
                 URI -> 
-                m (bs, Size, HttpStatus)
-downloadToBS config uri@(URI u) = liftIO $ do    
+                Maybe ETag ->
+                m (bs, Size, HttpStatus, Maybe ETag)
+downloadToBS config uri@(URI u) eTag = liftIO $ do    
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = config ^. #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((_, size), status) <- 
-                downloadConduit uri fd 
+        ((_, size), status, newETag) <- 
+                downloadConduit uri eTag fd 
                     (sinkGenSize 
                         uri
                         (config ^. typed @RrdpConf . #maxSize)
@@ -82,7 +84,7 @@ downloadToBS config uri@(URI u) = liftIO $ do
                         id)
         hClose fd                    
         content <- readB name size
-        pure (content, size, status)
+        pure (content, size, status, newETag)
 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
@@ -90,18 +92,19 @@ downloadToBS config uri@(URI u) = liftIO $ do
 downloadHashedBS :: (Blob bs, MonadIO m) => 
                     Config ->
                     URI -> 
+                    Maybe ETag ->
                     Hash -> 
-                    (Hash -> Either e (bs, Size, HttpStatus)) ->
-                    m (Either e (bs, Size, HttpStatus))
-downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
+                    (Hash -> Either e (bs, Size, HttpStatus, Maybe ETag)) ->
+                    m (Either e (bs, Size, HttpStatus, Maybe ETag))
+downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and read it as a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
     let tmpDir = config ^. #tmpDirectory  
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((actualHash, size), status) <- 
-                downloadConduit uri fd 
+        ((actualHash, size), status, newETag) <- 
+                downloadConduit uri eTag fd 
                     (sinkGenSize                     
                        uri    
                         (config ^. typed @RrdpConf . #maxSize)
@@ -113,7 +116,7 @@ downloadHashedBS config uri@(URI u) expectedHash hashMishmatch = liftIO $ do
             else do
                 hClose fd
                 content <- readB name size
-                pure $ Right (content, size, status)
+                pure $ Right (content, size, status, newETag)
                 
 
 -- | Fetch arbitrary file using the streaming implementation
@@ -122,10 +125,11 @@ fetchRpkiObject :: AppContext s ->
                 RrdpURL ->             
                 ValidatorT IO RpkiObject
 fetchRpkiObject appContext uri = do
-    (content, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
+    (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                             downloadToBS 
                             (appContext ^. typed @Config) 
                             (getURL uri) 
+                            Nothing
                         
     vHoist $ readObject (RrdpU uri) content
 
@@ -136,14 +140,9 @@ downloadToFile :: MonadIO m =>
                 -> Size                
                 -> m HttpStatus
 downloadToFile uri file limit = liftIO $ do    
-    fmap snd $ withFile file WriteMode $ \fd -> do 
-        downloadConduit uri fd 
-            (sinkGenSize 
-                uri
-                limit
-                ()
-                (\_ _ -> ()) 
-                id) 
+    fmap (\(_, s, _) -> s) $ withFile file WriteMode $ \fd -> do 
+        downloadConduit uri Nothing fd 
+            (sinkGenSize uri limit () (\_ _ -> ()) id) 
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
@@ -165,28 +164,43 @@ instance Exception OversizedDownloadStream
 --
 downloadConduit :: (MonadIO m, MonadUnliftIO m) => 
                     URI 
+                    -> Maybe ETag
                     -> Handle 
                     -> ConduitT BS.ByteString Void (ResourceT m) t
-                    -> m (t, HttpStatus)
-downloadConduit (URI u) fileHandle extraSink = do 
+                    -> m (t, HttpStatus, Maybe ETag)
+downloadConduit (URI u) eTag fileHandle extraSink = do 
     req <- liftIO $ parseRequest $ Text.unpack u    
+
+    let eTagHeader = case eTag of 
+            Nothing          -> []
+            Just (ETag etag) -> [(hIfNoneMatch, etag)]
+
+    let newHeaders = 
+            [(hUserAgent, userAgent)] <> eTagHeader <> requestHeaders req
+
     let req' = req { 
-            requestHeaders = (hUserAgent, userAgent) : requestHeaders req,
+            requestHeaders = newHeaders,
             -- Since the whole RRDP fetching process is limited in time
             -- it's fine (and sometimes necessary) to set some ridiculously 
             -- high timeout here (10 minutes).
-            responseTimeout = responseTimeoutMicro 600_000_000
+            responseTimeout = responseTimeoutMicro 600_000_000 
         }
-    status <- liftIO $ newIORef mempty
+
+    httpStatus  <- liftIO $ newIORef mempty
+    newETag <- liftIO $ newIORef Nothing
     let getSrc r = do         
-            liftIO $ writeIORef status $ HttpStatus $ getResponseStatusCode r         
+            liftIO $ do 
+                writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
+                case getResponseHeader "ETag" r of
+                    []    -> pure ()
+                    e : _ -> writeIORef newETag $ Just $ ETag e
             getResponseBody r
 
     (z, _) <- runConduitRes 
                     $ httpSource req' getSrc
                     .| zipSinks extraSink (sinkHandle fileHandle)    
 
-    (z,) <$> liftIO (readIORef status)
+    liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
 
 userAgent :: BS.ByteString
 userAgent = U.convert getVersion
