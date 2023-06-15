@@ -51,6 +51,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let serial = RrdpSerial 13
         let nextSerial' = nextSerial serial
         let delta = makeDelta nextSerial'
+
         let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
