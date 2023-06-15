@@ -47,6 +47,7 @@ import           RPKI.Validation.TopDown
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
+import           RPKI.AsyncFetch
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
@@ -73,6 +74,9 @@ runWorkflow appContext@AppContext {..} tals = do
     -- If not needed it will the an noop.  
     let rtrServer = initRtrIfNeeded
 
+    -- Run async fetcher thread if there are appropriate settings in the config
+    let asyncFetcher = initAsyncFetcherIfNeeded
+
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics config
 
@@ -86,10 +90,12 @@ runWorkflow appContext@AppContext {..} tals = do
     let threads = [ 
                 -- thread that takes jobs from the queue and executes them sequentially
                 jobExecutor,
-                -- thread that generate re-validation jobs
+                -- thread that generates re-validation jobs
                 generateRevalidationJob prometheusMetrics,
+                -- 
+                const asyncFetcher,
                 -- RTR server job (or a noop)  
-                const rtrServer
+                const rtrServer                
             ]
 
     mapConcurrently_ (\f -> f globalQueue) $ threads <> periodicJobs
@@ -326,6 +332,10 @@ runWorkflow appContext@AppContext {..} tals = do
 
         initRtrIfNeeded = 
             for_ (config ^. #rtrConfig) $ runRtrServer appContext
+
+        initAsyncFetcherIfNeeded = 
+            for_ (config ^. #validationConfig . #slowRepositoryThreshold) 
+                $ \_ -> runAsyncFetcher appContext
 
 
         runProcessTALsWorker worldVersion = do 

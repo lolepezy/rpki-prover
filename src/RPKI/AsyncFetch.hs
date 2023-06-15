@@ -54,3 +54,6 @@ import           RPKI.Worker
 
 import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
+
+runAsyncFetcher AppContext {..} = do 
+    pure ()
