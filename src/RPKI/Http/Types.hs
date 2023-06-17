@@ -266,6 +266,7 @@ data ResourcesDto = ResourcesDto {
 data SystemDto = SystemDto {
         proverVersion :: Text,
         config        :: Config,
+        startUpTime   :: Instant,
         resources     :: [ResourcesDto]
     }
     deriving stock (Eq, Show, Generic)
