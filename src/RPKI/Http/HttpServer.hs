@@ -34,6 +34,7 @@ import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Config
 import           RPKI.Metrics.Prometheus
+import           RPKI.Metrics.System
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Api
@@ -304,17 +305,17 @@ getRpkiObject AppContext {..} uri hash =
 getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
-    si <- readTVarIO $ appState ^. #system
+    SystemInfo {..} <- readTVarIO $ appState ^. #system
     let proverVersion = getVersion
 
     let toResources (scope, resourceUsage) = let
                 tag = scopeText scope
                 aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
                 maxMemory = resourceUsage ^. #maxMemory
-                avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (si ^. #startTime) now
+                avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
             in ResourcesDto {..}
 
-    let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ si ^. #metrics . #resources
+    let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ metrics ^. #resources        
     pure SystemDto {..}
 
 getRtr :: (MonadIO m, Storage s, MonadError ServerError m) =>

@@ -35,8 +35,8 @@ newtype SystemMetrics = SystemMetrics {
 
 
 data SystemInfo = SystemInfo {
-        metrics   :: SystemMetrics,
-        startTime :: Instant
+        metrics     :: SystemMetrics,
+        startUpTime :: Instant
     }   
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
