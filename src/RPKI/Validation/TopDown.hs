@@ -130,11 +130,6 @@ newAllTasTopDownContext worldVersion now repositoryProcessing =
         briefs         <- newTVar []
         pure $ AllTasTopDownContext {..}
 
-newRepositoryContext :: PublicationPoints -> RepositoryContext
-newRepositoryContext publicationPoints = let
-    takenCareOf = Set.empty
-    in RepositoryContext {..}
-
 
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited
 verifyLimit hitTheLimit limit =

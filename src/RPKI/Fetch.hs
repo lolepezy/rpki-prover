@@ -24,11 +24,8 @@ import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
 import qualified Data.Map.Strict             as Map
-import           Data.Set                    (Set)
 
-import GHC.Generics (Generic)
-
-import Time.Types
+import           Time.Types
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -45,19 +42,7 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
-import RPKI.Parallel (withSemaphore)
-
-
-data RepositoryContext = RepositoryContext {
-        publicationPoints  :: PublicationPoints,
-        takenCareOf        :: Set RpkiURL
-    } 
-    deriving stock (Generic)  
-
-fValidationState :: FetchResult -> ValidationState 
-fValidationState (FetchSuccess _ vs) = vs
-fValidationState (FetchFailure _ vs) = vs
-
+import           RPKI.Parallel (withSemaphore)
 
 
 -- Main entry point: fetch repository using the cache of tasks.
@@ -102,17 +87,16 @@ fetchPPWithFallback
                 Nothing -> do                                         
                     modifyTVar' ppSeqFetchRuns $ Map.insert ppsKey Stub
                     pure $ bracketOnError 
-                                (async $ do 
-                                    evaluate =<< fetchWithFallback parentScope 
-                                                    (NonEmpty.toList $ unPublicationPointAccess ppAccess')) 
+                                (async $ evaluate =<< fetchWithFallback parentScope (ppsToList ppAccess'))
                                 (stopAndDrop ppSeqFetchRuns ppsKey) 
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
-      where          
+      where   
+        ppsToList = NonEmpty.toList . unPublicationPointAccess
+
         ppSeqKey = sequence 
                 $ take 1 
                 $ map (urlToDownload . getRpkiURL) 
-                $ NonEmpty.toList 
-                $ unPublicationPointAccess ppAccess
+                $ ppsToList ppAccess
           where
             urlToDownload u = 
                 case u of
@@ -181,17 +165,16 @@ fetchPPWithFallback
         (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
             (repoNeedAFetch, repo) <- needsAFetch pp now'
             let rpkiUrl = getRpkiURL repo
-            if repoNeedAFetch 
-                then 
-                    runForKey indivudualFetchRuns rpkiUrl >>= \case                    
-                        Just Stub         -> retry
-                        Just (Fetching a) -> pure (rpkiUrl, AttemptedFetch, wait a)
+            if repoNeedAFetch then 
+                runForKey indivudualFetchRuns rpkiUrl >>= \case                    
+                    Just Stub         -> retry
+                    Just (Fetching a) -> pure (rpkiUrl, AttemptedFetch, wait a)
 
-                        Nothing -> do                                         
-                            modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
-                            pure (rpkiUrl, AttemptedFetch, fetchPP parentScope repo)
-                else                         
-                    pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
+                    Nothing -> do                                         
+                        modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
+                        pure (rpkiUrl, AttemptedFetch, fetchPP parentScope repo)
+            else
+                pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
 
         f <- fetchIO
         pure (rpkiUrl, fetchFreshness, f)

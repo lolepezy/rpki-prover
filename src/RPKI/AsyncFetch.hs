@@ -8,9 +8,6 @@
 
 module RPKI.AsyncFetch where
 
-import           Control.Concurrent.Async
-import           Control.Concurrent
-import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 
