@@ -278,14 +278,13 @@ anySuccess r = not $ null $ [ () | FetchSuccess{} <- r ]
 
 
 fetchEverSucceeded :: MonadIO m => 
-                    RepositoryProcessing
+                   RepositoryProcessing
                 -> PublicationPointAccess 
                 -> m FetchEverSucceeded 
 fetchEverSucceeded 
     repositoryProcessing
-    (PublicationPointAccess ppAccess) = liftIO $ do
-        let publicationPoints = repositoryProcessing ^. #publicationPoints
-        pps <- readTVarIO publicationPoints
+    (PublicationPointAccess ppAccess) = liftIO $ do        
+        pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         pure $ everSucceeded pps $ getRpkiURL $ NonEmpty.head ppAccess
 
 

@@ -243,7 +243,7 @@ recover tryF finallyF =
 timeoutVT :: Seconds -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
 timeoutVT s toDo timedOut = do 
     let Seconds t = s
-    vp <- ask 
-    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT vp toDo)
+    scopes <- askScopes 
+    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT scopes toDo)
     maybe timedOut (embedValidatorT . pure) z    
 
