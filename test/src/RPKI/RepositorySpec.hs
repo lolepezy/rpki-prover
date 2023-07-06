@@ -71,7 +71,7 @@ prop_rsync_tree_commutative =
 
 prop_rsync_tree_update :: QC.Property
 prop_rsync_tree_update =
-    QC.forAll arbitrary $ \(newStatus :: FetchStatus) ->
+    QC.forAll arbitrary $ \(newStatus :: FetchStatus, newSpeed :: Speed) ->
         QC.forAll (replicateM 100 generateRsyncUrl) $ \urls ->
             QC.forAll (QC.sublistOf urls) $ \toUpdate -> let
                 tree = convertToRepos urls Pending
@@ -86,16 +86,18 @@ prop_rsync_tree_update =
                                 []   -> original
                                 s :_ -> s)) 
                         toUpdate allShorter
-                updatedTree = foldr (`toRsyncTree` newStatus) tree sameOrShorter
+                updatedTree = foldr (\u t -> toRsyncTree u newStatus newSpeed t) tree sameOrShorter
                 sameOrLonger = filter (\(RsyncURL h p) -> 
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
-                in all (\url -> fmap snd (statusInRsyncTree url updatedTree) == Just newStatus) sameOrLonger
+                in all (\url -> 
+                    fmap snd (infoInRsyncTree url updatedTree) == 
+                        Just (RsyncNodeInfo newStatus newSpeed)) sameOrLonger
 
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncTree
 convertToRepos urls status = 
-    foldr (`toRsyncTree` status) newRsyncTree urls  
+    foldr (\u t -> toRsyncTree u status Quick t) newRsyncTree urls  
 
 
 generateRsyncUrl :: Gen RsyncURL

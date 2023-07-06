@@ -265,8 +265,8 @@ validaionDetailsHtml result =
   where      
     vrHtml (FullVDto{..}, index) = do 
         let objectUrl = Prelude.head path         
-        forM_ issues $ \pr -> do                    
-            htmlRow index $ do 
+        forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) -> do                    
+            htmlRow (index + jndex) $ do 
                 let (marker, problem) = 
                         case pr of 
                             ErrorDto err -> ("red-dot",  err)                                        
@@ -289,8 +289,8 @@ validaionDetailsHtml result =
         List.foldl' countP (0 :: Int, 0 :: Int)
         where
             countP z FullVDto {..} = List.foldl' countEW z issues
-            countEW (e, w) (ErrorDto _)   = (e + 1, w)
-            countEW (e, w) (WarningDto _) = (e, w + 1)
+            countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
+            countEW (!e, !w) (WarningDto _) = (e, w + 1)
 
 
 primaryRepoTooltip :: Html

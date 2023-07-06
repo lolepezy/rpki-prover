@@ -26,7 +26,7 @@ import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.Text                        as Text
 
 import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)
+import           Data.Int                         (Int16, Int64)    
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
@@ -446,7 +446,7 @@ executeWorker input appContext =
             CacheCleanupParams {..} -> exec resultHandler $
                 CacheCleanupResult <$> runCacheCleanup appContext worldVersion
   where
-    exec resultHandler f = resultHandler =<< execWithTiming f
+    exec resultHandler f = resultHandler =<< execWithStats f
 
 
 createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv

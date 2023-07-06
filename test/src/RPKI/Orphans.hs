@@ -471,8 +471,12 @@ instance Arbitrary RsyncTree where
 instance Arbitrary RsyncNodeNormal where
     arbitrary = genericArbitrary
     shrink = genericShrink
+    
+instance Arbitrary Trace where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
-instance Arbitrary Downloadable where
+instance Arbitrary RsyncNodeInfo where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

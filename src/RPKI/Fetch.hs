@@ -24,6 +24,7 @@ import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
 import qualified Data.Map.Strict             as Map
+import qualified Data.Set                    as Set
 
 import           Time.Types
 
@@ -103,7 +104,7 @@ fetchPPWithFallback
                     RrdpU _ -> pure u
                     RsyncU rsyncUrl -> do  
                         pps <- readTVar publicationPoints
-                        pure $ maybe u (RsyncU . fst) $ statusInRsyncTree rsyncUrl (pps ^. typed)            
+                        pure $ maybe u (RsyncU . fst) $ infoInRsyncTree rsyncUrl (pps ^. typed)            
 
 
     fetchWithFallback :: Scopes -> [PublicationPoint] -> IO [FetchResult]
@@ -195,10 +196,13 @@ fetchPPWithFallback
                             Left _      -> (repo, FailedAt fetchTime)
                             Right repo' -> (repo', FetchedAt fetchTime)
 
+                    let speed = if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
+                                    then Timedout
+                                    else Quick
+
                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             adjustSucceededUrl rpkiUrl 
-                                    $ updateStatuses (pps ^. typed @PublicationPoints) 
-                                        [(newRepo, newStatus)]                
+                                    $ updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
                 pure (r, validations)
 
         bracketOnError 
@@ -255,6 +259,7 @@ fetchRepository
                 pure z)
             (do 
                 logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                trace WorkerTimeoutTrace
                 appError $ RsyncE $ RsyncDownloadTimeout maxDuration)        
     
     fetchRrdpRepository r = do 
@@ -269,6 +274,7 @@ fetchRepository
                 pure z)            
             (do 
                 logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                trace WorkerTimeoutTrace
                 appError $ RrdpE $ RrdpDownloadTimeout maxDuration)                
 
 
