@@ -250,7 +250,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
 
     -- Validate resource set
-    void $ validateResourceCert @_ @_ @ 'BGPCert now bgpCert parentCert validCrl
+    void $ validateResourceCert @_ @_ @'BGPCert now bgpCert parentCert validCrl
 
     let cwsX509 = cwsX509certificate $ getCertWithSignature bgpCert
 

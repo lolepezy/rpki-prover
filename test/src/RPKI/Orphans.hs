@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=18 #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -196,18 +197,20 @@ instance Arbitrary LogMessage where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (X509.SignedExact a) where
+instance (Arg (X509.SignedExact a) (X509.Signed a), 
+          Arg (X509.Signed a) a, 
+          Arbitrary a) => Arbitrary (X509.SignedExact a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (X509.Signed a) where
+instance (Arg (X509.Signed a) a, Arbitrary a) => Arbitrary (X509.Signed a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
-instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
+instance (Arg (NESet.NESet a) a, Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -267,9 +270,19 @@ instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (CMS a) where
+instance (Arg (CMS a) (SignedObject a), 
+          Arg (SignedObject a) a,           
+          Arg (EncapsulatedContentInfo a) a, 
+          Arbitrary a) => Arbitrary (CMS a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+instance (Arg (CMSBasedObject a) a, 
+          Arg (SignedObject a) a, 
+          Arg (EncapsulatedContentInfo a) a, 
+          Arbitrary a) => Arbitrary (CMSBasedObject a) where
+    arbitrary = genericArbitrary
+    shrink = genericShrink    
 
 instance Arbitrary SignCRL where
     arbitrary = genericArbitrary
@@ -283,7 +296,7 @@ instance Arbitrary RpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (Located a) where
+instance (Arg (Located a) a, Arbitrary a) => Arbitrary (Located a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -307,35 +320,36 @@ instance Arbitrary CrlObject where
     arbitrary = genericArbitrary    
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (CMSBasedObject a) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (SomeRFC r) where
+instance (Arg (SomeRFC r) r, 
+          Arg (PolyRFC r 'StrictRFC) r,
+          Arg (PolyRFC r 'ReconsideredRFC) r,
+          Arbitrary r) => Arbitrary (SomeRFC r) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
+instance (Arg (PolyRFC r 'StrictRFC) r, Arbitrary r) => 
+        Arbitrary (PolyRFC r 'StrictRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
+instance (Arg (PolyRFC r 'ReconsideredRFC) r, Arbitrary r) => 
+        Arbitrary (PolyRFC r 'ReconsideredRFC) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (TypedCert r 'CACert) where
+instance (Arg (TypedCert r 'CACert) r, Arbitrary r) => Arbitrary (TypedCert r 'CACert) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (TypedCert r 'EECert) where
+instance (Arg (TypedCert r 'EECert) r, Arbitrary r) => Arbitrary (TypedCert r 'EECert) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary r => Arbitrary (TypedCert r 'BGPCert) where
+instance (Arg (TypedCert r 'BGPCert) r, Arbitrary r) => Arbitrary (TypedCert r 'BGPCert) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -360,7 +374,7 @@ instance Arbitrary AsResource where
             e <- suchThat arbitrary (>s)
             pure $ ASRange (ASN s) (ASN e)
 
-instance Arbitrary a => Arbitrary (RSet a) where
+instance (Arg (RSet a) a, Arbitrary a) => Arbitrary (RSet a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -376,15 +390,19 @@ instance Arbitrary ContentType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (EncapsulatedContentInfo a) where
+instance (Arg (EncapsulatedContentInfo a) a, Arbitrary a) => Arbitrary (EncapsulatedContentInfo a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (SignedObject a) where
+instance (Arg (SignedObject a) (SignedData a),
+          Arg (EncapsulatedContentInfo a) a, 
+          Arbitrary a) => Arbitrary (SignedObject a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary a => Arbitrary (SignedData a) where
+instance (Arg (SignedData a) (EncapsulatedContentInfo a), 
+          Arg (EncapsulatedContentInfo a) a, 
+          Arbitrary a) => Arbitrary (SignedData a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -619,11 +637,13 @@ instance Arbitrary HttpStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance (Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
+instance (Arg (T2 a b) a, Arg (T2 a b) b, 
+         Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
+instance (Arg (T3 a b c) a, Arg (T3 a b c) b, Arg (T3 a b c) c, 
+         Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

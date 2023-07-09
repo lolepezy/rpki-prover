@@ -13,6 +13,7 @@ module RPKI.Store.DatabaseSpec where
 import           Control.Exception.Lifted
 
 import           Control.Lens                     ((.~), (%~), (&), (^.))
+import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
@@ -453,9 +454,9 @@ readObjectFromFile path = do
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = \case 
-    CerRO c  -> CerRO $ c { aki = Just a }
-    BgpRO c  -> BgpRO $ c { aki = Just a }    
-    CrlRO c  -> CrlRO $ c { aki = a }
+    CerRO c  -> CerRO $ c & #aki .~ Just a
+    BgpRO c  -> BgpRO $ c & #aki .~ Just a    
+    CrlRO c  -> CrlRO $ c & #aki .~ a
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms
     GbrRO c  -> GbrRO $ c & #cmsPayload %~ mapCms

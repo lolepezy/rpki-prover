@@ -55,7 +55,6 @@ dependencies:
 - generic-lens
 - generic-monoid
 - hashable
-- hexpat
 - hourglass
 - http-client
 - http-conduit
@@ -80,6 +79,7 @@ dependencies:
 - optparse-generic
 - pipes
 - primitive
+# - prometheus
 - prometheus-client
 - prometheus-metrics-ghc
 - servant
