@@ -28,6 +28,7 @@ docker push lolepezy/rpki-prover:latest
 ```
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder && \
 stack install --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static
+stack install --ghc-options '-threaded -O2 -Wall -rtsopts -funbox-strict-fields -static -optl-static -optl-pthread -fPIC' --docker --docker-image "rpki-prover-builder" --no-nix rpki-prover:rpki-prover-static
 ```
 
 ## Releasing

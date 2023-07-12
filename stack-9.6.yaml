@@ -2,23 +2,10 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 # resolver: lts-16.31
-resolver: nightly-2023-07-09
+resolver: nightly-2023-07-10
 # resolver:  lts-18.28
 # resolver:  lts-18.6
 
-# User packages to be built.
-# Various formats can be used as shown in the example below.
-#
-# packages:
-# - some-directory
-# - https://example.com/foo/bar/baz-0.0.2.tar.gz
-# - location:
-#    git: https://github.com/commercialhaskell/stack.git
-#    commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
-# - location: https://github.com/commercialhaskell/stack/commit/e7b331f14bcffb8367cd58fbfc8b40ec7642100a
-#  subdirs:
-#  - auto-update
-#  - wai
 packages:
 - .
 

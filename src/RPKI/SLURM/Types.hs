@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                #-}
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE RecordWildCards    #-}
@@ -14,7 +15,11 @@ import           Data.Aeson as Json
 import           Data.Aeson.Types
 import           Data.Swagger
 
+#if MIN_VERSION_aeson(2,0,0)
 import qualified Data.Aeson.KeyMap as KM
+#else
+import qualified Data.HashMap.Strict as KM
+#endif
 
 import           Data.String.Interpolate.IsString
 
@@ -30,6 +35,12 @@ import           RPKI.Orphans.Json
 import           RPKI.Orphans.Swagger
 import           RPKI.Store.Base.Serialisation
 
+
+-- Older aeson has key of type Text
+#if MIN_VERSION_aeson(2,0,0)
+#else
+type Key = Text
+#endif
 
 -- NOTE: All the data here is strict
 
