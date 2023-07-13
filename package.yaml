@@ -131,13 +131,13 @@ executables:
   rpki-prover:
     main:                Main.hs
     source-dirs:         app
-    ghc-options:
-    - -threaded
-    - -O2
-    - -Wall    
-    - -rtsopts
-    - -funbox-strict-fields
-    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T --disable-delayed-os-memory-return"'
+    # ghc-options:
+    # - -threaded
+    # - -O2
+    # - -Wall    
+    # - -rtsopts
+    # - -funbox-strict-fields
+    # - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T --disable-delayed-os-memory-return"'
     dependencies:
     - rpki-prover  
 
