@@ -5,11 +5,12 @@ WORKDIR /opt/build
 # GHC dynamically links its compilation targets to lib gmp
 RUN apt-get update && apt-get download libgmp10
 RUN mv libgmp*.deb libgmp.deb
-RUN apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev
+RUN apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev pkg-config
 
 # Docker build should not use cached layer if any of these is modified
-COPY stack.yaml package.yaml /opt/build/
-RUN stack build rpki-prover:rpki-prover --system-ghc --dependencies-only
+COPY stack-9.6.yaml /opt/build/
+COPY package-template.yaml  /opt/build/package.yaml
+RUN stack build rpki-prover:rpki-prover --system-ghc --dependencies-only --stack-yaml=stack-9.6.yaml
 
 # -------------------------------------------------------------------------------------------
 FROM fpco/stack-build-small:latest as build
@@ -20,10 +21,10 @@ COPY . /opt/build/
 
 WORKDIR /opt/build
 
-RUN apt-get update && apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev
-RUN stack build --system-ghc
+RUN apt-get update && apt-get install -y libexpat1-dev liblmdb-dev liblzma-dev libz-dev pkg-config
+RUN stack build --system-ghc  --stack-yaml=stack-9.6.yaml
 
-RUN mv "$(stack path --local-install-root --system-ghc)/bin" /opt/build/bin
+RUN mv "$(stack path --local-install-root --system-ghc  --stack-yaml=stack-9.6.yaml)/bin" /opt/build/bin
 
 # -------------------------------------------------------------------------------------------
 # Base image for stack build so compiled artifact from previous
