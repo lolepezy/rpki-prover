@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=18 #-}
@@ -197,20 +198,32 @@ instance Arbitrary LogMessage where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (X509.SignedExact a) (X509.Signed a), 
           Arg (X509.Signed a) a, 
           Arbitrary a) => Arbitrary (X509.SignedExact a) where
+#else
+instance Arbitrary a => Arbitrary (X509.SignedExact a) where    
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (X509.Signed a) a, Arbitrary a) => Arbitrary (X509.Signed a) where
+#else
+instance Arbitrary a => Arbitrary (X509.Signed a) where    
+#endif    
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (NESet.NESet a) a, Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
+#else
+instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
+#endif    
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -270,17 +283,25 @@ instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (CMS a) (SignedObject a), 
           Arg (SignedObject a) a,           
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (CMS a) where
+#else
+instance (Arbitrary a) => Arbitrary (CMS a) where    
+#endif            
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (CMSBasedObject a) a, 
           Arg (SignedObject a) a, 
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (CMSBasedObject a) where
+#else
+instance (Arbitrary a) => Arbitrary (CMSBasedObject a) where    
+#endif            
     arbitrary = genericArbitrary
     shrink = genericShrink    
 
@@ -296,7 +317,11 @@ instance Arbitrary RpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (Located a) a, Arbitrary a) => Arbitrary (Located a) where
+#else
+instance Arbitrary a => Arbitrary (Located a) where
+#endif      
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -324,32 +349,56 @@ instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (SomeRFC r) r, 
           Arg (PolyRFC r 'StrictRFC) r,
           Arg (PolyRFC r 'ReconsideredRFC) r,
           Arbitrary r) => Arbitrary (SomeRFC r) where
+#else
+instance Arbitrary r => Arbitrary (SomeRFC r) where
+#endif      
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (PolyRFC r 'StrictRFC) r, Arbitrary r) => 
         Arbitrary (PolyRFC r 'StrictRFC) where
+#else
+instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
+#endif      
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (PolyRFC r 'ReconsideredRFC) r, Arbitrary r) => 
         Arbitrary (PolyRFC r 'ReconsideredRFC) where
+#else
+instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'CACert) r, Arbitrary r) => Arbitrary (TypedCert r 'CACert) where
+#else
+instance Arbitrary r => Arbitrary (TypedCert r 'CACert) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'EECert) r, Arbitrary r) => Arbitrary (TypedCert r 'EECert) where
+#else
+instance Arbitrary r => Arbitrary (TypedCert r 'EECert) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'BGPCert) r, Arbitrary r) => Arbitrary (TypedCert r 'BGPCert) where
+#else
+instance Arbitrary r => Arbitrary (TypedCert r 'BGPCert) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -374,7 +423,11 @@ instance Arbitrary AsResource where
             e <- suchThat arbitrary (>s)
             pure $ ASRange (ASN s) (ASN e)
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (RSet a) a, Arbitrary a) => Arbitrary (RSet a) where
+#else
+instance Arbitrary a => Arbitrary (RSet a) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -390,19 +443,31 @@ instance Arbitrary ContentType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (EncapsulatedContentInfo a) a, Arbitrary a) => Arbitrary (EncapsulatedContentInfo a) where
+#else
+instance Arbitrary a => Arbitrary (EncapsulatedContentInfo a) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (SignedObject a) (SignedData a),
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (SignedObject a) where
+#else
+instance Arbitrary a => Arbitrary (SignedObject a) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (SignedData a) (EncapsulatedContentInfo a), 
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (SignedData a) where
+#else
+instance Arbitrary a => Arbitrary (SignedData a) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -637,13 +702,21 @@ instance Arbitrary HttpStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (T2 a b) a, Arg (T2 a b) b, 
          Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
+#else
+instance (Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (T3 a b c) a, Arg (T3 a b c) b, Arg (T3 a b c) c, 
          Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
+#else
+instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
+#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
