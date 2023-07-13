@@ -91,7 +91,7 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
 
    - Clone https://github.com/lolepezy/rpki-prover/
 
-   - Run `stack install rpki-prover:rpki-prover` inside of the `rpki-prover` directory. It should take quite some time (30-50 minutes as it has to build all the required libraries)
+   - Run `./build-local.sh` inside of the `rpki-prover` directory. It should take quite some time (30-50 minutes as it has to build all the required libraries)
 
    - Run `mkdirs.sh` script. This script accepts an argument -- directory where `rpki-prover` will store the TAL files, cache, rsync mirror and different temporary files. If the argument is not set the default `$HOME/.rpki` will be used. After creating directory structure it will download TAL files from `https://github.com/NLnetLabs/routinator/tree/master/tals` (kudos, guys!)
 
