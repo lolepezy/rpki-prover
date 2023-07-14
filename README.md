@@ -59,7 +59,7 @@ Every [release](https://github.com/lolepezy/rpki-prover/releases) includes stati
 
 ## Docker image <a name="docker-image"></a>
 
-It is possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub and it's about 80mb in size.
+It is possible to run rpki-prover as `docker run lolepezy/rpki-prover:latest`. The image is available on Docker Hub.
 
 It is also possible to build your own image using `docker build . --file Dockerfile.prover --tag rpki-prover`.
 
