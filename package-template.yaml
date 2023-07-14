@@ -4,7 +4,7 @@ github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
 maintainer:          "misha.puzanov@gmail.com"
-copyright:           "2019 Mikhail Puzanov"
+copyright:           "2023 Mikhail Puzanov"
 
 extra-source-files:
 - README.md
