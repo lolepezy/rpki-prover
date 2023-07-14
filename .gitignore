@@ -8,3 +8,4 @@ rpki-prover-test.prof*
 .stylish-haskell.yaml
 .vscode/
 stack*yaml.lock
+package.yaml
