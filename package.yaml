@@ -139,27 +139,27 @@ executables:
 
   # This is necessary to work around a ugly bug in stack
   #
-  #1rpki-prover-static:    
-  #1  main:                Main.hs
-  #1  source-dirs:         app
-  #1  ghc-options:
-  #1  - -threaded
-  #1  - -static
-  #1  - -O2
-  #1  - -Wall    
-  #1  - -rtsopts
-  #1  - -funbox-strict-fields    
-  #1  - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T --disable-delayed-os-memory-return"'
-  #1  - -fPIC
-  #1  cc-options: -static
-  #1  ld-options: -static -pthread 
-  #1  extra-lib-dirs: 
-  #1    - /usr/lib 
-  #1    - /usr/lib64 
-  #1    - /lib 
-  #1    - /lib64
-  #1  dependencies:
-  #1  - rpki-prover  
+  rpki-prover-static:    
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -static
+    - -O2
+    - -Wall    
+    - -rtsopts
+    - -funbox-strict-fields    
+    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T --disable-delayed-os-memory-return"'
+    - -fPIC
+    cc-options: -static
+    ld-options: -static -pthread 
+    extra-lib-dirs: 
+      - /usr/lib 
+      - /usr/lib64 
+      - /lib 
+      - /lib64
+    dependencies:
+    - rpki-prover  
 
 tests:
   rpki-prover-test:
