@@ -1,7 +1,8 @@
-FROM utdemir/ghc-musl:v20-ghc8104 as rpki-prover-builder
-# FROM utdemir/ghc-musl:v24-ghc8107 as rpki-prover-builder
+# FROM utdemir/ghc-musl:v20-ghc8104 as rpki-prover-builder
+FROM utdemir/ghc-musl:v25-ghc8107 as rpki-prover-builder
+# FROM utdemir/ghc-musl:v25-ghc962 as rpki-prover-builder
 
-RUN apk add --update --no-cache expat-dev lmdb-dev lmdb expat-static lmdb
+RUN apk add --update --no-cache lmdb-dev lmdb xz-static
 
 # There's no statically linked version of LMDB, so we build it from the sources here
 RUN wget https://github.com/LMDB/lmdb/archive/refs/tags/LMDB_0.9.29.tar.gz && \

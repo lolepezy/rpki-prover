@@ -12,6 +12,7 @@ module RPKI.Validation.TopDown where
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
 
@@ -705,7 +706,7 @@ validateCa
                         let vrpList = getCMSContent $ cmsPayload roa
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
-                        let payload = (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
+                        let payload = (mempty :: Payloads (Set Vrp)) & #vrps .~ Set.fromList vrpList
                         updateEEBrief roa RoaBrief payload
 
             GbrRO gbr -> do
@@ -715,7 +716,7 @@ validateCa
                         void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                         oneMoreGbr
                         let gbr' = getCMSContent $ cmsPayload gbr
-                        let payload = (mempty :: Payloads (Set Vrp)) { gbrs = Set.singleton (getHash gbr, gbr') }
+                        let payload = (mempty :: Payloads (Set Vrp)) & #gbrs .~ Set.singleton (getHash gbr, gbr')
                         pure $! Seq.singleton $ payload
 
             AspaRO aspa -> do
@@ -725,7 +726,7 @@ validateCa
                         void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
                         oneMoreAspa
                         let aspa' = getCMSContent $ cmsPayload aspa
-                        let payload = (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+                        let payload = (mempty :: Payloads (Set Vrp)) & #aspas .~ Set.singleton aspa'
                         updateEEBrief aspa AspaBrief payload
 
             BgpRO bgpCert -> do

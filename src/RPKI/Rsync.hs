@@ -14,6 +14,7 @@ import           Data.Bifunctor
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
+import           Control.Monad.IO.Class           (liftIO)
 
 import           Control.Monad
 import           Control.Monad.Except

@@ -10,6 +10,8 @@
 module RPKI.Validation.BottomUp where
 
 import           Control.Concurrent.STM
+import           Control.Monad
+import           Control.Monad.IO.Class
 import           Control.Monad.Except
 import           Control.Lens
 

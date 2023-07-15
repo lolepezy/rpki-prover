@@ -1,0 +1,37 @@
+resolver: nightly-2023-07-13
+packages:
+- .
+
+extra-deps: 
+  - git: https://github.com/lolepezy/lmdb-high-level.git
+    commit: c1bfd9564b5a894659428281f328df2975d04569
+  - git: https://github.com/lolepezy/hs-certificate.git          
+    commit: b416b13123eb7bac10a1e5b2c2925fb4d72c2e19    
+    subdirs:
+      - x509
+      - x509-validation
+
+  - git: https://github.com/lolepezy/hs-connection
+    commit: e3cf8623979f8687694280939349734868cd18ac    
+
+  - git: https://github.com/lolepezy/prometheus-haskell
+    commit: ef4349d9c5c9abe9cd9a1cf0d3a5249af71d695e    
+    subdirs:
+      - prometheus-client
+      - prometheus-metrics-ghc
+  
+  - git: https://github.com/lolepezy/bytestring-mmap
+    commit: 244367f5febcc44ca9e673dedbf00874395de406      
+
+  - hw-ip-2.4.2.1
+  - hw-bits-0.7.2.2
+  - hw-prim-0.6.3.2
+  - cryptohash-sha512-0.11.102.0
+  - streaming-0.2.4.0
+  - optparse-generic-1.5.0
+  - wreq-0.5.4.0
+  - monoidal-containers-0.6.4.0
+  - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
+  - lz4-0.2.3.1@sha256:9d286f1c8e3e3aab86ebb8cd39b485af57c0a05d9da5baf921641012a3c83cf0,1821
+
+allow-newer: true
