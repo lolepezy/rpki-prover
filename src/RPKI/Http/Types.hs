@@ -245,8 +245,8 @@ data MetricsDto = MetricsDto {
     deriving stock (Eq, Show, Generic)
 
 data PublicationPointDto = PublicationPointDto {
-        rrdp :: [(RrdpURL, RrdpRepository)]
-        -- TODO Add rsync tree here
+        rrdp  :: [(RrdpURL, RrdpRepository)],
+        rsync :: [(RsyncURL, RsyncNodeInfo)]        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -399,6 +399,7 @@ instance ToJSON FetchStatus
 instance ToJSON ETag
 instance ToJSON Speed
 instance ToJSON RrdpRepository
+instance ToJSON RsyncNodeInfo
 instance ToJSON PublicationPointDto
 
 instance ToSchema MetricsDto
@@ -408,6 +409,7 @@ instance ToSchema ETag where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema Speed
 instance ToSchema RrdpRepository
+instance ToSchema RsyncNodeInfo
 instance ToSchema PublicationPointDto
 
 instance ToJSONKey (DtoScope s) where 
@@ -430,7 +432,8 @@ toMetricsDto rawMetrics = MetricsDto {
 
 toPublicationPointDto :: PublicationPoints -> PublicationPointDto
 toPublicationPointDto PublicationPoints {..} = PublicationPointDto {
-        rrdp = Map.toList $ unRrdpMap rrdps
+        rrdp  = Map.toList $ unRrdpMap rrdps,
+        rsync = flattenRsyncTree rsyncs
     }
 
 parseHash :: Text -> Either Text Hash

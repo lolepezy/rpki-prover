@@ -490,4 +490,12 @@ infoInRsyncTree (RsyncURL host path) (RsyncTree t) =
     fetchStatus' [] _  SubTree {} = Nothing
     fetchStatus' (u: us) realPath SubTree {..} = 
         Map.lookup u rsyncChildren >>= fetchStatus' us (realPath <> [u])
+
+flattenRsyncTree :: RsyncTree -> [(RsyncURL, RsyncNodeInfo)]
+flattenRsyncTree (RsyncTree t) = 
+    mconcat $ map (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
+  where    
+    flattenTree host (Leaf info) realPath  = [(RsyncURL host realPath, info)]
+    flattenTree host SubTree {..} realPath = 
+        mconcat $ map (\(p, n) -> flattenTree host n (realPath <> [p])) $ Map.toList rsyncChildren        
   
