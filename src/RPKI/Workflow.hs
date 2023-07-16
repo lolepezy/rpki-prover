@@ -215,7 +215,8 @@ runWorkflow appContext@AppContext {..} tals = do
                     -- easier to just clean them up rather then prevent all 
                     -- possible leakages (even if it is possible).
                     cleaned <- cleanUpStaleTx appContext
-                    logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]                                
+                    when (cleaned > 0) $ 
+                        logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]                                
 
         -- Delete objects in the store that were read by top-down validation 
         -- longer than `cacheLifeTime` hours ago.
@@ -418,7 +419,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         completeWorldVersion tx db worldVersion
 
     logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]    
-    -- threadDelay 30_000_000
 
     pure (updatedValidation, maybeSlurm)
 

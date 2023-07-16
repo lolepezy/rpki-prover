@@ -430,6 +430,23 @@ filterPPAccess Config {..} ppAccess =
             _                       -> False
 
 
+findSpeedProblems :: PublicationPoints -> [(RpkiURL, Repository)]
+findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
+    rrdpSpeedProblem <> rsyncSpeedProblem
+  where
+    rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
+        | (u, r) <- Map.toList rrdps, r ^. #speed /= Quick ]
+
+    rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u info)
+        | (u, info) <- flattenRsyncTree rsyncTree, info ^. #speed /= Quick ]
+        where 
+            rsyncRepo u info = RsyncR $ RsyncRepository { 
+                repoPP = RsyncPublicationPoint u,
+                status = info ^. #fetchStatus,
+                speed  = info ^. #speed
+            }
+
+
 data RsyncNodeInfo = RsyncNodeInfo {
         fetchStatus :: FetchStatus,
         speed       :: Speed

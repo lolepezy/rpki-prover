@@ -68,7 +68,7 @@ data API api = API {
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,
         system :: api    :- "system" :> Get '[JSON] SystemDto,
 
-        publicationsPoints :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
+        repositories :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                     :> QueryParam "hash" Text 

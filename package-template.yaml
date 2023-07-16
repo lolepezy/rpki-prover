@@ -117,8 +117,8 @@ dependencies:
 - xeno
 
 
-ghc-options:
-  - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS -fprint-potential-instances
+ghc-options:  
+  - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS -fprint-potential-instances -fwrite-ide-info  
 
 library:
   source-dirs: src

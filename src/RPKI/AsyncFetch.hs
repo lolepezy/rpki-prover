@@ -10,6 +10,7 @@ module RPKI.AsyncFetch where
 
 import           Control.Exception
 import           Control.Monad
+import           Control.Concurrent.STM
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
@@ -47,10 +48,29 @@ import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.TAL
 import           RPKI.Time
+import           RPKI.Fetch
+import           RPKI.Repository
 import           RPKI.Worker
 
 import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
 
+{- 
+    Run periodic fetches for slow repositories asychronously to the validation process.
+
+    - Periodically check if there're repositories that don't have speed `Quick`
+    - Try to refetch these repositories
+    - 
+-}
 runAsyncFetcher AppContext {..} = do 
-    pure ()
+    repositoryProcessing <- newRepositoryProcessingIO config
+    xx repositoryProcessing `finally` (cancelFetchTasks repositoryProcessing)
+  where
+    xx repositoryProcessing = do 
+        pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
+        let problematicRepositories = findSpeedProblems pps
+        for_ problematicRepositories $ \(url, repository) -> do 
+            -- r <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
+            pure ()
+        fetchValidation <- validationStateOfFetches repositoryProcessing
+        pure ()

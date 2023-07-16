@@ -176,7 +176,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             let pps' = addRsyncPrefetchUrls config pps
             atomically $ writeTVar (allTas ^. #repositoryProcessing . #publicationPoints) pps'
 
-        rs <- liftIO $ pooledForConcurrently tals $ \tal -> do
+        rs <- pooledForConcurrently tals $ \tal -> do
             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
                     validateTA appContext tal worldVersion allTas
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
