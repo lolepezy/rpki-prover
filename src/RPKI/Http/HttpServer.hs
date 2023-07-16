@@ -92,7 +92,7 @@ httpApi appContext = genericServe HttpApi {
     uiServer = do
         worldVersion <- liftIO $ getLastVersion appContext
         vResults     <- liftIO $ getValidations appContext
-        metrics <- getMetrics appContext
+        metrics      <- getMetrics appContext
         pure $ mainPage worldVersion vResults metrics
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
@@ -257,7 +257,7 @@ getStats appContext@AppContext {..} = liftIO $ do
 
 getJobs :: (MonadIO m, Storage s) => AppContext s -> m JobsDto
 getJobs AppContext {..} = liftIO $ do
-    db <- readTVarIO database
+    db   <- readTVarIO database
     jobs <- roTx db $ \tx -> allJobs tx db
     pure JobsDto {..}
 
