@@ -9,3 +9,4 @@ rpki-prover-test.prof*
 .vscode/
 stack*yaml.lock
 package.yaml
+*.hie
