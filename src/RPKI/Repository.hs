@@ -84,13 +84,7 @@ data PublicationPoint = RrdpPP  RrdpRepository |
                         RsyncPP RsyncPublicationPoint
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass TheBinary
-
-newtype RepositoryAccess = RepositoryAccess {
-        unRepositoryAccess :: NonEmpty Repository
-    }
-    deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass TheBinary        
-
+   
 newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }

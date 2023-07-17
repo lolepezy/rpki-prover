@@ -17,6 +17,7 @@ import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
 
 import           Data.List
+import           Data.List.NonEmpty          (NonEmpty (..), fromList)
 import           Data.Foldable (for_)
 import           Data.Int                         (Int64)
 import qualified Data.Text                        as Text
@@ -62,7 +63,7 @@ import           RPKI.SLURM.Types
     - Try to refetch these repositories
     - 
 -}
-runAsyncFetcher AppContext {..} = do 
+runAsyncFetcher appContext@AppContext {..} = do 
     repositoryProcessing <- newRepositoryProcessingIO config
     xx repositoryProcessing `finally` (cancelFetchTasks repositoryProcessing)
   where
@@ -70,7 +71,16 @@ runAsyncFetcher AppContext {..} = do
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         let problematicRepositories = findSpeedProblems pps
         for_ problematicRepositories $ \(url, repository) -> do 
-            -- r <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
+
+            -- TODO This fiddling is weird and probably redundant
+            let pp = case repository of 
+                        RsyncR r -> RsyncPP $ r ^. #repoPP
+                        RrdpR r  -> RrdpPP r
+
+            let ppAccess = PublicationPointAccess $ fromList [pp]            
+            worldVersion <- newWorldVersion
+            r <- runValidatorT (newScopes' RepositoryFocus url) $ 
+                    fetchPPWithFallback appContext repositoryProcessing worldVersion ppAccess
             pure ()
         fetchValidation <- validationStateOfFetches repositoryProcessing
         pure ()
