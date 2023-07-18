@@ -52,6 +52,7 @@ import           RPKI.Time
 import           RPKI.Fetch
 import           RPKI.Repository
 import           RPKI.Worker
+import           RPKI.Periodic
 
 import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
@@ -64,10 +65,14 @@ import           RPKI.SLURM.Types
     - 
 -}
 runAsyncFetcher appContext@AppContext {..} = do 
+    pure ()
+
+
+runFetches appContext@AppContext {..} = do     
     repositoryProcessing <- newRepositoryProcessingIO config
-    xx repositoryProcessing `finally` (cancelFetchTasks repositoryProcessing)
+    fetchSlowRepos repositoryProcessing `finally` (cancelFetchTasks repositoryProcessing)
   where
-    xx repositoryProcessing = do 
+    fetchSlowRepos repositoryProcessing = do 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         let problematicRepositories = findSpeedProblems pps
         for_ problematicRepositories $ \(url, repository) -> do 
