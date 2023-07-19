@@ -109,8 +109,8 @@ fetchPPWithFallback
                                 (rememberAndWait ppSeqFetchRuns ppsKey)                
       where          
         ppSeqKey = sequence 
-                $ take 1 
                 $ map (urlToDownload . getRpkiURL) 
+                $ take 1                 
                 $ NonEmpty.toList 
                 $ unPublicationPointAccess ppAccess
           where

@@ -41,6 +41,7 @@ import           RPKI.Config
 import           RPKI.AppTypes
 import           RPKI.Repository
 import           RPKI.Domain
+import           RPKI.TAL
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
 import           RPKI.Orphans.Swagger
@@ -276,6 +277,12 @@ newtype RtrDto = RtrDto {
     }
     deriving stock (Eq, Show, Generic)
 
+data TalDto = TalDto {
+        tal :: TAL,
+        repositories :: [Text]
+    }
+    deriving stock (Eq, Show, Generic)
+
 data ManualCVS = ManualCVS
 
 newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
@@ -327,6 +334,7 @@ instance ToJSON VrpMinimalDto
 instance ToJSON AspaDto
 instance ToJSON BgpCertDto
 instance ToJSON RtrDto
+instance ToJSON TalDto
 
 instance ToSchema RObject
 instance ToSchema VrpDto where
@@ -354,6 +362,10 @@ instance ToSchema CheckListDto
 instance ToSchema AspaDto
 instance ToSchema BgpCertDto
 instance ToSchema RtrDto
+instance ToSchema TalDto
+instance ToSchema TAL
+instance ToSchema EncodedBase64 where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ProviderAsn
 
 instance ToJSON ProviderAsn where

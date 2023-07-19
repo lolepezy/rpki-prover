@@ -118,8 +118,8 @@ validateBottomUp
                     logWarn logger [i|Unsupported type of object: #{_somethingElse}.|]        
 
 
-    findPathToRoot db@DB{..} certificate = do                  
-        tas <- roAppTx db $ \tx -> getTAs tx taStore         
+    findPathToRoot db certificate = do                  
+        tas <- roAppTx db $ \tx -> getTAs tx db         
         let taCerts = Map.fromList $ 
                         map (\(_, StorableTA {..}) ->                             
                         (getSKI taCert, Located (talCertLocations tal) taCert)) tas 

@@ -58,6 +58,8 @@ data API api = API {
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
+
+        tals :: api :- "tals" :> Get '[JSON] [TalDto],
                 
         validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),
         fullValidationResults    :: api :- "validations-full" :> Get '[JSON] (ValidationsDto FullVDto),
@@ -141,12 +143,13 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
 
             ("/slurms", mempty & get ?~ jsonOn200 
                         "Returns all SLURMs (RFC 8416) for every version"),
+            ("/tals", mempty & get ?~ jsonOn200 "Returns all TALs"),
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
-            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")            
+            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")                        
         ] 
   where                
     jsonOn200 txt = mempty
