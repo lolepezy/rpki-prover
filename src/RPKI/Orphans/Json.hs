@@ -403,6 +403,7 @@ instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
+instance ToJSON AsyncFetchConfig
 instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf

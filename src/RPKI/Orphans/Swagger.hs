@@ -126,6 +126,7 @@ instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
 instance ToSchema ValidationConfig
+instance ToSchema AsyncFetchConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig

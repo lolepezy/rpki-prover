@@ -4,6 +4,7 @@ import           Control.Concurrent
 import           Control.Monad
 import           Data.Int  (Int64)
 import           Data.Hourglass
+import           Data.Foldable (for_)
 
 import           RPKI.AppTypes
 import           RPKI.Time
@@ -32,6 +33,20 @@ periodically interval action = go
         case nextStep of
             Repeat -> go
             Done   -> pure ()
+
+-- | Execute an IO action every N seconds
+periodicallyWithDelay :: Seconds -> IO (Maybe Seconds) -> IO ()
+periodicallyWithDelay initialDelay action = go initialDelay
+  where
+    go delay = do
+        Now start <- thisInstant
+        nextDelay <- action
+        Now end <- thisInstant
+        let pause = leftToWait start end delay
+        when (pause > 0) $
+            threadDelay $ fromIntegral pause
+        for_ nextDelay go
+        
 
 leftToWait :: Instant -> Instant -> Seconds -> Int64
 leftToWait start end (Seconds interval) = let

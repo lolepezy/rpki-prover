@@ -336,7 +336,7 @@ runWorkflow appContext@AppContext {..} tals = do
             for_ (config ^. #rtrConfig) $ runRtrServer appContext
 
         initAsyncFetcherIfNeeded = 
-            for_ (config ^. #validationConfig . #slowRepositoryThreshold) 
+            for_ (config ^. #validationConfig . #asyncFetchConfig) 
                 $ \_ -> runAsyncFetcher appContext
 
 

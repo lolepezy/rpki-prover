@@ -121,11 +121,20 @@ data ValidationConfig = ValidationConfig {
         -- Manimal allowed size of an individual object 
         minObjectSize                  :: Integer,
 
-        -- Maximal download time of a repository beyond 
-        -- which it is considered slow.
-        slowRepositoryThreshold        :: Maybe Seconds
+        -- configuration for asynchronous repository fetches
+        asyncFetchConfig                :: Maybe AsyncFetchConfig
     } 
     deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data AsyncFetchConfig = AsyncFetchConfig {
+        -- Maximal download time of a repository beyond 
+        -- which it is considered slow.    
+        slowRepositoryThreshold :: Seconds,
+        -- 
+        checkPeriod             :: Seconds       
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data HttpApiConfig = HttpApiConfig {
@@ -202,7 +211,10 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 3000,
-        slowRepositoryThreshold        = Nothing
+        asyncFetchConfig                = Just $ AsyncFetchConfig {
+            slowRepositoryThreshold = Seconds 180,
+            checkPeriod             = Seconds 60
+        }
     },
     httpApiConf = HttpApiConfig {
         port = 9999
