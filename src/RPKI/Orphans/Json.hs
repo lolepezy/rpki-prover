@@ -58,6 +58,7 @@ import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Types
+import           RPKI.TAL
 import           RPKI.Time
 import qualified RPKI.Util                   as U
 
@@ -401,6 +402,7 @@ instance ToJSON LogLevel
 instance ToJSON Config
 instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
+$(deriveToJSON defaultOptions ''TAL)
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
