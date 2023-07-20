@@ -453,14 +453,14 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
 
 -- TA store functions
 
-saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> TAStore s -> StorableTA -> m ()
-saveTA tx (TAStore s) ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
+saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
+saveTA tx DB { taStore = TAStore s } ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 
-getTA :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> TaName -> m (Maybe StorableTA)
-getTA tx (TAStore s) name = liftIO $ M.get tx s name
+getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
+getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s name
 
-getTAs :: (MonadIO m, Storage s) => Tx s mode -> TAStore s -> m [(TaName, StorableTA)]
-getTAs tx (TAStore s) = liftIO $ M.all tx s
+getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(TaName, StorableTA)]
+getTAs tx DB { taStore = TAStore s } = liftIO $ M.all tx s
 
 saveValidations :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()

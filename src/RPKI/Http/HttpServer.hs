@@ -25,6 +25,7 @@ import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import           Data.String.Interpolate.IsString
 
@@ -37,6 +38,7 @@ import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time
 import           RPKI.Reporting
+import           RPKI.Repository
 import           RPKI.Http.Api
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
@@ -76,6 +78,7 @@ httpApi appContext = genericServe HttpApi {
 
         slurm = getSlurm appContext,
         slurms = getAllSlurms appContext,
+        tals = getAllTALs appContext,
 
         fullValidationResults    = getValidationsDto appContext,
         validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
@@ -245,6 +248,17 @@ getAllSlurms AppContext {..} = do
         versions <- List.sortOn Down <$> validationVersions tx db
         slurms   <- mapM (\wv -> (wv, ) <$> slurmForVersion tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
+
+getAllTALs :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                AppContext s -> m [TalDto]
+getAllTALs AppContext {..} = do
+    db <- liftIO $ readTVarIO database
+    liftIO $ roTx db $ \tx -> do        
+        tas <- getTAs tx db     
+        pure [ TalDto {..} | (_, StorableTA {..}) <- tas, 
+                let repositories = map (toText . getRpkiURL) 
+                        $ NonEmpty.toList 
+                        $ unPublicationPointAccess initialRepositories ]           
 
 
 getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
