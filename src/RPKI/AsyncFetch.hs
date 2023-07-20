@@ -70,11 +70,12 @@ runAsyncFetcher appContext@AppContext {..} = do
 
 runFetches appContext@AppContext {..} = do     
     repositoryProcessing <- newRepositoryProcessingIO config
-    fetchSlowRepos repositoryProcessing `finally` (cancelFetchTasks repositoryProcessing)
+    fetchSlowRepos repositoryProcessing `finally` cancelFetchTasks repositoryProcessing
   where
     fetchSlowRepos repositoryProcessing = do 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         let problematicRepositories = findSpeedProblems pps
+        logDebug logger [i||]
         for_ problematicRepositories $ \(url, repository) -> do 
 
             -- TODO This fiddling is weird and probably redundant
