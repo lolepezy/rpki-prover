@@ -558,6 +558,10 @@ generalWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
 generalWorldVersion tx database worldVersion =    
     saveVersion tx database worldVersion generalKind
 
+asyncFetchWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
+asyncFetchWorldVersion tx database worldVersion =    
+    saveVersion tx database worldVersion asyncFetchKind
+
 
 saveMetrics :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 saveMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
@@ -793,9 +797,16 @@ deletePayloads tx db worldVersion = do
 getLastCompletedVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
 getLastCompletedVersion database tx = do 
         vs <- map fst <$> allVersions tx database
-        pure $! case vs of         
+        pure $ case vs of         
             []  -> Nothing
             vs' -> Just $ maximum vs'
+
+getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
+getLastVersionOfKind database tx versionKind = do 
+        versions <- allVersions tx database        
+        pure $ case versions of         
+            []  -> Nothing
+            vs' -> Just $ maximum [ v | (v, k) <- versions, k == versionKind ]
 
 getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
 getLatestVRPs db = 

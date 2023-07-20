@@ -93,10 +93,11 @@ httpApi appContext = genericServe HttpApi {
     }
 
     uiServer = do
-        worldVersion <- liftIO $ getLastVersion appContext
+        validationWorldVersion <- liftIO $ getLastValidationVersion appContext
+        asyncFetchVersion      <- liftIO $ getLastAsyncFetchVersion appContext
         vResults     <- liftIO $ getValidations appContext
         metrics      <- getMetrics appContext
-        pure $ mainPage worldVersion vResults metrics
+        pure $ mainPage validationWorldVersion asyncFetchVersion vResults metrics
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
@@ -212,6 +213,17 @@ getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastVersion AppContext {..} = do
     db <- readTVarIO database
     roTx db $ getLastCompletedVersion db
+
+getLastValidationVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
+getLastValidationVersion appContext = getLastKindVersion appContext validationKind
+
+getLastAsyncFetchVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
+getLastAsyncFetchVersion appContext = getLastKindVersion appContext asyncFetchKind
+
+getLastKindVersion :: Storage s => AppContext s -> VersionKind -> IO (Maybe WorldVersion)
+getLastKindVersion AppContext {..} versionKind = do
+    db <- readTVarIO database
+    roTx db $ \tx -> getLastVersionOfKind db tx versionKind
 
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m (RawMetric, MetricsDto)

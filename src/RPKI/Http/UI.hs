@@ -42,8 +42,8 @@ import RPKI.Http.Types
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> Maybe (ValidationsDto FullVDto) -> (RawMetric, MetricsDto) -> Html
-mainPage worldVersion validations (rawMetric, metricsDto) =     
+mainPage :: Maybe WorldVersion -> Maybe WorldVersion -> Maybe (ValidationsDto FullVDto) -> (RawMetric, MetricsDto) -> Html
+mainPage validationoWorldVersion asyncFetchVersion validations (rawMetric, metricsDto) =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -56,6 +56,7 @@ mainPage worldVersion validations (rawMetric, metricsDto) =
                 H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
+                H.a ! A.href "#async-fetch"        $ H.text "Asynchronous fetches"
 
         for_ validations $ \vs -> do 
             H.div ! A.class_ "main" $ do            
@@ -63,7 +64,7 @@ mainPage worldVersion validations (rawMetric, metricsDto) =
                 H.br
                 H.section $ H.text "Overall"
                 H.br
-                overallHtml worldVersion
+                overallHtml validationoWorldVersion
                 H.br >> H.br            
                 H.a ! A.id "validation-metrics" $ "" 
                 H.section $ H.text "Validation metrics"
@@ -77,6 +78,8 @@ mainPage worldVersion validations (rawMetric, metricsDto) =
                 H.a ! A.id "validation-details" $ ""
                 H.section $ H.text "Validation details"
                 validaionDetailsHtml $ vs ^. #validations
+                H.a ! A.id "async-fetch" $ ""
+                H.section $ H.text "Asynchronous fetches"             
 
 
 overallHtml :: Maybe WorldVersion -> Html

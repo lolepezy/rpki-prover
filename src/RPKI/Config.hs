@@ -211,7 +211,7 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 3000,
-        asyncFetchConfig                = Just $ AsyncFetchConfig {
+        asyncFetchConfig               = Just $ AsyncFetchConfig {
             slowRepositoryThreshold = Seconds 180,
             checkPeriod             = Seconds 60
         }

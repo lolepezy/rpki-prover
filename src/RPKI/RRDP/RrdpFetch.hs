@@ -291,7 +291,7 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just (repoSessionId, repoSerial) } Noti
 
         | repoSerial > serial -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is lower than the remote serial #{serial}.|]
+            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is higher than the remote serial #{serial}.|]
 
         | repoSerial == serial -> 
             pure $ NothingToDo [i|up-to-date, #{repoSessionId}, serial #{repoSerial}|]
