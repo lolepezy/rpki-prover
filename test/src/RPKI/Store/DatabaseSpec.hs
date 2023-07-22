@@ -263,7 +263,7 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
     world <- getOrCreateWorldVerion =<< newAppState
 
     rwTx validationsStore $ \tx -> saveValidations tx db world vrs
-    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world
+    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx db world
 
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
