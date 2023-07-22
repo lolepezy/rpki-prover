@@ -30,6 +30,8 @@ import           System.Exit
 import           System.Directory
 import           System.FilePath                  ((</>))
 
+import           UnliftIO.Async                   (pooledForConcurrently)
+
 import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -64,7 +66,7 @@ data JobRun = FirstRun | RanBefore
     deriving (Show, Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
-        -- Indicates if anything was every deleted from the DB,
+        -- Indicates if anything was ever deleted from the DB,
         -- it is needed for cleanup and compaction procedures.
         deletedAnythingFromDb :: TVar Bool,
 
@@ -74,7 +76,7 @@ data WorkflowShared = WorkflowShared {
         -- the DB for long time by a cleanup process).        
         globalQueue :: ClosableQueue (WorldVersion -> IO ()),
 
-        -- The same type of the queue for separately for the async fetcher.
+        -- The same type of the separate queue for the async fetcher.
         asyncFetchQueue :: ClosableQueue (WorldVersion -> IO ())
     }
     deriving (Generic)
@@ -93,10 +95,6 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Some shared state between the threads for simplicity.
     workflowShared <- atomically newWorkflowShared
 
-    -- Run RTR server thread when rtrConfig is present in the AppConfig.  
-    -- If not needed it will the an noop.  
-    let rtrServer = initRtrIfNeeded
-
     -- Initialise prometheus metrics here
     prometheusMetrics <- createPrometheusMetrics config
 
@@ -112,9 +110,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 -- thread that takes jobs from the queue and executes them sequentially
                 jobExecutor,
                 -- thread that generates re-validation jobs
-                generateRevalidationJob prometheusMetrics,                
-                -- RTR server job (or a noop)  
-                const rtrServer                
+                generateRevalidationJob prometheusMetrics,                                
+                -- Run RTR server thread when rtrConfig is present in the AppConfig.      
+                const initRtrIfNeeded            
             ]
 
     mapConcurrently_ (\f -> f workflowShared) $ threads <> periodicJobs
@@ -128,7 +126,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         writeQ globalQueue $ \_ -> do 
                             -- Validate all TAs top-down
                             validateAllTAs prometheusMetrics =<< createWorldVersion
-                            -- After every validation run async repository fetcher                          
+                            -- After every validation run async repository fetcher   
+                            -- for slow/unstable/timedout repositories                       
                             runAsyncFetcherIfNeeded
                         pure Repeat)
                 `finally`
@@ -514,16 +513,16 @@ loadStoredAppState AppContext {..} = do
 -}
 runFetches :: Storage s => AppContext s -> IO ValidationState
 runFetches appContext@AppContext {..} = do         
-    withRepositoriesProcessing appContext $ \repositoryProcessing -> do
+    withRepositoriesProcessing adjustedConfig $ \repositoryProcessing -> do
 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         let problematicRepositories = findSpeedProblems pps
 
-        let reposText = Text.intercalate "," $ map (toText . fst) problematicRepositories
+        let reposText = Text.intercalate ", " $ map (toText . fst) problematicRepositories
         unless (null problematicRepositories) $ 
             logDebug logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
 
-        for_ problematicRepositories $ \(url, repository) -> do 
+        void $ pooledForConcurrently problematicRepositories $ \(url, repository) -> do 
 
             -- TODO This fiddling is weird and probably redundant
             let pp = case repository of 
@@ -535,4 +534,10 @@ runFetches appContext@AppContext {..} = do
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchPPWithFallback appContext repositoryProcessing worldVersion ppAccess
             
-        validationStateOfFetches repositoryProcessing    
+        validationStateOfFetches repositoryProcessing   
+  where
+    -- Replace rsync and rrdp timeouts with their async conterparts, 
+    -- since fetcher is not aware if it works in sync or async context.
+    adjustedConfig = appContext 
+        & #config . #rsyncConf %~ (\rc -> rc & #rsyncTimeout .~ rc ^. #asyncRsyncTimeout)
+        & #config . #rrdpConf %~ (\rc -> rc & #rrdpTimeout .~ rc ^. #asyncRrdpTimeout)

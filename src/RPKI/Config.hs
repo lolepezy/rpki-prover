@@ -67,6 +67,7 @@ data RsyncConf = RsyncConf {
         rsyncClientPath   :: Maybe FilePath,
         rsyncRoot         :: FilePath,
         rsyncTimeout      :: Seconds,
+        asyncRsyncTimeout :: Seconds,
         enabled           :: Bool,
         rsyncPrefetchUrls :: [RsyncURL]
     } 
@@ -81,10 +82,11 @@ newtype Size = Size { unSize :: Int64 }
     deriving Monoid via Sum Size
 
 data RrdpConf = RrdpConf {
-        tmpRoot     :: FilePath,
-        maxSize     :: Size,
-        rrdpTimeout :: Seconds,
-        enabled     :: Bool
+        tmpRoot          :: FilePath,
+        maxSize          :: Size,
+        rrdpTimeout      :: Seconds,
+        asyncRrdpTimeout :: Seconds,
+        enabled          :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -188,14 +190,16 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = "",
-        rsyncTimeout = 7 * 60,
+        rsyncTimeout = 5 * 60,
+        asyncRsyncTimeout = 10 * 60,
         enabled = True,
         rsyncPrefetchUrls = []
     },
     rrdpConf = RrdpConf {
         tmpRoot = "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * 60,
+        rrdpTimeout = 3 * 60,
+        asyncRrdpTimeout = 10 * 60,
         enabled = True
     },
     validationConfig = ValidationConfig {

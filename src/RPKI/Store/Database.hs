@@ -449,7 +449,7 @@ getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Loca
 getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx certBySKI ski
     located   <- MaybeT $ getLocatedByKey tx db objectKey
-    pure $ located & #payload %~ (\(CerRO c) -> c)
+    pure $ located & #payload %~ (\(CerRO c) -> c) 
 
 -- TA store functions
 
@@ -468,8 +468,8 @@ saveValidations tx DB { validationsStore = ValidationsStore s } wv validations =
     liftIO $ M.put tx s wv (Compressed validations)
 
 validationsForVersion :: (MonadIO m, Storage s) => 
-                        Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
-validationsForVersion tx ValidationsStore {..} wv = 
+                        Tx s mode -> DB s -> WorldVersion -> m (Maybe Validations)
+validationsForVersion tx DB { validationsStore = ValidationsStore {..} } wv = 
     liftIO $ fmap unCompressed <$> M.get tx results wv
 
 deleteValidations :: (MonadIO m, Storage s) => 
@@ -804,9 +804,9 @@ getLastCompletedVersion database tx = do
 getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
 getLastVersionOfKind database tx versionKind = do 
         versions <- allVersions tx database        
-        pure $ case versions of         
-            []  -> Nothing
-            vs' -> Just $ maximum [ v | (v, k) <- versions, k == versionKind ]
+        pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
+                []  -> Nothing
+                vs' -> Just $ maximum vs'
 
 getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
 getLatestVRPs db = 

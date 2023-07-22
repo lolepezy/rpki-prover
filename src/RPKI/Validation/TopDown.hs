@@ -37,7 +37,7 @@ import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
 
-import           UnliftIO.Async
+import           UnliftIO.Async                   (pooledForConcurrently)
 
 import           RPKI.AppContext
 import           RPKI.AppState

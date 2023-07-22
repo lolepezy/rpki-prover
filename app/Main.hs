@@ -225,9 +225,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #rsyncConf . #enabled .~ not noRsync
                 & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+                & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
                 & #rrdpConf . #enabled .~ not noRrdp
                 & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+                & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
                 & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
@@ -587,8 +589,16 @@ data CLIOptions wrapped = CLIOptions {
         ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
+    asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
+        ("Timebox for RRDP repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
+       +++ "finish within this timeout, the repository is considered unavailable"),
+
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
+       +++ "finish within this timeout, the repository is considered unavailable"),
+
+    asyncRsyncTimeout :: wrapped ::: Maybe Int64 <?>
+        ("Timebox for rsync repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
