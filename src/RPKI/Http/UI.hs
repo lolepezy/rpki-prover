@@ -42,8 +42,9 @@ import RPKI.Http.Types
 import RPKI.Domain
 
 
-mainPage :: Maybe WorldVersion -> Maybe WorldVersion -> Maybe (ValidationsDto FullVDto) -> (RawMetric, MetricsDto) -> Html
-mainPage validationoWorldVersion asyncFetchVersion validations (rawMetric, metricsDto) =     
+mainPage :: Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) 
+        -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) -> Html
+mainPage validation asyncFecth =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -56,35 +57,53 @@ mainPage validationoWorldVersion asyncFetchVersion validations (rawMetric, metri
                 H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
-                H.a ! A.href "#async-fetch"        $ H.text "Asynchronous fetches"
+                let spaces = replicateM_ 4 space
+                for_ asyncFecth $ \_ -> do                 
+                    H.a ! A.href "#async-fetch"                    $ H.text "Asynchronous fetches"
+                    H.a ! A.href "#async-fetch-rrdp-metrics"       $ spaces >> H.text "RRDP fetches"
+                    H.a ! A.href "#async-fetch-rsync-metrics"      $ spaces >> H.text "Rsync fetches"
+                    H.a ! A.href "#async-fetch-validation-details" $ spaces >> H.text "Errors & Warnings"
 
-        for_ validations $ \vs -> do 
-            H.div ! A.class_ "main" $ do            
+        for_ validation $ \(version, vs, rawMetric@RawMetric {..}) -> do 
+            H.div ! A.class_ "main" $ do
                 H.a ! A.id "overall" $ "" 
                 H.br
-                H.section $ H.text "Overall"
+                H.section $ H.h4 "Overall"
                 H.br
-                overallHtml validationoWorldVersion
+                overallHtml version
                 H.br >> H.br            
                 H.a ! A.id "validation-metrics" $ "" 
-                H.section $ H.text "Validation metrics"
+                H.section $ H.h4 "Validation metrics"
+                let metricsDto = toMetricsDto rawMetric
                 validationMetricsHtml $ metricsDto ^. #groupedValidations
                 H.a ! A.id "rrdp-metrics" $ ""
-                H.section $ H.text "RRDP metrics"
-                rrdpMetricsHtml $ rrdpMetrics rawMetric 
+                H.section $ H.h4 "RRDP metrics"
+                rrdpMetricsHtml rrdpMetrics
                 H.a ! A.id "rsync-metrics" $ ""
-                H.section $ H.text "Rsync metrics"
-                rsyncMetricsHtml $ rsyncMetrics rawMetric        
+                H.section $ H.h4 "Rsync metrics"
+                rsyncMetricsHtml rsyncMetrics
                 H.a ! A.id "validation-details" $ ""
-                H.section $ H.text "Validation details"
+                H.section $ H.h4 "Validation details"
                 validaionDetailsHtml $ vs ^. #validations
-                H.a ! A.id "async-fetch" $ ""
-                H.section $ H.text "Asynchronous fetches"             
+
+                for_ asyncFecth $ \(_, asValidations, rawMetrics) -> do 
+                    H.a ! A.id "async-fetch" $ ""
+                    H.section $ H.h4 "Asynchronous fetches"                    
+                    H.text "Metrics, errors and warning for the slow and timed out repositories that are fetched asynchronously."
+                    H.br >> H.br            
+                    H.a ! A.id "async-fetch-rrdp-metrics" $ ""
+                    H.section $ H.h4 "RRDP metrics"
+                    rrdpMetricsHtml $ rawMetrics ^. #rrdpMetrics
+                    H.a ! A.id "async-fetch-rsync-metrics" $ ""
+                    H.section $ H.h4 "Rsync metrics"
+                    rsyncMetricsHtml $ rawMetrics ^. #rsyncMetrics        
+                    H.a ! A.id "async-fetch-validation-details" $ ""
+                    H.section $ H.h4 "Errors & Warnings"                
+                    validaionDetailsHtml $ asValidations ^. #validations
 
 
-overallHtml :: Maybe WorldVersion -> Html
-overallHtml Nothing = pure ()
-overallHtml (Just worldVersion) = do 
+overallHtml :: WorldVersion -> Html
+overallHtml worldVersion = do 
     let t = versionToMoment worldVersion
     H.div ! A.class_ "overall" $ do 
         H.text "Last validation: " >> space

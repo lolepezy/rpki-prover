@@ -96,7 +96,7 @@ td, th {
 
 .side-navigation {
     height: 100%;
-    width: 150px;
+    width: 200px;
     position: fixed;
     z-index: 1;
     top: 0;
@@ -117,7 +117,7 @@ td, th {
 }
 
 .main {
-    margin-left: 150px;
+    margin-left: 200px;
 }
 
 .overall { 		
