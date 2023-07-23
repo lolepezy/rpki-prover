@@ -173,7 +173,7 @@ instance Monoid Speed where
     mempty = Quick
 
 instance Semigroup Speed where    
-    s1 <> s2 = s2
+    _ <> s2 = s2
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        

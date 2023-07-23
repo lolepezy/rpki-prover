@@ -203,7 +203,7 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
     liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
 
 userAgent :: BS.ByteString
-userAgent = U.convert getVersion
+userAgent = U.convert rpkiProverVersion
 
 -- | Calculate size and extra arbitrary function of the sinked stream
 -- | and throw and exception is the size gets too big.

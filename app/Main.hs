@@ -77,12 +77,12 @@ import           RPKI.RSC.Verifier
 main :: IO ()
 main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
-            "RPKI prover, relying party software for RPKI, version " <> getVersion
+            "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
 
     if version
         then do
             -- it is "--version" call, so print the version and exit
-            putStrLn $ convert getVersion
+            putStrLn $ convert rpkiProverVersion
         else do
             case worker of
                 Nothing ->

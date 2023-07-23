@@ -33,8 +33,10 @@ import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes
+import           RPKI.Config
 import           RPKI.AppState
 import           RPKI.Metrics.Metrics
+import           RPKI.Metrics.System
 import           RPKI.Reporting
 import           RPKI.Time
 
@@ -42,9 +44,10 @@ import RPKI.Http.Types
 import RPKI.Domain
 
 
-mainPage :: Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) 
+mainPage :: SystemInfo 
+        -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) 
         -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) -> Html
-mainPage validation asyncFecth =     
+mainPage systemInfo validation asyncFecth =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -66,12 +69,9 @@ mainPage validation asyncFecth =
 
         for_ validation $ \(version, vs, rawMetric@RawMetric {..}) -> do 
             H.div ! A.class_ "main" $ do
-                H.a ! A.id "overall" $ "" 
-                H.br
-                H.section $ H.h4 "Overall"
-                H.br
-                overallHtml version
-                H.br >> H.br            
+                H.a ! A.id "overall" $ ""                 
+                H.section $ H.h4 "Overall"                
+                overallHtml systemInfo version                      
                 H.a ! A.id "validation-metrics" $ "" 
                 H.section $ H.h4 "Validation metrics"
                 let metricsDto = toMetricsDto rawMetric
@@ -102,13 +102,20 @@ mainPage validation asyncFecth =
                     validaionDetailsHtml $ asValidations ^. #validations
 
 
-overallHtml :: WorldVersion -> Html
-overallHtml worldVersion = do 
+overallHtml :: SystemInfo -> WorldVersion -> Html
+overallHtml SystemInfo {..} worldVersion = do 
     let t = versionToMoment worldVersion
-    H.div ! A.class_ "overall" $ do 
-        H.text "Last validation: " >> space
-        H.text $ Text.pack $ instantDateFormat t
-        space >> H.text "(UTC)"
+    H.table $ H.tbody $ do
+        htmlRow 0 $ do 
+            td $ H.text "Version"
+            td $ H.text rpkiProverVersion
+        htmlRow 1 $ do 
+            td $ H.text "Last validation"
+            td $ H.text $ Text.pack $ instantDateFormat t
+        htmlRow 2 $ do 
+            td $ H.text "Startup time"
+            td $ H.text $ Text.pack $ instantDateFormat startUpTime
+                    
 
 
 validationMetricsHtml :: GroupedValidationMetric ValidationMetric -> Html

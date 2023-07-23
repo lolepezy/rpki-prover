@@ -78,7 +78,7 @@ data API api = API {
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
-        versions :: api :- "versions" :> Get '[JSON] [WorldVersion]
+        versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)]
     }
     deriving (Generic)
 
@@ -98,7 +98,7 @@ data HttpApi route = HttpApi {
 swaggerDoc :: Swagger
 swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
     & info.title    .~ "RPKI Prover API"
-    & info.version  .~ convert getVersion
+    & info.version  .~ convert rpkiProverVersion
     & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
                             "this UI is only good for documentation and examples." )
     & basePath          ?~ "/api"

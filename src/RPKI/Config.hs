@@ -26,8 +26,8 @@ import RPKI.Store.Base.Serialisation
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 
-getVersion :: Text
-getVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
+rpkiProverVersion :: Text
+rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 
 data Parallelism = Parallelism {
         cpuCount         :: Natural,
