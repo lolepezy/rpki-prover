@@ -206,50 +206,6 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
         pure $ fromValidations fetchValidation : rs
 
-
--- | It is the main entry point for the top-down validation. 
--- Validates a bunch of TAs starting from their TALs.  
--- validateMutlipleTAs :: Storage s =>
---                     AppContext s
---                     -> WorldVersion
---                     -> [TAL]
---                     -> IO [TopDownResult]
--- validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
---     db <- readTVarIO database
-
---     repositoryProcessing <- newRepositoryProcessingIO config
---     allTas <- newAllTasTopDownContext worldVersion
---                 (Now $ versionToMoment worldVersion) repositoryProcessing
-
---     validateThem db allTas
---         `finally`
---             concurrently
---                 (applyValidationSideEffects appContext allTas)
---                 (cancelFetchTasks repositoryProcessing)
---   where
-
---     validateThem db allTas = do
---         -- set initial publication point state
---         mapException (AppException . storageError) $ do
---             pps <- roTx db $ \tx -> getPublicationPoints tx db
---             let pps' = addRsyncPrefetchUrls config pps
---             atomically $ writeTVar (allTas ^. #repositoryProcessing . #publicationPoints) pps'
-
---         rs <- pooledForConcurrently tals $ \tal -> do
---             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
---                     validateTA appContext tal worldVersion allTas
---             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
---             pure r
-
---         -- save publication points state    
---         mapException (AppException . storageError) $ do
---             pps <- readTVarIO $ allTas ^. #repositoryProcessing . #publicationPoints
---             rwTx db $ \tx -> savePublicationPoints tx db pps
-
---         -- Get validations for all the fetches that happened during this top-down traversal
---         fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
---         pure $ fromValidations fetchValidation : rs
-
 --
 validateTA :: Storage s =>
             AppContext s
