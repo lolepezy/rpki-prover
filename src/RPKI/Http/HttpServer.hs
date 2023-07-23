@@ -93,23 +93,23 @@ httpApi appContext = genericServe HttpApi {
     }
 
     uiServer AppContext {..} = do
-        version <- liftIO $ getLastValidationVersion appContext        
+        db <- liftIO $ readTVarIO database
+        version <- liftIO $ roTx db $ \tx -> getLastValidationVersion db tx 
         case version of 
             Nothing -> notFoundException
-            Just validationVersion -> do  
-                db <- liftIO $ readTVarIO database
-                af <- liftIO $ roTx db $ \tx -> runMaybeT $ do 
-                        afVersion     <- MaybeT $ getLastAsyncFetchVersion appContext
-                        afMetrics     <- MaybeT $ metricsForVersion tx db afVersion
-                        afValidations <- MaybeT $ getValidationsForVersion appContext afVersion
-                        pure (afVersion, afValidations, afMetrics)
+            Just validationVersion -> do                  
+                asyncFetch <- liftIO $ roTx db $ \tx -> runMaybeT $ do 
+                                afVersion     <- MaybeT $ getLastAsyncFetchVersion appContext
+                                afMetrics     <- MaybeT $ metricsForVersion tx db afVersion
+                                afValidations <- MaybeT $ getValidationsForVersion appContext afVersion
+                                pure (afVersion, afValidations, afMetrics)
                     
-                vv <- liftIO $ roTx db $ \tx -> runMaybeT $ do                 
-                        vMetrics     <- MaybeT $ metricsForVersion tx db validationVersion
-                        vValidations <- MaybeT $ getValidationsForVersion appContext validationVersion
-                        pure (validationVersion, vValidations, vMetrics)
+                validation <- liftIO $ roTx db $ \tx -> runMaybeT $ do                 
+                                vMetrics     <- MaybeT $ metricsForVersion tx db validationVersion
+                                vValidations <- MaybeT $ getValidationsForVersion appContext validationVersion
+                                pure (validationVersion, vValidations, vMetrics)
 
-                pure $ mainPage vv af
+                pure $ mainPage validation asyncFetch
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
@@ -187,7 +187,7 @@ getBGPCertsFiltered :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCertsFiltered AppContext {..} = do
     db <- readTVarIO database
     fmap (fromMaybe mempty) $ roTx db $ \tx ->
-        getLastCompletedVersion db tx >>= \case      
+        getLastValidationVersion db tx >>= \case      
             Nothing      -> pure mempty   
             Just version -> runMaybeT $ do 
                 bgps  <- MaybeT $ getBgps tx db version
@@ -198,7 +198,7 @@ getGBRs :: Storage s => AppContext s -> IO [Located GbrDto]
 getGBRs AppContext {..} = do
     gbrs <- getLatestGbrs =<< readTVarIO database
     pure [ Located { payload = gbrObjectToDto g, .. }
-            | Located { payload = GbrRO g, .. } <- gbrs ]    
+         | Located { payload = GbrRO g, .. } <- gbrs ]    
 
 
 getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
@@ -235,13 +235,6 @@ getValidationsDto appContext = do
     vs <- liftIO $ getValidations appContext
     maybe notFoundException pure vs
 
-getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
-getLastVersion AppContext {..} = do
-    db <- readTVarIO database
-    roTx db $ getLastCompletedVersion db
-
-getLastValidationVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
-getLastValidationVersion appContext = getLastKindVersion appContext validationKind
 
 getLastAsyncFetchVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastAsyncFetchVersion appContext = getLastKindVersion appContext asyncFetchKind
@@ -271,8 +264,8 @@ getMetricsImpl AppContext {..} getVersionF = do
     db <- liftIO $ readTVarIO database
     metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-            lastVersion <- MaybeT $ getVersionF db tx
-            rawMetrics  <- MaybeT $ metricsForVersion tx db lastVersion
+            version <- MaybeT $ getVersionF db tx
+            rawMetrics  <- MaybeT $ metricsForVersion tx db version
             pure (rawMetrics, toMetricsDto rawMetrics)
     maybe notFoundException pure metrics
 
@@ -286,7 +279,7 @@ getSlurm AppContext {..} = do
     db <- liftIO $ readTVarIO database
     z  <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion db tx
+                lastVersion <- MaybeT $ getLastValidationVersion db tx
                 MaybeT $ slurmForVersion tx db lastVersion
     case z of
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }

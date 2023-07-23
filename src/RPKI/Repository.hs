@@ -55,8 +55,6 @@ instance Semigroup FetchEverSucceeded where
 data Speed = Quick | Slow | Timedout 
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass TheBinary
-    deriving Semigroup via Max Speed
-
 
 data FetchStatus
   = Pending
@@ -173,6 +171,9 @@ instance Monoid FetchStatus where
     
 instance Monoid Speed where    
     mempty = Quick
+
+instance Semigroup Speed where    
+    s1 <> s2 = s2
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
@@ -371,7 +372,7 @@ updateStatuses
         foldRepos 
             (RrdpR r@RrdpRepository {..}, newStatus, newSpeed) 
             (rrdps', rsyncs', lastS) = 
-                    ((uri, (r & #status .~ newStatus) & #speed .~ newSpeed) : rrdps', 
+                    ((uri, r & #status .~ newStatus & #speed .~ newSpeed) : rrdps', 
                     rsyncs', 
                     status2Success (RrdpU uri) newStatus lastS)
 

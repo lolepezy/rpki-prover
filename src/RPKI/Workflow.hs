@@ -65,6 +65,19 @@ import           RPKI.SLURM.Types
 data JobRun = FirstRun | RanBefore
     deriving (Show, Eq, Ord, Generic)  
 
+-- Some jobs are dangerous to run with anything else
+newtype JobLock = JobLock (TVar Bool)
+
+newJobLock :: STM JobLock
+newJobLock = JobLock <$> newTVar False
+
+exclusiveJob :: JobLock -> IO a -> IO a
+exclusiveJob (JobLock t) f = 
+    bracket lock unlock (const f)
+  where 
+    lock     = atomically $ readTVar t >>= (`when` retry)
+    unlock _ = atomically $ writeTVar t False
+
 data WorkflowShared = WorkflowShared { 
         -- Indicates if anything was ever deleted from the DB,
         -- it is needed for cleanup and compaction procedures.
@@ -77,12 +90,20 @@ data WorkflowShared = WorkflowShared {
         globalQueue :: ClosableQueue (WorldVersion -> IO ()),
 
         -- The same type of the separate queue for the async fetcher.
-        asyncFetchQueue :: ClosableQueue (WorldVersion -> IO ())
+        asyncFetchQueue :: ClosableQueue (WorldVersion -> IO ()),
+
+        -- This lock is to be used by compaction and async-fetch jobs,
+        -- since they should never run at the same time.
+        exclusiveLock :: JobLock
     }
     deriving (Generic)
 
 newWorkflowShared :: STM WorkflowShared
-newWorkflowShared = WorkflowShared <$> newTVar False <*> newCQueue 10 <*> newCQueue 10
+newWorkflowShared = WorkflowShared 
+            <$> newTVar False 
+            <*> newCQueue 10 
+            <*> newCQueue 10 
+            <*> newJobLock
 
 
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
@@ -136,13 +157,15 @@ runWorkflow appContext@AppContext {..} tals = do
             runAsyncFetcherIfNeeded = 
                 for_ (config ^. #validationConfig . #asyncFetchConfig) $ \_ -> do 
                     logDebug logger [i|Running async fetch job.|] 
-                    writeQIfPossible asyncFetchQueue $ \worldVersion -> do 
-                        validations <- runFetches appContext
-                        db <- readTVarIO database
-                        rwTx db $ \tx -> do
-                            saveValidations tx db worldVersion (validations ^. typed)
-                            saveMetrics tx db worldVersion (validations ^. typed)
-                            asyncFetchWorldVersion tx db worldVersion                  
+                    writeQIfPossible asyncFetchQueue $ \worldVersion -> 
+                        -- aquire the same lock as the compaction job
+                        exclusiveJob exclusiveLock $ do 
+                            validations <- runFetches appContext
+                            db <- readTVarIO database
+                            rwTx db $ \tx -> do
+                                saveValidations tx db worldVersion (validations ^. typed)
+                                saveMetrics tx db worldVersion (validations ^. typed)
+                                asyncFetchWorldVersion tx db worldVersion                  
 
         periodicJobStarters workflowShared = do 
             let availableJobs = [
@@ -288,7 +311,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
 
         -- Do the LMDB compaction
-        compact WorkflowShared {..} worldVersion _ = do
+        compact WorkflowShared {..} worldVersion _ = exclusiveJob exclusiveLock $ do
             -- Some heuristics first to see if it's obvisouly too early to run compaction:
             -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
             deletedAnything <- readTVarIO deletedAnythingFromDb
@@ -469,12 +492,12 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- This is to prevent cleaning up objects if they were untouched 
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
-        fromMaybe worldVersion <$> getLastCompletedVersion db tx
+        fromMaybe worldVersion <$> getLastValidationVersion db tx
 
     deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
 
 
--- | Load the state corresponding to the last completed version.
+-- | Load the state corresponding to the last completed validation version.
 -- 
 loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do
@@ -482,8 +505,8 @@ loadStoredAppState AppContext {..} = do
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
     db <- readTVarIO database
     roTx db $ \tx ->
-        getLastCompletedVersion db tx >>= \case
-            Nothing          -> pure Nothing
+        getLastValidationVersion db tx >>= \case
+            Nothing  -> pure Nothing
 
             Just lastVersion
                 | versionIsOld now' revalidationInterval lastVersion -> do
@@ -532,11 +555,11 @@ runFetches appContext@AppContext {..} = do
             let ppAccess = PublicationPointAccess $ fromList [pp]            
             worldVersion <- newWorldVersion
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                    fetchPPWithFallback appContext repositoryProcessing worldVersion ppAccess
+                    fetchPPWithFallback adjustedConfig repositoryProcessing worldVersion ppAccess
             
         validationStateOfFetches repositoryProcessing   
   where
-    -- Replace rsync and rrdp timeouts with their async conterparts, 
+    -- Replace rsync and rrdp timeouts with their async counterparts, 
     -- since fetcher is not aware if it works in sync or async context.
     adjustedConfig = appContext 
         & #config . #rsyncConf %~ (\rc -> rc & #rsyncTimeout .~ rc ^. #asyncRsyncTimeout)

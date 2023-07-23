@@ -794,12 +794,8 @@ deletePayloads tx db worldVersion = do
 
 -- | Find the latest completed world version 
 -- 
-getLastCompletedVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
-getLastCompletedVersion database tx = do 
-        vs <- map fst <$> allVersions tx database
-        pure $ case vs of         
-            []  -> Nothing
-            vs' -> Just $ maximum vs'
+getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
+getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
 
 getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
 getLastVersionOfKind database tx versionKind = do 
@@ -812,7 +808,7 @@ getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
 getLatestVRPs db = 
     roTx db $ \tx ->        
         runMaybeT $ do 
-            version <- MaybeT $ getLastCompletedVersion db tx
+            version <- MaybeT $ getLastValidationVersion db tx
             MaybeT $ getVrps tx db version
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
@@ -833,7 +829,7 @@ getLatestX :: (Storage s, Monoid b) =>
             -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
             -> IO b
 getLatestX tx db f =      
-        getLastCompletedVersion db tx >>= \case         
+        getLastValidationVersion db tx >>= \case         
             Nothing      -> pure mempty
             Just version -> fromMaybe mempty <$> f tx db version    
 
