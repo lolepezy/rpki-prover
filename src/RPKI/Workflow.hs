@@ -22,7 +22,8 @@ import           Data.List
 import           Data.List.NonEmpty              (fromList)
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
-import qualified Data.Map.Strict as Map
+import qualified Data.Map.Strict                 as Map
+import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe)
 
 import           Data.String.Interpolate.IsString
@@ -539,7 +540,11 @@ runFetches appContext@AppContext {..} = do
     withRepositoriesProcessing adjustedConfig $ \repositoryProcessing -> do
 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
-        let problematicRepositories = findSpeedProblems pps
+        -- We only care about the repositories that are mentioned 
+        -- in the last validation.
+        let problematicRepositories = filter (\(u, _) -> 
+                u `Set.member` (pps ^. #recentlyRequested)) $ 
+                findSpeedProblems pps
 
         let reposText = Text.intercalate ", " $ map (toText . fst) problematicRepositories
         unless (null problematicRepositories) $ 

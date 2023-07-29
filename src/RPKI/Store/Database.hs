@@ -66,12 +66,14 @@ import           RPKI.Time
 currentDatabaseVersion :: Integer
 currentDatabaseVersion = 19
 
-
 databaseVersionKey :: Text
 databaseVersionKey = "database-version"
 
 lastValidMftKey :: Text
 lastValidMftKey = "last-valid-mft"
+
+recentlyRequestedKey :: Text
+recentlyRequestedKey = "recently-requested"
 
 data EraseWrapper s where 
     EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
@@ -207,14 +209,15 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-        lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
+        rrdpS   :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS  :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        lastS   :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded,
+        recentS :: SMap "recently-requested" s Text (Compressed (Set.Set RpkiURL))
     }
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _) = storage s
+    storage (RepositoryStore s _ _ _) = storage s
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
@@ -598,7 +601,7 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 ChangeSet ->
                 m ()
 applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges lastSucceded) = liftIO $ do
+                  (ChangeSet rrdpChanges rsyncChanges lastSucceded recentlyRequested) = liftIO $ do
     -- Do the Remove first and only then Put
     let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
 
@@ -613,6 +616,9 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     let (lastSPuts, lastSRemoves) = separate lastSucceded
     for_ lastSRemoves $ \(uri', _) -> M.delete tx lastS uri'
     for_ lastSPuts $ uncurry (M.put tx lastS)
+
+    let (lastSPuts, _) = separate [recentlyRequested]    
+    for_ lastSPuts $ \rr -> M.put tx recentS recentlyRequestedKey (Compressed rr)
   where
     separate = foldr f ([], [])
       where
@@ -624,10 +630,12 @@ getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ 
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS
     lasts <- M.all tx lastS
+    recents <- fromMaybe mempty . fmap unCompressed <$> M.get tx recentS recentlyRequestedKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)
             (EverSucceededMap $ Map.fromList lasts)
+            recents
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

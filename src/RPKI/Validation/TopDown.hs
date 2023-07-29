@@ -191,8 +191,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
                     (Now $ versionToMoment worldVersion) repositoryProcessing
 
         validateThem allTas
-            `finally` (applyValidationSideEffects appContext allTas)
-                    
+            `finally` (applyValidationSideEffects appContext allTas)                    
   where
 
     validateThem allTas = do
@@ -305,7 +304,7 @@ validateFromTACert
 
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
+        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos        
 
     -- Do the tree descend, gather validation results and VRPs                
     payloads <- fromTryM
@@ -316,10 +315,10 @@ validateFromTACert
 
 
 validateCa :: Storage s =>
-                        AppContext s ->
-                        TopDownContext ->
-                        Located CaCerObject ->
-                        ValidatorT IO (Seq (Payloads (Set Vrp)))
+            AppContext s ->
+            TopDownContext ->
+            Located CaCerObject ->
+            ValidatorT IO (Seq (Payloads (Set Vrp)))
 validateCa
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
@@ -374,7 +373,9 @@ validateCa
                         Just ppAccess' -> do
                             -- Skip repositories that are known to be too slow 
                             -- or timed out (i.e. unavailable)
-                            filterOutSlow repositoryProcessing ppAccess' >>= \case
+                            (filteredPPs, filteredOutRepos) <- filterOutSlow repositoryProcessing ppAccess'                            
+                            markAsRequested repositoryProcessing filteredOutRepos
+                            case filteredPPs of 
                                 Nothing               -> validateThisCertAndGoDown
                                 Just filteredPPAccess -> do 
                                     fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess

@@ -28,20 +28,20 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict (getMonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
+import           Data.String.Interpolate.IsString as S
 
-import Text.Blaze.Html5 as H
-import Text.Blaze.Html5.Attributes as A
+import           Text.Blaze.Html5 as H
+import           Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes
-import           RPKI.Config
 import           RPKI.AppState
+import           RPKI.Config
+import           RPKI.Domain
+import           RPKI.Http.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
 import           RPKI.Reporting
 import           RPKI.Time
-
-import RPKI.Http.Types
-import RPKI.Domain
 
 
 mainPage :: SystemInfo 
@@ -86,10 +86,11 @@ mainPage systemInfo validation asyncFecth =
                 H.section $ H.h4 "Validation details"
                 validaionDetailsHtml $ vs ^. #validations
 
-                for_ asyncFecth $ \(_, asValidations, rawMetrics) -> do 
+                for_ asyncFecth $ \(afVersion, asValidations, rawMetrics) -> do 
                     H.a ! A.id "async-fetch" $ ""
                     H.section $ H.h4 "Asynchronous fetches"                    
-                    H.text "Metrics, errors and warning for the slow and timed out repositories that are fetched asynchronously."
+                    H.text [S.i|Metrics, errors and warning for the slow and timed out repositories 
+                                that are fetched asynchronously at #{instantDateFormat $ versionToMoment afVersion}.|]
                     H.br >> H.br            
                     H.a ! A.id "async-fetch-rrdp-metrics" $ ""
                     H.section $ H.h4 "RRDP metrics"

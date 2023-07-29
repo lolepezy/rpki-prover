@@ -219,9 +219,8 @@ fetchPPWithFallback
         wait a
 
     needsAFetch pp now' = do 
-        pps <- readTVar publicationPoints
-        let asIfMerged = mergePP pp pps
-        let Just repo = repositoryFromPP asIfMerged (getRpkiURL pp)
+        pps <- readTVar publicationPoints        
+        let Just repo = repositoryFromPP (mergePP pp pps) (getRpkiURL pp)
         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
         pure (needsFetching', repo)
 
@@ -325,7 +324,10 @@ needsFetching r status ValidationConfig {..} (Now now) =
     case status of
         Pending         -> True
         FetchedAt time  -> tooLongAgo time
-        FailedAt time   -> tooLongAgo time
+        -- TODO This is an interesting question and needs some 
+        -- It maybe should be 
+        -- FailedAt time   -> tooLongAgo time
+        FailedAt time   -> True
   where
     tooLongAgo momendTnThePast = 
         not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
@@ -370,20 +372,32 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
     pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
 
 
-filterOutSlow :: MonadIO m => RepositoryProcessing -> PublicationPointAccess -> m (Maybe PublicationPointAccess)
+filterOutSlow :: MonadIO m => 
+                RepositoryProcessing 
+            -> PublicationPointAccess 
+            -> m (Maybe PublicationPointAccess, [Repository])
 filterOutSlow repositoryProcessing ppAccess = liftIO $ do
     pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-    pure $ fmap PublicationPointAccess $ 
-            NonEmpty.nonEmpty $ 
-            NonEmpty.filter (filter_ pps) $ 
-            unPublicationPointAccess ppAccess
-  where
-    filter_ pps pp = let
-        r = repositoryFromPP (mergePP pp pps) (getRpkiURL pp)    
-        in case r of 
-            Nothing -> False
-            Just (getSpeed -> speed) ->
-                case speed of 
-                    Quick -> True
-                    _      -> False
+    
+    let ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
 
+    let slowFilteredOut = [ r  | (isQuick, Just r) <- map (filter_ pps) ppaList, not isQuick ]
+    let quickOnes       = [ pp | (pp, (isQuick, _)) <- map (\pp -> (pp, filter_ pps pp)) ppaList, isQuick ]
+
+    pure (PublicationPointAccess <$> NonEmpty.nonEmpty quickOnes, slowFilteredOut)
+
+  where
+   
+    filter_ pps pp = 
+        case repositoryFromPP (mergePP pp pps) (getRpkiURL pp) of 
+            Nothing -> (False, Nothing)
+            Just r  ->
+                case getSpeed r of 
+                    Quick -> (True, Just r)
+                    _     -> (False, Just r)
+
+
+markAsRequested ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
+markAsRequested RepositoryProcessing {..} filteredOutRepos = liftIO $ atomically $ do 
+    modifyTVar' publicationPoints
+        (& #recentlyRequested %~ (<> Set.fromList (map getRpkiURL filteredOutRepos)))

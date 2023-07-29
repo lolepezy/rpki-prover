@@ -266,7 +266,8 @@ getMetricsImpl AppContext {..} getVersionF = do
 
 
 notFoundException :: MonadError ServerError m => m a
-notFoundException = throwError err404 { errBody = "Working, please hold still!" }
+notFoundException = throwError err404 { 
+    errBody = "No finished validations yet." }
 
 getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m Slurm
