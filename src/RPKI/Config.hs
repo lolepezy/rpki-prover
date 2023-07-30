@@ -257,6 +257,8 @@ defaulPrefetchURLs = [
         "rsync://rpki.apnic.net/member_repository",
         "rsync://rpki-repo.registro.br/repo/",
         "rsync://repo-rpki.idnic.net/repo/",
-        "rsync://0.sb/repo/"
+        "rsync://0.sb/repo/",
+        "rsync://rpki.co/repo/",
+        "rsync://rpki-rps.arin.net/repository/"
     ]    
     
