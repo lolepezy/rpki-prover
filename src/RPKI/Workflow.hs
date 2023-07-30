@@ -103,7 +103,7 @@ newWorkflowShared :: STM WorkflowShared
 newWorkflowShared = WorkflowShared 
             <$> newTVar False 
             <*> newCQueue 10 
-            <*> newCQueue 10 
+            <*> newCQueue 2 
             <*> newJobLock
 
 
@@ -149,7 +149,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             -- Validate all TAs top-down
                             validateAllTAs prometheusMetrics =<< createWorldVersion
                             -- After every validation run async repository fetcher   
-                            -- for slow/unstable/timedout repositories                       
+                            -- for slow/unstable/timed out repositories                       
                             runAsyncFetcherIfNeeded
                         pure Repeat)
                 `finally`
@@ -158,7 +158,8 @@ runWorkflow appContext@AppContext {..} tals = do
             runAsyncFetcherIfNeeded = 
                 for_ (config ^. #validationConfig . #asyncFetchConfig) $ \_ -> do                     
                     writeQIfPossible asyncFetchQueue $ \worldVersion -> 
-                        -- aquire the same lock as the compaction job
+                        -- aquire the same lock as the compaction job to not 
+                        -- allow async fetches during LMDB compaction
                         exclusiveJob exclusiveLock $ do 
                             logDebug logger [i|Running async fetch job.|] 
                             validations <- runFetches appContext
@@ -193,7 +194,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                     Nothing           -> (defInitialDelay, FirstRun)
                                     Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
                         
-                            jobAction worldVersion = do                                 
+                            jobWrapper worldVersion = do                                 
                                     action worldVersion jobRun
                                 `finally` (do
                                     Now endTime <- thisInstant
@@ -208,14 +209,16 @@ runWorkflow appContext@AppContext {..} tals = do
                                     then [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
                                     else [i|with initial delay #{delaySeconds}s|] 
                             logDebug logger [i|Scheduling job '#{job}' #{delayText} and interval #{interval}.|] 
-                            generatePeriodicJob initialDelay interval jobAction globalQueue
+                            generatePeriodicJob initialDelay interval jobWrapper globalQueue
     
         jobExecutor WorkflowShared {..} = 
             void $ concurrently (go globalQueue) (go asyncFetchQueue)
           where
             go queue = do
                 z <- atomically $ readCQueue queue
-                for_ z $ \job -> createWorldVersion >>= job >> go queue
+                for_ z $ \job -> do 
+                    createWorldVersion >>= job
+                    go queue
 
         validateAllTAs prometheusMetrics worldVersion = do
             logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
@@ -470,10 +473,10 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     (_, elapsed) <- timedMS $ rwTx db $ \tx -> do
         saveValidations tx db worldVersion (updatedValidation ^. typed)
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
-        saveVrps tx db (payloads ^. #vrps) worldVersion
-        saveAspas tx db (payloads ^. #aspas) worldVersion
-        saveGbrs tx db (payloads ^. #gbrs) worldVersion
-        saveBgps tx db (payloads ^. #bgpCerts) worldVersion
+        saveVrps tx db (payloads ^. typed) worldVersion
+        saveAspas tx db (payloads ^. typed) worldVersion
+        saveGbrs tx db (payloads ^. typed) worldVersion
+        saveBgps tx db (payloads ^. typed) worldVersion
         for_ maybeSlurm $ saveSlurm tx db worldVersion
         completeWorldVersion tx db worldVersion
 
