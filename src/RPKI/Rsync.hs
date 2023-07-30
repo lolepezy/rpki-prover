@@ -270,7 +270,7 @@ rsyncProcess Config {..} rsyncURL destination rsyncMode =
     proc "rsync" $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
-        -- [ "--contimeout=" <> show timeout' ] <>         
+        [ "--contimeout=" <> show timeout' ] <>         
         [ "--max-size=" <> show (validationConfig ^. #maxObjectSize) ] <> 
         [ "--min-size=" <> show (validationConfig ^. #minObjectSize) ] <> 
         extraOptions <> 
