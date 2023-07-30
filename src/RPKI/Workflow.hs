@@ -156,17 +156,18 @@ runWorkflow appContext@AppContext {..} tals = do
                     atomically (closeCQueue globalQueue)        
           where
             runAsyncFetcherIfNeeded = 
-                for_ (config ^. #validationConfig . #asyncFetchConfig) $ \_ -> do 
-                    logDebug logger [i|Running async fetch job.|] 
+                for_ (config ^. #validationConfig . #asyncFetchConfig) $ \_ -> do                     
                     writeQIfPossible asyncFetchQueue $ \worldVersion -> 
                         -- aquire the same lock as the compaction job
                         exclusiveJob exclusiveLock $ do 
+                            logDebug logger [i|Running async fetch job.|] 
                             validations <- runFetches appContext
                             db <- readTVarIO database
                             rwTx db $ \tx -> do
                                 saveValidations tx db worldVersion (validations ^. typed)
                                 saveMetrics tx db worldVersion (validations ^. typed)
                                 asyncFetchWorldVersion tx db worldVersion                  
+                            logDebug logger [i|Finished async fetch job.|]
 
         periodicJobStarters workflowShared = do 
             let availableJobs = [
