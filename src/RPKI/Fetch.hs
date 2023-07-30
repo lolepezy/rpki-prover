@@ -400,4 +400,4 @@ filterOutSlow repositoryProcessing ppAccess = liftIO $ do
 markAsRequested ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
 markAsRequested RepositoryProcessing {..} filteredOutRepos = liftIO $ atomically $ do 
     modifyTVar' publicationPoints
-        (& #recentlyRequested %~ (<> Set.fromList (map getRpkiURL filteredOutRepos)))
+        (& #slowRequested %~ (<> Set.fromList (map getRpkiURL filteredOutRepos)))

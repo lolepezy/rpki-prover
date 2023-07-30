@@ -373,8 +373,8 @@ validateCa
                         Just ppAccess' -> do
                             -- Skip repositories that are known to be too slow 
                             -- or timed out (i.e. unavailable)
-                            (filteredPPs, filteredOutRepos) <- filterOutSlow repositoryProcessing ppAccess'                            
-                            markAsRequested repositoryProcessing filteredOutRepos
+                            (filteredPPs, filteredOutSlowRepos) <- filterOutSlow repositoryProcessing ppAccess'                            
+                            markAsRequested repositoryProcessing filteredOutSlowRepos
                             case filteredPPs of 
                                 Nothing               -> validateThisCertAndGoDown
                                 Just filteredPPAccess -> do 

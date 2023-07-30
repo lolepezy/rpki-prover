@@ -543,7 +543,7 @@ runFetches appContext@AppContext {..} = do
         -- We only care about the repositories that are mentioned 
         -- in the last validation.
         let problematicRepositories = filter (\(u, _) -> 
-                u `Set.member` (pps ^. #recentlyRequested)) $ 
+                u `Set.member` (pps ^. #slowRequested)) $ 
                 findSpeedProblems pps
 
         let reposText = Text.intercalate ", " $ map (toText . fst) problematicRepositories

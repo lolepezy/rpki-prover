@@ -66,14 +66,11 @@ import           RPKI.Time
 currentDatabaseVersion :: Integer
 currentDatabaseVersion = 19
 
-databaseVersionKey :: Text
+-- Some constant keys
+databaseVersionKey, lastValidMftKey, slowrRequestedKey :: Text
 databaseVersionKey = "database-version"
-
-lastValidMftKey :: Text
-lastValidMftKey = "last-valid-mft"
-
-recentlyRequestedKey :: Text
-recentlyRequestedKey = "recently-requested"
+lastValidMftKey    = "last-valid-mft"
+slowrRequestedKey  = "slow-requested"
 
 data EraseWrapper s where 
     EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
@@ -109,7 +106,7 @@ instance Storage s => WithStorage s (DB s) where
 -- That's why all the fiddling with locations in putObject, getLocatedByKey 
 -- and deleteObject.
 -- 
--- Also, since URLs are relatives long, there's a separate mapping between 
+-- Also, since URLs are relativly long, there's a separate mapping between 
 -- URLs and artificial UrlKeys.
 -- 
 data RpkiObjectStore s = RpkiObjectStore {
@@ -209,10 +206,10 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS   :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS  :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-        lastS   :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded,
-        recentS :: SMap "recently-requested" s Text (Compressed (Set.Set RpkiURL))
+        rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded,
+        slowS  :: SMap "slow-requested" s Text (Compressed (Set.Set RpkiURL))
     }
     deriving stock (Generic)
 
@@ -601,7 +598,7 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 ChangeSet ->
                 m ()
 applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges lastSucceded recentlyRequested) = liftIO $ do
+                  (ChangeSet rrdpChanges rsyncChanges lastSucceded slowRequested) = liftIO $ do
     -- Do the Remove first and only then Put
     let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
 
@@ -617,8 +614,8 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     for_ lastSRemoves $ \(uri', _) -> M.delete tx lastS uri'
     for_ lastSPuts $ uncurry (M.put tx lastS)
 
-    let (lastSPuts, _) = separate [recentlyRequested]    
-    for_ lastSPuts $ \rr -> M.put tx recentS recentlyRequestedKey (Compressed rr)
+    let (lastSPuts, _) = separate [slowRequested]    
+    for_ lastSPuts $ \rr -> M.put tx slowS slowrRequestedKey (Compressed rr)
   where
     separate = foldr f ([], [])
       where
@@ -630,12 +627,12 @@ getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ 
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS
     lasts <- M.all tx lastS
-    recents <- fromMaybe mempty . fmap unCompressed <$> M.get tx recentS recentlyRequestedKey
+    slowS <- fromMaybe mempty . fmap unCompressed <$> M.get tx slowS slowrRequestedKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)
             (EverSucceededMap $ Map.fromList lasts)
-            recents
+            slowS
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do
@@ -893,7 +890,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         in RepositoryStats <$>
             M.stats tx rrdpS <*>
             M.stats tx rsyncS <*>
-            M.stats tx lastS
+            M.stats tx lastS <*>
+            M.stats tx slowS
 
     vResultStats' tx = 
         let ValidationsStore results = validationsStore

@@ -108,11 +108,11 @@ data PublicationPoints = PublicationPoints {
         -- TODO Figure out is this is still needed, 
         -- it is not clear what the advantage of keeping track of it aree
         lastSucceded :: EverSucceededMap,
-        -- Set of all URL that were requested to fetch as a result of fetching 
+        -- Set of _slow_ URL that were requested to fetch as a result of fetching 
         -- publication points on certificats during the last validation.
-        -- In other words, repository URLs we care about and want to keep 
-        -- up-to-date in the local cache.
-        recentlyRequested :: Set.Set RpkiURL
+        -- In other words, slow and timing out repository URLs we care about 
+        -- and want to keep up-to-date in the local cache.
+        slowRequested :: Set.Set RpkiURL
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
@@ -370,12 +370,12 @@ changeSet
 -- Update statuses of the repositories and last successful fetch times for them
 updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus, Speed) -> PublicationPoints
 updateStatuses 
-    (PublicationPoints rrdps rsyncs lastSucceded recentlyRequested) newStatuses = 
+    (PublicationPoints rrdps rsyncs lastSucceded slowRequested) newStatuses = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdpUpdates))
             rsyncsUpdates
             (lastSucceded <> EverSucceededMap (Map.fromList lastSuccededUpdates))
-            recentlyRequested
+            slowRequested
     where
         (rrdpUpdates, rsyncsUpdates, lastSuccededUpdates) = 
             foldr foldRepos ([], rsyncs, []) newStatuses
