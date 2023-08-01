@@ -24,6 +24,7 @@ import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
+import qualified Deque.Strict                    as Deq
 import           Data.Maybe                      (fromMaybe)
 
 import           Data.String.Interpolate.IsString
@@ -573,3 +574,21 @@ runFetches appContext@AppContext {..} = do
     adjustedConfig = appContext 
         & #config . #rsyncConf %~ (\rc -> rc & #rsyncTimeout .~ rc ^. #asyncRsyncTimeout)
         & #config . #rrdpConf %~ (\rc -> rc & #rrdpTimeout .~ rc ^. #asyncRrdpTimeout)
+
+
+
+data Task = ValidationTask
+        | CleanupCacheTask
+        | LmdbCompactTask
+        | CleanupTask
+        | AsyncFetchTask
+
+data ParallelQueue = ParallelQueue {
+    queue :: TVar (Deq.Deque (Task, IO ()))
+}
+
+canRunAtTheSameTime :: Task -> Task -> Bool
+canRunAtTheSameTime t1 t2 = compatible t1 t2 || compatible t2 t1
+  where
+    compatible ValidationTask AsyncFetchTask = True
+    compatible ValidationTask AsyncFetchTask = True
