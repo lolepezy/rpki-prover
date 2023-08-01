@@ -10,6 +10,7 @@
 
 module RPKI.Validation.TopDown where
 
+import           Control.Concurrent.Async        (forConcurrently)
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
@@ -195,7 +196,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
   where
 
     validateThem allTas = do
-        rs <- pooledForConcurrently tals $ \tal -> do
+        rs <- forConcurrently tals $ \tal -> do
             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
                     validateTA appContext tal worldVersion allTas
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
@@ -252,7 +253,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 -> ValidatorT IO (Located CaCerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
-    let validationConfig = config ^. typed @ValidationConfig
+    let validationConfig = config ^. typed
 
     db       <- liftIO $ readTVarIO database
     taByName <- roAppTxEx db storageError $ \tx -> getTA tx db (getTaName tal)
