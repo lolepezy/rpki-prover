@@ -143,6 +143,10 @@ instance Storage LmdbStorage where
         foldGeneric tx db f a0 withMultiCursor LMMap.firstForward
 
 -- TODO Add some nice type signature here
+-- foldGeneric :: forall m cursor . 
+--             Lmdb.Transaction (LmdbTxMode m) 
+--         -> cursor 
+--         -> _
 foldGeneric tx db f a0 withCurs makeProducer =
     withCurs tx db $ \c -> do
         z <- newIORef a0

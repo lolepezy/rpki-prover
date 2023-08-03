@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
-import Network.HTTP.Simple (getResponseBody, getResponseStatusCode, getResponseHeader, httpSource)
+import Network.HTTP.Simple
 
 import RPKI.AppContext
 import RPKI.AppMonad
