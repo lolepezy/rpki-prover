@@ -2,33 +2,41 @@ body {
     font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif;
 }
 
-table { 
+table.gen-t { 
 	width: 1000px; 
 	border-collapse: collapse; 
 	margin:50px auto;
 }
 
-th { 	
+th.gen-t { 	
     background-color: #ebebeb;
 	color: rgb(52, 52, 52); 
 	font-weight: bold; 
 }
 
-td, th { 
+td.gen-t, th.gen-t { 
 	padding: 8px; 
 	border: 1px solid rgb(153, 153, 153); 	
 	text-align: left; 
 	font-size: 15px;
 }
 
-.no-wrap {
-    white-space: nowrap
+table.sub-t { 
+	width: 1000px; 	
+    border-collapse: collapse;
+    margin-top: 8px;
+    margin-bottom: 8px;
 }
 
-.labels tr td {
-	background-color: #c1c1c1;
-	font-weight: bold;
-	color: rgb(52, 52, 52); 
+td.sub-t, th.sub-t { 
+	padding: 8px; 	
+    border-collapse: collapse;
+	text-align: left; 
+	font-size: 14px;
+}
+
+.no-wrap {
+    white-space: nowrap
 }
 
 .error-message {

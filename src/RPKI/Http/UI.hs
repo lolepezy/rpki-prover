@@ -49,11 +49,9 @@ mainPage :: SystemInfo
         -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) -> Html
 mainPage systemInfo validation asyncFecth =     
     H.docTypeHtml $ do
-        H.head $ do
+        H.head $ 
             link ! rel "stylesheet" ! href "/static/styles.css"
-            script ! src "/static/jquery.min.js" $ mempty
-            script ! src "/static/functions.js" ! type_ "text/javascript" $ mempty            
-        H.body $ do 
+        H.body $
             H.div ! A.class_ "side-navigation" $ do  
                 H.a ! A.href "#overall"            $ H.text "Overall"
                 H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
@@ -67,7 +65,7 @@ mainPage systemInfo validation asyncFecth =
                     H.a ! A.href "#async-fetch-rsync-metrics"      $ spaces >> H.text "Rsync fetches"
                     H.a ! A.href "#async-fetch-validation-details" $ spaces >> H.text "Errors & Warnings"
 
-        for_ validation $ \(version, vs, rawMetric@RawMetric {..}) -> do 
+        for_ validation $ \(version, vs, rawMetric@RawMetric {..}) ->
             H.div ! A.class_ "main" $ do
                 H.a ! A.id "overall" $ ""                 
                 H.section $ H.h4 "Overall"                
@@ -106,16 +104,16 @@ mainPage systemInfo validation asyncFecth =
 overallHtml :: SystemInfo -> WorldVersion -> Html
 overallHtml SystemInfo {..} worldVersion = do 
     let t = versionToMoment worldVersion
-    H.table $ H.tbody $ do
+    H.table ! A.class_ "gen-t" $ H.tbody $ do
         htmlRow 0 $ do 
-            td $ H.text "Version"
-            td $ H.text rpkiProverVersion
+            genTd $ H.text "Version"
+            genTd $ H.text rpkiProverVersion
         htmlRow 1 $ do 
-            td $ H.text "Last validation"
-            td $ H.text $ Text.pack $ instantDateFormat t
+            genTd $ H.text "Last validation"
+            genTd $ H.text $ Text.pack $ instantDateFormat t
         htmlRow 2 $ do 
-            td $ H.text "Startup time"
-            td $ H.text $ Text.pack $ instantDateFormat startUpTime
+            genTd $ H.text "Startup time"
+            genTd $ H.text $ Text.pack $ instantDateFormat startUpTime
                     
 
 
@@ -126,54 +124,54 @@ validationMetricsHtml grouped = do
     let taMetrics   = MonoidalMap.toList $ grouped ^. #byTa        
 
     -- this is for per-TA metrics
-    H.table $ do         
+    H.table ! A.class_ "gen-t" $ do         
         H.thead $ tr $ do 
-            th $ do 
+            genTh $ do 
                 H.text "Trust Anchor ("
                 toHtml $ length taMetrics
                 H.text " in total)"
-            th $ H.text "Validation time"
-            th $ H.text "Original VRPs"      
-            th $ H.text "Unique VRPs"      
-            th $ H.text "Objects"
-            th $ H.text "ROAs"
-            th $ H.text "Certificates"
-            th $ H.text "Manifests"
-            th $ H.text "CRLs"
-            th $ H.text "GBRs"
-            th $ H.text "ASPAs"
-            th $ H.text "BGP Certificates"
+            genTh $ H.text "Validation time"
+            genTh $ H.text "Original VRPs"      
+            genTh $ H.text "Unique VRPs"      
+            genTh $ H.text "Objects"
+            genTh $ H.text "ROAs"
+            genTh $ H.text "Certificates"
+            genTh $ H.text "Manifests"
+            genTh $ H.text "CRLs"
+            genTh $ H.text "GBRs"
+            genTh $ H.text "ASPAs"
+            genTh $ H.text "BGP Certificates"
         
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
                 metricRow index ta 
-                    (\vm' -> td $ toHtml $ vm' ^. #totalTimeMs) 
-                    (\vm' -> td $ toHtml $ show $ vm' ^. #uniqueVrpNumber) 
+                    (\vm' -> genTd $ toHtml $ vm' ^. #totalTimeMs) 
+                    (\vm' -> genTd $ toHtml $ show $ vm' ^. #uniqueVrpNumber) 
                     vm      
             
             metricRow (MonoidalMap.size (grouped ^. #byTa) + 1) 
                         ("Total" :: Text) 
-                        (const $ td $ toHtml $ text "-")
-                        (const $ td $ toHtml $ show $ grouped ^. #total . #uniqueVrpNumber)
+                        (const $ genTd $ toHtml $ text "-")
+                        (const $ genTd $ toHtml $ show $ grouped ^. #total . #uniqueVrpNumber)
                         (grouped ^. #total)
 
     -- this is for per-repository metrics        
-    H.table $ do         
+    H.table ! A.class_ "gen-t" $ do         
         H.thead $ tr $ do 
-            th $ H.div ! A.class_ "tooltip" $ do 
+            genTh $ H.div ! A.class_ "tooltip" $ do 
                 H.text "Primary repository ("
                 toHtml $ length repoMetrics
                 H.text " in total)" 
                 H.span ! A.class_ "tooltiptext" $ primaryRepoTooltip
-            th $ H.text "Original VRPs"      
-            th $ H.text "Objects"
-            th $ H.text "ROAs"
-            th $ H.text "Certificates"
-            th $ H.text "Manifests"
-            th $ H.text "CRLs"
-            th $ H.text "GBRs"                
-            th $ H.text "ASPAs"                
-            th $ H.text "BGP Certificates"
+            genTh $ H.text "Original VRPs"      
+            genTh $ H.text "Objects"
+            genTh $ H.text "ROAs"
+            genTh $ H.text "Certificates"
+            genTh $ H.text "Manifests"
+            genTh $ H.text "CRLs"
+            genTh $ H.text "GBRs"                
+            genTh $ H.text "ASPAs"                
+            genTh $ H.text "BGP Certificates"
 
         H.tbody $ do 
             let sortedRepos = List.sortOn fst $ 
@@ -192,129 +190,122 @@ validationMetricsHtml grouped = do
                          vm ^. #validAspaNumber +
                          vm ^. #validBgpNumber
         htmlRow index $ do 
-            td $ toHtml ta                                    
+            genTd $ toHtml ta                                    
             void $ validationTime vm
-            td $ toHtml $ show $ vm ^. #vrpCounter
+            genTd $ toHtml $ show $ vm ^. #vrpCounter
             void $ uniqueVrps vm 
-            td $ toHtml $ show totalCount
-            td $ toHtml $ show $ vm ^. #validRoaNumber
-            td $ toHtml $ show $ vm ^. #validCertNumber
-            td $ toHtml $ show $ vm ^. #validMftNumber
-            td $ toHtml $ show $ vm ^. #validCrlNumber
-            td $ toHtml $ show $ vm ^. #validGbrNumber
-            td $ toHtml $ show $ vm ^. #validAspaNumber
-            td $ toHtml $ show $ vm ^. #validBgpNumber
+            genTd $ toHtml $ show totalCount
+            genTd $ toHtml $ show $ vm ^. #validRoaNumber
+            genTd $ toHtml $ show $ vm ^. #validCertNumber
+            genTd $ toHtml $ show $ vm ^. #validMftNumber
+            genTd $ toHtml $ show $ vm ^. #validCrlNumber
+            genTd $ toHtml $ show $ vm ^. #validGbrNumber
+            genTd $ toHtml $ show $ vm ^. #validAspaNumber
+            genTd $ toHtml $ show $ vm ^. #validBgpNumber
 
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
-    H.table $ do 
+    H.table ! A.class_ "gen-t" $ do 
         let rrdpMap = unMetricMap rrdpMetricMap                
 
         H.thead $ tr $ do                         
-            th $ do 
+            genTh $ do 
                 H.text "Repository (" 
                 toHtml $ MonoidalMap.size rrdpMap
                 H.text " in total)"                                 
-            th $ H.div ! A.class_ "tooltip" $ do
+            genTh $ H.div ! A.class_ "tooltip" $ do
                 H.text "Fetching"
                 H.span ! A.class_ "tooltiptext" $ rrdpFetchTooltip            
-            th $ H.div ! A.class_ "tooltip" $ do 
+            genTh $ H.div ! A.class_ "tooltip" $ do 
                 H.text "RRDP Update"            
                 H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip
-            th $ H.text "Added objects"
-            th $ H.text "Deleted objects"
-            th $ H.text "Last HTTP status"
-            th $ H.text "Download time"
-            th $ H.text "Save time"
-            th $ H.text "Total time"                    
+            genTh $ H.text "Added objects"
+            genTh $ H.text "Deleted objects"
+            genTh $ H.text "Last HTTP status"
+            genTh $ H.text "Download time"
+            genTh $ H.text "Save time"
+            genTh $ H.text "Total time"                    
 
         H.tbody $ 
             forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do 
-                    td $ toHtml $ focusToText repository                        
-                    td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
-                    td ! A.class_ "no-wrap" $ toHtml $ rm ^. #rrdpSource                    
-                    td $ toHtml $ show $ rm ^. #added
-                    td $ toHtml $ show $ rm ^. #deleted
-                    td $ toHtml $ rm ^. #lastHttpStatus
-                    td $ toHtml $ rm ^. #downloadTimeMs                                
-                    td $ toHtml $ rm ^. #saveTimeMs
-                    td $ toHtml $ rm ^. #totalTimeMs     
+                    genTd $ toHtml $ focusToText repository                        
+                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
+                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #rrdpSource                    
+                    genTd $ toHtml $ show $ rm ^. #added
+                    genTd $ toHtml $ show $ rm ^. #deleted
+                    genTd $ toHtml $ rm ^. #lastHttpStatus
+                    genTd $ toHtml $ rm ^. #downloadTimeMs                                
+                    genTd $ toHtml $ rm ^. #saveTimeMs
+                    genTd $ toHtml $ rm ^. #totalTimeMs     
 
 
 rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
 rsyncMetricsHtml rsyncMetricMap =
-    H.table $ do 
+    H.table ! A.class_ "gen-t" $ do 
         let rsyncMap = getMonoidalMap $ unMetricMap rsyncMetricMap        
 
         H.thead $ tr $ do 
-            th $ do 
+            genTh $ do 
                 H.text "Repository ("
                 toHtml $ Map.size rsyncMap
                 H.text " in total)" 
-            th $ H.div ! A.class_ "tooltip" $ do
+            genTh $ H.div ! A.class_ "tooltip" $ do
                 H.text "Fetching"
                 H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
-            th $ H.text "Processed objects"
-            th $ H.text "Total time"                    
+            genTh $ H.text "Processed objects"
+            genTh $ H.text "Total time"                    
 
         H.tbody $
             forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do
-                    td $ toHtml $ focusToText repository                                                        
-                    td ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
-                    td $ toHtml $ show $ rm ^. #processed            
-                    td $ toHtml $ rm ^. #totalTimeMs            
+                    genTd $ toHtml $ focusToText repository                                                        
+                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
+                    genTd $ toHtml $ show $ rm ^. #processed            
+                    genTd $ toHtml $ rm ^. #totalTimeMs            
 
 
 validaionDetailsHtml :: [FullVDto] -> Html
 validaionDetailsHtml result = 
-    H.table $ do 
+    H.table ! A.class_ "gen-t" $ do 
         H.thead $ tr $ do 
-            th $ H.span $ H.text "Issue"            
-            th $ H.div ! A.class_ "tooltip" $ do
+            genTh $ H.span $ H.text "Issue"            
+            genTh $ H.div ! A.class_ "tooltip" $ do
                 H.text "URL/Scope"
                 H.span ! A.class_ "tooltiptext" $ validationPathTootip               
-        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> do 
-            H.tbody ! A.class_ "labels" $ do 
-                tr $ td ! colspan "2" $                                         
-                    H.div ! class_ "flex switch" $ do                        
-                        H.div ! class_ "ta-header" $ do 
-                            toHtml ta >> ":"
-                            space >> space >> space
-                            let (e, w) = countProblems vrs
-                            toHtml e >> " errors, "
-                            toHtml w >> " warnings"
-                        H.div ! class_ "pointer-up-header" $ arrowUp >> space
-                        H.div ! class_ "pointer-right-header" ! A.style "display: none;" $ arrowRight >> space                        
-            tbody ! class_ "hide" $ do 
-                forM_ (zip vrs [1 :: Int ..]) vrHtml
-
+        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> 
+            H.tbody $ tr $ td ! A.class_ "even-row, gen-t" ! colspan "2" $ do 
+                -- Open the small ones
+                let detailElem = if length vrs < 5 then (H.details ! A.open "") else H.details
+                detailElem $ do 
+                    H.summary $ do 
+                        toHtml ta >> ":"
+                        space >> space >> space
+                        let (e, w) = countProblems vrs
+                        toHtml e >> " errors, "
+                        toHtml w >> " warnings"                    
+                    H.table ! A.class_ "sub-t" $ 
+                        H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml
+            
   where      
     vrHtml (FullVDto{..}, index) = do 
         let objectUrl = Prelude.head path         
-        forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) -> do                    
+        forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
                 let (marker, problem) = 
                         case pr of 
                             ErrorDto err -> ("red-dot",  err)                                        
                             WarningDto w -> ("yellow-dot", w)
-                td $ H.span $ do 
+                td ! A.class_ "sub-t" $ H.span $ do 
                     H.span ! A.class_ marker $ ""
-                    space >> space
+                    space 
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
-                td $ do
-                    H.div ! class_ "flex short-link" $ do
-                        H.div ! class_ "pointer-right" $ arrowRight >> space
-                        H.div ! class_ "full-path" $ focusLink objectUrl
-                    H.div ! class_ "flex full-link" ! A.style "display: none;" $ do
-                        H.div ! class_ "pointer-up" $ arrowUp >> space
-                        H.div ! class_ "full-path" $ do
-                            forM_ path $ \pathUrl -> do            
-                                H.div ! A.class_ "path-elem" $ focusLink pathUrl
-
+                td ! A.class_ "sub-t" $ H.details $ do 
+                    H.summary $ focusLink objectUrl
+                    forM_ (Prelude.tail path) $ \p -> 
+                        focusLink p >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
         where
@@ -390,6 +381,10 @@ htmlRow index =
     case index `mod` 2 of 
         0 -> tr ! A.class_ "even-row"
         _ -> tr 
+
+genTd, genTh :: Html -> Html
+genTd = td ! A.class_ "gen-t" 
+genTh = th ! A.class_ "gen-t" 
 
 space, arrowUp, arrowRight :: Html
 space      = preEscapedToMarkup ("&nbsp;" :: Text)
