@@ -92,13 +92,22 @@ mainPage systemInfo validation asyncFecth =
                     H.br >> H.br            
                     H.a ! A.id "async-fetch-rrdp-metrics" $ ""
                     H.section $ H.h4 "RRDP metrics"
-                    rrdpMetricsHtml $ rawMetrics ^. #rrdpMetrics
+                    if rawMetrics ^. #rrdpMetrics == mempty then 
+                        H.text "No RRDP metrics for async fetches."
+                    else 
+                        rrdpMetricsHtml $ rawMetrics ^. #rrdpMetrics
                     H.a ! A.id "async-fetch-rsync-metrics" $ ""
                     H.section $ H.h4 "Rsync metrics"
-                    rsyncMetricsHtml $ rawMetrics ^. #rsyncMetrics        
+                    if rawMetrics ^. #rsyncMetrics == mempty then 
+                        H.section $ H.text "No rsync metrics for async fetches."
+                    else 
+                        rsyncMetricsHtml $ rawMetrics ^. #rsyncMetrics        
                     H.a ! A.id "async-fetch-validation-details" $ ""
                     H.section $ H.h4 "Errors & Warnings"                
-                    validaionDetailsHtml $ asValidations ^. #validations
+                    if asValidations ^. #validations == mempty then
+                        H.section $ H.text "No issues for async fetches."
+                    else 
+                        validaionDetailsHtml $ asValidations ^. #validations
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html
@@ -206,8 +215,7 @@ validationMetricsHtml grouped = do
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
     H.table ! A.class_ "gen-t" $ do 
-        let rrdpMap = unMetricMap rrdpMetricMap                
-
+        let rrdpMap = unMetricMap rrdpMetricMap
         H.thead $ tr $ do                         
             genTh $ do 
                 H.text "Repository (" 
@@ -278,9 +286,9 @@ validaionDetailsHtml result =
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> 
             H.tbody $ tr $ td ! A.class_ "even-row, gen-t" ! colspan "2" $ do 
                 -- Open the small ones
-                let detailElem = if length vrs < 5 then (H.details ! A.open "") else H.details
+                let detailElem = if length vrs < 5 then H.details ! A.open "" else H.details
                 detailElem $ do 
-                    H.summary $ do 
+                    H.summary $ H.strong $ do 
                         toHtml ta >> ":"
                         space >> space >> space
                         let (e, w) = countProblems vrs
@@ -321,7 +329,7 @@ primaryRepoTooltip =
             "to the RRDP repository even if it was downloaded from the rsync one because of the fall-back."
 
 fetchTooltip :: Text -> Text -> Html
-fetchTooltip repoType setting = do                
+fetchTooltip repoType setting =               
     H.div ! A.style "text-align: left;" $ do 
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
@@ -333,7 +341,7 @@ rrdpFetchTooltip  = fetchTooltip "RRDP" "rrdp-refresh-interval"
 rsyncFetchTooltip = fetchTooltip "rsync" "rsync-refresh-interval"
 
 rrdpUpdateTooltip :: Html
-rrdpUpdateTooltip = do
+rrdpUpdateTooltip =
     H.div ! A.style "text-align: left;" $ do 
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
