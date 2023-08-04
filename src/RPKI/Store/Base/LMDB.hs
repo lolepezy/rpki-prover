@@ -142,14 +142,14 @@ instance Storage LmdbStorage where
     foldMu (LmdbTx tx) LmdbMultiStore {..} f a0 =
         foldGeneric tx db f a0 withMultiCursor LMMap.firstForward
 
--- foldGeneric :: forall tx db cursor a . 
---             tx 
---         -> db 
---         -> (a -> SKey -> SValue -> IO a)
---         -> a
---         -> (tx -> db -> (cursor -> IO a))
---         -> (cursor -> Producer (Lmdb.KeyValue BS.ByteString BS.ByteString) IO ())
---         -> a
+foldGeneric :: forall tx db cursor a . 
+            tx 
+        -> db 
+        -> (a -> SKey -> SValue -> IO a)
+        -> a
+        -> (tx -> db -> (cursor -> IO a) -> IO a)
+        -> (cursor -> Producer' (Lmdb.KeyValue BS.ByteString BS.ByteString) IO ())        
+        -> IO a
 foldGeneric tx db f a0 withCurs makeProducer =
     withCurs tx db $ \c -> do
         z <- newIORef a0
