@@ -286,7 +286,7 @@ validaionDetailsHtml result =
         forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> 
             H.tbody $ tr $ td ! A.class_ "even-row, gen-t" ! colspan "2" $ do 
                 -- Open the small ones
-                let detailElem = if length vrs < 5 then H.details ! A.open "" else H.details
+                let detailElem = if length vrs < 10 then H.details ! A.open "" else H.details
                 detailElem $ do 
                     H.summary $ H.strong $ do 
                         toHtml ta >> ":"
