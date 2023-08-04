@@ -108,6 +108,28 @@ newWorkflowShared = WorkflowShared
             <*> newCQueue 2 
             <*> newJobLock
 
+-- Different types of periodic tasks that may run 
+data TaskType = 
+        -- top-down validation and sync fetches
+        ValidationTask
+
+        -- delete old versions
+        | CleanupCacheTask    
+
+        -- delete old payloads (VRPs, ASPAs, etc.)    
+        | DeleteOldPayloadsTask            
+
+        | LmdbCompactTask
+
+        -- files in tmp and stale LMDB reader transactions
+        | LeftoversCleanupTask
+
+        -- async fetches of slow repositories
+        | AsyncFetchTask
+
+
+data Task = Task TaskType (IO ())
+    deriving (Generic)
 
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
@@ -578,25 +600,43 @@ runFetches appContext@AppContext {..} = do
 
 
 
-data Task = ValidationTask
-        | CleanupCacheTask
-        | LmdbCompactTask
-        | CleanupTask
-        | AsyncFetchTask
-
-data ParallelQueue = ParallelQueue {
-    queue :: TVar (Deq.Deque (Task, IO ()))
+newtype TaskQueue = TaskQueue {
+    queue :: TVar (Deq.Deque Task)
 }
 
+
+readTasks :: TaskQueue -> STM [Task]
+readTasks (TaskQueue q) = do 
+    deq <- readTVar q
+    case Deq.uncons deq of 
+        Nothing           -> retry
+        Just (task, deq') -> do 
+            let (tasks, deq'') = grabAllThatCanRunInParallel [task] deq'    
+            writeTVar q deq''
+            pure tasks
+  where
+    grabAllThatCanRunInParallel tasks deq = do 
+        case Deq.uncons deq of 
+            Nothing           -> (tasks, deq)
+            Just (task, deq') -> 
+                if Prelude.all (canRunAtTheSameTime task) tasks
+                    then grabAllThatCanRunInParallel (task : tasks) deq'
+                    else (tasks, deq')
+
+pushTask :: TaskQueue -> Task -> STM ()
+pushTask (TaskQueue q) t = modifyTVar' q (t `Deq.snoc`)
+
+
 canRunAtTheSameTime :: Task -> Task -> Bool
-canRunAtTheSameTime t1 t2 = compatible t1 t2 || compatible t2 t1
+canRunAtTheSameTime (Task t1 _) (Task t2 _) = compatible t1 t2 || compatible t2 t1
   where
     compatible ValidationTask AsyncFetchTask = True
-    compatible ValidationTask AsyncFetchTask = True
-
+    compatible ValidationTask _              = False    
 
 
 data NextStep = Repeat | Done
+
+
 
 -- 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
