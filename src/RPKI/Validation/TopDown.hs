@@ -375,24 +375,25 @@ validateCa
                             -- Skip repositories that are known to be too slow 
                             -- or timed out (i.e. unavailable)
                             pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                            let (filteredPPs, filteredOutSlowRepos) = filterOutSlow pps ppAccess'
-                            -- logDebug logger [i|filteredPPs = #{filteredPPs}, filteredOutSlowRepos = #{filteredOutSlowRepos}|]
-                            markAsRequested repositoryProcessing filteredOutSlowRepos
-                            case filteredPPs of 
+                            let (quickPPs, slowRepos) = onlyForSyncFetch pps ppAccess'
+
+                            -- Even though we are skipping the repository we still need to remember
+                            -- that it was mentioned as a publciation point on a certificate
+                            markAsRequested repositoryProcessing slowRepos
+
+                            case quickPPs of 
                                 Nothing               -> validateThisCertAndGoDown
                                 Just filteredPPAccess -> do 
                                     fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
                                     primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
-                                    let goFurther =
-                                            if anySuccess fetches
-                                                then validateThisCertAndGoDown
-                                                else do
-                                                    fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case
-                                                        Never       -> pure mempty
-                                                        AtLeastOnce -> validateThisCertAndGoDown
                                     case primaryUrl of
-                                        Nothing -> goFurther
-                                        Just rp -> inSubMetricScope' PPFocus rp goFurther
+                                        Nothing -> do 
+                                            -- try some heuristics here, use the slow filtered out one
+                                            case slowRepos of 
+                                                []    -> validateThisCertAndGoDown
+                                                r : _ -> inSubMetricScope' PPFocus (getRpkiURL r) $ validateThisCertAndGoDown
+                                        Just rp -> 
+                                            inSubMetricScope' PPFocus rp validateThisCertAndGoDown
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it

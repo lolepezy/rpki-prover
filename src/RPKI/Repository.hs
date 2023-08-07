@@ -203,11 +203,10 @@ getSpeed :: Repository -> Speed
 getSpeed (RrdpR r)  = r ^. #speed
 getSpeed (RsyncR r) = r ^. #speed
 
-isQuick :: Speed -> Bool
-isQuick = \case    
-    Quick _ -> True
-    _       -> False
-
+isSlow :: Speed -> Bool
+isSlow = \case    
+    Slow _ -> True
+    _      -> False
 
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty mempty
@@ -454,10 +453,10 @@ findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _ _) =
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
-        | (u, r) <- Map.toList rrdps, isQuick $ r ^. #speed ]
+        | (u, r) <- Map.toList rrdps, isSlow $ r ^. #speed ]
 
     rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u info)
-        | (u, info) <- flattenRsyncTree rsyncTree, not $ isQuick $ info ^. #speed ]
+        | (u, info) <- flattenRsyncTree rsyncTree, isSlow $ info ^. #speed ]
         where 
             rsyncRepo u info = RsyncR $ RsyncRepository { 
                 repoPP = RsyncPublicationPoint u,

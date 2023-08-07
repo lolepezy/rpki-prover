@@ -327,7 +327,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
         -- TODO This is an interesting question and needs some 
         -- It maybe should be 
         -- FailedAt time   -> tooLongAgo time
-        FailedAt time   -> True
+        FailedAt _      -> True
   where
     tooLongAgo momendTnThePast = 
         not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
@@ -373,27 +373,23 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
 
 
 
-filterOutSlow :: PublicationPoints 
+onlyForSyncFetch :: PublicationPoints 
             -> PublicationPointAccess 
             -> (Maybe PublicationPointAccess, [Repository])
-filterOutSlow pps ppAccess = let
+onlyForSyncFetch pps ppAccess = let
         
     ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
 
-    slowFilteredOut = [ r  | (isQuick, Just r) <- map filter_ ppaList, not isQuick ]
-    quickOnes       = [ pp | (pp, (isQuick, _)) <- map (\pp -> (pp, filter_ pp)) ppaList, isQuick ]
+    slowFilteredOut = [ r  | (isSlowRepo, Just r) <- map checkSlow ppaList, isSlowRepo ]
+    quickOnes       = [ pp | (pp, (isSlowRepo, _)) <- map (\pp -> (pp, checkSlow pp)) ppaList, not isSlowRepo ]
 
     in (PublicationPointAccess <$> NonEmpty.nonEmpty quickOnes, slowFilteredOut)
 
-  where
-   
-    filter_ pp = 
+  where   
+    checkSlow pp = 
         case repositoryFromPP (mergePP pp pps) (getRpkiURL pp) of 
             Nothing -> (False, Nothing)
-            Just r  ->
-                case getSpeed r of 
-                    Quick _ -> (True, Just r)
-                    _       -> (False, Just r)
+            Just r  -> (isSlow $ getSpeed r, Just r)                        
 
 
 markAsRequested ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
