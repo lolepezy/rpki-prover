@@ -419,7 +419,8 @@ instance ToSchema FetchStatus where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema Speed
+instance ToSchema Speed where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RrdpRepository
 instance ToSchema RsyncNodeInfo
 instance ToSchema PublicationPointDto

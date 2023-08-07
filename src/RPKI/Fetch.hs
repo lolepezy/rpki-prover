@@ -197,8 +197,8 @@ fetchPPWithFallback
                             Right repo' -> (repo', FetchedAt fetchTime)
 
                     let speed = if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
-                                    then Timedout
-                                    else Quick
+                                    then Slow fetchTime
+                                    else Quick fetchTime
 
                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                             adjustSucceededUrl rpkiUrl 
@@ -372,29 +372,28 @@ getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
     pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
 
 
-filterOutSlow :: MonadIO m => 
-                RepositoryProcessing 
+
+filterOutSlow :: PublicationPoints 
             -> PublicationPointAccess 
-            -> m (Maybe PublicationPointAccess, [Repository])
-filterOutSlow repositoryProcessing ppAccess = liftIO $ do
-    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-    
-    let ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
+            -> (Maybe PublicationPointAccess, [Repository])
+filterOutSlow pps ppAccess = let
+        
+    ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
 
-    let slowFilteredOut = [ r  | (isQuick, Just r) <- map (filter_ pps) ppaList, not isQuick ]
-    let quickOnes       = [ pp | (pp, (isQuick, _)) <- map (\pp -> (pp, filter_ pps pp)) ppaList, isQuick ]
+    slowFilteredOut = [ r  | (isQuick, Just r) <- map filter_ ppaList, not isQuick ]
+    quickOnes       = [ pp | (pp, (isQuick, _)) <- map (\pp -> (pp, filter_ pp)) ppaList, isQuick ]
 
-    pure (PublicationPointAccess <$> NonEmpty.nonEmpty quickOnes, slowFilteredOut)
+    in (PublicationPointAccess <$> NonEmpty.nonEmpty quickOnes, slowFilteredOut)
 
   where
    
-    filter_ pps pp = 
+    filter_ pp = 
         case repositoryFromPP (mergePP pp pps) (getRpkiURL pp) of 
             Nothing -> (False, Nothing)
             Just r  ->
                 case getSpeed r of 
-                    Quick -> (True, Just r)
-                    _     -> (False, Just r)
+                    Quick _ -> (True, Just r)
+                    _       -> (False, Just r)
 
 
 markAsRequested ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()

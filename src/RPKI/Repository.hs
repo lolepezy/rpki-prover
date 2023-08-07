@@ -52,9 +52,12 @@ instance Semigroup FetchEverSucceeded where
     _           <> _           = AtLeastOnce    
 
    
-data Speed = Quick | Slow | Timedout 
-    deriving stock (Show, Eq, Ord, Generic)    
+data Speed = Unknown 
+            | Quick Instant 
+            | Slow Instant
+    deriving stock (Show, Eq, Generic)    
     deriving anyclass TheBinary
+    deriving Semigroup via Max Speed
 
 data FetchStatus
   = Pending
@@ -177,10 +180,14 @@ instance Monoid FetchStatus where
     mempty = Pending
     
 instance Monoid Speed where    
-    mempty = Quick
+    mempty = Unknown
 
-instance Semigroup Speed where    
-    _ <> s2 = s2
+instance Ord Speed where
+    compare = comparing time
+      where             
+        time Unknown   = Nothing
+        time (Quick t) = Just t
+        time (Slow t)  = Just t
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
@@ -195,6 +202,12 @@ getFetchStatus (RsyncR r) = r ^. #status
 getSpeed :: Repository -> Speed
 getSpeed (RrdpR r)  = r ^. #speed
 getSpeed (RsyncR r) = r ^. #speed
+
+isQuick :: Speed -> Bool
+isQuick = \case    
+    Quick _ -> True
+    _       -> False
+
 
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty mempty
@@ -228,7 +241,7 @@ mkRrdp u = RrdpRepository {
         rrdpMeta = Nothing,
         eTag     = Nothing,
         status   = Pending,
-        speed    = Quick 
+        speed    = Unknown 
     }
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
@@ -441,17 +454,16 @@ findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _ _) =
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
-        | (u, r) <- Map.toList rrdps, r ^. #speed /= Quick ]
+        | (u, r) <- Map.toList rrdps, isQuick $ r ^. #speed ]
 
     rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u info)
-        | (u, info) <- flattenRsyncTree rsyncTree, info ^. #speed /= Quick ]
+        | (u, info) <- flattenRsyncTree rsyncTree, not $ isQuick $ info ^. #speed ]
         where 
             rsyncRepo u info = RsyncR $ RsyncRepository { 
                 repoPP = RsyncPublicationPoint u,
                 status = info ^. #fetchStatus,
                 speed  = info ^. #speed
-            }
-
+            }    
 
 data RsyncNodeInfo = RsyncNodeInfo {
         fetchStatus :: FetchStatus,

@@ -374,7 +374,9 @@ validateCa
                         Just ppAccess' -> do
                             -- Skip repositories that are known to be too slow 
                             -- or timed out (i.e. unavailable)
-                            (filteredPPs, filteredOutSlowRepos) <- filterOutSlow repositoryProcessing ppAccess'                            
+                            pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
+                            let (filteredPPs, filteredOutSlowRepos) = filterOutSlow pps ppAccess'
+                            -- logDebug logger [i|filteredPPs = #{filteredPPs}, filteredOutSlowRepos = #{filteredOutSlowRepos}|]
                             markAsRequested repositoryProcessing filteredOutSlowRepos
                             case filteredPPs of 
                                 Nothing               -> validateThisCertAndGoDown

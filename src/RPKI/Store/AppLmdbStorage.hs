@@ -152,7 +152,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
     let cacheDir = config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
-    logInfo logger [i|Compacting LMDB storage.|]
+    logInfo logger [i|Checking if compacting LMDB storage is needed.|]
 
     currentNativeEnv <- readTVarIO $ nativeEnv lmdbEnv   
 

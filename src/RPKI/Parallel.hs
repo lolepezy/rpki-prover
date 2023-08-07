@@ -45,20 +45,20 @@ foldPipeline parallelism stream mapStream consume accum0 =
                 cancel
   where        
     writeAll queue = S.mapM_ toQueue stream
-        where 
-            toQueue s = do
-                t <- async $ mapStream s
-                liftIO $ atomically $ writeCQueue queue t
+      where 
+        toQueue s = do
+            t <- async $ mapStream s
+            liftIO $ atomically $ writeCQueue queue t
 
     readAll queue = go accum0
-        where
-            go accum = do                
-                t <- liftIO $ atomically $ readCQueue queue
-                case t of
-                    Nothing -> pure accum
-                    Just t' -> do 
-                        p <- wait t'
-                        consume p accum >>= go
+      where
+        go accum = do                
+            t <- liftIO $ atomically $ readCQueue queue
+            case t of
+                Nothing -> pure accum
+                Just t' -> do 
+                    p <- wait t'
+                    consume p accum >>= go
 
 
 

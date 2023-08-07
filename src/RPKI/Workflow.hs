@@ -17,10 +17,11 @@ import           Control.Monad
 import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
+import           GHC.IsList                      (fromList)
 
 import           Data.List
-import           Data.List.NonEmpty              (fromList)
-import           Data.Foldable                   (for_)
+import qualified Data.List.NonEmpty              as NE
+import           Data.Foldable                   (for_, toList)
 import qualified Data.Text                       as Text
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
@@ -127,9 +128,14 @@ data TaskType =
         -- async fetches of slow repositories
         | AsyncFetchTask
 
+        -- Delete local rsyncm mirror once in a while
+        | RsyncCleanupTask
+        deriving (Show, Eq, Ord, Bounded, Enum, Generic)
+
 
 data Task = Task TaskType (IO ())
     deriving (Generic)
+
 
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
@@ -162,7 +168,7 @@ runWorkflow appContext@AppContext {..} tals = do
             ]
 
     mapConcurrently_ (\f -> f workflowShared) $ threads <> periodicJobs
-    where
+  where        
 
         -- The main loop of the validator: periodically 
         -- generate a command to re-validate all TAs.        
@@ -235,6 +241,51 @@ runWorkflow appContext@AppContext {..} tals = do
                             logDebug logger [i|Scheduling job '#{job}' #{delayText} and interval #{interval}.|] 
                             generatePeriodicJob initialDelay interval jobWrapper globalQueue
     
+
+        periodicJobStarters1 workflowShared = do 
+            let availableJobs = [
+                    -- These initial delay numbers are pretty arbitrary and chosen based 
+                    -- on reasonable order of the jobs.
+                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC workflowShared),
+                    ("cleanOldPayloadsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldPayloads workflowShared),
+                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact workflowShared),
+                    ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
+                    ]  
+            
+            persistedJobs <- do
+                db <- readTVarIO database
+                roTx db $ \tx -> Map.fromList <$> allJobs tx db
+
+            Now now <- thisInstant                   
+            
+            pure $ 
+                flip map availableJobs $ 
+                    \(job, defInitialDelay, interval, action) -> 
+                        let (initialDelay, jobRun) =  
+                                case Map.lookup job persistedJobs of 
+                                    Nothing           -> (defInitialDelay, FirstRun)
+                                    Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
+                        
+                            jobWrapper worldVersion = do                                 
+                                    action worldVersion jobRun
+                                `finally` (do
+                                    Now endTime <- thisInstant
+                                    -- re-read `db` since it could have been changed by the time the
+                                    -- job is finished (after compaction, in particular)                            
+                                    db <- readTVarIO database
+                                    rwTx db $ \tx -> setJobCompletionTime tx db job endTime)
+
+                        in \WorkflowShared {..} -> do 
+                            let delaySeconds = initialDelay `div` 1_000_000
+                            let delayText :: Text.Text = if initialDelay <= 0 
+                                    then [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
+                                    else [i|with initial delay #{delaySeconds}s|] 
+                            logDebug logger [i|Scheduling job '#{job}' #{delayText} and interval #{interval}.|] 
+                            generatePeriodicJob initialDelay interval jobWrapper globalQueue
+
+          where
+            
+
         jobExecutor WorkflowShared {..} = 
             void $ concurrently (go globalQueue) (go asyncFetchQueue)
           where
@@ -585,7 +636,7 @@ runFetches appContext@AppContext {..} = do
                         RsyncR r -> RsyncPP $ r ^. #repoPP
                         RrdpR r  -> RrdpPP r
 
-            let ppAccess = PublicationPointAccess $ fromList [pp]            
+            let ppAccess = PublicationPointAccess $ NE.fromList [pp]            
             worldVersion <- newWorldVersion
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchPPWithFallback adjustedConfig repositoryProcessing worldVersion ppAccess
@@ -600,43 +651,79 @@ runFetches appContext@AppContext {..} = do
 
 
 
-newtype TaskQueue = TaskQueue {
-    queue :: TVar (Deq.Deque Task)
-}
 
 
-readTasks :: TaskQueue -> STM [Task]
-readTasks (TaskQueue q) = do 
-    deq <- readTVar q
-    case Deq.uncons deq of 
-        Nothing           -> retry
-        Just (task, deq') -> do 
-            let (tasks, deq'') = grabAllThatCanRunInParallel [task] deq'    
-            writeTVar q deq''
-            pure tasks
+canRunInParallel (Task t1 _) (Task t2 _) = 
+    t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where
-    grabAllThatCanRunInParallel tasks deq = do 
-        case Deq.uncons deq of 
-            Nothing           -> (tasks, deq)
-            Just (task, deq') -> 
-                if Prelude.all (canRunAtTheSameTime task) tasks
-                    then grabAllThatCanRunInParallel (task : tasks) deq'
-                    else (tasks, deq')
+    canRunWith ValidationTask        = [AsyncFetchTask]    
+    canRunWith DeleteOldPayloadsTask = allExcept [LmdbCompactTask]    
+    canRunWith AsyncFetchTask        = [ValidationTask]
+    canRunWith RsyncCleanupTask      = allExcept [ValidationTask, AsyncFetchTask]
+    canRunWith _                     = []
+  
+    allExcept tasks = filter (not . (`elem` tasks)) [minBound..maxBound]
+        
+    
+{- 
+    Implementation of a queue where reading in groups
+    which elements are "compatible". The "next-to-read" 
+    element left in the queue is the first "incompatible" one.
 
-pushTask :: TaskQueue -> Task -> STM ()
-pushTask (TaskQueue q) t = modifyTVar' q (t `Deq.snoc`)
+    Used for grouping tasks in the queue where compatibility is
+    "can run in parallel with each other".
+-}
+
+-- data GroupedQueue a = GroupedQueue {
+--     queue      :: TVar (Deq.Deque a),
+--     compatible :: a -> a -> Bool,
+--     maxSize    :: Int
+-- }
+
+-- newGroupedQueue :: (a -> a -> Bool) -> STM (GroupedQueue a)
+-- newGroupedQueue compatible = do 
+--     queue <- newTVar mempty
+--     let maxSize = 10
+--     pure GroupedQueue {..}
+
+-- readTasks :: forall a . GroupedQueue a -> STM [a]
+-- readTasks GroupedQueue {..} = do 
+--     deq <- readTVar queue
+--     when (Deq.null deq) retry
+--     let (tasks, deq') = grabCompatibles [] $ toList deq        
+--     writeTVar queue $ fromList deq'
+--     pure tasks
+--   where
+--     grabCompatibles :: [a] -> [a] -> ([a], [a])
+--     grabCompatibles compatibles []                = (compatibles, [])
+--     grabCompatibles compatibles deq@(task : deq') = 
+--         if all (compatible task) compatibles
+--             then grabCompatibles (task : compatibles) deq'
+--             else (compatibles, deq)
+
+-- pushTask :: GroupedQueue a -> a -> STM ()
+-- pushTask GroupedQueue {..} t = do 
+--     readTVar queue
+--     modifyTVar' queue (t `Deq.snoc`)
 
 
-canRunAtTheSameTime :: Task -> Task -> Bool
-canRunAtTheSameTime (Task t1 _) (Task t2 _) = compatible t1 t2 || compatible t2 t1
+
+data Trigger = Inactive | Running
+
+-- triggered :: IO ()
+triggered f =    
+    bracketChanClosable 2 maintainTrigger execute (\_ -> pure ())
   where
-    compatible ValidationTask AsyncFetchTask = True
-    compatible ValidationTask _              = False    
+    execute _ = pure ()
+
+    maintainTrigger _ = pure ()
+
+
+
+
 
 
 data NextStep = Repeat | Done
-
-
 
 -- 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
@@ -667,3 +754,11 @@ leftToWait start end (Seconds interval) = let
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
     in timeToWaitNs `div` 1000               
 
+
+{- 
+
+q <- atomically $ newGroupedQueue canRunInParallel
+atomically $ pushTask q ValidationTask >> pushTask q AsyncFetchTask >> pushTask q LmdbCompactTask >> pushTask q ValidationTask >> pushTask q DeleteOldPayloadsTask
+
+
+-}
