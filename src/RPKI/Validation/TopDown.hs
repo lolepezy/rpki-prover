@@ -397,7 +397,7 @@ validateCa
                                             -- try some heuristics here, use the slow filtered out one
                                             case slowRepos of 
                                                 []    -> validateThisCertAndGoDown
-                                                r : _ -> inSubMetricScope' PPFocus (getRpkiURL r) $ validateThisCertAndGoDown
+                                                r : _ -> inSubMetricScope' PPFocus (getRpkiURL r) validateThisCertAndGoDown
                                         Just rp -> 
                                             inSubMetricScope' PPFocus rp validateThisCertAndGoDown
 

@@ -55,11 +55,10 @@ import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.AppStorage
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Worker
-
-import           RPKI.Store.AppStorage
 import           RPKI.SLURM.Types
 
 
