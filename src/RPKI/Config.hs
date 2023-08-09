@@ -37,6 +37,15 @@ data Parallelism = Parallelism {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+data FetchConfig = FetchConfig {
+        rsyncTimeout       :: Seconds,
+        rsyncSlowThreshold :: Seconds,
+        rrdpTimeout        :: Seconds,
+        rrdpSlowThreshold  :: Seconds
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 data Config = Config {        
         programBinaryPath         :: FilePath,
         rootDirectory             :: FilePath,
@@ -121,10 +130,7 @@ data ValidationConfig = ValidationConfig {
         maxObjectSize                  :: Integer,
 
         -- Manimal allowed size of an individual object 
-        minObjectSize                  :: Integer,
-
-        -- configuration for asynchronous repository fetches
-        asyncFetchConfig                :: Maybe AsyncFetchConfig
+        minObjectSize                  :: Integer
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -214,11 +220,7 @@ defaultConfig = Config {
         -- every object contains at least 256 bytes of RSA key, 
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
-        maxTaRepositories              = 3000,
-        asyncFetchConfig               = Just $ AsyncFetchConfig {
-            slowRepositoryThreshold = Seconds 180,
-            checkPeriod             = Seconds 60
-        }
+        maxTaRepositories              = 3000
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -259,6 +261,7 @@ defaulPrefetchURLs = [
         "rsync://repo-rpki.idnic.net/repo/",
         "rsync://0.sb/repo/",
         "rsync://rpki.co/repo/",
-        "rsync://rpki-rps.arin.net/repository/"
+        "rsync://rpki-rps.arin.net/repository/",
+        "rsync://rpki-repository.nic.ad.jp/ap/"        
     ]    
     

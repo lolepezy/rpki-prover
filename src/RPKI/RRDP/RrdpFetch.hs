@@ -51,10 +51,11 @@ import qualified RPKI.Util                        as U
 
 
 runRrdpFetchWorker :: AppContext s 
+            -> FetchConfig
             -> WorldVersion
             -> RrdpRepository             
             -> ValidatorT IO RrdpRepository
-runRrdpFetchWorker AppContext {..} worldVersion repository = do
+runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RrdpFetchParams'.
@@ -75,7 +76,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                             config
                             workerId 
                             (RrdpFetchParams scopes repository worldVersion)                        
-                            (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
+                            (Timebox $ fetchConfig ^. #rrdpTimeout)
                             arguments  
         
     let RrdpFetchResult z = payload

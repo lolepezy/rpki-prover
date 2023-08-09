@@ -305,7 +305,8 @@ validateFromTACert
 
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos        
+        void $ fetchPPWithFallback appContext (syncFetchConfig config) 
+                repositoryProcessing worldVersion filteredRepos        
 
     -- Do the tree descend, gather validation results and VRPs                
     payloads <- fromTryM
@@ -384,7 +385,8 @@ validateCa
                             case quickPPs of 
                                 Nothing               -> validateThisCertAndGoDown
                                 Just filteredPPAccess -> do 
-                                    fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
+                                    fetches    <- fetchPPWithFallback appContext (syncFetchConfig config) 
+                                                    repositoryProcessing worldVersion filteredPPAccess
                                     primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
                                     case primaryUrl of
                                         Nothing -> do 

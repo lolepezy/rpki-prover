@@ -14,10 +14,8 @@ import           Data.Bifunctor
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
-import           Control.Monad.IO.Class           (liftIO)
-
 import           Control.Monad
-import           Control.Monad.Except
+import           Control.Monad.IO.Class           (liftIO)
 
 import qualified Data.ByteString                  as BS
 import           Data.Maybe (fromMaybe)
@@ -84,10 +82,11 @@ stderr = [#{U.textual stderr'}]|]
 
 
 runRsyncFetchWorker :: AppContext s 
+                    -> FetchConfig
                     -> WorldVersion
                     -> RsyncRepository             
                     -> ValidatorT IO RsyncRepository
-runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
+runRsyncFetchWorker AppContext {..} fetchConfig worldVersion rsyncRepo = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RsyncFetchResult'.
@@ -108,7 +107,7 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                                 config
                                 workerId 
                                 (RsyncFetchParams vp rsyncRepo worldVersion)                        
-                                (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
+                                (Timebox $ fetchConfig ^. #rsyncTimeout)
                                 arguments                        
     let RsyncFetchResult z = payload        
     logWorkerDone logger workerId wr

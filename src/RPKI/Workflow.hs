@@ -185,20 +185,19 @@ runWorkflow appContext@AppContext {..} tals = do
                 `finally`
                     atomically (closeCQueue globalQueue)        
           where
-            runAsyncFetcherIfNeeded = 
-                for_ (config ^. #validationConfig . #asyncFetchConfig) $ \_ -> do                     
-                    writeQIfPossible asyncFetchQueue $ \worldVersion -> 
-                        -- aquire the same lock as the compaction job to not 
-                        -- allow async fetches during LMDB compaction
-                        exclusiveJob exclusiveLock $ do 
-                            logDebug logger [i|Running async fetch job.|] 
-                            validations <- runFetches appContext
-                            db <- readTVarIO database
-                            rwTx db $ \tx -> do
-                                saveValidations tx db worldVersion (validations ^. typed)
-                                saveMetrics tx db worldVersion (validations ^. typed)
-                                asyncFetchWorldVersion tx db worldVersion                  
-                            logDebug logger [i|Finished async fetch job.|]
+            runAsyncFetcherIfNeeded =                 
+                writeQIfPossible asyncFetchQueue $ \worldVersion -> 
+                    -- aquire the same lock as the compaction job to not 
+                    -- allow async fetches during LMDB compaction
+                    exclusiveJob exclusiveLock $ do 
+                        logDebug logger [i|Running async fetch job.|] 
+                        validations <- runFetches appContext
+                        db <- readTVarIO database
+                        rwTx db $ \tx -> do
+                            saveValidations tx db worldVersion (validations ^. typed)
+                            saveMetrics tx db worldVersion (validations ^. typed)
+                            asyncFetchWorldVersion tx db worldVersion                  
+                        logDebug logger [i|Finished async fetch job.|]
 
         periodicJobStarters workflowShared = do 
             let availableJobs = [
@@ -616,7 +615,7 @@ loadStoredAppState AppContext {..} = do
 -}
 runFetches :: Storage s => AppContext s -> IO ValidationState
 runFetches appContext@AppContext {..} = do         
-    withRepositoriesProcessing adjustedConfig $ \repositoryProcessing -> do
+    withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         -- We only care about the repositories that are mentioned 
@@ -638,18 +637,12 @@ runFetches appContext@AppContext {..} = do
 
             let ppAccess = PublicationPointAccess $ NE.fromList [pp]            
             worldVersion <- newWorldVersion
+            logDebug logger [i|Fetch config = #{asyncFetchConfig config}|]            
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                    fetchPPWithFallback adjustedConfig repositoryProcessing worldVersion ppAccess
+                    fetchPPWithFallback appContext (asyncFetchConfig config) 
+                        repositoryProcessing worldVersion ppAccess
             
         validationStateOfFetches repositoryProcessing   
-  where
-    -- Replace rsync and rrdp timeouts with their async counterparts, 
-    -- since fetcher is not aware if it works in sync or async context.
-    adjustedConfig = appContext 
-        & #config . #rsyncConf %~ (\rc -> rc & #rsyncTimeout .~ rc ^. #asyncRsyncTimeout)
-        & #config . #rrdpConf %~ (\rc -> rc & #rrdpTimeout .~ rc ^. #asyncRrdpTimeout)
-
-
 
 
 
