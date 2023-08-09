@@ -107,10 +107,7 @@ data RsyncRepository = RsyncRepository {
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
-        rsyncs :: RsyncTree,
-        -- TODO Figure out is this is still needed, 
-        -- it is not clear what the advantage of keeping track of it aree
-        lastSucceded :: EverSucceededMap,
+        rsyncs :: RsyncTree,        
         -- Set of _slow_ URL that were requested to fetch as a result of fetching 
         -- publication points on certificats during the last validation.
         -- In other words, slow and timing out repository URLs we care about 
@@ -209,7 +206,7 @@ isSlow = \case
     _      -> False
 
 newPPs :: PublicationPoints
-newPPs = PublicationPoints mempty newRsyncTree mempty mempty
+newPPs = PublicationPoints mempty newRsyncTree mempty
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
@@ -263,16 +260,14 @@ mergeRsyncPP (RsyncPublicationPoint u) pps =
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
-    pps & #rrdps %~ newRrdps & #lastSucceded %~ newLastSucceded    
+    pps & #rrdps %~ newRrdps
   where
     newRrdps (RrdpMap rrdps) = RrdpMap $ 
         case Map.lookup uri rrdps of
             Nothing -> Map.insert uri r rrdps
             Just existing 
                 | r == existing -> rrdps 
-                | otherwise     -> Map.insert uri (r <> existing) rrdps                    
-    newLastSucceded lastSucceded = 
-        succeededFromStatus (RrdpU uri) status lastSucceded        
+                | otherwise     -> Map.insert uri (r <> existing) rrdps                        
 
 
 succeededFromStatus :: RpkiURL -> FetchStatus -> EverSucceededMap -> EverSucceededMap
@@ -346,20 +341,18 @@ data Change a = Put a | Remove a
 
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
-    [Change (RsyncHost, RsyncNodeNormal)]
-    [Change (RpkiURL, FetchEverSucceeded)]
+    [Change (RsyncHost, RsyncNodeNormal)]    
     (Change (Set.Set RpkiURL))
 
 
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld) (EverSucceededMap lastSuccededOld) _ ) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) (EverSucceededMap lastSuccededNew) requestNew) = 
+    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld)  _ ) 
+    (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) requestNew) = 
     ChangeSet 
         (putNewRrdps <> removeOldRrdps) 
-        (putNewRsyncs <> removeOldRsyncs)
-        (putNewSucceded <> removeOldSucceded)
+        (putNewRsyncs <> removeOldRsyncs)        
         (Put requestNew)
     where
         -- TODO Don't generate removes if there's a PUT for the same URL
@@ -371,63 +364,33 @@ changeSet
         rsyncOldList = Map.toList rsyncOld
         rsyncNewList = Map.toList rsyncNew
         putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
-        removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList
-
-        lastSuccededOldList = Map.toList lastSuccededOld
-        lastSuccededNewList = Map.toList lastSuccededNew
-        putNewSucceded    = map Put    $ filter (not . (\(u, p) -> Map.lookup u lastSuccededOld == Just p)) lastSuccededNewList        
-        removeOldSucceded = map Remove $ filter (not . (\(u, p) -> Map.lookup u lastSuccededNew == Just p)) lastSuccededOldList
+        removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
 
 -- Update statuses of the repositories and last successful fetch times for them
 updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus, Speed) -> PublicationPoints
 updateStatuses 
-    (PublicationPoints rrdps rsyncs lastSucceded slowRequested) newStatuses = 
+    (PublicationPoints rrdps rsyncs slowRequested) newStatuses = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdpUpdates))
-            rsyncsUpdates
-            (lastSucceded <> EverSucceededMap (Map.fromList lastSuccededUpdates))
-            slowRequested
+            rsyncsUpdates slowRequested
     where
-        (rrdpUpdates, rsyncsUpdates, lastSuccededUpdates) = 
-            foldr foldRepos ([], rsyncs, []) newStatuses
+        (rrdpUpdates, rsyncsUpdates) = 
+            foldr foldRepos ([], rsyncs) newStatuses
 
         foldRepos 
             (RrdpR r@RrdpRepository {..}, newStatus, newSpeed) 
-            (rrdps', rsyncs', lastS) = 
-                    ((uri, r & #status .~ newStatus & #speed .~ newSpeed) : rrdps', 
-                    rsyncs', 
-                    status2Success (RrdpU uri) newStatus lastS)
+            (rrdps', rsyncs') = 
+                ((uri, r & #status .~ newStatus & #speed .~ newSpeed) : rrdps', rsyncs')
 
         foldRepos 
             (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _ _), newStatus, newSpeed) 
-            (rrdps', rsyncs', lastS) = 
-                    (rrdps', 
-                    toRsyncTree uri newStatus newSpeed rsyncs', 
-                    status2Success (RsyncU uri) newStatus lastS)
-
-        status2Success u (FetchedAt _) lastS = (u, AtLeastOnce) : lastS
-        status2Success _ _             lastS = lastS
-    
-
-everSucceeded :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
-everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u = 
-    fromMaybe Never $ Map.lookup u m
-
-adjustSucceededUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
-adjustSucceededUrl u pps =     
-    case findPublicationPointStatus pps of 
-        Nothing          -> pps
-        Just fetchStatus -> pps & typed %~ succeededFromStatus u fetchStatus
-    where        
-        findPublicationPointStatus (PublicationPoints (RrdpMap rrdps) rsyncRepos _ _) =     
-            case u of
-                RrdpU  rrdpUrl  -> (^. typed) <$> Map.lookup rrdpUrl rrdps
-                RsyncU rsyncUrl -> (^. typed) . snd <$> infoInRsyncTree rsyncUrl rsyncRepos  
+            (rrdps', rsyncs') = 
+                (rrdps', toRsyncTree uri newStatus newSpeed rsyncs')            
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int
-repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncTree rsyncs) _ _) =     
+repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncTree rsyncs) _) =     
     Map.size rrdps + 
     sum (map counts $ Map.elems rsyncs)
   where
@@ -449,7 +412,7 @@ filterPPAccess Config {..} ppAccess =
 
 
 findSpeedProblems :: PublicationPoints -> [(RpkiURL, Repository)]
-findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _ _) = 
+findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 

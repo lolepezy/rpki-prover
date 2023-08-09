@@ -17,7 +17,6 @@ import           Control.Monad
 import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
-import           GHC.IsList                      (fromList)
 
 import           Data.List
 import qualified Data.List.NonEmpty              as NE

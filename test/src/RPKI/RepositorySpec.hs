@@ -97,7 +97,7 @@ prop_rsync_tree_update =
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncTree
 convertToRepos urls status = 
-    foldr (\u t -> toRsyncTree u status Quick t) newRsyncTree urls  
+    foldr (\u t -> toRsyncTree u status Unknown t) newRsyncTree urls  
 
 
 generateRsyncUrl :: Gen RsyncURL

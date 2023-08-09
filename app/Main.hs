@@ -440,7 +440,7 @@ executeWorker input appContext =
                     appContext worldVersion rrdpRepository
             RsyncFetchParams {..} -> exec resultHandler $
                 fmap RsyncFetchResult $ runValidatorT scopes $ updateObjectForRsyncRepository
-                    appContext worldVersion rsyncRepository
+                    appContext fetchConfig worldVersion rsyncRepository
             CompactionParams {..} -> exec resultHandler $
                 CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
             ValidationParams {..} -> exec resultHandler $

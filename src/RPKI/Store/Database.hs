@@ -207,14 +207,13 @@ newtype SlurmStore s = SlurmStore {
 
 data RepositoryStore s = RepositoryStore {
         rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-        lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded,
+        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
         slowS  :: SMap "slow-requested" s Text (Compressed (Set.Set RpkiURL))
     }
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _ _) = storage s
+    storage (RepositoryStore s _ _) = storage s
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
@@ -598,7 +597,7 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 ChangeSet ->
                 m ()
 applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges lastSucceded slowRequested) = liftIO $ do
+                  (ChangeSet rrdpChanges rsyncChanges slowRequested) = liftIO $ do
     -- Do the Remove first and only then Put
     let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
 
@@ -608,11 +607,7 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
 
     for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
-    for_ rsyncPuts $ uncurry (M.put tx rsyncS)
-
-    let (lastSPuts, lastSRemoves) = separate lastSucceded
-    for_ lastSRemoves $ \(uri', _) -> M.delete tx lastS uri'
-    for_ lastSPuts $ uncurry (M.put tx lastS)
+    for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
 
     let (lastSPuts, _) = separate [slowRequested]    
     for_ lastSPuts $ \rr -> M.put tx slowS slowrRequestedKey (Compressed rr)
@@ -625,13 +620,11 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
-    rsyns <- M.all tx rsyncS
-    lasts <- M.all tx lastS
+    rsyns <- M.all tx rsyncS    
     slowS <- fromMaybe mempty . fmap unCompressed <$> M.get tx slowS slowrRequestedKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
-            (RsyncTree $ Map.fromList rsyns)
-            (EverSucceededMap $ Map.fromList lasts)
+            (RsyncTree $ Map.fromList rsyns)           
             slowS
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
@@ -889,8 +882,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         let RepositoryStore {..} = repositoryStore
         in RepositoryStats <$>
             M.stats tx rrdpS <*>
-            M.stats tx rsyncS <*>
-            M.stats tx lastS <*>
+            M.stats tx rsyncS <*>            
             M.stats tx slowS
 
     vResultStats' tx = 

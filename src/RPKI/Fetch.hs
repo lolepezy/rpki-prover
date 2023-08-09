@@ -202,8 +202,7 @@ fetchPPWithFallback
                     let speed = deriveSpeed repo validations duratioMs fetchTime
 
                     modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
-                            adjustSucceededUrl rpkiUrl 
-                                    $ updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
+                            updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
                 pure (r, validations)        
 
         bracketOnError 
@@ -231,8 +230,8 @@ fetchPPWithFallback
         Seconds rsyncSlowMs = fetchConfig ^. #rsyncSlowThreshold
         speedByTiming = 
             case repo of
-                RrdpR _  -> checkSlow $ 1000*duratioMs > rrdpSlowMs
-                RsyncR _ -> checkSlow $ 1000*duratioMs > rsyncSlowMs
+                RrdpR _  -> checkSlow $ duratioMs > 1000*rrdpSlowMs
+                RsyncR _ -> checkSlow $ duratioMs > 1000*rsyncSlowMs
 
         -- If there fetch timed out then it's definitely slow
         -- otherwise, check how long did it take to download
@@ -302,8 +301,8 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: AppContext s -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
-fetchTACertificate appContext@AppContext {..} tal = 
+fetchTACertificate :: AppContext s -> FetchConfig -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
+fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
@@ -318,8 +317,8 @@ fetchTACertificate appContext@AppContext {..} tal =
         fetchTaCert = do                     
             logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
-                RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
-                RrdpU rrdpU   -> fetchRpkiObject appContext rrdpU
+                RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
+                RrdpU rrdpU   -> fetchRpkiObject appContext fetchConfig rrdpU
             pure (u, ro)
 
 

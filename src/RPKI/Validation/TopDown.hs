@@ -267,7 +267,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
   where
     fetchValidateAndStore db (Now moment) previousCert = do
-        (uri', ro) <- fetchTACertificate appContext tal
+        (uri', ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
         cert       <- vHoist $ validateTACert tal uri' ro
         -- Check for replay attacks
         actualCert <- case previousCert of
@@ -376,17 +376,21 @@ validateCa
                             -- Skip repositories that are known to be too slow 
                             -- or timed out (i.e. unavailable)
                             pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                            let (quickPPs, slowRepos) = onlyForSyncFetch pps ppAccess'
-
-                            -- Even though we are skipping the repository we still need to remember
-                            -- that it was mentioned as a publciation point on a certificate
-                            markAsRequested repositoryProcessing slowRepos
-
+                            let (quickPPs, slowRepos) = onlyForSyncFetch pps ppAccess'                                                
                             case quickPPs of 
-                                Nothing               -> validateThisCertAndGoDown
+                                Nothing -> do 
+                                    -- Even though we are skipping the repository we still need to remember
+                                    -- that it was mentioned as a publication point on a certificate                                    
+                                    markAsRequested repositoryProcessing slowRepos
+                                    validateThisCertAndGoDown
+
                                 Just filteredPPAccess -> do 
-                                    fetches    <- fetchPPWithFallback appContext (syncFetchConfig config) 
+                                    fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
                                                     repositoryProcessing worldVersion filteredPPAccess
+
+                                    -- TODO This marking should happen based on successes in `fetches`
+                                    markAsRequested repositoryProcessing slowRepos
+
                                     primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
                                     case primaryUrl of
                                         Nothing -> do 

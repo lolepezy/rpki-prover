@@ -286,7 +286,7 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
     rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
     rrdpMap2  <- rrdpSubMap createdPPs
 
-    let shrunkPPs = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty mempty) rsyncPPs2
+    let shrunkPPs = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
 
     let changeSet2 = changeSet storedPps2 shrunkPPs
 
@@ -309,7 +309,7 @@ shouldGetAndSaveRepositories io = do
     rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
     rrdpMap2  <- rrdpSubMap pps1
 
-    let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty mempty) rsyncPPs2
+    let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
 
     rwTx db $ \tx -> savePublicationPoints tx db pps2
     pps2' <- roTx db $ \tx -> getPublicationPoints tx db       
@@ -319,12 +319,8 @@ shouldGetAndSaveRepositories io = do
 
 generateRepositories :: IO PublicationPoints
 generateRepositories = do     
-    rrdpMap :: RrdpMap <- QC.generate arbitrary    
-
-    let everSucceeded = Map.fromList [ (RrdpU u, AtLeastOnce) | 
-            RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
-
-    let pps = PublicationPoints rrdpMap newRsyncTree (EverSucceededMap everSucceeded) mempty
+    rrdpMap :: RrdpMap <- QC.generate arbitrary        
+    let pps = PublicationPoints rrdpMap newRsyncTree mempty
     pure $ List.foldr mergeRsyncPP pps repositoriesURIs    
     
 

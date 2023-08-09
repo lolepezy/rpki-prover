@@ -79,6 +79,7 @@ data WorkerParams = RrdpFetchParams {
             } | 
             RsyncFetchParams { 
                 scopes          :: Scopes, 
+                fetchConfig     :: FetchConfig, 
                 rsyncRepository :: RsyncRepository,
                 worldVersion    :: WorldVersion 
             } | 
