@@ -398,11 +398,25 @@ onlyForSyncFetch pps ppAccess = let
             Just r  -> (isSlow $ getSpeed r, Just r)                        
 
 
-markAsRequested ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
-markAsRequested RepositoryProcessing {..} filteredOutRepos = liftIO $ atomically $ do 
-    modifyTVar' publicationPoints
-        (& #slowRequested %~ (<> Set.fromList (map getRpkiURL filteredOutRepos)))
+filterForAsyncFetch :: PublicationPointAccess -> [FetchResult] -> [Repository] -> [Repository]
+filterForAsyncFetch ppAccess fetches slowRepos = 
+    filter (\(getRpkiURL -> slowUrl) -> 
+            not $ null $ filter thereIsASuccessfulFetch 
+                $ takeWhile (/= slowUrl) 
+                $ map getRpkiURL 
+                $ NonEmpty.toList $ unPublicationPointAccess ppAccess
+        ) slowRepos 
+  where            
+    thereIsASuccessfulFetch url = not $ null $ filter (
+        \case 
+            FetchSuccess r _ -> getRpkiURL r == url
+            FetchFailure u _ -> u == url
+        ) fetches
 
+markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
+markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ do 
+    modifyTVar' publicationPoints
+        (& #slowRequested %~ (<> Set.fromList (map getRpkiURL repos)))
 
 
 syncFetchConfig :: Config -> FetchConfig
@@ -420,3 +434,5 @@ asyncFetchConfig config = let
         rsyncSlowThreshold = config ^. typed @RsyncConf . #rsyncTimeout
         rrdpSlowThreshold = config ^. typed @RrdpConf . #rrdpTimeout
     in FetchConfig {..}
+
+

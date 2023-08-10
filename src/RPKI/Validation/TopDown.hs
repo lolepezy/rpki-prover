@@ -372,24 +372,24 @@ validateCa
                             -- Both rrdp and rsync (and whatever else in the future?) are
                             -- disabled, don't fetch at all.
                             validateThisCertAndGoDown
-                        Just ppAccess' -> do
+                        Just filteredPPAccess -> do
                             -- Skip repositories that are known to be too slow 
                             -- or timed out (i.e. unavailable)
                             pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                            let (quickPPs, slowRepos) = onlyForSyncFetch pps ppAccess'                                                
+                            let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess                                                
                             case quickPPs of 
                                 Nothing -> do 
                                     -- Even though we are skipping the repository we still need to remember
                                     -- that it was mentioned as a publication point on a certificate                                    
-                                    markAsRequested repositoryProcessing slowRepos
+                                    markForAsyncFetch repositoryProcessing slowRepos
                                     validateThisCertAndGoDown
 
                                 Just filteredPPAccess -> do 
                                     fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
                                                     repositoryProcessing worldVersion filteredPPAccess
-
-                                    -- TODO This marking should happen based on successes in `fetches`
-                                    markAsRequested repositoryProcessing slowRepos
+                                    
+                                    markForAsyncFetch repositoryProcessing 
+                                        $ filterForAsyncFetch filteredPPAccess fetches slowRepos
 
                                     primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
                                     case primaryUrl of
