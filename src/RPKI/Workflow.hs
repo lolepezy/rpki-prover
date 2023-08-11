@@ -634,8 +634,7 @@ runFetches appContext@AppContext {..} = do
                         RrdpR r  -> RrdpPP r
 
             let ppAccess = PublicationPointAccess $ NE.fromList [pp]            
-            worldVersion <- newWorldVersion
-            logDebug logger [i|Fetch config = #{asyncFetchConfig config}|]            
+            worldVersion <- newWorldVersion            
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchPPWithFallback appContext (asyncFetchConfig config) 
                         repositoryProcessing worldVersion ppAccess

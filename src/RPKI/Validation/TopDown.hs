@@ -191,6 +191,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         allTas <- newAllTasTopDownContext worldVersion
                     (Now $ versionToMoment worldVersion) repositoryProcessing
 
+        resetSlowRequested repositoryProcessing
         validateThem allTas
             `finally` (applyValidationSideEffects appContext allTas)                    
   where
@@ -361,45 +362,7 @@ validateCa
                 vError $ TooManyRepositories
                             (getLocations certificate)
                             (validationConfig ^. #maxTaRepositories)
-            )
-
-    let actuallyValidate =
-            case getPublicationPointsFromCertObject (certificate ^. #payload) of
-                Left e         -> vError e
-                Right ppAccess ->
-                    case filterPPAccess config ppAccess of
-                        Nothing ->
-                            -- Both rrdp and rsync (and whatever else in the future?) are
-                            -- disabled, don't fetch at all.
-                            validateThisCertAndGoDown
-                        Just filteredPPAccess -> do
-                            -- Skip repositories that are known to be too slow 
-                            -- or timed out (i.e. unavailable)
-                            pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                            let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess                                                
-                            case quickPPs of 
-                                Nothing -> do 
-                                    -- Even though we are skipping the repository we still need to remember
-                                    -- that it was mentioned as a publication point on a certificate                                    
-                                    markForAsyncFetch repositoryProcessing slowRepos
-                                    validateThisCertAndGoDown
-
-                                Just filteredPPAccess -> do 
-                                    fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
-                                                    repositoryProcessing worldVersion filteredPPAccess
-                                    
-                                    markForAsyncFetch repositoryProcessing 
-                                        $ filterForAsyncFetch filteredPPAccess fetches slowRepos
-
-                                    primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
-                                    case primaryUrl of
-                                        Nothing -> do 
-                                            -- try some heuristics here, use the slow filtered out one
-                                            case slowRepos of 
-                                                []    -> validateThisCertAndGoDown
-                                                r : _ -> inSubMetricScope' PPFocus (getRpkiURL r) validateThisCertAndGoDown
-                                        Just rp -> 
-                                            inSubMetricScope' PPFocus rp validateThisCertAndGoDown
+            )                
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
@@ -413,9 +376,46 @@ validateCa
     checkAndReport treeDepthLimit
         $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
-        $ actuallyValidate
+        $ peocessPublicationPointFetching
 
   where
+    peocessPublicationPointFetching = 
+        case getPublicationPointsFromCertObject (certificate ^. #payload) of
+            Left e         -> vError e
+            Right ppAccess ->
+                case filterPPAccess config ppAccess of
+                    Nothing ->
+                        -- Both rrdp and rsync (and whatever else in the future?) are
+                        -- disabled, don't fetch at all.
+                        validateThisCertAndGoDown
+                    Just filteredPPAccess -> do
+                        -- Skip repositories that are marked as "slow"
+                        pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
+                        let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess                                                
+                        case quickPPs of 
+                            Nothing -> do 
+                                -- Even though we are skipping the repository we still need to remember
+                                -- that it was mentioned as a publication point on a certificate                                    
+                                markForAsyncFetch repositoryProcessing slowRepos                                
+                                validateThisCertAndGoDown
+
+                            Just quickPPAccess -> do                                     
+                                fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
+                                                repositoryProcessing worldVersion quickPPAccess                                    
+                                -- Based on 
+                                --   * which repository(-ries) were mentioned on the certificate
+                                --   * which ones succeded, 
+                                --   * which were skipped because they are slow,
+                                -- derive which repository(-ies) should be picked up 
+                                -- for async fetching later.
+                                markForAsyncFetch repositoryProcessing 
+                                    $ filterForAsyncFetch filteredPPAccess fetches slowRepos
+
+                                -- primaryUrl is used for set the focus to the publication point
+                                primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
+                                case primaryUrl of
+                                    Nothing -> validateThisCertAndGoDown                                            
+                                    Just rp -> inSubMetricScope' PPFocus rp validateThisCertAndGoDown    
 
     validateThisCertAndGoDown = do
         -- Here we do the following
@@ -451,7 +451,7 @@ validateCa
         case maybeMft of
             Nothing ->
                 -- Use awkward vError + catchError to force the error to 
-                -- get into the Validations in the state.
+                -- get into the Validations in the state. 
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     goForLatestValid
@@ -598,7 +598,7 @@ validateCa
 
     gatherMftEntryResults mftEntryResults = do
         -- gather all the validation states from every MFT entry
-        mapM_ (embedState . snd) mftEntryResults
+        embedState $ mconcat $ map snd mftEntryResults
 
         case partitionEithers $ map fst mftEntryResults of
             ([], payloads) -> pure payloads
@@ -618,7 +618,8 @@ validateCa
         let nonUniqueEntries = Map.filter longerThanOne entryMap
 
         -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
-        -- about uniqueness of manifest entries.
+        -- about uniqueness of manifest entries. 
+        -- TODO Or does it? Maybe something in th ASN1 enodimng as Aet?
         unless (Map.null nonUniqueEntries) $
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
@@ -655,7 +656,7 @@ validateCa
         when (null nameMatches) $
             vWarn $ ManifestLocationMismatch filename objectLocations
 
-        case child of
+        case child of            
             RBrief ((^. #payload) -> brief) h
                 | getHash certificate == brief ^. #parentHash ->
                     -- It's under the same parent, so it's definitely the same object.
@@ -668,7 +669,7 @@ validateCa
                 validateRealObject o validCrl
 
     {- 
-        There's a brief for the already validated object, so only check, 
+        There's a brief for the already validated object, so only check 
         validity period and if it wasn't revoked.             
     -}
     validateBrief brief validCrl = do

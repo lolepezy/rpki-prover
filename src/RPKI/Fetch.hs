@@ -401,7 +401,7 @@ onlyForSyncFetch pps ppAccess = let
 filterForAsyncFetch :: PublicationPointAccess -> [FetchResult] -> [Repository] -> [Repository]
 filterForAsyncFetch ppAccess fetches slowRepos = 
     filter (\(getRpkiURL -> slowUrl) -> 
-            not $ null $ filter thereIsASuccessfulFetch 
+            null $ filter thereIsASuccessfulFetch 
                 $ takeWhile (/= slowUrl) 
                 $ map getRpkiURL 
                 $ NonEmpty.toList $ unPublicationPointAccess ppAccess
@@ -410,13 +410,18 @@ filterForAsyncFetch ppAccess fetches slowRepos =
     thereIsASuccessfulFetch url = not $ null $ filter (
         \case 
             FetchSuccess r _ -> getRpkiURL r == url
-            FetchFailure u _ -> u == url
+            FetchFailure _ _ -> False
         ) fetches
+
+resetSlowRequested ::  MonadIO m => RepositoryProcessing -> m ()
+resetSlowRequested RepositoryProcessing {..} = liftIO $ atomically $ do 
+    modifyTVar' publicationPoints (& #slowRequested .~ mempty)
 
 markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
 markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ do 
-    modifyTVar' publicationPoints
-        (& #slowRequested %~ (<> Set.fromList (map getRpkiURL repos)))
+    unless (null repos) $
+        modifyTVar' publicationPoints
+            (& #slowRequested %~ (<> Set.fromList (map getRpkiURL repos)))
 
 
 syncFetchConfig :: Config -> FetchConfig
