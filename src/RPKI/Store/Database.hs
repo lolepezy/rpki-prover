@@ -64,13 +64,13 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 20
+currentDatabaseVersion = 21
 
 -- Some constant keys
-databaseVersionKey, lastValidMftKey, slowrRequestedKey :: Text
+databaseVersionKey, lastValidMftKey, slowRequestedKey :: Text
 databaseVersionKey = "database-version"
 lastValidMftKey    = "last-valid-mft"
-slowrRequestedKey  = "slow-requested"
+slowRequestedKey  = "slow-requested"
 
 data EraseWrapper s where 
     EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
@@ -208,7 +208,7 @@ newtype SlurmStore s = SlurmStore {
 data RepositoryStore s = RepositoryStore {
         rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
         rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
-        slowS  :: SMap "slow-requested" s Text (Compressed (Set.Set RpkiURL))
+        slowS  :: SMap "slow-requested" s Text (Compressed (Set.Set [RpkiURL]))
     }
     deriving stock (Generic)
 
@@ -610,7 +610,7 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
 
     let (lastSPuts, _) = separate [slowRequested]    
-    for_ lastSPuts $ \rr -> M.put tx slowS slowrRequestedKey (Compressed rr)
+    for_ lastSPuts $ \rr -> M.put tx slowS slowRequestedKey (Compressed rr)
   where
     separate = foldr f ([], [])
       where
@@ -621,7 +621,7 @@ getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m Publica
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
-    slowS <- fromMaybe mempty . fmap unCompressed <$> M.get tx slowS slowrRequestedKey
+    slowS <- fromMaybe mempty . fmap unCompressed <$> M.get tx slowS slowRequestedKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)           

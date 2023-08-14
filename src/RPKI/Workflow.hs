@@ -11,6 +11,7 @@ module RPKI.Workflow where
 import           Control.Concurrent.Async
 import           Control.Concurrent
 import           Control.Concurrent.STM
+import           Control.Concurrent.STM.TMVar
 import           Control.Exception
 import           Control.Monad
 
@@ -25,7 +26,7 @@ import qualified Data.Text                       as Text
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
 import qualified Deque.Strict                    as Deq
-import           Data.Maybe                      (fromMaybe)
+import           Data.Maybe                      (fromMaybe, catMaybes)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 
@@ -57,6 +58,7 @@ import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.AppStorage
 import           RPKI.TAL
+import           RPKI.Util                     
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
@@ -67,18 +69,8 @@ import           RPKI.SLURM.Types
 data JobRun = FirstRun | RanBefore
     deriving (Show, Eq, Ord, Generic)  
 
--- Some jobs are dangerous to run with anything else
-newtype JobLock = JobLock (TVar Bool)
-
-newJobLock :: STM JobLock
-newJobLock = JobLock <$> newTVar False
-
-exclusiveJob :: JobLock -> IO a -> IO a
-exclusiveJob (JobLock t) f = 
-    bracket lock unlock (const f)
-  where 
-    lock     = atomically $ readTVar t >>= (`when` retry)
-    unlock _ = atomically $ writeTVar t False
+data AsyncStatus = NotActive | Starting | Active (Async ())
+    deriving (Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
         -- Indicates if anything was ever deleted from the DB,
@@ -89,30 +81,32 @@ data WorkflowShared = WorkflowShared {
         -- operations and such should not run at the same time with validation 
         -- (not only for consistency reasons, but we also want to avoid locking 
         -- the DB for long time by a cleanup process).        
-        globalQueue :: ClosableQueue (WorldVersion -> IO ()),
+        -- globalQueue :: ClosableQueue (WorldVersion -> IO ()),
 
-        -- The same type of the separate queue for the async fetcher.
-        asyncFetchQueue :: ClosableQueue (WorldVersion -> IO ()),
+        -- -- The same type of the separate queue for the async fetcher.
+        -- asyncFetchQueue :: ClosableQueue (WorldVersion -> IO ()),
 
-        -- This lock is to be used by compaction and async-fetch jobs,
-        -- since they should never run at the same time.
-        exclusiveLock :: JobLock
+        runningTasks :: RunningTasks,
+
+        prometheusMetrics :: PrometheusMetrics,
+
+        asyncFetchIsRunning :: TVar Bool
     }
     deriving (Generic)
 
-newWorkflowShared :: STM WorkflowShared
-newWorkflowShared = WorkflowShared 
-            <$> newTVar False 
-            <*> newCQueue 10 
-            <*> newCQueue 2 
-            <*> newJobLock
+newWorkflowShared :: PrometheusMetrics -> STM WorkflowShared
+newWorkflowShared prometheusMetrics = WorkflowShared 
+            <$> newTVar False             
+            <*> newRunningTasks
+            <*> pure prometheusMetrics
+            <*> newTVar False
 
 -- Different types of periodic tasks that may run 
 data TaskType = 
         -- top-down validation and sync fetches
         ValidationTask
 
-        -- delete old versions
+        -- delete old objects and version
         | CleanupCacheTask    
 
         -- delete old payloads (VRPs, ASPAs, etc.)    
@@ -131,7 +125,17 @@ data TaskType =
         deriving (Show, Eq, Ord, Bounded, Enum, Generic)
 
 
-data Task = Task TaskType (IO ())
+data Task = Task TaskType (WorldVersion -> JobRun -> IO ())
+    deriving (Generic)
+
+
+data Scheduling = Scheduling {
+        name         :: Text.Text,
+        initialDelay :: Int,
+        interval     :: Seconds,
+        task         :: Task,
+        persistent   :: Bool        
+    }
     deriving (Generic)
 
 
@@ -141,378 +145,355 @@ data Task = Task TaskType (IO ())
 runWorkflow :: (Storage s, MaintainableStorage s) =>
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do    
+        
+    prometheusMetrics <- createPrometheusMetrics config
 
     -- Some shared state between the threads for simplicity.
-    workflowShared <- atomically newWorkflowShared
-
-    -- Initialise prometheus metrics here
-    prometheusMetrics <- createPrometheusMetrics config
+    workflowShared <- atomically $ newWorkflowShared prometheusMetrics    
 
     -- Threads that will run periodic jobs and persist timestaps of running them
     -- for consistent scheduling.
-    periodicJobs <- periodicJobStarters workflowShared
+    -- periodicJobs <- periodicJobStarters workflowShared
 
     -- Fill in the current appState if it's not too old.
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
 
-    let threads = [ 
-                -- thread that takes jobs from the queue and executes them sequentially
-                jobExecutor,
-                -- thread that generates re-validation jobs
-                generateRevalidationJob prometheusMetrics,                                
-                -- Run RTR server thread when rtrConfig is present in the AppConfig.      
-                const initRtrIfNeeded            
-            ]
+    -- let periodicJobs = []
 
-    mapConcurrently_ (\f -> f workflowShared) $ threads <> periodicJobs
+    -- let threads = [ 
+                -- thread that takes jobs from the queue and executes them sequentially
+                -- jobExecutor,
+                -- thread that generates re-validation jobs
+                -- generateRevalidationJob,                                
+                -- Run RTR server thread when rtrConfig is present in the AppConfig.      
+            --     const initRtrIfNeeded            
+            -- ]
+
+    -- mapConcurrently_ (\f -> f workflowShared) $ threads <> periodicJobs
+
+    void $ concurrently
+            (runScheduledTasks workflowShared)
+            initRtrIfNeeded
+
   where        
 
-        -- The main loop of the validator: periodically 
-        -- generate a command to re-validate all TAs.        
-        generateRevalidationJob prometheusMetrics WorkflowShared {..} =
-            periodically (config ^. typed @ValidationConfig . #revalidationInterval) 
-                    (do                        
-                        writeQ globalQueue $ \_ -> do 
-                            -- Validate all TAs top-down
-                            validateAllTAs prometheusMetrics =<< createWorldVersion
-                            -- After every validation run async repository fetcher   
-                            -- for slow/unstable/timed out repositories                       
-                            runAsyncFetcherIfNeeded
-                        pure Repeat)
-                `finally`
-                    atomically (closeCQueue globalQueue)        
-          where
-            runAsyncFetcherIfNeeded =                 
-                writeQIfPossible asyncFetchQueue $ \worldVersion -> 
-                    -- aquire the same lock as the compaction job to not 
-                    -- allow async fetches during LMDB compaction
-                    exclusiveJob exclusiveLock $ do 
-                        logDebug logger [i|Running async fetch job.|] 
-                        validations <- runFetches appContext
-                        db <- readTVarIO database
-                        rwTx db $ \tx -> do
-                            saveValidations tx db worldVersion (validations ^. typed)
-                            saveMetrics tx db worldVersion (validations ^. typed)
-                            asyncFetchWorldVersion tx db worldVersion                  
-                        logDebug logger [i|Finished async fetch job.|]
+    schedules workflowShared = [
+            Scheduling { 
+                name = "validation", 
+                initialDelay = 0,
+                interval = config ^. typed @ValidationConfig . #revalidationInterval,
+                task = Task ValidationTask $ validateTAs logger workflowShared,
+                persistent = False
+            },                
+            Scheduling { 
+                name = "cleanupCache", 
+                initialDelay = 10_000_000,
+                interval = config ^. #cacheCleanupInterval,
+                task = Task CleanupCacheTask $ cacheGC workflowShared,
+                persistent = True
+            },        
+            Scheduling { 
+                name = "cleanOldPayloads",
+                initialDelay = 20_000_000,
+                interval =  config ^. #cacheCleanupInterval, 
+                task = Task DeleteOldPayloadsTask $ cleanOldPayloads workflowShared,
+                persistent = True
+            },
+            Scheduling { 
+                name = "compaction",       
+                initialDelay = 30_000_000,
+                interval = config ^. #storageCompactionInterval,
+                task = Task LmdbCompactTask $ compact workflowShared,
+                persistent = True
+            },
+            Scheduling { 
+                name = "rsyncCleanup",     
+                initialDelay = 60_000_000,
+                interval = config ^. #rsyncCleanupInterval,
+                task = Task RsyncCleanupTask rsyncCleanup,
+                persistent = True
+            },
+            Scheduling { 
+                name = "leftoverCleanup",     
+                initialDelay = 80_000_000,
+                interval = config ^. typed @ValidationConfig . #revalidationInterval,
+                task = Task LeftoversCleanupTask $ \_ _ -> cleanupLeftovers,
+                persistent = False
+            }
+        ]
 
-        periodicJobStarters workflowShared = do 
-            let availableJobs = [
-                    -- These initial delay numbers are pretty arbitrary and chosen based 
-                    -- on reasonable order of the jobs.
-                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC workflowShared),
-                    ("cleanOldPayloadsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldPayloads workflowShared),
-                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact workflowShared),
-                    ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
-                    ]  
-            
-            persistedJobs <- do
-                db <- readTVarIO database
-                roTx db $ \tx -> Map.fromList <$> allJobs tx db
+    runScheduledTasks workflowShared@WorkflowShared {..} = do        
+        db <- readTVarIO database
+        persistedJobs <- roTx db $ \tx -> Map.fromList <$> allJobs tx db        
 
-            Now now <- thisInstant                   
-            
-            pure $ 
-                flip map availableJobs $ 
-                    \(job, defInitialDelay, interval, action) -> 
-                        let (initialDelay, jobRun) =  
-                                case Map.lookup job persistedJobs of 
-                                    Nothing           -> (defInitialDelay, FirstRun)
-                                    Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
-                        
-                            jobWrapper worldVersion = do                                 
-                                    action worldVersion jobRun
-                                `finally` (do
-                                    Now endTime <- thisInstant
-                                    -- re-read `db` since it could have been changed by the time the
-                                    -- job is finished (after compaction, in particular)                            
-                                    db <- readTVarIO database
-                                    rwTx db $ \tx -> setJobCompletionTime tx db job endTime)
+        Now now <- thisInstant
+        forConcurrently (schedules workflowShared) $ \Scheduling {..} -> do
+            let (delay, jobRun) =                  
+                    if persistent 
+                    then case Map.lookup name persistedJobs of 
+                        Nothing           -> (initialDelay, FirstRun)
+                        Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
+                    else (initialDelay, FirstRun)            
 
-                        in \WorkflowShared {..} -> do 
-                            let delaySeconds = initialDelay `div` 1_000_000
-                            let delayText :: Text.Text = if initialDelay <= 0 
-                                    then [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
-                                    else [i|with initial delay #{delaySeconds}s|] 
-                            logDebug logger [i|Scheduling job '#{job}' #{delayText} and interval #{interval}.|] 
-                            generatePeriodicJob initialDelay interval jobWrapper globalQueue
-    
+            let delaySeconds = initialDelay `div` 1_000_000
+            let delayText :: Text.Text = 
+                    case () of 
+                      _ | delay == 0 -> [i|for ASAP execution|] 
+                        | delay < 0  -> [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
+                        | otherwise  -> [i|with initial delay #{delaySeconds}s|]                     
+            logDebug logger [i|Scheduling task '#{name}' #{delayText} and interval #{interval}.|] 
 
-        periodicJobStarters1 workflowShared = do 
-            let availableJobs = [
-                    -- These initial delay numbers are pretty arbitrary and chosen based 
-                    -- on reasonable order of the jobs.
-                    ("gcJob",               10_000_000, config ^. #cacheCleanupInterval, cacheGC workflowShared),
-                    ("cleanOldPayloadsJob", 20_000_000, config ^. #cacheCleanupInterval, cleanOldPayloads workflowShared),
-                    ("compactionJob",       30_000_000, config ^. #storageCompactionInterval, compact workflowShared),
-                    ("rsyncCleanupJob",     60_000_000, config ^. #rsyncCleanupInterval, rsyncCleanup)
-                    ]  
-            
-            persistedJobs <- do
-                db <- readTVarIO database
-                roTx db $ \tx -> Map.fromList <$> allJobs tx db
-
-            Now now <- thisInstant                   
-            
-            pure $ 
-                flip map availableJobs $ 
-                    \(job, defInitialDelay, interval, action) -> 
-                        let (initialDelay, jobRun) =  
-                                case Map.lookup job persistedJobs of 
-                                    Nothing           -> (defInitialDelay, FirstRun)
-                                    Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
-                        
-                            jobWrapper worldVersion = do                                 
-                                    action worldVersion jobRun
-                                `finally` (do
-                                    Now endTime <- thisInstant
-                                    -- re-read `db` since it could have been changed by the time the
-                                    -- job is finished (after compaction, in particular)                            
-                                    db <- readTVarIO database
-                                    rwTx db $ \tx -> setJobCompletionTime tx db job endTime)
-
-                        in \WorkflowShared {..} -> do 
-                            let delaySeconds = initialDelay `div` 1_000_000
-                            let delayText :: Text.Text = if initialDelay <= 0 
-                                    then [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
-                                    else [i|with initial delay #{delaySeconds}s|] 
-                            logDebug logger [i|Scheduling job '#{job}' #{delayText} and interval #{interval}.|] 
-                            generatePeriodicJob initialDelay interval jobWrapper globalQueue
-
-          where
-            
-
-        jobExecutor WorkflowShared {..} = 
-            void $ concurrently (go globalQueue) (go asyncFetchQueue)
-          where
-            go queue = do
-                z <- atomically $ readCQueue queue
-                for_ z $ \job -> do 
-                    createWorldVersion >>= job
-                    go queue
-
-        validateAllTAs prometheusMetrics worldVersion = do
-            logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
-            db <- readTVarIO database
-            executeOrDie
-                (processTALs db `finally` cleanupAfterValidation)
-                (\(rtrPayloads, slurmedPayloads) elapsed -> do 
-                    let vrps = rtrPayloads ^. #vrps
-                    let slurmedVrps = slurmedPayloads ^. #vrps
-                    logInfo logger $
-                        [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
-                        [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
-            where
-                processTALs db = do
-                    ((z, workerVS), workerId) <- runProcessTALsWorker worldVersion                    
-                    case z of 
-                        Left e -> do 
-                            logError logger [i|Validator process failed: #{e}.|]
-                            rwTx db $ \tx -> do
-                                saveValidations tx db worldVersion (workerVS ^. typed)
-                                saveMetrics tx db worldVersion (workerVS ^. typed)
-                                completeWorldVersion tx db worldVersion                            
-                            updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
-                            pure (mempty, mempty)            
-                        Right wr@WorkerResult {..} -> do                              
-                            let ValidationResult vs maybeSlurm = payload
-                            
-                            logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
-                        
-                            let topDownState = workerVS <> vs
-                            logDebug logger [i|Validation result: 
-#{formatValidations (topDownState ^. typed)}.|]
-                            updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
-                            
-                            reReadAndUpdatePayloads maybeSlurm
-                  where
-                    reReadAndUpdatePayloads maybeSlurm = do 
-                        roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
-                            Nothing -> do 
-                                logError logger [i|Something weird happened, could not re-read VRPs.|]
-                                pure (mempty, mempty)
-                            Just rtrPayloads -> do                 
-                                slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
-                                pure (rtrPayloads, slurmedPayloads)                        
-
-                cleanupAfterValidation = do
-                    -- Cleanup tmp directory, if some fetchers died abruptly 
-                    -- there may be leftover files.
-                    let tmpDir = config ^. #tmpDirectory
-                    logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
-                    listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
-                    
-                    -- Cleanup reader table of LMDB cache, it may get littered by 
-                    -- dead processes, unfinished/killed transaction, etc.
-                    -- All these stale transactions are essentially bugs, but it's 
-                    -- easier to just clean them up rather then prevent all 
-                    -- possible leakages (even if it is possible).
-                    cleaned <- cleanUpStaleTx appContext
-                    when (cleaned > 0) $ 
-                        logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]                                
-
-        -- Delete objects in the store that were read by top-down validation 
-        -- longer than `cacheLifeTime` hours ago.
-        cacheGC WorkflowShared {..} worldVersion _ = do            
-            executeOrDie
-                cleanupUntochedObjects
-                (\z elapsed -> 
-                    case z of 
-                        Left message -> logError logger message
-                        Right CleanUpResult {..} -> do 
-                            when (deletedObjects > 0) $ 
-                                atomically $ writeTVar deletedAnythingFromDb True
-                            logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
-                                            [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
-          where
-            cleanupUntochedObjects = do                 
-                ((z, _), workerId) <- runCleapUpWorker worldVersion      
-                case z of 
-                    Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
-                    Right wr@WorkerResult {..} -> do 
-                        logWorkerDone logger workerId wr
-                        pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
-                        pure $ Right payload                                       
-
-        -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
-        cleanOldPayloads WorkflowShared {..} worldVersion _ = do
-            let now = versionToMoment worldVersion
-            db <- readTVarIO database
-            executeOrDie
-                (deleteOldPayloads db $ versionIsOld now (config ^. #oldVersionsLifetime))
-                (\deleted elapsed -> do 
-                    when (deleted > 0) $ do
-                        atomically $ writeTVar deletedAnythingFromDb True
-                        logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
-
-        -- Do the LMDB compaction
-        compact WorkflowShared {..} worldVersion _ = exclusiveJob exclusiveLock $ do
-            -- Some heuristics first to see if it's obvisouly too early to run compaction:
-            -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
-            deletedAnything <- readTVarIO deletedAnythingFromDb
-            if deletedAnything then do 
-                (_, elapsed) <- timedMS $ runMaintenance appContext
-                logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
-            else 
-                logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
-
-        -- Delete local rsync mirror
-        rsyncCleanup _ jobRun =
-            executeOrDie
-                (case jobRun of 
-                    FirstRun -> 
-                        -- Do not actually do anything at the very first run.
-                        -- Statistically the first run would mean that the application 
-                        -- just was installed and started working and it's not very likely 
-                        -- that there's already a lot of garbage in the rsync mirror directory.                        
-                        pure ()
-                    RanBefore -> do
-                        let rsyncDir = config ^. #rsyncConf . #rsyncRoot
-                        logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
-                        listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
-                )
-                (\_ elapsed -> 
-                    case jobRun of 
-                        FirstRun  -> pure ()  
-                        RanBefore ->                    
-                            logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
-
-        executeOrDie :: IO a -> (a -> TimeMs -> IO ()) -> IO ()
-        executeOrDie f onRight =
-            exec `catches` [
-                    Handler $ \(AppException seriousProblem) ->
-                        die [i|Something really bad happened #{seriousProblem}, exiting.|],
-                    Handler $ \(_ :: AsyncCancelled) ->
-                        die [i|Interrupted with Ctrl-C, exiting.|],
-                    Handler $ \(weirdShit :: SomeException) ->
-                        logError logger [i|Something weird happened #{weirdShit}, exiting.|]
-                ]
-            where
-                exec = do
-                    (r, elapsed) <- timedMS f
-                    onRight r elapsed        
-
-        -- Write an action to the global queue with given interval.
-        generatePeriodicJob delay interval action queue = do
-            -- Delay may be 0 or negative (the job is long overdue), 
-            -- don't wait for anything then
             when (delay > 0) $
                 threadDelay delay
-            periodically interval $ do                 
-                closed <- atomically $ isClosedCQueue queue
-                unless closed $ writeQ queue action
-                pure $ if closed 
-                        then Done
-                        else Repeat
 
-        createWorldVersion = do
-            newVersion <- newWorldVersion
-            existing <- getWorldVerionIO appState
-            logDebug logger $ case existing of
-                Nothing ->
-                    [i|Generated first world version #{newVersion}.|]
-                Just oldWorldVersion ->
-                    [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
-            pure newVersion
-
-
-        writeQ queue z = do
-            isFull <- atomically $ ifFullCQueue queue
-            when isFull $ logInfo logger $
-                                [i|Job queue is full. Normally that means that revalidation interval |] <>
-                                [i|is too short for the time validation takes. It is recommended to restart |] <>
-                                [i|with a higher re-validation interval value.|]
-            atomically $ writeCQueue queue z
-
-        writeQIfPossible queue z = atomically $ do
-            isFull <- ifFullCQueue queue
-            unless isFull $ writeCQueue queue z
-
-        initRtrIfNeeded = 
-            for_ (config ^. #rtrConfig) $ runRtrServer appContext
-
-        runProcessTALsWorker worldVersion = do 
-            let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
-            let workerId = WorkerId $ "validation:" <> talsStr
-
-            let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-
-            let arguments = 
-                    [ worderIdS workerId ] <>
-                    rtsArguments [ 
-                        rtsN maxCpuAvailable, 
-                        rtsA "24m", 
-                        rtsAL "128m", 
-                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
+            periodically interval $ do 
+                worldVersion <- createWorldVersion                
+                let task' = let
+                        Task taskType io = task 
+                        in Task taskType $ \v j ->
+                            logDebug logger [i|Running task '#{name}'.|] >> io v j 
+                        
+                runInPool logger task' runningTasks worldVersion jobRun
+                    `finally` (do  
+                        when persistent $ do                       
+                            Now endTime <- thisInstant
+                            -- re-read `db` since it could have been changed by the time the
+                            -- job is finished (after compaction, in particular)                            
+                            db <- readTVarIO database                    
+                            rwTx db $ \tx -> setJobCompletionTime tx db name endTime
+                        logDebug logger [i|Done with task '#{name}'.|])
+                pure Repeat
             
-            r <- runValidatorT 
-                    (newScopes "validator") $ 
-                        runWorker logger config workerId 
-                            (ValidationParams worldVersion tals)                        
-                            (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                            arguments                                        
-            pure (r, workerId)
 
-        runCleapUpWorker worldVersion = do             
-            let workerId = WorkerId "cache-clean-up"
-            
-            let arguments = 
-                    [ worderIdS workerId ] <>
-                    rtsArguments [ 
-                        rtsN 2, 
-                        rtsA "24m", 
-                        rtsAL "64m", 
-                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
-            
-            r <- runValidatorT             
-                    (newScopes "cache-clean-up") $ 
-                        runWorker logger config workerId 
-                            (CacheCleanupParams worldVersion)
-                            (Timebox 300)
-                            arguments                                                                    
-            pure (r, workerId)                            
+    validateTAs logger workflowShared@WorkflowShared {..} worldVersion jobRun = do
+        validateAllTAs workflowShared worldVersion 
+        `finally`
+        runAsyncFetcherIfNeeded        
+      where
+        runAsyncFetcherIfNeeded = 
+            join $ atomically $ do 
+                readTVar asyncFetchIsRunning >>= \case                
+                    False -> pure $ 
+                        void $ forkFinally (do                                 
+                                atomically (writeTVar asyncFetchIsRunning True)
+                                fetchWorldVersion <- createWorldVersion
+                                runInPool logger asyncFetchTask runningTasks fetchWorldVersion jobRun)
+                                (const $ atomically $ writeTVar asyncFetchIsRunning False)
+                    True -> 
+                        pure $ pure ()
+          where 
+            asyncFetchTask = Task AsyncFetchTask $ \fetchVersion _ -> do 
+                logDebug logger [i|Running async fetch job.|] 
+                validations <- runFetches appContext
+                db <- readTVarIO database
+                rwTx db $ \tx -> do
+                    saveValidations tx db fetchVersion (validations ^. typed)
+                    saveMetrics tx db fetchVersion (validations ^. typed)
+                    asyncFetchWorldVersion tx db fetchVersion                  
+                logDebug logger [i|Finished async fetch job.|]
+
+
+    validateAllTAs WorkflowShared {..} worldVersion= do
+        logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
+        db <- readTVarIO database
+        executeOrDie
+            (processTALs db)
+            (\(rtrPayloads, slurmedPayloads) elapsed -> do 
+                let vrps = rtrPayloads ^. #vrps
+                let slurmedVrps = slurmedPayloads ^. #vrps
+                logInfo logger $
+                    [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
+                    [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
+      where
+        processTALs db = do
+            ((z, workerVS), workerId) <- runValidationWorker worldVersion                    
+            case z of 
+                Left e -> do 
+                    logError logger [i|Validator process failed: #{e}.|]
+                    rwTx db $ \tx -> do
+                        saveValidations tx db worldVersion (workerVS ^. typed)
+                        saveMetrics tx db worldVersion (workerVS ^. typed)
+                        completeWorldVersion tx db worldVersion                            
+                    updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
+                    pure (mempty, mempty)            
+                Right wr@WorkerResult {..} -> do                              
+                    let ValidationResult vs maybeSlurm = payload
+                    
+                    logWorkerDone logger workerId wr
+                    pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
+                
+                    let topDownState = workerVS <> vs
+                    logDebug logger [i|Validation result: 
+#{formatValidations (topDownState ^. typed)}.|]
+                    updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
+                    
+                    reReadAndUpdatePayloads maybeSlurm
+          where
+            reReadAndUpdatePayloads maybeSlurm = do 
+                roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
+                    Nothing -> do 
+                        logError logger [i|Something weird happened, could not re-read VRPs.|]
+                        pure (mempty, mempty)
+                    Just rtrPayloads -> do                 
+                        slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
+                        pure (rtrPayloads, slurmedPayloads)                        
+
+                          
+    -- Delete objects in the store that were read by top-down validation 
+    -- longer than `cacheLifeTime` hours ago.
+    cacheGC WorkflowShared {..} worldVersion _ = do            
+        executeOrDie
+            cleanupUntochedObjects
+            (\z elapsed -> 
+                case z of 
+                    Left message -> logError logger message
+                    Right CleanUpResult {..} -> do 
+                        when (deletedObjects > 0) $ 
+                            atomically $ writeTVar deletedAnythingFromDb True
+                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                                        [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
+        where
+        cleanupUntochedObjects = do                 
+            ((z, _), workerId) <- runCleapUpWorker worldVersion      
+            case z of 
+                Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                Right wr@WorkerResult {..} -> do 
+                    logWorkerDone logger workerId wr
+                    pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
+                    pure $ Right payload                                       
+
+    -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
+    cleanOldPayloads WorkflowShared {..} worldVersion _ = do
+        let now = versionToMoment worldVersion
+        db <- readTVarIO database
+        executeOrDie
+            (deleteOldPayloads db $ versionIsOld now (config ^. #oldVersionsLifetime))
+            (\deleted elapsed -> do 
+                when (deleted > 0) $ do
+                    atomically $ writeTVar deletedAnythingFromDb True
+                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
+
+    -- Do the LMDB compaction
+    compact WorkflowShared {..} worldVersion _ = do
+        -- Some heuristics first to see if it's obvisouly too early to run compaction:
+        -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
+        deletedAnything <- readTVarIO deletedAnythingFromDb
+        if deletedAnything then do 
+            (_, elapsed) <- timedMS $ runMaintenance appContext
+            logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
+        else 
+            logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
+
+    -- Delete temporary files and LMDB stale reader transactions
+    cleanupLeftovers = do
+        -- Cleanup tmp directory, if some fetchers died abruptly 
+        -- there may be leftover files.
+        let tmpDir = config ^. #tmpDirectory
+        logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
+        listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
+        
+        -- Cleanup reader table of LMDB cache, it may get littered by 
+        -- dead processes, unfinished/killed transaction, etc.
+        -- All these stale transactions are essentially bugs, but it's 
+        -- easier to just clean them up rather then prevent all 
+        -- possible leakages (even if it is possible).
+        cleaned <- cleanUpStaleTx appContext
+        when (cleaned > 0) $ 
+            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]      
+
+    -- Delete local rsync mirror
+    rsyncCleanup _ jobRun =
+        executeOrDie
+            (case jobRun of 
+                FirstRun -> 
+                    -- Do not actually do anything at the very first run.
+                    -- Statistically the first run would mean that the application 
+                    -- just was installed and started working and it's not very likely 
+                    -- that there's already a lot of garbage in the rsync mirror directory.                        
+                    pure ()
+                RanBefore -> do
+                    let rsyncDir = config ^. #rsyncConf . #rsyncRoot
+                    logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
+                    listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
+            )
+            (\_ elapsed -> 
+                case jobRun of 
+                    FirstRun  -> pure ()  
+                    RanBefore ->                    
+                        logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
+
+    executeOrDie :: IO a -> (a -> TimeMs -> IO ()) -> IO ()
+    executeOrDie f onRight =
+        exec `catches` [
+                Handler $ \(AppException seriousProblem) ->
+                    die [i|Something really bad happened #{seriousProblem}, exiting.|],
+                Handler $ \(_ :: AsyncCancelled) ->
+                    die [i|Interrupted with Ctrl-C, exiting.|],
+                Handler $ \(weirdShit :: SomeException) ->
+                    logError logger [i|Something weird happened #{weirdShit}, exiting.|]
+            ]
+        where
+            exec = do
+                (r, elapsed) <- timedMS f
+                onRight r elapsed        
+
+    createWorldVersion = do
+        newVersion <- newWorldVersion
+        existing <- getWorldVerionIO appState
+        logDebug logger $ case existing of
+            Nothing ->
+                [i|Generated first world version #{newVersion}.|]
+            Just oldWorldVersion ->
+                [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
+        pure newVersion
+
+    initRtrIfNeeded = 
+        for_ (config ^. #rtrConfig) $ runRtrServer appContext
+
+
+    -- Workers for functionality running in separate processes.
+    --     
+    runValidationWorker worldVersion = do 
+        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
+        let workerId = WorkerId $ "validation:" <> talsStr
+
+        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+
+        let arguments = 
+                [ worderIdS workerId ] <>
+                rtsArguments [ 
+                    rtsN maxCpuAvailable, 
+                    rtsA "24m", 
+                    rtsAL "128m", 
+                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
+        
+        r <- runValidatorT 
+                (newScopes "validator") $ 
+                    runWorker logger config workerId 
+                        (ValidationParams worldVersion tals)                        
+                        (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+                        arguments                                        
+        pure (r, workerId)
+
+    runCleapUpWorker worldVersion = do             
+        let workerId = WorkerId "cache-clean-up"
+        
+        let arguments = 
+                [ worderIdS workerId ] <>
+                rtsArguments [ 
+                    rtsN 2, 
+                    rtsA "24m", 
+                    rtsAL "64m", 
+                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
+        
+        r <- runValidatorT             
+                (newScopes "cache-clean-up") $ 
+                    runWorker logger config workerId 
+                        (CacheCleanupParams worldVersion)
+                        (Timebox 300)
+                        arguments                                                                    
+        pure (r, workerId)                            
 
 -- To be called by the validation worker process
 runValidation :: Storage s =>
@@ -618,34 +599,43 @@ runFetches appContext@AppContext {..} = do
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         -- We only care about the repositories that are mentioned 
         -- in the last validation.
-        let problematicRepositories = filter (\(u, _) -> 
-                u `Set.member` (pps ^. #slowRequested)) $ 
-                findSpeedProblems pps
+        let slowURLs = Map.fromList $ findSpeedProblems pps
 
-        let reposText = Text.intercalate ", " $ map (toText . fst) problematicRepositories
-        unless (null problematicRepositories) $ 
+        let problematicRepositories = 
+                catMaybes $ flip map (toList $ pps ^. #slowRequested) $ \case 
+                    []   -> Nothing
+                    urls -> fmap PublicationPointAccess 
+                                $ NE.nonEmpty 
+                                $ map repositoryToPP
+                                $ catMaybes
+                                $ map (\u -> Map.lookup u slowURLs) urls 
+        
+        unless (null problematicRepositories) $ do                         
+            let ppaToText (PublicationPointAccess ppas) = 
+                    Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
+            let reposText = Text.intercalate ", " $ map ppaToText problematicRepositories
             logDebug logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
 
-        void $ pooledForConcurrently problematicRepositories $ \(url, repository) -> do 
-
-            -- TODO This fiddling is weird and probably redundant
-            let pp = case repository of 
-                        RsyncR r -> RsyncPP $ r ^. #repoPP
-                        RrdpR r  -> RrdpPP r
-
-            let ppAccess = PublicationPointAccess $ NE.fromList [pp]            
+        void $ pooledForConcurrently problematicRepositories $ \ppAccess -> do             
             worldVersion <- newWorldVersion            
+            let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchPPWithFallback appContext (asyncFetchConfig config) 
                         repositoryProcessing worldVersion ppAccess
             
         validationStateOfFetches repositoryProcessing   
+  where    
+    repositoryToPP = \case    
+        RsyncR r -> RsyncPP $ r ^. #repoPP
+        RrdpR r  -> RrdpPP r
 
 
 
-canRunInParallel (Task t1 _) (Task t2 _) = 
+canRunInParallel (Task t1 _) (Task t2 _) = canRunInParallel' t1 t2    
+
+canRunInParallel' t1 t2 = 
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
-  where
+  where    
     canRunWith ValidationTask        = [AsyncFetchTask]    
     canRunWith DeleteOldPayloadsTask = allExcept [LmdbCompactTask]    
     canRunWith AsyncFetchTask        = [ValidationTask]
@@ -655,61 +645,31 @@ canRunInParallel (Task t1 _) (Task t2 _) =
     allExcept tasks = filter (not . (`elem` tasks)) [minBound..maxBound]
         
     
-{- 
-    Implementation of a queue where reading in groups
-    which elements are "compatible". The "next-to-read" 
-    element left in the queue is the first "incompatible" one.
+data RunningTasks = RunningTasks { 
+        running :: TVar (Set.Set TaskType)
+    }
 
-    Used for grouping tasks in the queue where compatibility is
-    "can run in parallel with each other".
--}
+newRunningTasks = RunningTasks <$> newTVar mempty
 
--- data GroupedQueue a = GroupedQueue {
---     queue      :: TVar (Deq.Deque a),
---     compatible :: a -> a -> Bool,
---     maxSize    :: Int
--- }
+runInPool :: AppLogger -> Task -> RunningTasks -> WorldVersion -> JobRun -> IO ()
+runInPool logger (Task taskType io) RunningTasks {..} worldVersion jobRun = do 
+    (runningTasks, canRun) <- atomically $ do 
+                runningTasks <- readTVar running
+                let canRun = Set.null $ Set.filter (not . canRunInParallel' taskType) runningTasks
+                pure (Set.toList runningTasks, canRun)
 
--- newGroupedQueue :: (a -> a -> Bool) -> STM (GroupedQueue a)
--- newGroupedQueue compatible = do 
---     queue <- newTVar mempty
---     let maxSize = 10
---     pure GroupedQueue {..}
+    unless canRun $ 
+        logDebug logger [i|Task #{taskType} cannot run concurrently with #{runningTasks} and has to wait.|]        
 
--- readTasks :: forall a . GroupedQueue a -> STM [a]
--- readTasks GroupedQueue {..} = do 
---     deq <- readTVar queue
---     when (Deq.null deq) retry
---     let (tasks, deq') = grabCompatibles [] $ toList deq        
---     writeTVar queue $ fromList deq'
---     pure tasks
---   where
---     grabCompatibles :: [a] -> [a] -> ([a], [a])
---     grabCompatibles compatibles []                = (compatibles, [])
---     grabCompatibles compatibles deq@(task : deq') = 
---         if all (compatible task) compatibles
---             then grabCompatibles (task : compatibles) deq'
---             else (compatibles, deq)
-
--- pushTask :: GroupedQueue a -> a -> STM ()
--- pushTask GroupedQueue {..} t = do 
---     readTVar queue
---     modifyTVar' queue (t `Deq.snoc`)
-
-
-
-data Trigger = Inactive | Running
-
--- triggered :: IO ()
-triggered f =    
-    bracketChanClosable 2 maintainTrigger execute (\_ -> pure ())
-  where
-    execute _ = pure ()
-
-    maintainTrigger _ = pure ()
-
-
-
+    join $ atomically $ do 
+        r <- readTVar running
+        if Set.null $ Set.filter (not . canRunInParallel' taskType) r
+            then do 
+                writeTVar running $ Set.insert taskType r
+                pure $ io worldVersion jobRun 
+                        `finally` 
+                        atomically (modifyTVar' running $ Set.filter (/= taskType))
+            else retry
 
 
 
@@ -743,12 +703,3 @@ leftToWait start end (Seconds interval) = let
     executionTimeNs = toNanoseconds end - toNanoseconds start
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
     in timeToWaitNs `div` 1000               
-
-
-{- 
-
-q <- atomically $ newGroupedQueue canRunInParallel
-atomically $ pushTask q ValidationTask >> pushTask q AsyncFetchTask >> pushTask q LmdbCompactTask >> pushTask q ValidationTask >> pushTask q DeleteOldPayloadsTask
-
-
--}

@@ -421,7 +421,7 @@ markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
 markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ do 
     unless (null repos) $
         modifyTVar' publicationPoints
-            (& #slowRequested %~ (<> Set.fromList (map getRpkiURL repos)))
+            (& #slowRequested %~ (Set.insert (map getRpkiURL repos)))
 
 
 syncFetchConfig :: Config -> FetchConfig

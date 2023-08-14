@@ -112,7 +112,7 @@ data PublicationPoints = PublicationPoints {
         -- publication points on certificats during the last validation.
         -- In other words, slow and timing out repository URLs we care about 
         -- and want to keep up-to-date in the local cache.
-        slowRequested :: Set.Set RpkiURL
+        slowRequested :: Set.Set [RpkiURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
@@ -342,7 +342,7 @@ data Change a = Put a | Remove a
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
     [Change (RsyncHost, RsyncNodeNormal)]    
-    (Change (Set.Set RpkiURL))
+    (Change (Set.Set [RpkiURL]))
 
 
 -- | Derive a diff between two states of publication points
