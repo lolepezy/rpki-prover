@@ -267,7 +267,7 @@ runWorkflow appContext@AppContext {..} tals = do
             
 
     validateTAs logger workflowShared@WorkflowShared {..} worldVersion jobRun = do
-        validateAllTAs workflowShared worldVersion 
+        doValidateTAs workflowShared worldVersion 
         `finally`
         runAsyncFetcherIfNeeded        
       where
@@ -284,17 +284,18 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure $ pure ()
           where 
             asyncFetchTask = Task AsyncFetchTask $ \fetchVersion _ -> do 
-                logDebug logger [i|Running async fetch job.|] 
-                validations <- runFetches appContext
-                db <- readTVarIO database
-                rwTx db $ \tx -> do
-                    saveValidations tx db fetchVersion (validations ^. typed)
-                    saveMetrics tx db fetchVersion (validations ^. typed)
-                    asyncFetchWorldVersion tx db fetchVersion                  
-                logDebug logger [i|Finished async fetch job.|]
+                logInfo logger [i|Running asynchronous fetch.|] 
+                (_, TimeMs elapsed) <- timedMS $ do 
+                    validations <- runFetches appContext
+                    db <- readTVarIO database
+                    rwTx db $ \tx -> do
+                        saveValidations tx db fetchVersion (validations ^. typed)
+                        saveMetrics tx db fetchVersion (validations ^. typed)
+                        asyncFetchWorldVersion tx db fetchVersion                  
+                logInfo logger [i|Finished asynchronous fetch in #{elapsed `div` 1000}s.|]
 
 
-    validateAllTAs WorkflowShared {..} worldVersion= do
+    doValidateTAs WorkflowShared {..} worldVersion= do
         logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
         db <- readTVarIO database
         executeOrDie
@@ -597,11 +598,12 @@ runFetches appContext@AppContext {..} = do
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
-        -- We only care about the repositories that are mentioned 
-        -- in the last validation.
+        -- We only care about the repositories that are
+        --  slow 
         let slowURLs = Map.fromList $ findSpeedProblems pps
 
-        let problematicRepositories = 
+        --  and mentioned on some certificates during the last validation.        
+        let problematicPPAs = 
                 catMaybes $ flip map (toList $ pps ^. #slowRequested) $ \case 
                     []   -> Nothing
                     urls -> fmap PublicationPointAccess 
@@ -610,13 +612,13 @@ runFetches appContext@AppContext {..} = do
                                 $ catMaybes
                                 $ map (\u -> Map.lookup u slowURLs) urls 
         
-        unless (null problematicRepositories) $ do                         
+        unless (null problematicPPAs) $ do                         
             let ppaToText (PublicationPointAccess ppas) = 
                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
-            let reposText = Text.intercalate ", " $ map ppaToText problematicRepositories
+            let reposText = Text.intercalate ", " $ map ppaToText problematicPPAs
             logDebug logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
 
-        void $ pooledForConcurrently problematicRepositories $ \ppAccess -> do             
+        void $ pooledForConcurrently problematicPPAs $ \ppAccess -> do             
             worldVersion <- newWorldVersion            
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
@@ -630,9 +632,10 @@ runFetches appContext@AppContext {..} = do
         RrdpR r  -> RrdpPP r
 
 
-
+canRunInParallel :: Task  -> Task -> Bool
 canRunInParallel (Task t1 _) (Task t2 _) = canRunInParallel' t1 t2    
 
+canRunInParallel' :: TaskType -> TaskType -> Bool
 canRunInParallel' t1 t2 = 
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
