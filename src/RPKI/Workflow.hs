@@ -69,27 +69,19 @@ import           RPKI.SLURM.Types
 data JobRun = FirstRun | RanBefore
     deriving (Show, Eq, Ord, Generic)  
 
-data AsyncStatus = NotActive | Starting | Active (Async ())
-    deriving (Eq, Ord, Generic)  
-
 data WorkflowShared = WorkflowShared { 
         -- Indicates if anything was ever deleted from the DB,
         -- it is needed for cleanup and compaction procedures.
         deletedAnythingFromDb :: TVar Bool,
 
-        -- Use a small command queue to avoid fully concurrent operations, i.e. cleanup 
-        -- operations and such should not run at the same time with validation 
-        -- (not only for consistency reasons, but we also want to avoid locking 
-        -- the DB for long time by a cleanup process).        
-        -- globalQueue :: ClosableQueue (WorldVersion -> IO ()),
-
-        -- -- The same type of the separate queue for the async fetcher.
-        -- asyncFetchQueue :: ClosableQueue (WorldVersion -> IO ()),
-
+        -- Currently running tasks, it is needed to keep track which 
+        -- tasks can run parallel to each other and avoid race conditions.
         runningTasks :: RunningTasks,
 
         prometheusMetrics :: PrometheusMetrics,
 
+        -- Async fetch is a special case, we want to know if it's 
+        -- running to avoid running it until the previous run is done.
         asyncFetchIsRunning :: TVar Bool
     }
     deriving (Generic)
@@ -128,7 +120,6 @@ data TaskType =
 data Task = Task TaskType (WorldVersion -> JobRun -> IO ())
     deriving (Generic)
 
-
 data Scheduling = Scheduling {
         name         :: Text.Text,
         initialDelay :: Int,
@@ -151,31 +142,15 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Some shared state between the threads for simplicity.
     workflowShared <- atomically $ newWorkflowShared prometheusMetrics    
 
-    -- Threads that will run periodic jobs and persist timestaps of running them
-    -- for consistent scheduling.
-    -- periodicJobs <- periodicJobStarters workflowShared
-
     -- Fill in the current appState if it's not too old.
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
 
-    -- let periodicJobs = []
-
-    -- let threads = [ 
-                -- thread that takes jobs from the queue and executes them sequentially
-                -- jobExecutor,
-                -- thread that generates re-validation jobs
-                -- generateRevalidationJob,                                
-                -- Run RTR server thread when rtrConfig is present in the AppConfig.      
-            --     const initRtrIfNeeded            
-            -- ]
-
-    -- mapConcurrently_ (\f -> f workflowShared) $ threads <> periodicJobs
-
+    -- Run one thread per task, each thread periodically trying to 
+    -- exectute the task, potentially blocked by other running tasks.
     void $ concurrently
             (runScheduledTasks workflowShared)
             initRtrIfNeeded
-
   where        
 
     schedules workflowShared = [
@@ -648,7 +623,7 @@ canRunInParallel' t1 t2 =
     allExcept tasks = filter (not . (`elem` tasks)) [minBound..maxBound]
         
     
-data RunningTasks = RunningTasks { 
+newtype RunningTasks = RunningTasks { 
         running :: TVar (Set.Set TaskType)
     }
 
