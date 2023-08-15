@@ -151,32 +151,32 @@ verifyLimit hitTheLimit limit =
 
 
 
--- | It is the main entry point for the top-down validation. 
--- Validates a bunch of TAs starting from their TALs.  
+-- Do something within the bracket of RepositoryProcessing instance
+-- 
 withRepositoriesProcessing :: Storage s =>
                             AppContext s 
                         -> (RepositoryProcessing -> IO a) 
                         -> IO a
-withRepositoriesProcessing AppContext {..} f = do      
-    rp <- newRepositoryProcessingIO config
-    g rp `finally` (cancelFetchTasks rp)
-  where
-    g rp = do 
-        db <- readTVarIO database        
+withRepositoriesProcessing AppContext {..} f = 
+    bracket
+        (newRepositoryProcessingIO config)
+        cancelFetchTasks
+        $ \rp -> do 
+            db <- readTVarIO database        
 
-        mapException (AppException . storageError) $ do
-            pps <- roTx db $ \tx -> getPublicationPoints tx db
-            let pps' = addRsyncPrefetchUrls config pps
-            atomically $ writeTVar (rp ^. #publicationPoints) pps'
+            mapException (AppException . storageError) $ do
+                pps <- roTx db $ \tx -> getPublicationPoints tx db
+                let pps' = addRsyncPrefetchUrls config pps
+                atomically $ writeTVar (rp ^. #publicationPoints) pps'
 
-        a <- f rp
+            a <- f rp
 
-        -- save publication points state    
-        mapException (AppException . storageError) $ do
-            pps <- readTVarIO $ (rp ^. #publicationPoints)
-            rwTx db $ \tx -> savePublicationPoints tx db pps          
+            -- save publication points state    
+            mapException (AppException . storageError) $ do
+                pps <- readTVarIO $ (rp ^. #publicationPoints)
+                rwTx db $ \tx -> savePublicationPoints tx db pps          
 
-        pure a
+            pure a
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
