@@ -15,6 +15,7 @@ module RPKI.Http.UI where
 import           Control.Monad
 import           Control.Lens                ((^.))
 
+import           Data.Ord
 import           Data.Foldable               (for_)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
@@ -234,8 +235,9 @@ rrdpMetricsHtml rrdpMetricMap =
             genTh $ H.text "Save time"
             genTh $ H.text "Total time"                    
 
-        H.tbody $ 
-            forM_ (zip (MonoidalMap.toList rrdpMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
+        H.tbody $ do 
+            let slowestFirst = List.sortOn (Down . (^. #totalTimeMs) . snd) $ MonoidalMap.toList rrdpMap
+            forM_ (zip slowestFirst [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     genTd $ toHtml $ focusToText repository                        
@@ -265,8 +267,9 @@ rsyncMetricsHtml rsyncMetricMap =
             genTh $ H.text "Processed objects"
             genTh $ H.text "Total time"                    
 
-        H.tbody $
-            forM_ (zip (Map.toList rsyncMap) [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
+        H.tbody $ do 
+            let slowestFirst = List.sortOn (Down . (^. #totalTimeMs) . snd) $ Map.toList rsyncMap
+            forM_ (zip slowestFirst [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do
                     genTd $ toHtml $ focusToText repository                                                        
