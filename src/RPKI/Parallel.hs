@@ -185,6 +185,7 @@ createSemaphoreIO = atomically . createSemaphore
 createSemaphore :: Int -> STM Semaphore
 createSemaphore n = Semaphore n <$> newTVar 0
 
+-- Execute using a semaphore as a barrier
 withSemaphore :: Semaphore -> IO a -> IO a
 withSemaphore (Semaphore maxCounter current) f = 
     bracket incr decr (const f)
@@ -196,7 +197,8 @@ withSemaphore (Semaphore maxCounter current) f =
                 else writeTVar current (c + 1)
         decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
-
+-- Execute using a semaphore as a barrier, but if sempahore 
+-- is not allowing execution, execute after a timeout anyway
 withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
 withSemaphoreAndTimeout (Semaphore maxCounter current) intervalMicroSeconds f =     
     bracket aquireSlot releaseSlot (const f)
