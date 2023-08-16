@@ -99,7 +99,7 @@ data TaskType =
         ValidationTask
 
         -- delete old objects and version
-        | CleanupCacheTask    
+        | CacheCleanupTask    
 
         -- delete old payloads (VRPs, ASPAs, etc.)    
         | DeleteOldPayloadsTask            
@@ -112,7 +112,7 @@ data TaskType =
         -- async fetches of slow repositories
         | AsyncFetchTask
 
-        -- Delete local rsyncm mirror once in a while
+        -- Delete local rsyncm mirror once in a long while
         | RsyncCleanupTask
         deriving (Show, Eq, Ord, Bounded, Enum, Generic)
 
@@ -165,7 +165,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 name = "cleanupCache", 
                 initialDelay = 10_000_000,
                 interval = config ^. #cacheCleanupInterval,
-                task = Task CleanupCacheTask $ cacheGC workflowShared,
+                task = Task CacheCleanupTask $ cacheGC workflowShared,
                 persistent = True
             },        
             Scheduling { 
@@ -378,7 +378,11 @@ runWorkflow appContext@AppContext {..} tals = do
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]      
 
-    -- Delete local rsync mirror
+    -- Delete local rsync mirror. The assumption here is that over time there
+    -- be a lot of local copies of rsync repositories that are so old that 
+    -- the next time they are updated, most of the new repository will be downloaded 
+    -- anyway. Since most of the time RRDP is up, rsync updates are rare, so local 
+    -- data is stale and just takes disk space.
     rsyncCleanup _ jobRun =
         executeOrDie
             (case jobRun of 
@@ -399,15 +403,19 @@ runWorkflow appContext@AppContext {..} tals = do
                     RanBefore ->                    
                         logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
 
+    -- Give up and die as soon as something serious happends. 
+    -- If disk data is corrupted or we run out of disk or something 
+    -- like that, it doesn't make sense to keep running.
+    -- 
     executeOrDie :: IO a -> (a -> TimeMs -> IO ()) -> IO ()
     executeOrDie f onRight =
         exec `catches` [
                 Handler $ \(AppException seriousProblem) ->
-                    die [i|Something really bad happened #{seriousProblem}, exiting.|],
+                    die [i|Something really bad happened: #{seriousProblem}, exiting.|],
                 Handler $ \(_ :: AsyncCancelled) ->
                     die [i|Interrupted with Ctrl-C, exiting.|],
                 Handler $ \(weirdShit :: SomeException) ->
-                    logError logger [i|Something weird happened #{weirdShit}, exiting.|]
+                    die [i|Something really bad and also unknown happened: #{weirdShit}, exiting.|]
             ]
         where
             exec = do

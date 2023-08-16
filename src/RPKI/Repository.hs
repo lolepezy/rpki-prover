@@ -137,7 +137,7 @@ data FetchTask a = Stub
 
 
 data RepositoryProcessing = RepositoryProcessing {
-        indivudualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
+        individualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
         indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
         ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
         publicationPoints      :: TVar PublicationPoints,

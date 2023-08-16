@@ -169,12 +169,12 @@ fetchPPWithFallback
             (repoNeedAFetch, repo) <- needsAFetch pp now'
             let rpkiUrl = getRpkiURL repo
             if repoNeedAFetch then 
-                runForKey indivudualFetchRuns rpkiUrl >>= \case                    
+                runForKey individualFetchRuns rpkiUrl >>= \case                    
                     Just Stub         -> retry
                     Just (Fetching a) -> pure (rpkiUrl, AttemptedFetch, wait a)
 
                     Nothing -> do                                         
-                        modifyTVar' indivudualFetchRuns $ Map.insert rpkiUrl Stub
+                        modifyTVar' individualFetchRuns $ Map.insert rpkiUrl Stub
                         pure (rpkiUrl, AttemptedFetch, fetchPP parentScope repo)
             else
                 pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
@@ -193,7 +193,7 @@ fetchPPWithFallback
                 ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
                                                   $ fetchRepository appContext fetchConfig worldVersion repo                                
                 atomically $ do
-                    modifyTVar' indivudualFetchRuns $ Map.delete rpkiUrl                    
+                    modifyTVar' individualFetchRuns $ Map.delete rpkiUrl                    
 
                     let (newRepo, newStatus) = case r of                             
                             Left _      -> (repo, FailedAt fetchTime)
@@ -207,8 +207,8 @@ fetchPPWithFallback
 
         bracketOnError 
             launchFetch 
-            (stopAndDrop indivudualFetchRuns rpkiUrl) 
-            (rememberAndWait indivudualFetchRuns rpkiUrl)           
+            (stopAndDrop individualFetchRuns rpkiUrl) 
+            (rememberAndWait individualFetchRuns rpkiUrl)           
             
     
     stopAndDrop stubs key asyncR = liftIO $ do         
@@ -349,22 +349,21 @@ validationStateOfFetches repositoryProcessing = liftIO $
 
 
 setValidationStateOfFetches :: MonadIO m => RepositoryProcessing -> [FetchResult] -> m [FetchResult] 
-setValidationStateOfFetches repositoryProcessing frs = liftIO $ do
-    atomically $ do 
-        forM_ frs $ \fr -> do 
-            let (u, vs) = case fr of
-                    FetchFailure r vs'    -> (r, vs')
-                    FetchSuccess repo vs' -> (getRpkiURL repo, vs')
-                
-            modifyTVar' (repositoryProcessing ^. #indivudualFetchResults)
-                        $ Map.insert u vs
+setValidationStateOfFetches repositoryProcessing frs = liftIO $ do    
+    forM_ frs $ \fr -> do 
+        let (u, vs) = case fr of
+                FetchFailure r vs'    -> (r, vs')
+                FetchSuccess repo vs' -> (getRpkiURL repo, vs')
+            
+        atomically $ modifyTVar' (repositoryProcessing ^. #indivudualFetchResults)
+                   $ Map.insert u vs
     pure frs
 
 -- 
 cancelFetchTasks :: RepositoryProcessing -> IO ()    
 cancelFetchTasks rp = do 
     (ifr, ppSeqFr) <- atomically $ (,) <$>
-                        readTVar (rp ^. #indivudualFetchRuns) <*>
+                        readTVar (rp ^. #individualFetchRuns) <*>
                         readTVar (rp ^. #ppSeqFetchRuns)
 
     mapM_ cancel [ a | (_, Fetching a) <- Map.toList ifr]
