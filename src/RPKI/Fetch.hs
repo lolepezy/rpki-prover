@@ -11,6 +11,8 @@ module RPKI.Fetch where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
+import           Control.Concurrent
+import           Control.Concurrent.STM.TMVar
 import           Control.Monad.IO.Class
 
 import           Control.Lens
@@ -44,7 +46,7 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
-import           RPKI.Parallel (withSemaphore)
+import           RPKI.Parallel 
 
 
 -- Main entry point: fetch repository using the cache of tasks.
@@ -182,35 +184,44 @@ fetchPPWithFallback
         f <- fetchIO
         pure (rpkiUrl, fetchFreshness, f)
       
-
     -- Do fetch the publication point and update the #publicationPoints
     -- 
-    fetchPP parentScope repo = withSemaphore fetchSemaphore $ do         
-        let rpkiUrl = getRpkiURL repo
-        let launchFetch = async $ do               
-                let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
-                Now fetchTime <- thisInstant
-                ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
-                                                  $ fetchRepository appContext fetchConfig worldVersion repo                                
-                atomically $ do
-                    modifyTVar' individualFetchRuns $ Map.delete rpkiUrl                    
+    -- A fetcher can proceed if either
+    --   - there's a free slot in the semaphore
+    --   - we are waiting for more than N seconds
+    --
+    -- In practice that means hanging timning out fetchers cannot 
+    -- block the pool for too long and new fetchers will get through anyway.
+    -- Fetching processes hanging on a connection don't take resources, 
+    -- so it's safe to run new ones, without overloading the system.
+    -- 
+    fetchPP parentScope repo = do 
+        let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
+        withSemaphoreAndTimeout fetchSemaphore intervalMicroSeconds $ do         
+            let rpkiUrl = getRpkiURL repo
+            let launchFetch = async $ do               
+                    let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
+                    Now fetchTime <- thisInstant
+                    ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
+                                                    $ fetchRepository appContext fetchConfig worldVersion repo                                
+                    atomically $ do
+                        modifyTVar' individualFetchRuns $ Map.delete rpkiUrl                    
 
-                    let (newRepo, newStatus) = case r of                             
-                            Left _      -> (repo, FailedAt fetchTime)
-                            Right repo' -> (repo', FetchedAt fetchTime)
+                        let (newRepo, newStatus) = case r of                             
+                                Left _      -> (repo, FailedAt fetchTime)
+                                Right repo' -> (repo', FetchedAt fetchTime)
 
-                    let speed = deriveSpeed repo validations duratioMs fetchTime
+                        let speed = deriveSpeed repo validations duratioMs fetchTime
 
-                    modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
-                            updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
-                pure (r, validations)        
+                        modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
+                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
+                    pure (r, validations)        
 
-        bracketOnError 
-            launchFetch 
-            (stopAndDrop individualFetchRuns rpkiUrl) 
-            (rememberAndWait individualFetchRuns rpkiUrl)           
-            
-    
+            bracketOnError 
+                launchFetch 
+                (stopAndDrop individualFetchRuns rpkiUrl) 
+                (rememberAndWait individualFetchRuns rpkiUrl)                        
+
     stopAndDrop stubs key asyncR = liftIO $ do         
         atomically $ modifyTVar' stubs $ Map.delete key
         cancel asyncR
@@ -226,12 +237,12 @@ fetchPPWithFallback
         pure (needsFetching', repo)
 
     deriveSpeed repo validations (TimeMs duratioMs) fetchTime = let                
-        Seconds rrdpSlowMs  = fetchConfig ^. #rrdpSlowThreshold
-        Seconds rsyncSlowMs = fetchConfig ^. #rsyncSlowThreshold
+        Seconds rrdpSlowSec  = fetchConfig ^. #rrdpSlowThreshold
+        Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold
         speedByTiming = 
             case repo of
-                RrdpR _  -> checkSlow $ duratioMs > 1000*rrdpSlowMs
-                RsyncR _ -> checkSlow $ duratioMs > 1000*rsyncSlowMs
+                RrdpR _  -> checkSlow $ duratioMs > 1000 * rrdpSlowSec
+                RsyncR _ -> checkSlow $ duratioMs > 1000 * rsyncSlowSec
 
         -- If there fetch timed out then it's definitely slow
         -- otherwise, check how long did it take to download
@@ -429,6 +440,7 @@ syncFetchConfig config = let
         rrdpTimeout  = config ^. typed @RrdpConf . #rrdpTimeout
         rsyncSlowThreshold = rsyncTimeout
         rrdpSlowThreshold = rrdpTimeout
+        fetchLaunchWaitDuration = Seconds 60 
     in FetchConfig {..}
 
 asyncFetchConfig :: Config -> FetchConfig
@@ -437,6 +449,7 @@ asyncFetchConfig config = let
         rrdpTimeout  = config ^. typed @RrdpConf . #asyncRrdpTimeout
         rsyncSlowThreshold = config ^. typed @RsyncConf . #rsyncTimeout
         rrdpSlowThreshold = config ^. typed @RrdpConf . #rrdpTimeout
+        fetchLaunchWaitDuration = Seconds 120 
     in FetchConfig {..}
 
 

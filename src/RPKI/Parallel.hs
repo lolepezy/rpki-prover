@@ -1,14 +1,16 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE AllowAmbiguousTypes        #-}
 
 module RPKI.Parallel where
 
+import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
 import           Control.Concurrent.Async.Lifted
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 
@@ -193,3 +195,24 @@ withSemaphore (Semaphore maxCounter current) f =
                 then retry
                 else writeTVar current (c + 1)
         decr _ = atomically $ modifyTVar' current $ \c -> c - 1
+
+
+withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
+withSemaphoreAndTimeout (Semaphore maxCounter current) intervalMicroSeconds f =     
+    bracket aquireSlot releaseSlot (const f)
+  where  
+    thereIsSpaceToRun = do 
+        c <- readTVar current
+        if c >= maxCounter 
+            then retry
+            else writeTVar current (c + 1)                                        
+
+    aquireSlot = 
+        either (const True) (const False) <$> 
+            race 
+                (atomically thereIsSpaceToRun)
+                (threadDelay intervalMicroSeconds)
+        
+    releaseSlot increasedCounter = 
+        when increasedCounter $ 
+            atomically $ modifyTVar' current $ \c -> c - 1  
