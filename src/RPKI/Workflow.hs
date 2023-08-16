@@ -191,7 +191,7 @@ runWorkflow appContext@AppContext {..} tals = do
             },
             Scheduling { 
                 name = "leftoverCleanup",     
-                initialDelay = 80_000_000,
+                initialDelay = 600_000_000,
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
                 task = Task LeftoversCleanupTask $ \_ _ -> cleanupLeftovers,
                 persistent = False
