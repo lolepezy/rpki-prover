@@ -11,7 +11,6 @@ module RPKI.Workflow where
 import           Control.Concurrent.Async
 import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Concurrent.STM.TMVar
 import           Control.Exception
 import           Control.Monad
 
@@ -25,7 +24,6 @@ import           Data.Foldable                   (for_, toList)
 import qualified Data.Text                       as Text
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
-import qualified Deque.Strict                    as Deq
 import           Data.Maybe                      (fromMaybe, catMaybes)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
@@ -48,7 +46,6 @@ import           RPKI.Repository
 import           RPKI.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
-import           RPKI.Parallel
 import           RPKI.Store.Database
 import           RPKI.Validation.TopDown
 
@@ -158,33 +155,33 @@ runWorkflow appContext@AppContext {..} tals = do
                 name = "validation", 
                 initialDelay = 0,
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
-                task = Task ValidationTask $ validateTAs logger workflowShared,
+                task = Task ValidationTask $ validateTAs workflowShared,
                 persistent = False
             },                
             Scheduling { 
                 name = "cleanupCache", 
-                initialDelay = 10_000_000,
+                initialDelay = 600_000_000,
                 interval = config ^. #cacheCleanupInterval,
                 task = Task CacheCleanupTask $ cacheGC workflowShared,
                 persistent = True
             },        
             Scheduling { 
                 name = "cleanOldPayloads",
-                initialDelay = 20_000_000,
+                initialDelay = 900_000_000,
                 interval =  config ^. #cacheCleanupInterval, 
                 task = Task DeleteOldPayloadsTask $ cleanOldPayloads workflowShared,
                 persistent = True
             },
             Scheduling { 
                 name = "compaction",       
-                initialDelay = 30_000_000,
+                initialDelay = 1200_000_000,
                 interval = config ^. #storageCompactionInterval,
                 task = Task LmdbCompactTask $ compact workflowShared,
                 persistent = True
             },
             Scheduling { 
                 name = "rsyncCleanup",     
-                initialDelay = 60_000_000,
+                initialDelay = 1200_000_000,
                 interval = config ^. #rsyncCleanupInterval,
                 task = Task RsyncCleanupTask rsyncCleanup,
                 persistent = True
@@ -235,13 +232,13 @@ runWorkflow appContext@AppContext {..} tals = do
                             Now endTime <- thisInstant
                             -- re-read `db` since it could have been changed by the time the
                             -- job is finished (after compaction, in particular)                            
-                            db <- readTVarIO database                    
-                            rwTx db $ \tx -> setJobCompletionTime tx db name endTime
+                            db' <- readTVarIO database                    
+                            rwTx db' $ \tx -> setJobCompletionTime tx db' name endTime
                         logDebug logger [i|Done with task '#{name}'.|])
                 pure Repeat
             
 
-    validateTAs logger workflowShared@WorkflowShared {..} worldVersion jobRun = do
+    validateTAs workflowShared@WorkflowShared {..} worldVersion jobRun = do
         doValidateTAs workflowShared worldVersion 
         `finally`
         runAsyncFetcherIfNeeded        
@@ -250,8 +247,7 @@ runWorkflow appContext@AppContext {..} tals = do
             join $ atomically $ do 
                 readTVar asyncFetchIsRunning >>= \case                
                     False -> pure $ 
-                        void $ forkFinally (do                                 
-                                atomically (writeTVar asyncFetchIsRunning True)
+                        void $ forkFinally (do                                                                 
                                 fetchWorldVersion <- createWorldVersion
                                 runInPool logger asyncFetchTask runningTasks fetchWorldVersion jobRun)
                                 (const $ atomically $ writeTVar asyncFetchIsRunning False)
@@ -259,7 +255,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure $ pure ()
           where 
             asyncFetchTask = Task AsyncFetchTask $ \fetchVersion _ -> do 
-                logInfo logger [i|Running asynchronous fetch.|] 
+                atomically (writeTVar asyncFetchIsRunning True)
+                logInfo logger [i|Running asynchronous fetch.|]                 
                 (_, TimeMs elapsed) <- timedMS $ do 
                     validations <- runFetches appContext
                     db <- readTVarIO database
@@ -599,7 +596,7 @@ runFetches appContext@AppContext {..} = do
             let ppaToText (PublicationPointAccess ppas) = 
                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
             let reposText = Text.intercalate ", " $ map ppaToText problematicPPAs
-            logDebug logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
+            logInfo logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
 
         void $ pooledForConcurrently problematicPPAs $ \ppAccess -> do             
             worldVersion <- newWorldVersion            
@@ -635,6 +632,7 @@ newtype RunningTasks = RunningTasks {
         running :: TVar (Set.Set TaskType)
     }
 
+newRunningTasks :: STM RunningTasks
 newRunningTasks = RunningTasks <$> newTVar mempty
 
 runInPool :: AppLogger -> Task -> RunningTasks -> WorldVersion -> JobRun -> IO ()
