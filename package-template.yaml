@@ -119,7 +119,7 @@ dependencies:
 
 ghc-options:  
   # - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS -fprint-potential-instances -fwrite-ide-info  
-  - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS -fprint-potential-instances
+  - -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
 
 library:
   source-dirs: src
