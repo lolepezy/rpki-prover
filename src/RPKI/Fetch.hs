@@ -11,8 +11,6 @@ module RPKI.Fetch where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Concurrent
-import           Control.Concurrent.STM.TMVar
 import           Control.Monad.IO.Class
 
 import           Control.Lens

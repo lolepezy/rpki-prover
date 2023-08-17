@@ -52,8 +52,8 @@ import           RPKI.Store.Database
 
 Every worker 
  - Reads serialised parameters from its stdin (WorkerInput)
- - Writes serialised result to its stdout
- - Logs to stderr (see `withWorkerLogger` in RPKI.Logging)
+ - Writes serialised result to its stdout (WorkerResult)
+ - Streams log messages to stderr (see `withWorkerLogger` in RPKI.Logging)
 
 Running a worker is done using `runWorker` which handles all the process machinery, error handling, etc.
 
