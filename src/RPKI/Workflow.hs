@@ -220,23 +220,24 @@ runWorkflow appContext@AppContext {..} tals = do
                 threadDelay delay
 
             periodically interval $ do 
-                worldVersion <- createWorldVersion                
-                let task' = let
-                        Task taskType io = task 
-                        in Task taskType $ \v j -> do 
-                            logDebug logger [i|Running task '#{name}'.|]
-                            io v j 
-                        
-                runInPool logger task' runningTasks worldVersion jobRun
-                    `finally` (do  
-                        when persistent $ do                       
-                            Now endTime <- thisInstant
-                            -- re-read `db` since it could have been changed by the time the
-                            -- job is finished (after compaction, in particular)                            
-                            db' <- readTVarIO database                    
-                            rwTx db' $ \tx -> setJobCompletionTime tx db' name endTime
-                        logDebug logger [i|Done with task '#{name}'.|])
+                worldVersion <- createWorldVersion                        
+                let task' = adjustedTask task persistent name
+                runInPool logger task' runningTasks worldVersion jobRun                    
                 pure Repeat
+              where
+                adjustedTask (Task taskType action) persistent name =                     
+                    Task taskType $ \version jobRun -> do 
+                        logDebug logger [i|Running task '#{name}'.|]
+                        action version jobRun 
+                            `finally` (do  
+                                when persistent $ do                       
+                                    Now endTime <- thisInstant
+                                    -- re-read `db` since it could have been changed by the time the
+                                    -- job is finished (after compaction, in particular)                            
+                                    db' <- readTVarIO database                    
+                                    rwTx db' $ \tx -> setJobCompletionTime tx db' name endTime
+                                logDebug logger [i|Done with task '#{name}'.|])                    
+
             
 
     validateTAs workflowShared@WorkflowShared {..} worldVersion jobRun = do
