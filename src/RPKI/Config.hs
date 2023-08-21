@@ -197,15 +197,15 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = "",
-        rsyncTimeout = 5 * 60,
-        asyncRsyncTimeout = 10 * 60,
+        rsyncTimeout = 2 * 60,
+        asyncRsyncTimeout = 15 * 60,
         enabled = True,
         rsyncPrefetchUrls = []
     },
     rrdpConf = RrdpConf {
         tmpRoot = "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 3 * 60,
+        rrdpTimeout = 2 * 60,
         asyncRrdpTimeout = 10 * 60,
         enabled = True
     },
