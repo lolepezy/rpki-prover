@@ -223,8 +223,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 worldVersion <- createWorldVersion                
                 let task' = let
                         Task taskType io = task 
-                        in Task taskType $ \v j ->
-                            logDebug logger [i|Running task '#{name}'.|] >> io v j 
+                        in Task taskType $ \v j -> do 
+                            logDebug logger [i|Running task '#{name}'.|]
+                            io v j 
                         
                 runInPool logger task' runningTasks worldVersion jobRun
                     `finally` (do  
@@ -420,11 +421,11 @@ runWorkflow appContext@AppContext {..} tals = do
                 onRight r elapsed        
 
     createWorldVersion = do
-        newVersion <- newWorldVersion
-        existing <- getWorldVerionIO appState
-        logDebug logger $ case existing of
+        newVersion      <- newWorldVersion        
+        existingVersion <- getWorldVerionIO appState
+        logDebug logger $ case existingVersion of
             Nothing ->
-                [i|Generated first world version #{newVersion}.|]
+                [i|Generated new world version #{newVersion}.|]
             Just oldWorldVersion ->
                 [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
         pure newVersion
