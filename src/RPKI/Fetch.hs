@@ -421,8 +421,8 @@ filterForAsyncFetch ppAccess fetches slowRepos =
             FetchFailure _ _ -> False
         ) fetches
 
-resetSlowRequested ::  MonadIO m => RepositoryProcessing -> m ()
-resetSlowRequested RepositoryProcessing {..} = liftIO $ atomically $ do 
+resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
+resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
     modifyTVar' publicationPoints (& #slowRequested .~ mempty)
 
 markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()

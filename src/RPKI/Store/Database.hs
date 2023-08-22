@@ -64,13 +64,13 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 21
+currentDatabaseVersion = 22
 
 -- Some constant keys
-databaseVersionKey, lastValidMftKey, slowRequestedKey :: Text
+databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
 databaseVersionKey = "database-version"
 lastValidMftKey    = "last-valid-mft"
-slowRequestedKey  = "slow-requested"
+forAsyncFetchKey  = "for-async-fetch"
 
 data EraseWrapper s where 
     EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
@@ -206,9 +206,9 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
-        slowS  :: SMap "slow-requested" s Text (Compressed (Set.Set [RpkiURL]))
+        rrdpS     :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS    :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
+        forAsyncS :: SMap "for-async-fetch" s Text (Compressed (Set.Set [RpkiURL]))
     }
     deriving stock (Generic)
 
@@ -610,7 +610,7 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
 
     let (lastSPuts, _) = separate [slowRequested]    
-    for_ lastSPuts $ \rr -> M.put tx slowS slowRequestedKey (Compressed rr)
+    for_ lastSPuts $ \rr -> M.put tx forAsyncS forAsyncFetchKey (Compressed rr)
   where
     separate = foldr f ([], [])
       where
@@ -621,11 +621,11 @@ getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m Publica
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
-    slowS <- fromMaybe mempty . fmap unCompressed <$> M.get tx slowS slowRequestedKey
+    forAsyncS <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)           
-            slowS
+            forAsyncS
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do
@@ -883,7 +883,7 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         in RepositoryStats <$>
             M.stats tx rrdpS <*>
             M.stats tx rsyncS <*>            
-            M.stats tx slowS
+            M.stats tx forAsyncS
 
     vResultStats' tx = 
         let ValidationsStore results = validationsStore

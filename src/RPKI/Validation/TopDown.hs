@@ -191,7 +191,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         allTas <- newAllTasTopDownContext worldVersion
                     (Now $ versionToMoment worldVersion) repositoryProcessing
 
-        resetSlowRequested repositoryProcessing
+        resetForAsyncFetch repositoryProcessing
         validateThem allTas
             `finally` (applyValidationSideEffects appContext allTas)                    
   where
