@@ -114,14 +114,13 @@ data TaskType =
         deriving (Show, Eq, Ord, Bounded, Enum, Generic)
 
 
-data Task = Task TaskType (WorldVersion -> JobRun -> IO ())
+data Task = Task TaskType (IO ())
     deriving (Generic)
 
-data Scheduling = Scheduling {
-        name         :: Text.Text,
+data Scheduling = Scheduling {        
         initialDelay :: Int,
         interval     :: Seconds,
-        task         :: Task,
+        taskDef      :: (TaskType, WorldVersion -> JobRun -> IO ()),
         persistent   :: Bool        
     }
     deriving (Generic)
@@ -151,46 +150,40 @@ runWorkflow appContext@AppContext {..} tals = do
   where        
 
     schedules workflowShared = [
-            Scheduling { 
-                name = "validation", 
+            Scheduling {                 
                 initialDelay = 0,
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
-                task = Task ValidationTask $ validateTAs workflowShared,
+                taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
             },                
             Scheduling { 
-                name = "cleanupCache", 
                 initialDelay = 600_000_000,
                 interval = config ^. #cacheCleanupInterval,
-                task = Task CacheCleanupTask $ cacheGC workflowShared,
+                taskDef = (CacheCleanupTask, cacheGC workflowShared),
                 persistent = True
             },        
-            Scheduling { 
-                name = "cleanOldPayloads",
+            Scheduling {                 
                 initialDelay = 900_000_000,
                 interval =  config ^. #cacheCleanupInterval, 
-                task = Task DeleteOldPayloadsTask $ cleanOldPayloads workflowShared,
+                taskDef = (DeleteOldPayloadsTask, cleanOldPayloads workflowShared),
                 persistent = True
             },
-            Scheduling { 
-                name = "compaction",       
+            Scheduling {                 
                 initialDelay = 1200_000_000,
                 interval = config ^. #storageCompactionInterval,
-                task = Task LmdbCompactTask $ compact workflowShared,
+                taskDef = (LmdbCompactTask, compact workflowShared),
                 persistent = True
             },
-            Scheduling { 
-                name = "rsyncCleanup",     
+            Scheduling {             
                 initialDelay = 1200_000_000,
                 interval = config ^. #rsyncCleanupInterval,
-                task = Task RsyncCleanupTask rsyncCleanup,
+                taskDef = (RsyncCleanupTask, rsyncCleanup),
                 persistent = True
             },
-            Scheduling { 
-                name = "leftoverCleanup",     
+            Scheduling {                 
                 initialDelay = 600_000_000,
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
-                task = Task LeftoversCleanupTask $ \_ _ -> cleanupLeftovers,
+                taskDef = (LeftoversCleanupTask, \_ _ -> cleanupLeftovers),
                 persistent = False
             }
         ]
@@ -200,35 +193,34 @@ runWorkflow appContext@AppContext {..} tals = do
         persistedJobs <- roTx db $ \tx -> Map.fromList <$> allJobs tx db        
 
         Now now <- thisInstant
-        forConcurrently (schedules workflowShared) $ \Scheduling {..} -> do
-            let (delay, jobRun) =                  
-                    if persistent 
+        forConcurrently (schedules workflowShared) $ \Scheduling {..} -> do                        
+            let name = fmtGen $ fst taskDef
+            let (delay, jobRun0) =                  
+                    if persistent
                     then case Map.lookup name persistedJobs of 
-                        Nothing           -> (initialDelay, FirstRun)
-                        Just lastExecuted -> (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
+                        Nothing -> 
+                            (initialDelay, FirstRun)
+                        Just lastExecuted -> 
+                            (fromIntegral $ leftToWait lastExecuted now interval, RanBefore)
                     else (initialDelay, FirstRun)            
 
-            let delaySeconds = initialDelay `div` 1_000_000
+            let delayInSeconds = initialDelay `div` 1_000_000
             let delayText :: Text.Text = 
                     case () of 
                       _ | delay == 0 -> [i|for ASAP execution|] 
-                        | delay < 0  -> [i|for ASAP execution (it is #{-delaySeconds}s due)|] 
-                        | otherwise  -> [i|with initial delay #{delaySeconds}s|]                     
+                        | delay < 0  -> [i|for ASAP execution (it is #{-delayInSeconds}s due)|] 
+                        | otherwise  -> [i|with initial delay #{delayInSeconds}s|]                     
             logDebug logger [i|Scheduling task '#{name}' #{delayText} and interval #{interval}.|] 
 
             when (delay > 0) $
                 threadDelay delay
 
-            periodically interval $ do 
-                worldVersion <- createWorldVersion                        
-                let task' = adjustedTask task persistent name
-                runInPool logger task' runningTasks worldVersion jobRun                    
-                pure Repeat
-              where
-                adjustedTask (Task taskType action) persistent name =                     
-                    Task taskType $ \version jobRun -> do 
+            let makeTask jobRun = do 
+                    Task (fst taskDef) $ do                         
                         logDebug logger [i|Running task '#{name}'.|]
-                        action version jobRun 
+                        worldVersion <- createWorldVersion
+                        let action = snd taskDef
+                        action worldVersion jobRun 
                             `finally` (do  
                                 when persistent $ do                       
                                     Now endTime <- thisInstant
@@ -236,11 +228,14 @@ runWorkflow appContext@AppContext {..} tals = do
                                     -- job is finished (after compaction, in particular)                            
                                     db' <- readTVarIO database                    
                                     rwTx db' $ \tx -> setJobCompletionTime tx db' name endTime
-                                logDebug logger [i|Done with task '#{name}'.|])                    
+                                logDebug logger [i|Done with task '#{name}'.|])    
 
-            
+            periodically interval jobRun0 $ \jobRun -> do                 
+                runInPool logger (makeTask jobRun) runningTasks                    
+                pure (Repeat, RanBefore)                              
 
-    validateTAs workflowShared@WorkflowShared {..} worldVersion jobRun = do
+
+    validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
         doValidateTAs workflowShared worldVersion 
         `finally`
         runAsyncFetcherIfNeeded        
@@ -249,16 +244,16 @@ runWorkflow appContext@AppContext {..} tals = do
             join $ atomically $ do 
                 readTVar asyncFetchIsRunning >>= \case                
                     False -> pure $ 
-                        void $ forkFinally (do                                                                 
-                                fetchWorldVersion <- createWorldVersion
-                                runInPool logger asyncFetchTask runningTasks fetchWorldVersion jobRun)
+                        void $ forkFinally (do                                
+                                runInPool logger asyncFetchTask runningTasks)
                                 (const $ atomically $ writeTVar asyncFetchIsRunning False)
                     True -> 
                         pure $ pure ()
           where 
-            asyncFetchTask = Task AsyncFetchTask $ \fetchVersion _ -> do 
+            asyncFetchTask = Task AsyncFetchTask $ do 
                 atomically (writeTVar asyncFetchIsRunning True)
-                logInfo logger [i|Running asynchronous fetch.|]                 
+                logInfo logger [i|Running asynchronous fetch.|]            
+                fetchVersion <- createWorldVersion     
                 (_, TimeMs elapsed) <- timedMS $ do 
                     validations <- runFetches appContext
                     db <- readTVarIO database
@@ -637,8 +632,8 @@ newtype RunningTasks = RunningTasks {
 newRunningTasks :: STM RunningTasks
 newRunningTasks = RunningTasks <$> newTVar mempty
 
-runInPool :: AppLogger -> Task -> RunningTasks -> WorldVersion -> JobRun -> IO ()
-runInPool logger (Task taskType io) RunningTasks {..} worldVersion jobRun = do 
+runInPool :: AppLogger -> Task -> RunningTasks -> IO ()
+runInPool logger (Task taskType action) RunningTasks {..} = do 
     (runningTasks, canRun) <- atomically $ do 
                 runningTasks <- readTVar running
                 let canRun = Set.null $ Set.filter (not . canRunInParallel' taskType) runningTasks
@@ -652,7 +647,7 @@ runInPool logger (Task taskType io) RunningTasks {..} worldVersion jobRun = do
         if Set.null $ Set.filter (not . canRunInParallel' taskType) r
             then do 
                 writeTVar running $ Set.insert taskType r
-                pure $ io worldVersion jobRun 
+                pure $ action
                         `finally` 
                         atomically (modifyTVar' running $ Set.filter (/= taskType))
             else retry
@@ -668,20 +663,20 @@ versionIsOld now period (WorldVersion nanos) =
     in not $ closeEnoughMoments validatedAt now period
 
 
--- | Execute an IO action every N seconds
-periodically :: Seconds -> IO NextStep -> IO ()
-periodically interval action = go
+periodically :: Seconds -> a -> (a -> IO (NextStep, a)) -> IO a
+periodically interval a0 action = do         
+    go a0
   where
-    go = do
-        Now start <- thisInstant
-        nextStep <- action
+    go a = do
+        Now start <- thisInstant        
+        (nextStep, a') <- action a
         Now end <- thisInstant
         let pause = leftToWait start end interval
         when (pause > 0) $
             threadDelay $ fromIntegral pause
         case nextStep of
-            Repeat -> go
-            Done   -> pure ()
+            Repeat -> go a'
+            Done   -> pure a'
 
 
 leftToWait :: Instant -> Instant -> Seconds -> Int64
