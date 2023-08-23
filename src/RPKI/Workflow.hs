@@ -78,7 +78,7 @@ data WorkflowShared = WorkflowShared {
         prometheusMetrics :: PrometheusMetrics,
 
         -- Async fetch is a special case, we want to know if it's 
-        -- running to avoid running it until the previous run is done.
+        -- running to avoid launching it until the previous run is done.
         asyncFetchIsRunning :: TVar Bool
     }
     deriving (Generic)
@@ -95,7 +95,7 @@ data TaskType =
         -- top-down validation and sync fetches
         ValidationTask
 
-        -- delete old objects and version
+        -- delete old objects and old versions
         | CacheCleanupTask    
 
         -- delete old payloads (VRPs, ASPAs, etc.)    
@@ -103,13 +103,13 @@ data TaskType =
 
         | LmdbCompactTask
 
-        -- files in tmp and stale LMDB reader transactions
+        -- cleanup files in tmp and stale LMDB reader transactions
         | LeftoversCleanupTask
 
         -- async fetches of slow repositories
         | AsyncFetchTask
 
-        -- Delete local rsyncm mirror once in a long while
+        -- Delete local rsync mirror once in a long while
         | RsyncCleanupTask
         deriving (Show, Eq, Ord, Bounded, Enum, Generic)
 
@@ -135,18 +135,17 @@ runWorkflow appContext@AppContext {..} tals = do
         
     prometheusMetrics <- createPrometheusMetrics config
 
-    -- Some shared state between the threads for simplicity.
+    -- Shared state between the threads for simplicity.
     workflowShared <- atomically $ newWorkflowShared prometheusMetrics    
 
     -- Fill in the current appState if it's not too old.
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
 
-    -- Run one thread per task, each thread periodically trying to 
-    -- exectute the task, potentially blocked by other running tasks.
+    -- Run the main scheduler and RTR server if configured    
     void $ concurrently
             (runScheduledTasks workflowShared)
-            initRtrIfNeeded
+            runRtrIfConfigured
   where        
 
     schedules workflowShared = [
@@ -190,7 +189,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- For each schedule 
     --   * run a thread that would try to run the task periodically 
-    --   * run tasks using `runConcurrenctlyIfPossible` to make sure 
+    --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared@WorkflowShared {..} = do        
         db <- readTVarIO database
@@ -235,7 +234,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                 logDebug logger [i|Done with task '#{name}'.|])    
 
             periodically interval jobRun0 $ \jobRun -> do                 
-                runConcurrenctlyIfPossible logger (makeTask jobRun) runningTasks                    
+                runConcurrentlyIfPossible logger (makeTask jobRun) runningTasks                    
                 pure RanBefore
 
 
@@ -249,7 +248,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 readTVar asyncFetchIsRunning >>= \case                
                     False -> pure $ 
                         void $ forkFinally (do                                
-                                runConcurrenctlyIfPossible logger asyncFetchTask runningTasks)
+                                runConcurrentlyIfPossible logger asyncFetchTask runningTasks)
                                 (const $ atomically $ writeTVar asyncFetchIsRunning False)
                     True -> 
                         pure $ pure ()
@@ -430,7 +429,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
         pure newVersion
 
-    initRtrIfNeeded = 
+    runRtrIfConfigured = 
         for_ (config ^. #rtrConfig) $ runRtrServer appContext
 
 
@@ -635,8 +634,8 @@ newtype RunningTasks = RunningTasks {
 newRunningTasks :: STM RunningTasks
 newRunningTasks = RunningTasks <$> newTVar mempty
 
-runConcurrenctlyIfPossible :: AppLogger -> Task -> RunningTasks -> IO ()
-runConcurrenctlyIfPossible logger (Task taskType action) RunningTasks {..} = do 
+runConcurrentlyIfPossible :: AppLogger -> Task -> RunningTasks -> IO ()
+runConcurrentlyIfPossible logger (Task taskType action) RunningTasks {..} = do 
     (runningTasks, canRun) <- atomically $ do 
                 runningTasks <- readTVar running
                 let canRun = Set.null $ Set.filter (not . canRunInParallel' taskType) runningTasks
