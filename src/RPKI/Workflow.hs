@@ -188,6 +188,10 @@ runWorkflow appContext@AppContext {..} tals = do
             }
         ]
 
+    -- For each schedule 
+    --   * run a thread that would try to run the task periodically 
+    --   * run tasks using `runConcurrenctlyIfPossible` to make sure 
+    --     there is no data races between different tasks
     runScheduledTasks workflowShared@WorkflowShared {..} = do        
         db <- readTVarIO database
         persistedJobs <- roTx db $ \tx -> Map.fromList <$> allJobs tx db        
@@ -231,8 +235,8 @@ runWorkflow appContext@AppContext {..} tals = do
                                 logDebug logger [i|Done with task '#{name}'.|])    
 
             periodically interval jobRun0 $ \jobRun -> do                 
-                runInPool logger (makeTask jobRun) runningTasks                    
-                pure (Repeat, RanBefore)                              
+                runConcurrenctlyIfPossible logger (makeTask jobRun) runningTasks                    
+                pure RanBefore
 
 
     validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
@@ -245,7 +249,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 readTVar asyncFetchIsRunning >>= \case                
                     False -> pure $ 
                         void $ forkFinally (do                                
-                                runInPool logger asyncFetchTask runningTasks)
+                                runConcurrenctlyIfPossible logger asyncFetchTask runningTasks)
                                 (const $ atomically $ writeTVar asyncFetchIsRunning False)
                     True -> 
                         pure $ pure ()
@@ -575,8 +579,7 @@ runFetches appContext@AppContext {..} = do
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
-        -- We only care about the repositories that are
-        --  slow 
+        -- We only care about the repositories that are slow 
         let slowURLs = Map.fromList $ findSpeedProblems pps
 
         --  and mentioned on some certificates during the last validation.        
@@ -632,8 +635,8 @@ newtype RunningTasks = RunningTasks {
 newRunningTasks :: STM RunningTasks
 newRunningTasks = RunningTasks <$> newTVar mempty
 
-runInPool :: AppLogger -> Task -> RunningTasks -> IO ()
-runInPool logger (Task taskType action) RunningTasks {..} = do 
+runConcurrenctlyIfPossible :: AppLogger -> Task -> RunningTasks -> IO ()
+runConcurrenctlyIfPossible logger (Task taskType action) RunningTasks {..} = do 
     (runningTasks, canRun) <- atomically $ do 
                 runningTasks <- readTVar running
                 let canRun = Set.null $ Set.filter (not . canRunInParallel' taskType) runningTasks
@@ -653,9 +656,6 @@ runInPool logger (Task taskType action) RunningTasks {..} = do
             else retry
 
 
-
-data NextStep = Repeat | Done
-
 -- 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
 versionIsOld now period (WorldVersion nanos) =
@@ -663,20 +663,19 @@ versionIsOld now period (WorldVersion nanos) =
     in not $ closeEnoughMoments validatedAt now period
 
 
-periodically :: Seconds -> a -> (a -> IO (NextStep, a)) -> IO a
+periodically :: Seconds -> a -> (a -> IO a) -> IO a
 periodically interval a0 action = do         
     go a0
   where
     go a = do
         Now start <- thisInstant        
-        (nextStep, a') <- action a
+        a' <- action a
         Now end <- thisInstant
         let pause = leftToWait start end interval
         when (pause > 0) $
             threadDelay $ fromIntegral pause
-        case nextStep of
-            Repeat -> go a'
-            Done   -> pure a'
+        
+        go a'        
 
 
 leftToWait :: Instant -> Instant -> Seconds -> Int64
