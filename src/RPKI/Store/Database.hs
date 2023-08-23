@@ -64,14 +64,13 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 18
+currentDatabaseVersion = 22
 
-
-databaseVersionKey :: Text
+-- Some constant keys
+databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
 databaseVersionKey = "database-version"
-
-lastValidMftKey :: Text
-lastValidMftKey = "last-valid-mft"
+lastValidMftKey    = "last-valid-mft"
+forAsyncFetchKey  = "for-async-fetch"
 
 data EraseWrapper s where 
     EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
@@ -107,7 +106,7 @@ instance Storage s => WithStorage s (DB s) where
 -- That's why all the fiddling with locations in putObject, getLocatedByKey 
 -- and deleteObject.
 -- 
--- Also, since URLs are relatives long, there's a separate mapping between 
+-- Also, since URLs are relativly long, there's a separate mapping between 
 -- URLs and artificial UrlKeys.
 -- 
 data RpkiObjectStore s = RpkiObjectStore {
@@ -207,9 +206,9 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS  :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-        lastS  :: SMap "last-fetch-success" s RpkiURL FetchEverSucceeded
+        rrdpS     :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS    :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
+        forAsyncS :: SMap "for-async-fetch" s Text (Compressed (Set.Set [RpkiURL]))
     }
     deriving stock (Generic)
 
@@ -449,7 +448,7 @@ getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Loca
 getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx certBySKI ski
     located   <- MaybeT $ getLocatedByKey tx db objectKey
-    pure $ located & #payload %~ (\(CerRO c) -> c)
+    pure $ located & #payload %~ (\(CerRO c) -> c) 
 
 -- TA store functions
 
@@ -468,8 +467,8 @@ saveValidations tx DB { validationsStore = ValidationsStore s } wv validations =
     liftIO $ M.put tx s wv (Compressed validations)
 
 validationsForVersion :: (MonadIO m, Storage s) => 
-                        Tx s mode -> ValidationsStore s -> WorldVersion -> m (Maybe Validations)
-validationsForVersion tx ValidationsStore {..} wv = 
+                        Tx s mode -> DB s -> WorldVersion -> m (Maybe Validations)
+validationsForVersion tx DB { validationsStore = ValidationsStore {..} } wv = 
     liftIO $ fmap unCompressed <$> M.get tx results wv
 
 deleteValidations :: (MonadIO m, Storage s) => 
@@ -558,6 +557,10 @@ generalWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
 generalWorldVersion tx database worldVersion =    
     saveVersion tx database worldVersion generalKind
 
+asyncFetchWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
+asyncFetchWorldVersion tx database worldVersion =    
+    saveVersion tx database worldVersion asyncFetchKind
+
 
 saveMetrics :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 saveMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
@@ -594,7 +597,7 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 ChangeSet ->
                 m ()
 applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges lastSucceded) = liftIO $ do
+                  (ChangeSet rrdpChanges rsyncChanges slowRequested) = liftIO $ do
     -- Do the Remove first and only then Put
     let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
 
@@ -604,11 +607,10 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
 
     for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
-    for_ rsyncPuts $ uncurry (M.put tx rsyncS)
+    for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
 
-    let (lastSPuts, lastSRemoves) = separate lastSucceded
-    for_ lastSRemoves $ \(uri', _) -> M.delete tx lastS uri'
-    for_ lastSPuts $ uncurry (M.put tx lastS)
+    let (lastSPuts, _) = separate [slowRequested]    
+    for_ lastSPuts $ \rr -> M.put tx forAsyncS forAsyncFetchKey (Compressed rr)
   where
     separate = foldr f ([], [])
       where
@@ -618,12 +620,12 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
-    rsyns <- M.all tx rsyncS
-    lasts <- M.all tx lastS
+    rsyns <- M.all tx rsyncS    
+    forAsyncS <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
-            (RsyncTree $ Map.fromList rsyns)
-            (EverSucceededMap $ Map.fromList lasts)
+            (RsyncTree $ Map.fromList rsyns)           
+            forAsyncS
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do
@@ -790,18 +792,21 @@ deletePayloads tx db worldVersion = do
 
 -- | Find the latest completed world version 
 -- 
-getLastCompletedVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
-getLastCompletedVersion database tx = do 
-        vs <- map fst <$> allVersions tx database
-        pure $! case vs of         
-            []  -> Nothing
-            vs' -> Just $ maximum vs'
+getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
+getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
+
+getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
+getLastVersionOfKind database tx versionKind = do 
+        versions <- allVersions tx database        
+        pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
+                []  -> Nothing
+                vs' -> Just $ maximum vs'
 
 getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
 getLatestVRPs db = 
     roTx db $ \tx ->        
         runMaybeT $ do 
-            version <- MaybeT $ getLastCompletedVersion db tx
+            version <- MaybeT $ getLastValidationVersion db tx
             MaybeT $ getVrps tx db version
 
 getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
@@ -822,7 +827,7 @@ getLatestX :: (Storage s, Monoid b) =>
             -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
             -> IO b
 getLatestX tx db f =      
-        getLastCompletedVersion db tx >>= \case         
+        getLastValidationVersion db tx >>= \case         
             Nothing      -> pure mempty
             Just version -> fromMaybe mempty <$> f tx db version    
 
@@ -877,8 +882,8 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         let RepositoryStore {..} = repositoryStore
         in RepositoryStats <$>
             M.stats tx rrdpS <*>
-            M.stats tx rsyncS <*>
-            M.stats tx lastS
+            M.stats tx rsyncS <*>            
+            M.stats tx forAsyncS
 
     vResultStats' tx = 
         let ValidationsStore results = validationsStore

@@ -33,7 +33,8 @@ httpSpec = testGroup "Unit tests for Http updates" [
         let hash = sha256 body
         let size = LBS.length body
 
-        (bs, s, status, _) <- downloadToBS testConfig (URI uri) Nothing
+        (bs, s, status, _) :: (LBS.ByteString, Size, HttpStatus, Maybe ETag) <- 
+            downloadToBS testConfig (URI uri) Nothing
 
         HU.assertEqual "Status" status (HttpStatus 200)
         HU.assertEqual "Size" s (Size size)

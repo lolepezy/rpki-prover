@@ -56,7 +56,7 @@ httpApi :: (Storage s, MaintainableStorage s) => AppContext s -> Application
 httpApi appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
-        ui      = uiServer,
+        ui      = uiServer appContext,
         staticContent = serveDirectoryEmbedded $(embedRecursiveDir "static"),
         swagger = swaggerSchemaUIServer swaggerDoc
     }
@@ -83,7 +83,7 @@ httpApi appContext = genericServe HttpApi {
         fullValidationResults    = getValidationsDto appContext,
         validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
         metrics = snd <$> getMetrics appContext,
-        publicationsPoints = getPPs appContext,
+        repositories = getPPs appContext,
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
@@ -92,11 +92,25 @@ httpApi appContext = genericServe HttpApi {
         versions = getVersions appContext
     }
 
-    uiServer = do
-        worldVersion <- liftIO $ getLastVersion appContext
-        vResults     <- liftIO $ getValidations appContext
-        metrics <- getMetrics appContext
-        pure $ mainPage worldVersion vResults metrics
+    uiServer AppContext {..} = do
+        db <- liftIO $ readTVarIO database
+        version <- liftIO $ roTx db $ \tx -> getLastValidationVersion db tx 
+        case version of 
+            Nothing -> notFoundException
+            Just validationVersion -> do                  
+                asyncFetch <- liftIO $ roTx db $ \tx -> runMaybeT $ do 
+                                afVersion     <- MaybeT $ getLastAsyncFetchVersion appContext
+                                afMetrics     <- MaybeT $ metricsForVersion tx db afVersion
+                                afValidations <- MaybeT $ getValidationsForVersion appContext afVersion
+                                pure (afVersion, afValidations, afMetrics)
+                    
+                validation <- liftIO $ roTx db $ \tx -> runMaybeT $ do                 
+                                vMetrics     <- MaybeT $ metricsForVersion tx db validationVersion
+                                vValidations <- MaybeT $ getValidationsForVersion appContext validationVersion
+                                pure (validationVersion, vValidations, vMetrics)
+
+                systemInfo <- liftIO $ readTVarIO $ appContext ^. #appState . #system
+                pure $ mainPage systemInfo validation asyncFetch
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
@@ -174,7 +188,7 @@ getBGPCertsFiltered :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCertsFiltered AppContext {..} = do
     db <- readTVarIO database
     fmap (fromMaybe mempty) $ roTx db $ \tx ->
-        getLastCompletedVersion db tx >>= \case      
+        getLastValidationVersion db tx >>= \case      
             Nothing      -> pure mempty   
             Just version -> runMaybeT $ do 
                 bgps  <- MaybeT $ getBgps tx db version
@@ -185,48 +199,75 @@ getGBRs :: Storage s => AppContext s -> IO [Located GbrDto]
 getGBRs AppContext {..} = do
     gbrs <- getLatestGbrs =<< readTVarIO database
     pure [ Located { payload = gbrObjectToDto g, .. }
-            | Located { payload = GbrRO g, .. } <- gbrs ]    
+         | Located { payload = GbrRO g, .. } <- gbrs ]    
+ 
 
-
-getValidations :: Storage s => AppContext s -> IO (Maybe (ValidationsDto FullVDto))
-getValidations AppContext {..} = do
-    db@DB {..} <- readTVarIO database
-    roTx versionStore $ \tx ->
-        runMaybeT $ do
-            lastVersion <- MaybeT $ getLastCompletedVersion db tx
-            validations <- MaybeT $ validationsForVersion tx validationsStore lastVersion
-            let validationDtos = map toVR $ validationsToList validations
-            pure $ ValidationsDto {
-                    worldVersion = lastVersion,
-                    timestamp    = versionToMoment lastVersion,
-                    validations  = validationDtos
-                }
+getValidationsForVersion :: Storage s => 
+                            AppContext s 
+                        -> WorldVersion 
+                        -> IO (Maybe (ValidationsDto FullVDto))
+getValidationsForVersion appContext worldVersion = 
+    getValidationsImpl appContext (\_ _ -> pure $ Just worldVersion)
 
 getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) =>
                     AppContext s -> m (ValidationsDto FullVDto)
 getValidationsDto appContext = do
-    vs <- liftIO $ getValidations appContext
+    vs <- liftIO $ getValidationsImpl appContext getLastValidationVersion    
     maybe notFoundException pure vs
 
-getLastVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
-getLastVersion AppContext {..} = do
+getValidationsImpl :: Storage s => 
+                    AppContext s 
+                -> (DB s -> Tx s 'RO -> IO (Maybe WorldVersion))
+                -> IO (Maybe (ValidationsDto FullVDto))
+getValidationsImpl AppContext {..} getVersionF = do
     db <- readTVarIO database
-    roTx db $ getLastCompletedVersion db
+    roTx db $ \tx ->
+        runMaybeT $ do
+            version     <- MaybeT $ getVersionF db tx
+            validations <- MaybeT $ validationsForVersion tx db version
+            let validationDtos = map toVR $ validationsToList validations
+            pure $ ValidationsDto {
+                    worldVersion = version,
+                    timestamp    = versionToMoment version,
+                    validations  = validationDtos
+                }                
+
+getLastAsyncFetchVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
+getLastAsyncFetchVersion appContext = getLastKindVersion appContext asyncFetchKind
+
+getLastKindVersion :: Storage s => AppContext s -> VersionKind -> IO (Maybe WorldVersion)
+getLastKindVersion AppContext {..} versionKind = do
+    db <- readTVarIO database
+    roTx db $ \tx -> getLastVersionOfKind db tx versionKind
 
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m (RawMetric, MetricsDto)
-getMetrics AppContext {..} = do
+getMetrics appContext = getMetricsImpl appContext getLastValidationVersion    
+
+getMetricsForVersion :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                        AppContext s 
+                    -> WorldVersion 
+                    -> m (RawMetric, MetricsDto)
+getMetricsForVersion appContext worldVersion = 
+    getMetricsImpl appContext (\_ _ -> pure $ Just worldVersion)
+
+getMetricsImpl :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                AppContext s 
+            -> (DB s -> Tx s 'RO -> IO (Maybe WorldVersion))
+            -> m (RawMetric, MetricsDto)
+getMetricsImpl AppContext {..} getVersionF = do
     db <- liftIO $ readTVarIO database
     metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-            lastVersion <- MaybeT $ getLastCompletedVersion db tx
-            rawMetrics  <- MaybeT $ metricsForVersion tx db lastVersion
+            version <- MaybeT $ getVersionF db tx
+            rawMetrics  <- MaybeT $ metricsForVersion tx db version
             pure (rawMetrics, toMetricsDto rawMetrics)
     maybe notFoundException pure metrics
 
 
 notFoundException :: MonadError ServerError m => m a
-notFoundException = throwError err404 { errBody = "Working, please hold still!" }
+notFoundException = throwError err404 { 
+    errBody = "No finished validations yet." }
 
 getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m Slurm
@@ -234,7 +275,7 @@ getSlurm AppContext {..} = do
     db <- liftIO $ readTVarIO database
     z  <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-                lastVersion <- MaybeT $ getLastCompletedVersion db tx
+                lastVersion <- MaybeT $ getLastValidationVersion db tx
                 MaybeT $ slurmForVersion tx db lastVersion
     case z of
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }
@@ -271,7 +312,7 @@ getStats appContext@AppContext {..} = liftIO $ do
 
 getJobs :: (MonadIO m, Storage s) => AppContext s -> m JobsDto
 getJobs AppContext {..} = liftIO $ do
-    db <- readTVarIO database
+    db   <- readTVarIO database
     jobs <- roTx db $ \tx -> allJobs tx db
     pure JobsDto {..}
 
@@ -320,7 +361,7 @@ getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
     SystemInfo {..} <- readTVarIO $ appState ^. #system
-    let proverVersion = getVersion
+    let proverVersion = rpkiProverVersion
 
     let toResources (scope, resourceUsage) = let
                 tag = scopeText scope
@@ -341,8 +382,8 @@ getRtr AppContext {..} = do
         Just rtrState -> pure RtrDto {..}
 
 getVersions :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                AppContext s -> m [WorldVersion]
+                AppContext s -> m [(WorldVersion, VersionKind)]
 getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
-    sortBy (flip compare) . map fst <$> roTx db (`allVersions` db)
+    sortBy (flip compare) <$> roTx db (`allVersions` db)

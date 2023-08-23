@@ -1,9 +1,8 @@
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DeriveDataTypeable    #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 
 module RPKI.Store.Sequence where
     
@@ -19,7 +18,8 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 
 newtype SequenceValue = SequenceValue Int64
-    deriving (Show, Eq, Generic, TheBinary)
+    deriving stock (Show, Eq, Generic)
+    deriving newtype (TheBinary)
 
 type SequenceMap s = SMap "sequences" s Text SequenceValue
 

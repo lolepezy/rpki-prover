@@ -7,4 +7,6 @@ rpki-prover.code-workspace
 rpki-prover-test.prof*
 .stylish-haskell.yaml
 .vscode/
-stack.yaml.lock
+stack*yaml.lock
+package.yaml
+*.hie

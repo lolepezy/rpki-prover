@@ -10,8 +10,10 @@
 
 module RPKI.Validation.TopDown where
 
+import           Control.Concurrent.Async        (forConcurrently)
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
 
@@ -36,7 +38,7 @@ import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
 
-import           UnliftIO.Async
+import           UnliftIO.Async                   (pooledForConcurrently)
 
 import           RPKI.AppContext
 import           RPKI.AppState
@@ -130,11 +132,6 @@ newAllTasTopDownContext worldVersion now repositoryProcessing =
         briefs         <- newTVar []
         pure $ AllTasTopDownContext {..}
 
-newRepositoryContext :: PublicationPoints -> RepositoryContext
-newRepositoryContext publicationPoints = let
-    takenCareOf = Set.empty
-    in RepositoryContext {..}
-
 
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited
 verifyLimit hitTheLimit limit =
@@ -152,6 +149,35 @@ verifyLimit hitTheLimit limit =
         AlreadyReportedLimit ->
             pure AlreadyReportedLimit
 
+
+
+-- Do something within the bracket of RepositoryProcessing instance
+-- 
+withRepositoriesProcessing :: Storage s =>
+                            AppContext s 
+                        -> (RepositoryProcessing -> IO a) 
+                        -> IO a
+withRepositoriesProcessing AppContext {..} f = 
+    bracket
+        (newRepositoryProcessingIO config)
+        cancelFetchTasks
+        $ \rp -> do 
+            db <- readTVarIO database        
+
+            mapException (AppException . storageError) $ do
+                pps <- roTx db $ \tx -> getPublicationPoints tx db
+                let pps' = addRsyncPrefetchUrls config pps
+                atomically $ writeTVar (rp ^. #publicationPoints) pps'
+
+            a <- f rp
+
+            -- save publication points state    
+            mapException (AppException . storageError) $ do
+                pps <- readTVarIO $ (rp ^. #publicationPoints)
+                rwTx db $ \tx -> savePublicationPoints tx db pps          
+
+            pure a
+
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
 validateMutlipleTAs :: Storage s =>
@@ -160,36 +186,22 @@ validateMutlipleTAs :: Storage s =>
                     -> [TAL]
                     -> IO [TopDownResult]
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
-    db <- readTVarIO database
 
-    repositoryProcessing <- newRepositoryProcessingIO config
-    allTas <- newAllTasTopDownContext worldVersion
-                (Now $ versionToMoment worldVersion) repositoryProcessing
+    withRepositoriesProcessing appContext $ \repositoryProcessing -> do 
+        allTas <- newAllTasTopDownContext worldVersion
+                    (Now $ versionToMoment worldVersion) repositoryProcessing
 
-    validateThem db allTas
-        `finally`
-            concurrently
-                (applyValidationSideEffects appContext allTas)
-                (cancelFetchTasks repositoryProcessing)
+        resetForAsyncFetch repositoryProcessing
+        validateThem allTas
+            `finally` (applyValidationSideEffects appContext allTas)                    
   where
 
-    validateThem db allTas = do
-        -- set initial publication point state
-        mapException (AppException . storageError) $ do
-            pps <- roTx db $ \tx -> getPublicationPoints tx db
-            let pps' = addRsyncPrefetchUrls config pps
-            atomically $ writeTVar (allTas ^. #repositoryProcessing . #publicationPoints) pps'
-
-        rs <- liftIO $ pooledForConcurrently tals $ \tal -> do
+    validateThem allTas = do
+        rs <- forConcurrently tals $ \tal -> do
             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
                     validateTA appContext tal worldVersion allTas
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
             pure r
-
-        -- save publication points state    
-        mapException (AppException . storageError) $ do
-            pps <- readTVarIO $ allTas ^. #repositoryProcessing . #publicationPoints
-            rwTx db $ \tx -> savePublicationPoints tx db pps
 
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
@@ -242,7 +254,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 -> ValidatorT IO (Located CaCerObject, PublicationPointAccess, TACertStatus)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
-    let validationConfig = config ^. typed @ValidationConfig
+    let validationConfig = config ^. typed
 
     db       <- liftIO $ readTVarIO database
     taByName <- roAppTxEx db storageError $ \tx -> getTA tx db (getTaName tal)
@@ -256,7 +268,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
   where
     fetchValidateAndStore db (Now moment) previousCert = do
-        (uri', ro) <- fetchTACertificate appContext tal
+        (uri', ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
         cert       <- vHoist $ validateTACert tal uri' ro
         -- Check for replay attacks
         actualCert <- case previousCert of
@@ -294,7 +306,8 @@ validateFromTACert
 
         -- ignore return result here, because all the fetching statuses will be
         -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext repositoryProcessing worldVersion filteredRepos
+        void $ fetchPPWithFallback appContext (syncFetchConfig config) 
+                repositoryProcessing worldVersion filteredRepos        
 
     -- Do the tree descend, gather validation results and VRPs                
     payloads <- fromTryM
@@ -305,10 +318,10 @@ validateFromTACert
 
 
 validateCa :: Storage s =>
-                        AppContext s ->
-                        TopDownContext ->
-                        Located CaCerObject ->
-                        ValidatorT IO (Seq (Payloads (Set Vrp)))
+            AppContext s ->
+            TopDownContext ->
+            Located CaCerObject ->
+            ValidatorT IO (Seq (Payloads (Set Vrp)))
 validateCa
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
@@ -349,30 +362,7 @@ validateCa
                 vError $ TooManyRepositories
                             (getLocations certificate)
                             (validationConfig ^. #maxTaRepositories)
-            )
-
-    let actuallyValidate =
-            case getPublicationPointsFromCertObject (certificate ^. #payload) of
-                Left e         -> vError e
-                Right ppAccess ->
-                    case filterPPAccess config ppAccess of
-                        Nothing ->
-                            -- Both rrdp and rsync (and whatever else in the future?) are
-                            -- disabled, don't fetch at all.
-                            validateThisCertAndGoDown
-                        Just filteredPPAccess -> do
-                            fetches    <- fetchPPWithFallback appContext repositoryProcessing worldVersion filteredPPAccess
-                            primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
-                            let goFurther =
-                                    if anySuccess fetches
-                                        then validateThisCertAndGoDown
-                                        else do
-                                            fetchEverSucceeded repositoryProcessing filteredPPAccess >>= \case
-                                                Never       -> pure mempty
-                                                AtLeastOnce -> validateThisCertAndGoDown
-                            case primaryUrl of
-                                Nothing -> goFurther
-                                Just rp -> inSubMetricScope' PPFocus rp goFurther
+            )                
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
@@ -386,9 +376,46 @@ validateCa
     checkAndReport treeDepthLimit
         $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
-        $ actuallyValidate
+        $ peocessPublicationPointFetching
 
   where
+    peocessPublicationPointFetching = 
+        case getPublicationPointsFromCertObject (certificate ^. #payload) of
+            Left e         -> vError e
+            Right ppAccess ->
+                case filterPPAccess config ppAccess of
+                    Nothing ->
+                        -- Both rrdp and rsync (and whatever else in the future?) are
+                        -- disabled, don't fetch at all.
+                        validateThisCertAndGoDown
+                    Just filteredPPAccess -> do
+                        -- Skip repositories that are marked as "slow"
+                        pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
+                        let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess                                                
+                        case quickPPs of 
+                            Nothing -> do 
+                                -- Even though we are skipping the repository we still need to remember
+                                -- that it was mentioned as a publication point on a certificate                                    
+                                markForAsyncFetch repositoryProcessing slowRepos                                
+                                validateThisCertAndGoDown
+
+                            Just quickPPAccess -> do                                     
+                                fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
+                                                repositoryProcessing worldVersion quickPPAccess                                    
+                                -- Based on 
+                                --   * which repository(-ries) were mentioned on the certificate
+                                --   * which ones succeded, 
+                                --   * which were skipped because they are slow,
+                                -- derive which repository(-ies) should be picked up 
+                                -- for async fetching later.
+                                markForAsyncFetch repositoryProcessing 
+                                    $ filterForAsyncFetch filteredPPAccess fetches slowRepos
+
+                                -- primaryUrl is used for set the focus to the publication point
+                                primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
+                                case primaryUrl of
+                                    Nothing -> validateThisCertAndGoDown                                            
+                                    Just rp -> inSubMetricScope' PPFocus rp validateThisCertAndGoDown    
 
     validateThisCertAndGoDown = do
         -- Here we do the following
@@ -424,7 +451,7 @@ validateCa
         case maybeMft of
             Nothing ->
                 -- Use awkward vError + catchError to force the error to 
-                -- get into the Validations in the state.
+                -- get into the Validations in the state. 
                 vError (NoMFT childrenAki certLocations)
                     `catchError`
                     goForLatestValid
@@ -571,7 +598,7 @@ validateCa
 
     gatherMftEntryResults mftEntryResults = do
         -- gather all the validation states from every MFT entry
-        mapM_ (embedState . snd) mftEntryResults
+        embedState $ mconcat $ map snd mftEntryResults
 
         case partitionEithers $ map fst mftEntryResults of
             ([], payloads) -> pure payloads
@@ -591,7 +618,8 @@ validateCa
         let nonUniqueEntries = Map.filter longerThanOne entryMap
 
         -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
-        -- about uniqueness of manifest entries.
+        -- about uniqueness of manifest entries. 
+        -- TODO Or does it? Maybe something in th ASN1 enodimng as Aet?
         unless (Map.null nonUniqueEntries) $
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
@@ -628,7 +656,7 @@ validateCa
         when (null nameMatches) $
             vWarn $ ManifestLocationMismatch filename objectLocations
 
-        case child of
+        case child of            
             RBrief ((^. #payload) -> brief) h
                 | getHash certificate == brief ^. #parentHash ->
                     -- It's under the same parent, so it's definitely the same object.
@@ -641,7 +669,7 @@ validateCa
                 validateRealObject o validCrl
 
     {- 
-        There's a brief for the already validated object, so only check, 
+        There's a brief for the already validated object, so only check 
         validity period and if it wasn't revoked.             
     -}
     validateBrief brief validCrl = do
@@ -705,7 +733,7 @@ validateCa
                         let vrpList = getCMSContent $ cmsPayload roa
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
-                        let payload = (mempty :: Payloads (Set Vrp)) { vrps = Set.fromList vrpList }
+                        let payload = (mempty :: Payloads (Set Vrp)) & #vrps .~ Set.fromList vrpList
                         updateEEBrief roa RoaBrief payload
 
             GbrRO gbr -> do
@@ -715,7 +743,7 @@ validateCa
                         void $ vHoist $ validateGbr now gbr certificate validCrl verifiedResources
                         oneMoreGbr
                         let gbr' = getCMSContent $ cmsPayload gbr
-                        let payload = (mempty :: Payloads (Set Vrp)) { gbrs = Set.singleton (getHash gbr, gbr') }
+                        let payload = (mempty :: Payloads (Set Vrp)) & #gbrs .~ Set.singleton (getHash gbr, gbr')
                         pure $! Seq.singleton $ payload
 
             AspaRO aspa -> do
@@ -725,7 +753,7 @@ validateCa
                         void $ vHoist $ validateAspa now aspa certificate validCrl verifiedResources
                         oneMoreAspa
                         let aspa' = getCMSContent $ cmsPayload aspa
-                        let payload = (mempty :: Payloads (Set Vrp)) { aspas = Set.singleton aspa' }
+                        let payload = (mempty :: Payloads (Set Vrp)) & #aspas .~ Set.singleton aspa'
                         updateEEBrief aspa AspaBrief payload
 
             BgpRO bgpCert -> do

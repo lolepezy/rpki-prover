@@ -26,14 +26,24 @@ import RPKI.Store.Base.Serialisation
 import Data.Version
 import qualified Paths_rpki_prover as Autogen
 
-getVersion :: Text
-getVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
+rpkiProverVersion :: Text
+rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 
 data Parallelism = Parallelism {
         cpuCount         :: Natural,
         cpuParallelism   :: Natural,
         fetchParallelism :: Natural
     } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data FetchConfig = FetchConfig {
+        rsyncTimeout       :: Seconds,
+        rsyncSlowThreshold :: Seconds,
+        rrdpTimeout        :: Seconds,
+        rrdpSlowThreshold  :: Seconds,
+        fetchLaunchWaitDuration  :: Seconds
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -67,6 +77,7 @@ data RsyncConf = RsyncConf {
         rsyncClientPath   :: Maybe FilePath,
         rsyncRoot         :: FilePath,
         rsyncTimeout      :: Seconds,
+        asyncRsyncTimeout :: Seconds,
         enabled           :: Bool,
         rsyncPrefetchUrls :: [RsyncURL]
     } 
@@ -81,10 +92,11 @@ newtype Size = Size { unSize :: Int64 }
     deriving Monoid via Sum Size
 
 data RrdpConf = RrdpConf {
-        tmpRoot     :: FilePath,
-        maxSize     :: Size,
-        rrdpTimeout :: Seconds,
-        enabled     :: Bool
+        tmpRoot          :: FilePath,
+        maxSize          :: Size,
+        rrdpTimeout      :: Seconds,
+        asyncRrdpTimeout :: Seconds,
+        enabled          :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -122,6 +134,16 @@ data ValidationConfig = ValidationConfig {
         minObjectSize                  :: Integer
     } 
     deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data AsyncFetchConfig = AsyncFetchConfig {
+        -- Maximal download time of a repository beyond 
+        -- which it is considered slow.    
+        slowRepositoryThreshold :: Seconds,
+        -- 
+        checkPeriod             :: Seconds       
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data HttpApiConfig = HttpApiConfig {
@@ -175,14 +197,16 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = "",
-        rsyncTimeout = 7 * 60,
+        rsyncTimeout = 2 * 60,
+        asyncRsyncTimeout = 15 * 60,
         enabled = True,
         rsyncPrefetchUrls = []
     },
     rrdpConf = RrdpConf {
         tmpRoot = "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * 60,
+        rrdpTimeout = 2 * 60,
+        asyncRrdpTimeout = 10 * 60,
         enabled = True
     },
     validationConfig = ValidationConfig {
@@ -236,6 +260,9 @@ defaulPrefetchURLs = [
         "rsync://rpki.apnic.net/member_repository",
         "rsync://rpki-repo.registro.br/repo/",
         "rsync://repo-rpki.idnic.net/repo/",
-        "rsync://0.sb/repo/"
+        "rsync://0.sb/repo/",
+        "rsync://rpki.co/repo/",
+        "rsync://rpki-rps.arin.net/repository/",
+        "rsync://rpki-repository.nic.ad.jp/ap/"        
     ]    
     

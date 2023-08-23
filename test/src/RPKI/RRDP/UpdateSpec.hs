@@ -19,11 +19,12 @@ rrdpUpdateSpec :: TestTree
 rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 
     HU.testCase "Should generate update snapshot action" $ do
-        let repo = RrdpRepository {
+        let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (SessionId "whatever", RrdpSerial 50),
                         status = Pending,
-                        eTag = Nothing 
+                        speed = Unknown,
+                        eTag = Nothing
                     }
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
@@ -33,12 +34,13 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 
     HU.testCase "Should generate nothing when the session id and serial are the same" $ do
         let sessionId = SessionId "something"
-        let serial = RrdpSerial 13        
-        let repo = RrdpRepository {
+        let serial = RrdpSerial 13
+        let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
                         status = Pending,
-                        eTag = Nothing 
+                        speed = Unknown,
+                        eTag = Nothing
                     }                        
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
@@ -49,12 +51,14 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let serial = RrdpSerial 13
         let nextSerial' = nextSerial serial
         let delta = makeDelta nextSerial'
-        let repo = RrdpRepository {
+
+        let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
                         status = Pending,
-                        eTag = Nothing 
-                    }                        
+                        speed = Unknown,
+                        eTag = Nothing
+                    }
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
                                     deltas = [delta]
@@ -66,12 +70,13 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
         let sessionId = SessionId "something"
         let serial = RrdpSerial 13
-        let repo = RrdpRepository {
+        let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
                         status = Pending,
-                        eTag = Nothing 
-                    }
+                        speed = Unknown,
+                        eTag = Nothing
+                    }                    
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 15)) {       
                                   deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
@@ -83,12 +88,13 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
     HU.testCase "Should generate error when deltas are not consecutive" $ do
         let sessionId = SessionId "something"
         let serial = RrdpSerial 13
-        let repo = RrdpRepository {
+        let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
                         status = Pending,
-                        eTag = Nothing 
-                    }
+                        speed = Unknown,
+                        eTag = Nothing
+                    } 
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 20)) {       
                         deltas = [

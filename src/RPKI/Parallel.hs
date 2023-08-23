@@ -1,14 +1,16 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE AllowAmbiguousTypes        #-}
 
 module RPKI.Parallel where
 
+import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
 import           Control.Concurrent.Async.Lifted
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 
@@ -45,20 +47,20 @@ foldPipeline parallelism stream mapStream consume accum0 =
                 cancel
   where        
     writeAll queue = S.mapM_ toQueue stream
-        where 
-            toQueue s = do
-                t <- async $ mapStream s
-                liftIO $ atomically $ writeCQueue queue t
+      where 
+        toQueue s = do
+            t <- async $ mapStream s
+            liftIO $ atomically $ writeCQueue queue t
 
     readAll queue = go accum0
-        where
-            go accum = do                
-                t <- liftIO $ atomically $ readCQueue queue
-                case t of
-                    Nothing -> pure accum
-                    Just t' -> do 
-                        p <- wait t'
-                        consume p accum >>= go
+      where
+        go accum = do                
+            t <- liftIO $ atomically $ readCQueue queue
+            case t of
+                Nothing -> pure accum
+                Just t' -> do 
+                    p <- wait t'
+                    consume p accum >>= go
 
 
 
@@ -183,6 +185,7 @@ createSemaphoreIO = atomically . createSemaphore
 createSemaphore :: Int -> STM Semaphore
 createSemaphore n = Semaphore n <$> newTVar 0
 
+-- Execute using a semaphore as a barrier
 withSemaphore :: Semaphore -> IO a -> IO a
 withSemaphore (Semaphore maxCounter current) f = 
     bracket incr decr (const f)
@@ -193,3 +196,25 @@ withSemaphore (Semaphore maxCounter current) f =
                 then retry
                 else writeTVar current (c + 1)
         decr _ = atomically $ modifyTVar' current $ \c -> c - 1
+
+-- Execute using a semaphore as a barrier, but if sempahore 
+-- is not allowing execution, execute after a timeout anyway
+withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
+withSemaphoreAndTimeout (Semaphore maxCounter current) intervalMicroSeconds f =     
+    bracket aquireSlot releaseSlot (const f)
+  where  
+    thereIsSpaceToRun = do 
+        c <- readTVar current
+        if c >= maxCounter 
+            then retry
+            else writeTVar current (c + 1)                                        
+
+    aquireSlot = 
+        either (const True) (const False) <$> 
+            race 
+                (atomically thereIsSpaceToRun)
+                (threadDelay intervalMicroSeconds)
+        
+    releaseSlot increasedCounter = 
+        when increasedCounter $ 
+            atomically $ modifyTVar' current $ \c -> c - 1  

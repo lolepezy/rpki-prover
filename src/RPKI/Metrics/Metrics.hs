@@ -42,12 +42,12 @@ groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}
     combineMetrics metricScope metric (pTa, perRepo) = (newPerTa, newPerRepo)
       where
         newPerTa =
-            case take 1 $ reverse [ TaName uri | TAFocus uri <- scopeList metricScope ] of
+            case Prelude.take 1 $ reverse [ TaName uri | TAFocus uri <- scopeList metricScope ] of
                 []      -> pTa
                 ta' : _ -> MonoidalMap.singleton ta' metric <> pTa
 
         newPerRepo =
             -- take the deepest PP
-            case take 1 [ pp | PPFocus pp <- scopeList metricScope ] of
+            case Prelude.take 1 [ pp | PPFocus pp <- scopeList metricScope ] of
                 []      -> perRepo
                 uri : _ -> MonoidalMap.singleton uri metric <> perRepo        

@@ -26,13 +26,13 @@ import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.Text                        as Text
 
 import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)
+import           Data.Int                         (Int16, Int64)    
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
-import           Numeric.Natural                  (Natural)
 
 import           Data.String.Interpolate.IsString
+import           Numeric.Natural                  (Natural)
 
 import           GHC.TypeLits
 
@@ -77,12 +77,12 @@ import           RPKI.RSC.Verifier
 main :: IO ()
 main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
-            "RPKI prover, relying party software for RPKI, version " <> getVersion
+            "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
 
     if version
         then do
             -- it is "--version" call, so print the version and exit
-            putStrLn $ convert getVersion
+            putStrLn $ convert rpkiProverVersion
         else do
             case worker of
                 Nothing ->
@@ -225,9 +225,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #rsyncConf . #enabled .~ not noRsync
                 & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
                 & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+                & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
                 & #rrdpConf . #tmpRoot .~ tmpd
                 & #rrdpConf . #enabled .~ not noRrdp
                 & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+                & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
                 & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
                 & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
@@ -274,7 +276,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     case dbCheck of 
         -- If the DB version wasn't compatible with the expected version, 
-        -- all the data was erased and makes a lot of sense to perform 
+        -- all the data was erased and it makes a lot of sense to perform 
         -- compaction. Not performing it may potentially bloat the database 
         -- (not sure why exactly but it was reproduced multiple times)
         -- until the next compaction that will happen probably in weeks.
@@ -283,12 +285,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- It may mean two different cases
         --   * empty db
         --   * old non-empty cache
-        -- In practice the hardly ever be a non-empty old cache, 
+        -- In practice there hardly ever be a non-empty old cache, 
         -- and even if it will be there, it will be compacted in 
         -- a week or so. So don't compact,
         Lmdb.DidntHaveVersion -> pure ()
 
-        -- Normal schedule
+        -- Nothing special, the cache is totally normal
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
@@ -438,7 +440,7 @@ executeWorker input appContext =
                     appContext worldVersion rrdpRepository
             RsyncFetchParams {..} -> exec resultHandler $
                 fmap RsyncFetchResult $ runValidatorT scopes $ updateObjectForRsyncRepository
-                    appContext worldVersion rsyncRepository
+                    appContext fetchConfig worldVersion rsyncRepository
             CompactionParams {..} -> exec resultHandler $
                 CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
             ValidationParams {..} -> exec resultHandler $
@@ -446,7 +448,7 @@ executeWorker input appContext =
             CacheCleanupParams {..} -> exec resultHandler $
                 CacheCleanupResult <$> runCacheCleanup appContext worldVersion
   where
-    exec resultHandler f = resultHandler =<< execWithTiming f
+    exec resultHandler f = resultHandler =<< execWithStats f
 
 
 createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
@@ -587,8 +589,16 @@ data CLIOptions wrapped = CLIOptions {
         ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
+    asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
+        ("Timebox for RRDP repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
+       +++ "finish within this timeout, the repository is considered unavailable"),
+
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
+       +++ "finish within this timeout, the repository is considered unavailable"),
+
+    asyncRsyncTimeout :: wrapped ::: Maybe Int64 <?>
+        ("Timebox for rsync repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>

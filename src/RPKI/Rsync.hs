@@ -14,9 +14,8 @@ import           Data.Bifunctor
 
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
-
 import           Control.Monad
-import           Control.Monad.Except
+import           Control.Monad.IO.Class           (liftIO)
 
 import qualified Data.ByteString                  as BS
 import           Data.Maybe (fromMaybe)
@@ -83,10 +82,11 @@ stderr = [#{U.textual stderr'}]|]
 
 
 runRsyncFetchWorker :: AppContext s 
+                    -> FetchConfig
                     -> WorldVersion
                     -> RsyncRepository             
                     -> ValidatorT IO RsyncRepository
-runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
+runRsyncFetchWorker AppContext {..} fetchConfig worldVersion rsyncRepo = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RsyncFetchResult'.
@@ -106,8 +106,8 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
                                 logger
                                 config
                                 workerId 
-                                (RsyncFetchParams vp rsyncRepo worldVersion)                        
-                                (Timebox $ config ^. typed @RsyncConf . #rsyncTimeout)
+                                (RsyncFetchParams vp fetchConfig rsyncRepo worldVersion)                        
+                                (Timebox $ fetchConfig ^. #rsyncTimeout)
                                 arguments                        
     let RsyncFetchResult z = payload        
     logWorkerDone logger workerId wr
@@ -119,12 +119,13 @@ runRsyncFetchWorker AppContext {..} worldVersion rsyncRepo = do
 -- | 
 -- | This function doesn't throw exceptions.
 rsyncRpkiObject :: AppContext s -> 
+                FetchConfig -> 
                 RsyncURL -> 
                 ValidatorT IO RpkiObject
-rsyncRpkiObject AppContext{..} uri = do
+rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile rsyncRoot uri
-    let rsync = rsyncProcess config uri destination RsyncOneFile
+    let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
         ExitFailure errorCode -> do
@@ -144,19 +145,21 @@ rsyncRpkiObject AppContext{..} uri = do
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: Storage s => 
                                   AppContext s
+                               -> FetchConfig 
                                -> WorldVersion 
                                -> RsyncRepository 
                                -> ValidatorT IO RsyncRepository
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
+    fetchConfig
     worldVersion
-    repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
+    repo@(RsyncRepository (RsyncPublicationPoint uri) _ _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
         objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
-        let rsync = rsyncProcess config uri destination RsyncDirectory
+        let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
         logDebug logger [i|Runnning #{U.trimmed rsync}|]
         (exitCode, out, err) <- fromTry 
@@ -264,17 +267,18 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
-rsyncProcess :: Config -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
-rsyncProcess Config {..} rsyncURL destination rsyncMode = 
+rsyncProcess :: Config -> FetchConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
+rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode = 
     proc "rsync" $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
+        [ "--contimeout=" <> show timeout' ] <>         
         [ "--max-size=" <> show (validationConfig ^. #maxObjectSize) ] <> 
         [ "--min-size=" <> show (validationConfig ^. #minObjectSize) ] <> 
         extraOptions <> 
         [ sourceUrl, destination ]
     where 
-        Seconds timeout' = rsyncConf ^. #rsyncTimeout
+        Seconds timeout' = fetchConfig ^. #rsyncTimeout
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])

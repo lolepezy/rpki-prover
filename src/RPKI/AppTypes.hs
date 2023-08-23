@@ -39,6 +39,7 @@ instance Show MaxMemory where
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
 
 
-validationKind, generalKind :: VersionKind
+validationKind, generalKind, asyncFetchKind :: VersionKind
 validationKind = VersionKind "validation"
 generalKind = VersionKind "general"
+asyncFetchKind = VersionKind "async-fetch"

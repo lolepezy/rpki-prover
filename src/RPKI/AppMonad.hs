@@ -9,6 +9,7 @@ module RPKI.AppMonad where
 import           Control.Lens
 
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader
@@ -19,6 +20,7 @@ import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
 import           Data.Hourglass
 import           Data.Proxy
+import           Data.Set                    (Set)
 import           Data.Text                   (Text)
 
 import           System.Timeout
@@ -157,31 +159,28 @@ catchAndEraseError f predicate errorHandler = do
             else throwError e
 
 
-vWarn :: Monad m =>
-        ValidationError -> ValidatorT m ()
+vWarn :: Monad m => ValidationError -> ValidatorT m ()
 vWarn = validatorWarning . VWarning . ValidationE
 
-appWarn :: Monad m =>
-            AppError -> ValidatorT m ()
+appWarn :: Monad m => AppError -> ValidatorT m ()
 appWarn = validatorWarning . VWarning
+
+trace :: Monad m => Trace -> ValidatorT m ()
+trace t = modify' $ typed %~ (mTrace t <>)    
 
 askScopes :: MonadReader r m => m r
 askScopes = ask
 
-inSubVScope :: Monad m => 
-              Text -> ValidatorT m r -> ValidatorT m r
+inSubVScope :: Monad m => Text -> ValidatorT m r -> ValidatorT m r
 inSubVScope = inSubVScope' TextFocus
 
-inSubObjectVScope :: Monad m => 
-                    Text -> ValidatorT m r -> ValidatorT m r
+inSubObjectVScope :: Monad m =>  Text -> ValidatorT m r -> ValidatorT m r
 inSubObjectVScope = inSubVScope' ObjectFocus
 
-inSubVScope' :: Monad m => 
-                (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+inSubVScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 inSubVScope' c t = local (& typed @VScope %~ subScope' c t)
 
-inSubMetricScope' :: Monad m => 
-                (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+inSubMetricScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 inSubMetricScope' c t = local (& typed @MetricScope %~ subScope' c t)
 
 updateMetric :: forall metric m . 
@@ -243,7 +242,7 @@ recover tryF finallyF =
 timeoutVT :: Seconds -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
 timeoutVT s toDo timedOut = do 
     let Seconds t = s
-    vp <- ask 
-    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT vp toDo)
+    scopes <- askScopes 
+    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT scopes toDo)
     maybe timedOut (embedValidatorT . pure) z    
 

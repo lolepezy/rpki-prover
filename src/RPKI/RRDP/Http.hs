@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
-import Network.HTTP.Simple (getResponseBody, getResponseStatusCode, getResponseHeader, httpSource)
+import Network.HTTP.Simple
 
 import RPKI.AppContext
 import RPKI.AppMonad
@@ -122,9 +122,10 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
 -- | Fetch arbitrary file using the streaming implementation
 -- 
 fetchRpkiObject :: AppContext s ->
+                FetchConfig ->             
                 RrdpURL ->             
                 ValidatorT IO RpkiObject
-fetchRpkiObject appContext uri = do
+fetchRpkiObject appContext _ uri = do
     (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                             downloadToBS 
                             (appContext ^. typed @Config) 
@@ -187,7 +188,7 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
         }
 
     httpStatus  <- liftIO $ newIORef mempty
-    newETag <- liftIO $ newIORef Nothing
+    newETag     <- liftIO $ newIORef Nothing
     let getSrc r = do         
             liftIO $ do 
                 writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
@@ -203,7 +204,7 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
     liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
 
 userAgent :: BS.ByteString
-userAgent = U.convert getVersion
+userAgent = U.convert rpkiProverVersion
 
 -- | Calculate size and extra arbitrary function of the sinked stream
 -- | and throw and exception is the size gets too big.

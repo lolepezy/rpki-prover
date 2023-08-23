@@ -70,7 +70,7 @@ data API api = API {
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,
         system :: api    :- "system" :> Get '[JSON] SystemDto,
 
-        publicationsPoints :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
+        repositories :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                     :> QueryParam "hash" Text 
@@ -78,7 +78,7 @@ data API api = API {
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
-        versions :: api :- "versions" :> Get '[JSON] [WorldVersion]
+        versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)]
     }
     deriving (Generic)
 
@@ -98,7 +98,7 @@ data HttpApi route = HttpApi {
 swaggerDoc :: Swagger
 swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
     & info.title    .~ "RPKI Prover API"
-    & info.version  .~ convert getVersion
+    & info.version  .~ convert rpkiProverVersion
     & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
                             "this UI is only good for documentation and examples." )
     & basePath          ?~ "/api"

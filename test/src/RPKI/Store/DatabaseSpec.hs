@@ -13,6 +13,7 @@ module RPKI.Store.DatabaseSpec where
 import           Control.Exception.Lifted
 
 import           Control.Lens                     ((.~), (%~), (&), (^.))
+import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
@@ -262,7 +263,7 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
     world <- getOrCreateWorldVerion =<< newAppState
 
     rwTx validationsStore $ \tx -> saveValidations tx db world vrs
-    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx validationsStore world
+    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx db world
 
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
@@ -318,12 +319,8 @@ shouldGetAndSaveRepositories io = do
 
 generateRepositories :: IO PublicationPoints
 generateRepositories = do     
-    rrdpMap :: RrdpMap <- QC.generate arbitrary    
-
-    let everSucceeded = Map.fromList [ (RrdpU u, AtLeastOnce) | 
-            RrdpRepository { uri = u, status = FetchedAt t } <- Map.elems $ unRrdpMap rrdpMap ]
-
-    let pps = PublicationPoints rrdpMap newRsyncTree (EverSucceededMap everSucceeded)
+    rrdpMap :: RrdpMap <- QC.generate arbitrary        
+    let pps = PublicationPoints rrdpMap newRsyncTree mempty
     pure $ List.foldr mergeRsyncPP pps repositoriesURIs    
     
 
@@ -453,9 +450,9 @@ readObjectFromFile path = do
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = \case 
-    CerRO c  -> CerRO $ c { aki = Just a }
-    BgpRO c  -> BgpRO $ c { aki = Just a }    
-    CrlRO c  -> CrlRO $ c { aki = a }
+    CerRO c  -> CerRO $ c & #aki .~ Just a
+    BgpRO c  -> BgpRO $ c & #aki .~ Just a    
+    CrlRO c  -> CrlRO $ c & #aki .~ a
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms
     GbrRO c  -> GbrRO $ c & #cmsPayload %~ mapCms

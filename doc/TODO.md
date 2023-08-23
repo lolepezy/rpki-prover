@@ -1,3 +1,5 @@
+This file is only useful for historical reasons.
+
 ------------------------------------- Done ------------------------------------------
 + implement resource set
 + extract SIA from certificates

@@ -353,6 +353,7 @@ instance ToJSON a => ToJSON (SignedObject a)
 instance ToJSON a => ToJSON (SignedData a)
 instance ToJSON a => ToJSON (EncapsulatedContentInfo a)
 
+instance ToJSON SPKI
 
 instance ToJSON SessionId where
     toJSON (SessionId s) = toJSON s
@@ -399,16 +400,18 @@ instance ToJSON DecodedBase64 where
     toJSON = toJSON . U.encodeBase64
 
 instance ToJSON LogLevel
-instance ToJSON Config
 instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
-$(deriveToJSON defaultOptions ''TAL)
+instance ToJSON TAL
+-- $(deriveToJSON defaultOptions ''TAL)
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
+instance ToJSON AsyncFetchConfig
 instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
+instance ToJSON Config
 
 instance ToJSON VersionKind
 instance ToJSON VIssue
@@ -419,7 +422,6 @@ instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON ValidationError
-instance ToJSON SPKI
 instance ToJSON StorageError
 instance ToJSON RsyncError
 instance ToJSON RrdpError

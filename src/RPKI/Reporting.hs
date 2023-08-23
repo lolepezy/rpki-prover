@@ -407,7 +407,7 @@ data ValidationMetric = ValidationMetric {
         validGbrNumber  :: Count,
         validAspaNumber :: Count,
         validBgpNumber  :: Count,
-        validBriefNumber  :: Count,
+        validBriefNumber :: Count,
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -450,17 +450,29 @@ data RawMetric = RawMetric {
     deriving Semigroup via GenericSemigroup RawMetric   
     deriving Monoid    via GenericMonoid RawMetric
 
+
+-- Misc
+
+data Trace = WorkerTimeoutTrace                   
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)    
+
 data ValidationState = ValidationState {
         validations   :: Validations,
-        topDownMetric :: RawMetric
+        topDownMetric :: RawMetric,
+        traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 
+mTrace :: Trace -> Set Trace
+mTrace t = Set.singleton t
+    
+
 vState :: Validations -> ValidationState
-vState vs = ValidationState vs mempty
+vState vs = ValidationState vs mempty mempty
 
 validationsToList :: Validations -> [(VScope, Set VIssue)]
 validationsToList (Validations vMap) = Map.toList vMap 

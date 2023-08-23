@@ -10,7 +10,9 @@ module RPKI.RRDP.RrdpFetch where
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 import           Control.Lens
+import           Control.Monad
 import           Control.Monad.Except
+import           Control.Monad.IO.Class           (liftIO)
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable
@@ -49,10 +51,11 @@ import qualified RPKI.Util                        as U
 
 
 runRrdpFetchWorker :: AppContext s 
+            -> FetchConfig
             -> WorldVersion
             -> RrdpRepository             
             -> ValidatorT IO RrdpRepository
-runRrdpFetchWorker AppContext {..} worldVersion repository = do
+runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RrdpFetchParams'.
@@ -73,7 +76,7 @@ runRrdpFetchWorker AppContext {..} worldVersion repository = do
                             config
                             workerId 
                             (RrdpFetchParams scopes repository worldVersion)                        
-                            (Timebox $ config ^. typed @RrdpConf . #rrdpTimeout)
+                            (Timebox $ fetchConfig ^. #rrdpTimeout)
                             arguments  
         
     let RrdpFetchResult z = payload
@@ -289,7 +292,7 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just (repoSessionId, repoSerial) } Noti
 
         | repoSerial > serial -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is lower than the remote serial #{serial}.|]
+            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is higher than the remote serial #{serial}.|]
 
         | repoSerial == serial -> 
             pure $ NothingToDo [i|up-to-date, #{repoSessionId}, serial #{repoSerial}|]

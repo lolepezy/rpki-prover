@@ -13,6 +13,7 @@ import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 import           Data.Generics.Product.Typed
 import           Data.Ord
+import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
 
@@ -23,6 +24,7 @@ import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Maybe                  (fromMaybe)
 import qualified Data.Set                    as Set
+import           Data.Monoid.Generic
 
 import           GHC.Generics
 
@@ -48,13 +50,22 @@ instance Monoid FetchEverSucceeded where
 instance Semigroup FetchEverSucceeded where
     Never       <> Never       = Never
     _           <> _           = AtLeastOnce    
-    
+
+   
+data Speed = Unknown 
+            | Quick Instant 
+            | Slow Instant
+    deriving stock (Show, Eq, Generic)    
+    deriving anyclass TheBinary
+    deriving Semigroup via Max Speed
+
 data FetchStatus
   = Pending
   | FetchedAt Instant
   | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
     deriving anyclass TheBinary
+    deriving Semigroup via Max FetchStatus
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
@@ -64,7 +75,8 @@ data RrdpRepository = RrdpRepository {
         uri         :: RrdpURL,
         rrdpMeta    :: Maybe (SessionId, RrdpSerial),
         eTag        :: Maybe ETag,
-        status      :: FetchStatus
+        status      :: FetchStatus,
+        speed       :: Speed
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -73,13 +85,7 @@ data PublicationPoint = RrdpPP  RrdpRepository |
                         RsyncPP RsyncPublicationPoint
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass TheBinary
-
-newtype RepositoryAccess = RepositoryAccess {
-        unRepositoryAccess :: NonEmpty Repository
-    }
-    deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass TheBinary        
-
+   
 newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }
@@ -93,15 +99,20 @@ data Repository = RrdpR RrdpRepository |
 
 data RsyncRepository = RsyncRepository {
         repoPP      :: RsyncPublicationPoint,
-        status      :: FetchStatus
+        status      :: FetchStatus,
+        speed       :: Speed
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
-        rsyncs :: RsyncTree,
-        lastSucceded :: EverSucceededMap
+        rsyncs :: RsyncTree,        
+        -- Set of _slow_ URL that were requested to fetch as a result of fetching 
+        -- publication points on certificats during the last validation.
+        -- In other words, slow and timing out repository URLs we care about 
+        -- and want to keep up-to-date in the local cache.
+        slowRequested :: Set.Set [RpkiURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
@@ -126,7 +137,7 @@ data FetchTask a = Stub
 
 
 data RepositoryProcessing = RepositoryProcessing {
-        indivudualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
+        individualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
         indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
         ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
         publicationPoints      :: TVar PublicationPoints,
@@ -149,14 +160,10 @@ instance WithURL RsyncRepository where
     
 
 instance Semigroup RrdpRepository where
-    RrdpRepository { uri = u1, rrdpMeta = m1, eTag = e1, status = s1 } <> 
-        RrdpRepository { rrdpMeta = m2, eTag = e2, status = s2 } = 
-        RrdpRepository u1 resultMeta resultETag resultStatus
-      where
-        (resultStatus, resultMeta, resultETag) = 
-            if s1 >= s2 
-                then (s1, m1, e1)
-                else (s2, m2, e2)
+    r1 <> r2 = 
+        if r1 ^. #status >= r2 ^. #status
+            then r1 
+            else r2 & #uri .~ r1 ^. #uri
 
 -- always use the latest one
 instance Ord FetchStatus where
@@ -166,8 +173,18 @@ instance Ord FetchStatus where
         timeAndStatus (FailedAt t)  = (Just t,  0)
         timeAndStatus (FetchedAt t) = (Just t,  1) 
 
-instance Semigroup FetchStatus where
-    (<>) = max
+instance Monoid FetchStatus where    
+    mempty = Pending
+    
+instance Monoid Speed where    
+    mempty = Unknown
+
+instance Ord Speed where
+    compare = comparing time
+      where             
+        time Unknown   = Nothing
+        time (Quick t) = Just t
+        time (Slow t)  = Just t
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
@@ -178,6 +195,15 @@ instance Semigroup RrdpMap where
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus (RrdpR r)  = r ^. #status
 getFetchStatus (RsyncR r) = r ^. #status
+
+getSpeed :: Repository -> Speed
+getSpeed (RrdpR r)  = r ^. #speed
+getSpeed (RsyncR r) = r ^. #speed
+
+isSlow :: Speed -> Bool
+isSlow = \case    
+    Slow _ -> True
+    _      -> False
 
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty
@@ -200,18 +226,27 @@ newRepositoryProcessingIO = atomically . newRepositoryProcessing
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
-rrdpPP u = RrdpPP $ RrdpRepository u Nothing Nothing Pending
+rrdpPP = RrdpPP . mkRrdp
 
 rrdpR  :: RrdpURL  -> Repository
-rrdpR u = RrdpR $ RrdpRepository u Nothing Nothing Pending 
+rrdpR = RrdpR . mkRrdp
+
+mkRrdp :: RrdpURL -> RrdpRepository
+mkRrdp u = RrdpRepository {
+        uri      = u,
+        rrdpMeta = Nothing,
+        eTag     = Nothing,
+        status   = Pending,
+        speed    = Unknown 
+    }
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
-rrdpRepository (PublicationPoints (RrdpMap rrdps) _ _) u = Map.lookup u rrdps        
+rrdpRepository PublicationPoints { rrdps = RrdpMap rrdps } u = Map.lookup u rrdps        
 
 rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
-rsyncRepository (PublicationPoints _ rsyncs _) u = 
-    (\(u', status) -> RsyncRepository (RsyncPublicationPoint u') status) 
-                    <$> statusInRsyncTree u rsyncs    
+rsyncRepository PublicationPoints {..} u = 
+    (\(u', info) -> RsyncRepository (RsyncPublicationPoint u') (info ^. typed) (info ^. typed)) 
+                    <$> infoInRsyncTree u rsyncs    
 
 repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
 repositoryFromPP pps rpkiUrl = 
@@ -221,19 +256,18 @@ repositoryFromPP pps rpkiUrl =
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed %~ toRsyncTree u Pending
+    pps & typed %~ toRsyncTree u mempty mempty
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
-mergeRrdp r@RrdpRepository { .. } 
-        (PublicationPoints (RrdpMap rrdps) rsyncs lastSucceded) =
-    PublicationPoints (RrdpMap rrdps') rsyncs lastSucceded'
+mergeRrdp r@RrdpRepository {..} pps =
+    pps & #rrdps %~ newRrdps
   where
-    rrdps' = case Map.lookup uri rrdps of
-                Nothing -> Map.insert uri r rrdps
-                Just existing 
-                    | r == existing -> rrdps 
-                    | otherwise     -> Map.insert uri (r <> existing) rrdps                    
-    lastSucceded' = succeededFromStatus (RrdpU uri) status lastSucceded        
+    newRrdps (RrdpMap rrdps) = RrdpMap $ 
+        case Map.lookup uri rrdps of
+            Nothing -> Map.insert uri r rrdps
+            Just existing 
+                | r == existing -> rrdps 
+                | otherwise     -> Map.insert uri (r <> existing) rrdps                        
 
 
 succeededFromStatus :: RpkiURL -> FetchStatus -> EverSucceededMap -> EverSucceededMap
@@ -307,19 +341,19 @@ data Change a = Put a | Remove a
 
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
-    [Change (RsyncHost, RsyncNode FetchStatus Downloadable)]
-    [Change (RpkiURL, FetchEverSucceeded)]
+    [Change (RsyncHost, RsyncNodeNormal)]    
+    (Change (Set.Set [RpkiURL]))
 
 
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld) (EverSucceededMap lastSuccededOld)) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) (EverSucceededMap lastSuccededNew)) = 
+    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld)  _ ) 
+    (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) requestNew) = 
     ChangeSet 
         (putNewRrdps <> removeOldRrdps) 
-        (putNewRsyncs <> removeOldRsyncs)
-        (putNewSucceded <> removeOldSucceded)
+        (putNewRsyncs <> removeOldRsyncs)        
+        (Put requestNew)
     where
         -- TODO Don't generate removes if there's a PUT for the same URL
         rrdpOldSet = Set.fromList $ Map.elems rrdpOld
@@ -330,54 +364,29 @@ changeSet
         rsyncOldList = Map.toList rsyncOld
         rsyncNewList = Map.toList rsyncNew
         putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
-        removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList
-
-        lastSuccededOldList = Map.toList lastSuccededOld
-        lastSuccededNewList = Map.toList lastSuccededNew
-        putNewSucceded    = map Put    $ filter (not . (\(u, p) -> Map.lookup u lastSuccededOld == Just p)) lastSuccededNewList        
-        removeOldSucceded = map Remove $ filter (not . (\(u, p) -> Map.lookup u lastSuccededNew == Just p)) lastSuccededOldList
+        removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
 
 -- Update statuses of the repositories and last successful fetch times for them
-updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus) -> PublicationPoints
+updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus, Speed) -> PublicationPoints
 updateStatuses 
-    (PublicationPoints rrdps rsyncs lastSucceded) newStatuses = 
+    (PublicationPoints rrdps rsyncs slowRequested) newStatuses = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdpUpdates))
-            rsyncsUpdates
-            (lastSucceded <> EverSucceededMap (Map.fromList lastSuccededUpdates))
+            rsyncsUpdates slowRequested
     where
-        (rrdpUpdates, rsyncsUpdates, lastSuccededUpdates) = 
-            foldr foldRepos ([], rsyncs, []) newStatuses
+        (rrdpUpdates, rsyncsUpdates) = 
+            foldr foldRepos ([], rsyncs) newStatuses
 
-        foldRepos (RrdpR r@RrdpRepository {..}, newStatus) (rrdps', rsyncs', lastS) = 
-                    ((uri, r { status = newStatus } :: RrdpRepository) : rrdps', 
-                    rsyncs', 
-                    status2Success (RrdpU uri) newStatus lastS)
+        foldRepos 
+            (RrdpR r@RrdpRepository {..}, newStatus, newSpeed) 
+            (rrdps', rsyncs') = 
+                ((uri, r & #status .~ newStatus & #speed .~ newSpeed) : rrdps', rsyncs')
 
-        foldRepos (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newStatus) (rrdps', rsyncs', lastS) = 
-                    (rrdps', 
-                    toRsyncTree uri newStatus rsyncs', 
-                    status2Success (RsyncU uri) newStatus lastS)
-
-        status2Success u (FetchedAt _) lastS = (u, AtLeastOnce) : lastS
-        status2Success _ _             lastS = lastS
-    
-
-everSucceeded :: PublicationPoints -> RpkiURL -> FetchEverSucceeded
-everSucceeded PublicationPoints { lastSucceded = EverSucceededMap m } u = 
-    fromMaybe Never $ Map.lookup u m
-
-adjustSucceededUrl :: RpkiURL -> PublicationPoints -> PublicationPoints
-adjustSucceededUrl u pps =     
-    case findPublicationPointStatus pps of 
-        Nothing     -> pps
-        Just status -> pps & typed %~ succeededFromStatus u status
-    where        
-        findPublicationPointStatus (PublicationPoints (RrdpMap rrdps) rsyncRepos _) =     
-            case u of
-                RrdpU  rrdpUrl  -> (^. typed) <$> Map.lookup rrdpUrl rrdps
-                RsyncU rsyncUrl -> snd <$> statusInRsyncTree rsyncUrl rsyncRepos  
+        foldRepos 
+            (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _ _), newStatus, newSpeed) 
+            (rrdps', rsyncs') = 
+                (rrdps', toRsyncTree uri newStatus newSpeed rsyncs')            
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int
@@ -401,20 +410,41 @@ filterPPAccess Config {..} ppAccess =
             (RsyncPP _, _,    True) -> True
             _                       -> False
 
-data Downloadable = NotDownloadable | WorthTrying
+
+findSpeedProblems :: PublicationPoints -> [(RpkiURL, Repository)]
+findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
+    rrdpSpeedProblem <> rsyncSpeedProblem
+  where
+    rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
+        | (u, r) <- Map.toList rrdps, isSlow $ r ^. #speed ]
+
+    rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u info)
+        | (u, info) <- flattenRsyncTree rsyncTree, isSlow $ info ^. #speed ]
+        where 
+            rsyncRepo u info = RsyncR $ RsyncRepository { 
+                repoPP = RsyncPublicationPoint u,
+                status = info ^. #fetchStatus,
+                speed  = info ^. #speed
+            }    
+
+data RsyncNodeInfo = RsyncNodeInfo {
+        fetchStatus :: FetchStatus,
+        speed       :: Speed
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving Semigroup via GenericSemigroup RsyncNodeInfo   
+    deriving Monoid    via GenericMonoid RsyncNodeInfo
 
-type RsyncNodeNormal = RsyncNode FetchStatus Downloadable
+type RsyncNodeNormal = RsyncNode RsyncNodeInfo
 
 newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNodeNormal)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-data RsyncNode a b = Leaf a
-               | SubTree { 
-                   rsyncChildren :: Map RsyncPathChunk (RsyncNode a b),
-                   nodePayload :: b
+data RsyncNode a = Leaf a
+               | SubTree {
+                   rsyncChildren :: Map RsyncPathChunk (RsyncNode a)
                } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -422,40 +452,35 @@ data RsyncNode a b = Leaf a
 newRsyncTree :: RsyncTree
 newRsyncTree = RsyncTree Map.empty
 
-toRsyncTree :: RsyncURL -> FetchStatus -> RsyncTree -> RsyncTree 
-toRsyncTree (RsyncURL host path) fs (RsyncTree byHost) = 
-    RsyncTree $ Map.alter (Just . maybe (buildRsyncTree path fs) (pathToRsyncTree path fs)) host byHost    
+toRsyncTree :: RsyncURL -> FetchStatus -> Speed -> RsyncTree -> RsyncTree 
+toRsyncTree (RsyncURL host path) fetchStatus speed (RsyncTree byHost) = 
+    RsyncTree $ Map.alter (Just . maybe 
+        (buildRsyncTree path nodeInfo) 
+        (pathToRsyncTree path nodeInfo)) host byHost    
+  where
+    nodeInfo = RsyncNodeInfo fetchStatus speed
 
-pathToRsyncTree :: [RsyncPathChunk] -> FetchStatus -> RsyncNodeNormal -> RsyncNodeNormal
+pathToRsyncTree :: [RsyncPathChunk] -> RsyncNodeInfo -> RsyncNodeNormal -> RsyncNodeNormal
 
-pathToRsyncTree [] fs (Leaf fs') = Leaf $ fs' <> fs 
-pathToRsyncTree [] fs SubTree {} = Leaf fs 
+pathToRsyncTree [] ni (Leaf ni') = Leaf $ ni' <> ni 
+pathToRsyncTree [] ni SubTree {} = Leaf ni
 
 -- Strange case when we by some reason decide to merge
 -- a deeper nested PP while there's a dowloaded  one some
 -- higher level. Not supported, don't change the tree.
-pathToRsyncTree _ _ (Leaf fs') = Leaf fs'
+pathToRsyncTree _ _ (Leaf ni') = Leaf ni'
 
-pathToRsyncTree (u : us) fs subTree@SubTree { rsyncChildren = ch } = 
+pathToRsyncTree (u : us) ni (SubTree ch) = 
     case Map.lookup u ch of
-        Nothing -> 
-            SubTree {
-                rsyncChildren = Map.insert u (buildRsyncTree us fs) ch,
-                nodePayload  = WorthTrying
-            }
-        Just child -> subTree { 
-                rsyncChildren = Map.insert u (pathToRsyncTree us fs child) ch 
-            }
+        Nothing    -> SubTree $ Map.insert u (buildRsyncTree us ni) ch            
+        Just child -> SubTree $ Map.insert u (pathToRsyncTree us ni child) ch             
 
-buildRsyncTree :: [RsyncPathChunk] -> FetchStatus -> RsyncNodeNormal
+buildRsyncTree :: [RsyncPathChunk] -> RsyncNodeInfo -> RsyncNodeNormal
 buildRsyncTree [] fs      = Leaf fs
-buildRsyncTree (u: us) fs = SubTree {
-        rsyncChildren = Map.singleton u $ buildRsyncTree us fs,
-        nodePayload  = WorthTrying
-    }
+buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs    
 
-statusInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, FetchStatus)
-statusInRsyncTree (RsyncURL host path) (RsyncTree t) = 
+infoInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RsyncNodeInfo)
+infoInRsyncTree (RsyncURL host path) (RsyncTree t) = 
     fetchStatus' path [] =<< Map.lookup host t
   where    
     fetchStatus' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
@@ -463,12 +488,11 @@ statusInRsyncTree (RsyncURL host path) (RsyncTree t) =
     fetchStatus' (u: us) realPath SubTree {..} = 
         Map.lookup u rsyncChildren >>= fetchStatus' us (realPath <> [u])
 
-rsyncStatuses :: RsyncTree -> [(RsyncURL, FetchStatus)]
-rsyncStatuses (RsyncTree hostMap) = 
-    mconcat [ statuses (RsyncURL host []) tree 
-            | (host, tree) <- Map.toList hostMap ]
-  where
-    statuses u (Leaf fs) = [(u, fs)]
-    statuses (RsyncURL host path) SubTree {..} = 
-        mconcat [ statuses (RsyncURL host (path <> [p])) t 
-                | (p, t) <- Map.toList rsyncChildren ]        
+flattenRsyncTree :: RsyncTree -> [(RsyncURL, RsyncNodeInfo)]
+flattenRsyncTree (RsyncTree t) = 
+    mconcat $ map (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
+  where    
+    flattenTree host (Leaf info) realPath  = [(RsyncURL host realPath, info)]
+    flattenTree host SubTree {..} realPath = 
+        mconcat $ map (\(p, n) -> flattenTree host n (realPath <> [p])) $ Map.toList rsyncChildren        
+  

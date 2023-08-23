@@ -11,7 +11,9 @@
 module RPKI.Validation.Common where
 
 import           Control.Concurrent.STM
+import           Control.Monad
 import           Control.Monad.Except
+import           Control.Monad.IO.Class
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
@@ -82,8 +84,8 @@ validateMftFileName filename =
 -- back to a latest valid cached manifest for this CA
 -- https://datatracker.ietf.org/doc/html/rfc9286#section-6.6
 -- 
--- This function doesn't make much sense by itself, it's just a chunk of code 
--- reusable by both TopDown and BottomUp.
+-- This function doesn't make much sense by itself, it's just a complex chunk 
+-- of code reusable by both TopDown and BottomUp.
 -- 
 tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
         AppContext s

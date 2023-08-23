@@ -52,8 +52,8 @@ import           RPKI.Store.Database
 
 Every worker 
  - Reads serialised parameters from its stdin (WorkerInput)
- - Writes serialised result to its stdout
- - Logs to stderr (see `withWorkerLogger` in RPKI.Logging)
+ - Writes serialised result to its stdout (WorkerResult)
+ - Streams log messages to stderr (see `withWorkerLogger` in RPKI.Logging)
 
 Running a worker is done using `runWorker` which handles all the process machinery, error handling, etc.
 
@@ -79,6 +79,7 @@ data WorkerParams = RrdpFetchParams {
             } | 
             RsyncFetchParams { 
                 scopes          :: Scopes, 
+                fetchConfig     :: FetchConfig, 
                 rsyncRepository :: RsyncRepository,
                 worldVersion    :: WorldVersion 
             } | 
@@ -184,8 +185,8 @@ executeWork input actualWork = do
 readWorkerInput :: (MonadIO m) => m WorkerInput
 readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdin
 
-execWithTiming :: MonadIO m => m r -> m (WorkerResult r)
-execWithTiming f = do        
+execWithStats :: MonadIO m => m r -> m (WorkerResult r)
+execWithStats f = do        
     (payload, clockTime) <- timedMS f
     cpuTime <- getCpuTime    
     RTSStats {..} <- liftIO getRTSStats
@@ -219,6 +220,8 @@ exitKillByTypedProcess = ExitFailure (-2)
 worderIdS :: WorkerId -> String
 worderIdS (WorkerId w) = unpack w
 
+-- Main entry point to start a worker
+-- 
 runWorker :: (TheBinary r, Show r) => 
             AppLogger 
             -> Config            
@@ -230,14 +233,14 @@ runWorker :: (TheBinary r, Show r) =>
 runWorker logger config workerId params timeout extraCli = do  
     thisProcessId <- liftIO getProcessID
 
-    let binaryToRun = config ^. #programBinaryPath    
+    let executableToRun = config ^. #programBinaryPath    
     let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout
 
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
             setStderr createSource $
             setStdout byteStringOutput $
-                proc binaryToRun $ [ "--worker" ] <> extraCli
+                proc executableToRun $ [ "--worker" ] <> extraCli
 
     logDebug logger [i|Running worker: #{trimmed worker}|]        
 
@@ -271,10 +274,11 @@ runWorker logger config workerId params timeout extraCli = do
                 | exit == exitTimeout -> do                     
                     let message = [i|Worker #{workerId} execution timed out.|]
                     logError logger message
+                    trace WorkerTimeoutTrace
                     appError $ InternalE $ WorkerTimeout message
                 | exit == exitOutOfMemory -> do                     
                     let message = [i|Worker #{workerId} ran out of memory.|]
-                    logError logger message
+                    logError logger message                    
                     appError $ InternalE $ WorkerOutOfMemory message
                 | exit == exitKillByTypedProcess -> do
                     -- 
@@ -288,7 +292,7 @@ runWorker logger config workerId params timeout extraCli = do
                     -- 
                     -- This logging message is slightly deceiving: it's not that just the worker 
                     -- was killed, but we also know that there was an asynchronous exception, which 
-                    -- we retrow here to make sure "outer threads" know about it.
+                    -- we retrow here to make sure "outer stack" knows about it.
                     --
                     logError logger [i|Worker #{workerId} died/killed.|]
                     throwIO AsyncCancelled                    

@@ -83,8 +83,8 @@ data VResultStats = VResultStats {
 
 data RepositoryStats = RepositoryStats {
     rrdpStats  :: SStats,
-    rsyncStats :: SStats,
-    lastSStats :: SStats    
+    rsyncStats :: SStats,        
+    slowSStats :: SStats    
 } deriving stock (Show, Eq, Generic)
 
 data DBStats = DBStats {

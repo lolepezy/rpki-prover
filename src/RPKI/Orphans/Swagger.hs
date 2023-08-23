@@ -34,7 +34,6 @@ import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable
 
 import           RPKI.Store.Types
-import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Orphans.Json
 import           RPKI.Orphans.Generics
@@ -127,6 +126,7 @@ instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
 instance ToSchema ValidationConfig
+instance ToSchema AsyncFetchConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
