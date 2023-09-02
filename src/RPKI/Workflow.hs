@@ -279,29 +279,46 @@ runWorkflow appContext@AppContext {..} tals = do
                     [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
                     [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
       where
-        processTALs db = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion                    
-            case z of 
-                Left e -> do 
-                    logError logger [i|Validator process failed: #{e}.|]
-                    rwTx db $ \tx -> do
-                        saveValidations tx db worldVersion (workerVS ^. typed)
-                        saveMetrics tx db worldVersion (workerVS ^. typed)
-                        completeWorldVersion tx db worldVersion                            
-                    updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
-                    pure (mempty, mempty)            
-                Right wr@WorkerResult {..} -> do                              
-                    let ValidationResult vs maybeSlurm = payload
+--         processTALsOld db = do
+--             ((z, workerVS), workerId) <- runValidationWorker worldVersion         
+--             case z of 
+--                 Left e -> do 
+--                     logError logger [i|Validator process failed: #{e}.|]
+--                     rwTx db $ \tx -> do
+--                         saveValidations tx db worldVersion (workerVS ^. typed)
+--                         saveMetrics tx db worldVersion (workerVS ^. typed)
+--                         completeWorldVersion tx db worldVersion                            
+--                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
+--                     pure (mempty, mempty)            
+--                 Right wr@WorkerResult {..} -> do                              
+--                     let ValidationResult vs maybeSlurm = payload
                     
-                    logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
+--                     logWorkerDone logger workerId wr
+--                     pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
                 
-                    let topDownState = workerVS <> vs
-                    logDebug logger [i|Validation result: 
-#{formatValidations (topDownState ^. typed)}.|]
-                    updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
+--                     let topDownState = workerVS <> vs
+--                     logDebug logger [i|Validation result: 
+-- #{formatValidations (topDownState ^. typed)}.|]
+--                     updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
                     
-                    reReadAndUpdatePayloads maybeSlurm
+--                     reReadAndUpdatePayloads maybeSlurm
+--           where
+--             reReadAndUpdatePayloads maybeSlurm = do 
+--                 roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
+--                     Nothing -> do 
+--                         logError logger [i|Something weird happened, could not re-read VRPs.|]
+--                         pure (mempty, mempty)
+--                     Just rtrPayloads -> do                 
+--                         slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
+--                         pure (rtrPayloads, slurmedPayloads)           
+
+
+        processTALs db = do            
+            (topDownState, maybeSlurm) <- runValidation appContext worldVersion tals 
+            logDebug logger [i|Validation result: 
+#{formatValidations (topDownState ^. typed)}.|]
+            updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                                            
+            reReadAndUpdatePayloads maybeSlurm
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
@@ -310,7 +327,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure (mempty, mempty)
                     Just rtrPayloads -> do                 
                         slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
-                        pure (rtrPayloads, slurmedPayloads)                        
+                        pure (rtrPayloads, slurmedPayloads)                                         
 
                           
     -- Delete objects in the store that were read by top-down validation 
@@ -435,27 +452,27 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Workers for functionality running in separate processes.
     --     
-    runValidationWorker worldVersion = do 
-        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
-        let workerId = WorkerId $ "validation:" <> talsStr
+    -- runValidationWorker worldVersion = do 
+    --     let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
+    --     let workerId = WorkerId $ "validation:" <> talsStr
 
-        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+    --     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
 
-        let arguments = 
-                [ worderIdS workerId ] <>
-                rtsArguments [ 
-                    rtsN maxCpuAvailable, 
-                    rtsA "24m", 
-                    rtsAL "128m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
+    --     let arguments = 
+    --             [ worderIdS workerId ] <>
+    --             rtsArguments [ 
+    --                 rtsN maxCpuAvailable, 
+    --                 rtsA "24m", 
+    --                 rtsAL "128m", 
+    --                 rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
         
-        r <- runValidatorT 
-                (newScopes "validator") $ 
-                    runWorker logger config workerId 
-                        (ValidationParams worldVersion tals)                        
-                        (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                        arguments                                        
-        pure (r, workerId)
+    --     r <- runValidatorT 
+    --             (newScopes "validator") $ 
+    --                 runWorker logger config workerId 
+    --                     (ValidationParams worldVersion tals)                        
+    --                     (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+    --                     arguments                                        
+    --     pure (r, workerId)
 
     runCleapUpWorker worldVersion = do             
         let workerId = WorkerId "cache-clean-up"
