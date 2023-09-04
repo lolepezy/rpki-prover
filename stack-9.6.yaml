@@ -1,4 +1,4 @@
-resolver: nightly-2023-08-01
+resolver: nightly-2023-09-03
 packages:
 - .
 
@@ -24,14 +24,6 @@ extra-deps:
     commit: 244367f5febcc44ca9e673dedbf00874395de406      
 
   - hw-ip-2.4.2.1
-  - hw-bits-0.7.2.2
-  - hw-prim-0.6.3.2
-  - cryptohash-sha512-0.11.102.0
-  - streaming-0.2.4.0
-  - optparse-generic-1.5.0
-  - wreq-0.5.4.0
-  - monoidal-containers-0.6.4.0
   - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
-  - lz4-0.2.3.1@sha256:9d286f1c8e3e3aab86ebb8cd39b485af57c0a05d9da5baf921641012a3c83cf0,1821
 
 allow-newer: true
