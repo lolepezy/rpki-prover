@@ -23,14 +23,15 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
-    tal                 :: TAL,
-    taCert              :: CaCerObject,
-    fetchStatus         :: FetchStatus,
-    initialRepositories :: PublicationPointAccess
-} deriving (Show, Eq, Generic, TheBinary)
+        tal                 :: TAL,
+        taCert              :: CaCerObject,
+        fetchStatus         :: FetchStatus,
+        initialRepositories :: PublicationPointAccess
+    } 
+    deriving (Show, Eq, Generic, TheBinary)
 
 data ROMeta = ROMeta {
-        insertedBy :: WorldVersion,
+        insertedBy  :: {-# UNPACK #-} WorldVersion,
         validatedBy :: Maybe WorldVersion
     } 
     deriving stock (Show, Eq, Generic)
@@ -58,7 +59,7 @@ newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString
 
 data Keyed a = Keyed { 
         object :: a,
-        key    :: ObjectKey
+        key    :: {-# UNPACK #-} ObjectKey
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        

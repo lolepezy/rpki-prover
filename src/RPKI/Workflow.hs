@@ -191,9 +191,8 @@ runWorkflow appContext@AppContext {..} tals = do
     --   * run a thread that would try to run the task periodically 
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
-    runScheduledTasks workflowShared@WorkflowShared {..} = do        
-        db <- readTVarIO database
-        persistedJobs <- roTx db $ \tx -> Map.fromList <$> allJobs tx db        
+    runScheduledTasks workflowShared@WorkflowShared {..} = do                
+        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> allJobs tx db        
 
         Now now <- thisInstant
         forConcurrently (schedules workflowShared) $ \Scheduling {..} -> do                        
@@ -228,9 +227,8 @@ runWorkflow appContext@AppContext {..} tals = do
                                 when persistent $ do                       
                                     Now endTime <- thisInstant
                                     -- re-read `db` since it could have been changed by the time the
-                                    -- job is finished (after compaction, in particular)                            
-                                    db' <- readTVarIO database                    
-                                    rwTx db' $ \tx -> setJobCompletionTime tx db' name endTime
+                                    -- job is finished (after compaction, in particular)                                                                
+                                    rwTxT database $ \tx db' -> setJobCompletionTime tx db' name endTime
                                 logDebug logger [i|Done with task '#{name}'.|])    
 
             periodically interval jobRun0 $ \jobRun -> do                 
@@ -682,3 +680,54 @@ leftToWait start end (Seconds interval) = let
     executionTimeNs = toNanoseconds end - toNanoseconds start
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
     in timeToWaitNs `div` 1000               
+
+
+
+{-
+Incrememtal validation 
+
+Fetcher process should 
+ - save objects
+ - save metadata (last version of the object updates, list of additions and deletions)
+ 
+
+Validator should 
+- read the latest version of the forest skeleton
+  - if the forest doesn't exists, validate fully from the roots
+    - save payloads for the version
+  - if there is forest
+    - go down every tree and for every repository update
+    - read metadata, read updates
+    - for the diff
+      - for additions
+        - fully revalidate replaced certificates/EEs
+        - no changes -- no validation 
+      - look at the diffs of the manifests, revalidate additions, remove payloads for removals 
+      - change in the CRL
+        - revalidate revocations for all additions (or all children)        
+
+    - apply read updates to the current tree    
+
+- store validity period for every object in the tree,
+  check them while going down for the payloads  
+- if validatiry period is not okay -- revalidate object
+- store validations next to the object in the forest?
+  - or ina seaprate objectKey -> validation map
+
+- store the whole tree and a bunch of updates for it for some number 
+  of versions happened after, do not store the whole tree for 
+  every version, it's expensive
+
+
+
+
+------------------------------------------------------------
+
+Full validation vs. shortcut validation, for shortcut validation store separate stuff
+- look in the new objects first
+- full validartion for the new ones
+- shortcut path to payloads for existing validated ones
+
+
+
+-}

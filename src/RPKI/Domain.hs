@@ -27,6 +27,7 @@ import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
 import qualified Data.Set                 as Set
+import qualified Data.Map.Strict          as Map
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
@@ -455,10 +456,10 @@ data Vrp = Vrp
     deriving anyclass TheBinary
 
 data Manifest = Manifest {
-        mftNumber   :: Serial, 
+        mftNumber   :: {-# UNPACK #-} Serial, 
         fileHashAlg :: X509.HashALG, 
-        thisTime    :: Instant, 
-        nextTime    :: Instant, 
+        thisTime    :: {-# UNPACK #-} Instant, 
+        nextTime    :: {-# UNPACK #-} Instant, 
         mftEntries  :: [T2 Text Hash]
     } 
     deriving stock (Show, Eq, Generic)
@@ -674,7 +675,7 @@ data BriefType = RoaBrief
            | AspaBrief
            | BgpBrief
            | GbrBrief
-    deriving stock (Show, Eq, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary        
 
 {- 
@@ -691,7 +692,7 @@ data EEBrief = EEBrief {
         serial         :: Serial,
         payload        :: Payloads (Set.Set Vrp)
     }
-    deriving stock (Show, Eq, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary        
 
 instance {-# OVERLAPPING #-} WithValidityPeriod EEBrief where
@@ -710,6 +711,7 @@ data Payloads a = Payloads {
     deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup (Payloads a)
     deriving Monoid    via GenericMonoid (Payloads a)
+
 
 
 -- Small utility functions that don't have anywhere else to go

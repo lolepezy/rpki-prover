@@ -22,7 +22,6 @@ import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (fromMaybe)
 import qualified Data.Set                    as Set
 import           Data.Monoid.Generic
 

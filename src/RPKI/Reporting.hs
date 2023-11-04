@@ -79,6 +79,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BrokenKeyUsage Text |
                         ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI Locations |
+                        NoMFTButCachedMft AKI Locations |
                         NoCRLOnMFT AKI Locations |
                         MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
                         NoMFTSIA Locations |

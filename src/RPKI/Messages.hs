@@ -206,6 +206,9 @@ toValidationMessage = \case
       NoMFT (AKI aki) _ -> 
           [i|No manifest found for AKI #{aki}.|]
 
+      NoMFTButCachedMft (AKI aki) _ -> 
+          [i|No manifest found for AKI #{aki}, but there's a cached version of it.|]
+
       NoCRLOnMFT (AKI aki) _ -> 
           [i|No CRL found on the manifest manifest found for AKI #{aki}.|]
 

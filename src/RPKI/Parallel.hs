@@ -197,7 +197,7 @@ withSemaphore (Semaphore maxCounter current) f =
                 else writeTVar current (c + 1)
         decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
--- Execute using a semaphore as a barrier, but if sempahore 
+-- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
 withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
 withSemaphoreAndTimeout (Semaphore maxCounter current) intervalMicroSeconds f =     

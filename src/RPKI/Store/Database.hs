@@ -49,6 +49,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
+import           RPKI.Validation.Types
 
 import           RPKI.Util                (ifJustM)
 
@@ -127,7 +128,8 @@ data RpkiObjectStore s = RpkiObjectStore {
         urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
-        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed EEBrief)
+        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed EEBrief),
+        mftShortcuts       :: MftShortcutStore s        
     } 
     deriving stock (Generic)
 
@@ -225,6 +227,18 @@ newtype MetadataStore s = MetadataStore {
     }
     deriving stock (Generic)
 
+newtype MftShortcutStore s = MftShortcutStore {
+        mfts :: SMap "mfts-shortcuts" s AKI (Compressed MftShortcut)
+    }
+    deriving stock (Generic)
+
+
+
+
+getKeyByHash :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> Hash -> m (Maybe ObjectKey)
+getKeyByHash tx DB { objectStore = RpkiObjectStore {..} } h = 
+    liftIO $ M.get tx hashToKey h
 
 getByHash :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> Hash -> m (Maybe (Located RpkiObject))
@@ -351,14 +365,17 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
-findLatestMftByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ 
+findLatestMftByAKI tx db aki' = liftIO $ do   
+    findLatestMftKeyByAKI tx db aki' >>= \case     
+        Nothing -> pure Nothing     
+        Just k  -> getMftByKey tx db k
+
+findLatestMftKeyByAKI :: (MonadIO m, Storage s) => 
+                         Tx s mode -> DB s -> AKI -> m (Maybe ObjectKey)
+findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ 
     MM.foldS tx mftByAKI aki' chooseLatest Nothing >>= \case
         Nothing     -> pure Nothing
-        Just (k, _) -> do 
-            o <- getLocatedByKey tx db k
-            pure $! case o of 
-                Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
-                _                              -> Nothing
+        Just (k, _) -> pure $ Just k
   where
     chooseLatest latest _ (k, timingMark) = 
         pure $! case latest of 
@@ -368,26 +385,42 @@ findLatestMftByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO
                 | otherwise               -> latest                                  
 
 
+getMftByKey :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located MftObject)))
+getMftByKey tx db k = do 
+    o <- getLocatedByKey tx db k
+    pure $! case o of 
+        Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
+        _                              -> Nothing       
+
+
+getMftShorcut :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> AKI -> m (Maybe MftShortcut)
+getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki' = 
+    liftIO $ let MftShortcutStore {..} = mftShortcuts 
+             in fmap unCompressed <$> M.get tx mfts aki'
+
+
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
                 -> Set.Set Hash 
                 -> WorldVersion -> m ()
 markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
-    exisingVersions <- validationVersions tx db    
+    existingVersions <- validationVersions tx db    
         
     allKeys <- fmap (Set.fromList . catMaybes) 
                 $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h                    
 
     M.put tx validatedByVersion worldVersion (Compressed allKeys)
     
-    case exisingVersions of 
+    case existingVersions of 
         [] -> pure ()
         _ -> do
             -- This is an optimisation, but a necessary one:
             -- Delete 'validatedKeys' from the previous version if
             -- they are present in the last one. In most cases it
             -- will delete most of the entries.
-            let previousVersion = List.maximum exisingVersions 
+            let previousVersion = List.maximum existingVersions 
             ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) ->                
                 M.put tx validatedByVersion previousVersion $ 
                         Compressed $ previousKeys `Set.difference` allKeys
@@ -621,11 +654,11 @@ getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m Publica
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
-    forAsyncS <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
+    forAsyncS' <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)           
-            forAsyncS
+            forAsyncS'
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do
@@ -913,6 +946,12 @@ roAppTx ws f = appTx ws f roTx
 
 rwAppTx :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RW -> ValidatorT IO a) -> ValidatorT IO a
 rwAppTx ws f = appTx ws f rwTx
+
+-- roAppTxT :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RO -> db -> ValidatorT IO a) -> ValidatorT IO a 
+-- roAppTxT ws f = appTx ws f roTxT    
+
+-- rwAppTxT :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RW -> db -> ValidatorT IO a) -> ValidatorT IO a
+-- rwAppTxT ws f = appTx ws f rwTxT
 
 
 appTx :: (Storage s, WithStorage s ws) => 

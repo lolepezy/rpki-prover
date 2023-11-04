@@ -20,7 +20,6 @@ import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
 import           Data.Hourglass
 import           Data.Proxy
-import           Data.Set                    (Set)
 import           Data.Text                   (Text)
 
 import           System.Timeout

@@ -105,6 +105,7 @@ createDatabase env logger checkAction = do
             certBySKI          <- createMap
             objectBriefs       <- createMap
             validatedByVersion <- createMap        
+            mftShortcuts       <- MftShortcutStore <$> createMap        
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 

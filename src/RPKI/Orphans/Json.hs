@@ -293,7 +293,7 @@ instance ToJSON Attribute where
                 "type" .= ("MessageDigest" :: Text),
                 "value" .= b
             ]            
-        SigningTime dt tz -> Json.object [
+        SigningTime dt _ -> Json.object [
                 "type" .= ("SigningTime" :: Text),
                 "value" .= (instantDateFormat $ Instant dt)                
             ]
