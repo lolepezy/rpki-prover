@@ -39,7 +39,7 @@ data MftChild = CaChild CaShortcut
 
 data MftEntry = MftEntry {
         serial   :: Serial,
-        fileName :: ~Text.Text,
+        fileName :: Text.Text,
         child    :: MftChild
     }
     deriving stock (Show, Eq, Ord, Generic)

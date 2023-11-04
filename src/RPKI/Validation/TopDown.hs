@@ -796,13 +796,6 @@ validateCa
 
         let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') mftChildren
 
-        db <- readTVarIO database
-        withKeys <- forM nonCrlChildren $ \(T2 fileName hash) -> do
-                        k <- roAppTx db $ \tx -> getKeyByHash tx db hash            
-                        case k of 
-                            Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
-                            Just key -> pure $! T3 fileName hash key
-
         -- Make sure all the entries are unique
         let entryMap = Map.fromListWith (<>) $ map (\(T2 f h) -> (h, [f])) nonCrlChildren
         let nonUniqueEntries = Map.filter longerThanOne entryMap
@@ -813,7 +806,12 @@ validateCa
         unless (Map.null nonUniqueEntries) $
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
-        pure withKeys
+        db <- readTVarIO database
+        forM nonCrlChildren $ \(T2 fileName hash) -> do
+                k <- roAppTx db $ \tx -> getKeyByHash tx db hash            
+                case k of 
+                    Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
+                    Just key -> pure $! T3 fileName hash key        
         where
             longerThanOne = \case 
                 [_] -> False
@@ -1031,30 +1029,30 @@ makeCaShortcut key (Validated certificate) = let
         serial = getSerial certificate
     in MftEntry {..}
 
-makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> MftEntry
-makeRoaShortcut key (Validated roa) vrps = let 
+makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text.Text -> MftEntry
+makeRoaShortcut key (Validated roa) vrps fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod roa    
         child = RoaChild $ RoaShortcut {..}
         serial = getSerial roa
     in MftEntry {..}    
 
-makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> MftEntry
-makeAspaShortcut key (Validated aspaObject) aspa = let 
+makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> Text.Text -> MftEntry
+makeAspaShortcut key (Validated aspaObject) aspa fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod aspaObject            
         child = AspaChild $ AspaShortcut {..}
         serial = getSerial aspaObject
     in MftEntry {..}    
 
-makeGbrShortcut :: ObjectKey -> Validated GbrObject -> Gbr -> MftEntry
-makeGbrShortcut key (Validated gbrObject) gbr = let 
+makeGbrShortcut :: ObjectKey -> Validated GbrObject -> Gbr -> Text.Text -> MftEntry
+makeGbrShortcut key (Validated gbrObject) gbr fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod gbrObject    
         child = GbrChild $ GbrShortcut {..}
         serial = getSerial gbrObject
     in MftEntry {..}    
 
 
-makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> MftEntry
-makeBgpSecShortcut key (Validated bgpCert) bgpSec = let         
+makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> Text.Text -> MftEntry
+makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let         
         (notValidBefore, notValidAfter) = getValidityPeriod bgpCert                  
         child = BgpSecChild $ BgpSecShortcut {..}
         serial = getSerial bgpCert
