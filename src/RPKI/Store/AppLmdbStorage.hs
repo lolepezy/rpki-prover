@@ -202,6 +202,10 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
             closeNativeLmdb oldNativeEnv
             removePathForcibly currentLinkTarget
+
+            Size lmdbFileSize <- cacheFsSize appContext 
+            let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
+            logInfo logger [i|New LMDB file size is #{fileSizeMb}mb, will perform compaction.|]            
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
@@ -218,7 +222,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                     logError logger [i|ERROR: #{e}.|]        
                     cleanUpAfterException)
         else 
-            logInfo logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
+            logInfo logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]          
         
 
 cacheFsSize :: AppContext s -> IO Size 
