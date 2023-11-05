@@ -423,9 +423,8 @@ validateAspa now aspa parentCert crl verifiedResources = do
             unless ((AS customer) `IS.isInside` asnSet) $ 
                 vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
 
-            case filter (\(asn, _) -> asn == customer) providers of 
-                []       -> pure ()
-                _overlap -> vError $ AspaOverlappingCustomerProvider customer (map fst providers)
+            when (customer `Set.member` providers) $
+                vError $ AspaOverlappingCustomerProvider customer $ Set.toList providers
     
     pure $ Validated aspa
     
