@@ -15,7 +15,6 @@ module RPKI.Validation.Types where
 import qualified Data.Map.Strict             as Map
 import qualified Data.Text                   as Text
 import qualified Data.Set                    as Set
-import           Data.Tuple.Strict
 import           GHC.Generics
 
 import           RPKI.Time
@@ -27,18 +26,17 @@ import           RPKI.Store.Types
 
 -- Shortcuts
 
-data MftChild = CaChild CaShortcut
-              | RoaChild RoaShortcut
-              | AspaChild AspaShortcut
-              | BgpSecChild BgpSecShortcut
-              | GbrChild GbrShortcut
-              | KeyChild ObjectKey
+data MftChild = CaChild CaShortcut Serial
+              | RoaChild RoaShortcut Serial
+              | AspaChild AspaShortcut Serial
+              | BgpSecChild BgpSecShortcut Serial
+              | GbrChild GbrShortcut Serial
+              | TroubledChild ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 
-data MftEntry = MftEntry {
-        serial   :: Serial,
+data MftEntry = MftEntry {        
         fileName :: Text.Text,
         child    :: MftChild
     }

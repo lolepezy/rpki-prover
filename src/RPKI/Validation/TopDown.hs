@@ -35,6 +35,7 @@ import qualified Data.Set                         as Set
 import           Data.Sequence                    (Seq)
 import qualified Data.Sequence                    as Seq
 import           Data.String.Interpolate.IsString
+import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
@@ -603,19 +604,6 @@ validateCa
 
                 pure manifestResult            
 
-            -- Calculate difference bentween a manifest shortcut 
-            -- and a real manifest object.
-            mftDiff MftShortcut {..} newMftChidlren = 
-                List.partition (\(T3 fileName _  k) -> 
-                        isNewEntry k fileName entries) newMftChidlren
-              where
-                -- it's not in the map of shortcut children or it has changed 
-                -- its name (very unlikely but can happen in theory)                
-                isNewEntry key fileName shortcutChildren = 
-                    case Map.lookup key shortcutChildren of
-                        Nothing -> True
-                        Just e  -> e ^. #fileName /= fileName 
-
 
             validateManifestWithChildren keyedMft@(Keyed (Located locations mft) mftKey) mftShortcut =                 
                 inSubObjectVScope (locationsToText locations) $ do
@@ -634,7 +622,7 @@ validateCa
 
                     -- MFT can be revoked by the CRL that is on this MFT -- detect 
                     -- revocation as well                               
-                    void $ vHoist $ validateMft now mft
+                    validMft <- vHoist $ validateMft now mft
                                         ca validCrl verifiedResources
 
                     -- Validate entry list and filter out CRL itself
@@ -661,24 +649,19 @@ validateCa
                             -- and the shortcut objects for these children
                             T2 validatedPayloads childrenShortcuts <- 
                                     (gatherMftEntryResults =<< gatherMftEntryValidations newChildren validCrl)
+                                                    
+                            let newEntries = makeEntriesWithMap 
+                                    newChildren (Map.fromList childrenShortcuts) 
+                                    (\entry fileName -> entry fileName)
 
-
-                            let childrenShortcutMap = Map.fromList childrenShortcuts
-                        
-                            let z = [ (k, entry & #fileName .~ f) | (k, f, Just entry) <- 
-                                        [ (k, f, Map.lookup k childrenShortcutMap) | (T3 f _ k) <- newChildren ]]
-
-                            let newChildrenShortcuts = 
+                            let nextChildrenShortcuts = 
                                     case mftShortcut of 
-                                        Nothing               -> childrenShortcuts
-                                        Just MftShortcut {..} -> let
-                                            usableShortcutsFromPreviousTime = 
-                                                    [ (k, entry) | (k, Just entry) <- 
-                                                        [ (k, Map.lookup k entries) | 
-                                                            (T3 _ _ k) <- overlappingChildren ] ]
-                                            in usableShortcutsFromPreviousTime
+                                        Nothing               -> newEntries
+                                        Just MftShortcut {..} -> 
+                                            newEntries <> makeEntriesWithMap 
+                                                overlappingChildren entries (\entry _ -> entry)
                                         
-                            -- let mftShortcut = makeMftShortcut mftKey $ childrenShortcuts <> overlapping
+                            let mftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts
                             -- addMftShortcut topDownContext $ makeMftShortcut mftKey newChildrenShortcuts
                             pure validatedPayloads
 
@@ -700,6 +683,25 @@ validateCa
                     _ -> 
                         vError $ CRLHashPointsToAnotherObject crlHash certLocations   
                     
+
+            -- Calculate difference bentween a manifest shortcut 
+            -- and a real manifest object.
+            mftDiff MftShortcut {..} newMftChidlren = 
+                List.partition (\(T3 fileName _  k) -> 
+                        isNewEntry k fileName entries) newMftChidlren
+              where
+                -- it's not in the map of shortcut children or it has changed 
+                -- its name (very unlikely but can happen in theory)                
+                isNewEntry key fileName shortcutChildren = 
+                    case Map.lookup key shortcutChildren of
+                        Nothing -> True
+                        Just e  -> e ^. #fileName /= fileName 
+
+            -- utility for repeated peace of code
+            makeEntriesWithMap childrenList entryMap makeEntry = 
+                [ (key, makeEntry entry fileName) 
+                        | (key, fileName, Just entry) <- [ (key, fileName, Map.lookup key entryMap) 
+                        | (T3 fileName _ key) <- childrenList ]]
 
 
             -- this indicates the difeerence between RFC9286-bis 
@@ -764,15 +766,6 @@ validateCa
                                 Left e                     -> InvalidChild e vs' key
                                 Right (T2 r childShortcut) -> Valid r vs' childShortcut key
 
-    -- gatherMftEntryResults mftEntryResults = do
-    --     -- gather all the validation states from every MFT entry
-    --     embedState $ mconcat $ map snd mftEntryResults
-
-    --     case partitionEithers $ map fst mftEntryResults of
-    --         ([], payloads) -> pure payloads
-    --         (e : _, _)     -> appError e
-
-
     gatherMftEntryResults =        
         foldM (\(T2 payloads childrenShortcuts) r -> do 
                 embedState $ manifestEntryVs r
@@ -780,7 +773,7 @@ validateCa
                     InvalidEntry e _ -> 
                         appError e
                     InvalidChild _ vs key -> 
-                        pure $! T2 payloads ((key, KeyChild key) : childrenShortcuts)
+                        pure $! T2 payloads ((key, makeTroubledChild key) : childrenShortcuts)
                     Valid payload vs childShortcut key -> do 
                         let payloads' = payload <> payloads
                         pure $! T2 payloads' ((key, childShortcut) : childrenShortcuts)
@@ -806,7 +799,7 @@ validateCa
         unless (Map.null nonUniqueEntries) $
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
-        db <- readTVarIO database
+        db <- liftIO $ readTVarIO database
         forM nonCrlChildren $ \(T2 fileName hash) -> do
                 k <- roAppTx db $ \tx -> getKeyByHash tx db hash            
                 case k of 
@@ -824,38 +817,6 @@ validateCa
             Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
             Just ro -> pure ro
 
-    -- findManifestEntryObject :: MonadIO m => Text.Text -> Hash -> m (Maybe ObjectOrBrief)
-    -- findManifestEntryObject filename hash' = do
-    --     validateMftFileName filename        
-    --     brief <- roTxT database $ \tx db -> getOjectBrief tx db hash'
-    --     case brief of
-    --         Just b  -> pure $! RBrief (b ^. #object) hash'
-    --         Nothing -> RObject <$> getManifestEntry hash' filename    
-
-
-    -- validateMftChild child filename validCrl = do
-    --     -- warn about names on the manifest mismatching names in the object URLs
-    --     let objectLocations = case child of
-    --             RObject o  -> getLocations o
-    --             RBrief o _ -> getLocations o
-
-    --     let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ unLocations objectLocations
-    --     when (null nameMatches) $
-    --         vWarn $ ManifestLocationMismatch filename objectLocations
-
-    --     case child of            
-    --         RBrief ((^. #payload) -> brief) h
-    --             | getHash ca == brief ^. #parentHash ->
-    --                 -- It's under the same parent, so it's definitely the same object.
-    --                 validateBrief brief validCrl
-    --             | otherwise -> do
-    --                 -- oops, brief is not as we expected it to be, switch to the real object
-    --                 me <- getManifestEntry h filename
-    --                 validateChildObject me validCrl
-    --         RObject o ->
-    --             validateChildObject o validCrl
-
-
     validateMftChild child filename validCrl = do
         -- warn about names on the manifest mismatching names in the object URLs
         let objectLocations = getLocations child
@@ -866,26 +827,6 @@ validateCa
 
         validateChildObject child validCrl
 
-    {- 
-        There's a brief for the already validated object, so only check 
-        validity period and if it wasn't revoked.             
-    -}
-    -- validateBrief brief validCrl = do
-    --     vHoist $ do
-    --         validateCertValidityPeriod brief now
-    --         if (isRevoked brief validCrl) then do
-    --             void $ vPureWarning RevokedResourceCertificate
-    --             pure $! mempty
-    --         else do
-    --             oneMoreBrief
-    --             case brief ^. #briefType of
-    --                 RoaBrief  -> do
-    --                     oneMoreRoa
-    --                     moreVrps $ Count $ fromIntegral $ Set.size $ brief ^. #payload . #vrps
-    --                 AspaBrief -> oneMoreAspa
-    --                 BgpBrief  -> oneMoreBgp
-    --                 GbrBrief  -> oneMoreGbr
-    --             pure $! Seq.singleton $ brief ^. #payload
 
     {-         
         Validate manifest children according to 
@@ -923,86 +864,65 @@ validateCa
 
                 embedState validationState
                 pure $! case r of 
-                        Left e -> T2 mempty (MftEntry { 
-                                                child = KeyChild childKey,
-                                                serial = getSerial childCert 
-                                            })
-                        Right payloads -> T2 payloads (makeCaShortcut childKey childRo)
+                        Left e        -> T2 mempty (makeTroubledChild childKey)
+                        Right payload -> T2 payload (makeCaShortcut childKey (Validated childCert))
                 -- pure $! fromRight mempty r
 
             RoaRO roa -> do
                 validateObjectLocations child
                 inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
-                        void $ vHoist $ validateRoa now roa ca validCrl verifiedResources
+                        validRoa <- vHoist $ validateRoa now roa ca validCrl verifiedResources
                         let vrpList = getCMSContent $ cmsPayload roa
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = (mempty :: Payloads (Set Vrp)) & #vrps .~ Set.fromList vrpList
                         -- updateEEBrief roa RoaBrief payload                        
-                        pure $! T2 (Seq.singleton payload) (makeRoaShortcut childKey roa) 
+                        pure $! T2 (Seq.singleton payload) (makeRoaShortcut childKey validRoa vrpList) 
 
 
             GbrRO gbr -> do
                 validateObjectLocations child
                 inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
-                        void $ vHoist $ validateGbr now gbr ca validCrl verifiedResources
+                        validGbr <- vHoist $ validateGbr now gbr ca validCrl verifiedResources
                         oneMoreGbr
                         let gbr' = getCMSContent $ cmsPayload gbr
                         let gbrPayload = (getHash gbr, gbr')
                         let payload = (mempty :: Payloads (Set Vrp)) & #gbrs .~ Set.singleton gbrPayload
                         -- pure $! Seq.singleton $ payload
-                        pure $! T2 (Seq.singleton payloads) (makeGbrShortcut childKey gbr gbrPayload) 
+                        pure $! T2 (Seq.singleton payload) (makeGbrShortcut childKey validGbr gbrPayload) 
                         
 
             AspaRO aspa -> do
                 validateObjectLocations child
                 inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
-                        void $ vHoist $ validateAspa now aspa ca validCrl verifiedResources
+                        validAspa <- vHoist $ validateAspa now aspa ca validCrl verifiedResources
                         oneMoreAspa
                         let aspaPayload = getCMSContent $ cmsPayload aspa
                         let payload = (mempty :: Payloads (Set Vrp)) & #aspas .~ Set.singleton aspaPayload
                         -- updateEEBrief aspa AspaBrief payload
-                        pure $! T2 (Seq.singleton payloads) (makeAspaShortcut childKey aspa aspaPayload) 
+                        pure $! T2 (Seq.singleton payload) (makeAspaShortcut childKey validAspa aspaPayload) 
 
             BgpRO bgpCert -> do
                 validateObjectLocations child
                 inSubObjectVScope (locationsToText locations) $
                     allowRevoked $ do
-                        bgpPayload <- vHoist $ validateBgpCert now bgpCert ca validCrl
+                        (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert ca validCrl
                         oneMoreBgp
                         let payload = (mempty :: Payloads (Set Vrp)) { bgpCerts = Set.singleton bgpPayload }
                         -- updateEEBrief bgpCert BgpBrief payload
-                        pure $! T2 (Seq.singleton payloads) (makeBgpSecShortcut childKey bgpCert bgpPayload) 
+                        pure $! T2 (Seq.singleton payload) (makeBgpSecShortcut childKey validaBgpCert bgpPayload) 
 
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
             _somethingElse -> do
-                logWarn logger [i|Unsupported type of object: #{locations}.|]
-                pure $! T2 (Seq.singleton mempty) (KeyChild childKey)
+                logWarn logger [i|Unsupported type of object: #{locations}.|]                
+                pure $! T2 (Seq.singleton mempty) (makeTroubledChild childKey)
 
         where
-
-            -- updateEEBrief :: (MonadIO m, WithHash object, WithValidityPeriod object, WithSerial object) =>
-            --                 object -> BriefType -> Payloads (Set.Set Vrp) -> m (Seq (Payloads (Set Vrp)))
-            -- updateEEBrief object briefType payload = liftIO $ do
-            --     let (notValidBefore, notValidAfter) = getValidityPeriod object
-            --     let parentHash = getHash ca
-            --     let serial = getSerial object
-            --     let brief = EEBrief {..}
-            --     -- Only save briefs for strict classical validation, 
-            --     -- for reconsidered there will be potentially arbitrary verified resource set
-            --     -- so we have to revalidate resource sets every time.
-            --     case getRFC ca of
-            --         StrictRFC -> 
-            --             atomically $ modifyTVar' briefs $ \b -> 
-            --                 let !z = BriefUpdate (getHash object) brief in z : b
-            --         ReconsideredRFC -> 
-            --             pure ()
-            --     pure $! Seq.singleton $ payload
 
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
@@ -1017,53 +937,54 @@ validateCa
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
 
+    -- TODO Implement it
     gatherPayloads _ = do
         pure mempty
 
 
-makeCaShortcut :: ObjectKey -> Validated CaCerObject -> MftEntry
-makeCaShortcut key (Validated certificate) = let 
+makeCaShortcut :: ObjectKey -> Validated CaCerObject -> Text -> MftEntry
+makeCaShortcut key (Validated certificate) fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod certificate            
         ski = getSKI certificate
-        child = CaChild $ CaShortcut {..}
         serial = getSerial certificate
+        child = CaChild (CaShortcut {..}) serial
     in MftEntry {..}
 
-makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text.Text -> MftEntry
+makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text -> MftEntry
 makeRoaShortcut key (Validated roa) vrps fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod roa    
-        child = RoaChild $ RoaShortcut {..}
         serial = getSerial roa
+        child = RoaChild (RoaShortcut {..}) serial
     in MftEntry {..}    
 
-makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> Text.Text -> MftEntry
+makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> Text -> MftEntry
 makeAspaShortcut key (Validated aspaObject) aspa fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod aspaObject            
-        child = AspaChild $ AspaShortcut {..}
         serial = getSerial aspaObject
+        child = AspaChild (AspaShortcut {..}) serial
     in MftEntry {..}    
 
-makeGbrShortcut :: ObjectKey -> Validated GbrObject -> Gbr -> Text.Text -> MftEntry
-makeGbrShortcut key (Validated gbrObject) gbr fileName = let 
+makeGbrShortcut :: ObjectKey -> Validated GbrObject -> (Hash, Gbr) -> Text -> MftEntry
+makeGbrShortcut key (Validated gbrObject) (hash, gbr) fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod gbrObject    
-        child = GbrChild $ GbrShortcut {..}
         serial = getSerial gbrObject
+        child = GbrChild (GbrShortcut {..}) serial       
     in MftEntry {..}    
 
 
-makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> Text.Text -> MftEntry
+makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> Text -> MftEntry
 makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let         
         (notValidBefore, notValidAfter) = getValidityPeriod bgpCert                  
-        child = BgpSecChild $ BgpSecShortcut {..}
         serial = getSerial bgpCert
+        child = BgpSecChild (BgpSecShortcut {..}) serial
     in MftEntry {..}    
 
 
-makeMftShortcut :: ObjectKey -> Validated MftObject -> [MftChild] -> MftShortcut
-makeMftShortcut key (Validated mftObject) childrenShotcuts = let         
+makeMftShortcut :: ObjectKey -> Validated MftObject -> [(ObjectKey, MftEntry)] -> MftShortcut
+makeMftShortcut key (Validated mftObject) children = let         
         (notValidBefore, notValidAfter) = getValidityPeriod mftObject      
         -- TODO 
-        entries = mempty
+        entries = Map.fromList children
     in MftShortcut { .. }
 
 
@@ -1166,10 +1087,15 @@ extractPPAs = \case
 
 data ManifestValidity e r v = InvalidEntry e v 
                             | InvalidChild e v ObjectKey 
-                            | Valid r v MftChild ObjectKey
+                            | Valid r v (Text -> MftEntry) ObjectKey
 
 manifestEntryVs :: ManifestValidity e r v -> v
 manifestEntryVs = \case 
     InvalidEntry _ vs   -> vs
     InvalidChild _ vs _ -> vs
     Valid _ vs _ _      -> vs
+
+
+makeTroubledChild :: ObjectKey -> Text -> MftEntry
+makeTroubledChild childKey fileName = 
+    MftEntry { child = TroubledChild childKey, .. }     

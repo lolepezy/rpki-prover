@@ -244,7 +244,7 @@ validateBgpCert ::
     c ->
     parent ->
     Validated CrlObject ->
-    PureValidatorT BGPSecPayload
+    PureValidatorT (Validated c, BGPSecPayload)
 validateBgpCert now bgpCert parentCert validCrl = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
@@ -274,7 +274,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
     let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
-    pure BGPSecPayload {..}
+    pure (Validated bgpCert, BGPSecPayload {..})
 
 
 ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
