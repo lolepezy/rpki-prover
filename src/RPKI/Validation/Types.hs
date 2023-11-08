@@ -102,10 +102,22 @@ data BgpSecShortcut = BgpSecShortcut {
 
 data GbrShortcut = GbrShortcut {
         key            :: ObjectKey,    
-        gbr            :: Gbr,
+        gbr            :: (Hash, Gbr),
         notValidBefore :: Instant,
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+
+instance WithValidityPeriod RoaShortcut where
+    getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
+
+instance WithValidityPeriod AspaShortcut where
+    getValidityPeriod AspaShortcut {..} = (notValidBefore, notValidAfter)
+
+instance WithValidityPeriod BgpSecShortcut where
+    getValidityPeriod BgpSecShortcut {..} = (notValidBefore, notValidAfter)
+
+instance WithValidityPeriod GbrShortcut where
+    getValidityPeriod GbrShortcut {..} = (notValidBefore, notValidAfter)
