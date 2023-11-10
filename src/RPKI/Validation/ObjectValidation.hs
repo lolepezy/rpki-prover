@@ -8,6 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -45,7 +46,7 @@ import           RPKI.Resources.Resources
 
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
-
+    deriving newtype (WithSKI, WithAKI, WithHash)
 
 class ExtensionValidator (t :: CertType) where
     validateResourceCertExtensions_ :: Proxy t -> [ExtensionRaw] -> PureValidatorT ()
