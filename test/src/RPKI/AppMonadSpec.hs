@@ -59,20 +59,20 @@ scopesShouldBeProperlyNested = do
         <- runValidatorT (newScopes "root") $ do
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
-                inSubObjectVScope "snapshot.xml" $ do            
+                inSubVScope' LocationFocus "snapshot.xml" $ do            
                     timedMetric (Proxy :: Proxy RsyncMetric) $ do                        
                         appWarn $ UnspecifiedE "Error1" "text 1"
-                        inSubObjectVScope "broken.roa" $ do                                        
+                        inSubVScope' LocationFocus "broken.roa" $ do                                        
                             appError $ UnspecifiedE "Crash" "Crash it"                                                                    
 
     HU.assertEqual "Deepest scope should have 1 error"     
-        (Map.lookup (subScope' ObjectFocus "broken.roa" 
-                        $ subScope' ObjectFocus "snapshot.xml" 
+        (Map.lookup (subScope' LocationFocus "broken.roa" 
+                        $ subScope' LocationFocus "snapshot.xml" 
                         $ newScope "root") validationMap)
         (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
 
     HU.assertEqual "Nested scope should have 1 warning"         
-        (Map.lookup (subScope' ObjectFocus "snapshot.xml" $ newScope "root") validationMap)
+        (Map.lookup (subScope' LocationFocus "snapshot.xml" $ newScope "root") validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error1" "text 1"))])
 
     HU.assertEqual "Nested validations should have 1 warning"         

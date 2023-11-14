@@ -12,6 +12,7 @@
 
 module RPKI.Domain where
 
+import           Data.Int                 (Int64)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
@@ -32,6 +33,7 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           Data.Bifunctor
+import           Data.Monoid
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -712,6 +714,25 @@ data Payloads a = Payloads {
     deriving Semigroup via GenericSemigroup (Payloads a)
     deriving Monoid    via GenericMonoid (Payloads a)
 
+-- Some auxiliary types
+newtype Size = Size { unSize :: Int64 }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving newtype (Num)
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Sum Size
+    deriving Monoid via Sum Size
+
+newtype UrlKey = UrlKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype ObjectKey = ObjectKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype ArtificialKey = ArtificialKey Int64
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
 
 
 -- Small utility functions that don't have anywhere else to go

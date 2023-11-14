@@ -203,17 +203,17 @@ toValidationMessage = \case
       ObjectHasMultipleLocations locs -> 
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
-      NoMFT (AKI aki) _ -> 
+      NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 
-      NoMFTButCachedMft (AKI aki) _ -> 
+      NoMFTButCachedMft (AKI aki) -> 
           [i|No manifest found for AKI #{aki}, but there's a cached version of it.|]
 
-      NoCRLOnMFT (AKI aki) _ -> 
+      NoCRLOnMFT (AKI aki) -> 
           [i|No CRL found on the manifest manifest found for AKI #{aki}.|]
 
-      MoreThanOneCRLOnMFT aki locations entries ->
-          [i|Multiple CRLs #{fmtMftEntries entries} found on the manifest manifest found for AKI #{aki} for CA #{fmtLocations locations}.|]
+      MoreThanOneCRLOnMFT aki entries ->
+          [i|Multiple CRLs #{fmtMftEntries entries} found on the manifest manifest found for AKI #{aki} for the CA.|]
 
       NoMFTSIA locations -> 
           [i|No SIA pointing to the manifest on the certificate #{fmtLocations locations}.|]
@@ -230,14 +230,14 @@ toValidationMessage = \case
       NonUniqueManifestEntries nonUniqueEntries -> 
             [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
 
-      NoCRLExists aki locations -> 
-            [i|No CRL exists with AKI #{aki} for CA #{fmtLocations locations}.|]
+      NoCRLExists aki -> 
+            [i|No CRL exists with AKI #{aki} for CA.|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
 
-      CRLHashPointsToAnotherObject hash locations -> 
-          [i|CRL hash #{hash} points to different object for CA #{fmtLocations locations}.|]
+      CRLHashPointsToAnotherObject hash -> 
+          [i|CRL hash #{hash} points to different object for CA.|]
 
       NextUpdateTimeNotSet -> 
           [i|Next update time is not set.|]
@@ -283,8 +283,8 @@ toValidationMessage = \case
       AIANotSameAsParentLocation aiaUrl locations -> 
           [i|AIA of the child #{aiaUrl} does not point to the real parent location #{fmtLocations locations}.|]          
 
-      CircularReference hash locations ->
-          [i|Object with hash #{hash} and location #{fmtLocations locations} creates reference cycle.|]
+      CircularReference hash ->
+          [i|Object with hash #{hash} creates reference cycle.|]
 
       CertificatePathTooDeep locations maxDepth ->
           [i|The CA tree reached maximum depth of #{maxDepth} at #{locations}.|]

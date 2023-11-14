@@ -24,6 +24,7 @@ import           Data.Text                   (Text)
 
 import           System.Timeout
 
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Time
 
@@ -173,7 +174,7 @@ askScopes = ask
 inSubVScope :: Monad m => Text -> ValidatorT m r -> ValidatorT m r
 inSubVScope = inSubVScope' TextFocus
 
-inSubObjectVScope :: Monad m =>  Text -> ValidatorT m r -> ValidatorT m r
+inSubObjectVScope :: Monad m =>  ObjectKey -> ValidatorT m r -> ValidatorT m r
 inSubObjectVScope = inSubVScope' ObjectFocus
 
 inSubVScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r

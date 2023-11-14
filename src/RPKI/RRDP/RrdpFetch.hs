@@ -399,7 +399,7 @@ saveSnapshot
                 pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
             Right rpkiURL ->
-                case first RrdpE $ U.decodeBase64 encodedb64 rpkiURL of
+                case first (RrdpE . BadBase64) $ U.decodeBase64 encodedb64 rpkiURL of
                     Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
                     Right (DecodedBase64 decoded) -> do                             
                         case validateSizeOfBS validationConfig decoded of 

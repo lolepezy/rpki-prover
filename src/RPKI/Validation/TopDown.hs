@@ -384,19 +384,19 @@ validateCa
     checkAndReport treeDepthLimit
         $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
-        $ validateCaNoLimitChecks appContext topDownContext ca
+        $ validateCaNoLimitChecks appContext topDownContext (CaFull ca)
 
 
 validateCaNoLimitChecks :: Storage s =>
             AppContext s ->
             TopDownContext ->
-            Located Ca ->
+            Ca ->
             ValidatorT IO (Seq (Payloads (Set Vrp)))
 validateCaNoLimitChecks
         appContext@AppContext {..}
         topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
         ca = 
-    case extractPPAs (ca ^. #payload) of        
+    case extractPPAs ca of        
         Left e         -> vError e
         Right ppAccess ->
             case filterPPAccess config ppAccess of
@@ -437,21 +437,21 @@ validateCaNoLimitChecks
     validateThisCertAndGoDown :: ValidatorT IO (Seq (Payloads (Set Vrp))) 
     validateThisCertAndGoDown = do    
         validateObjectLocations ca        
-        z <- join $ makeNextAction (toAKI $ getSKI ca) (getLocations ca)
+        z <- join $ makeNextAction (toAKI $ getSKI ca) ca
         oneMoreCert
         pure z
 
       where        
 
-        makeNextAction :: AKI -> Locations -> ValidatorT IO (ValidatorT IO PayloadsType)
-        makeNextAction childrenAki certLocations = 
+        makeNextAction :: AKI -> ValidatorT IO (ValidatorT IO PayloadsType)
+        makeNextAction childrenAki = 
             roTxT database $ \tx db -> do 
-                getMftShorcut tx db childrenAki >>= \case             
+                getMftShorcut tx db childrenAki >>= \case
                     Nothing -> do 
                         findLatestMftByAKI tx db childrenAki >>= \case 
                             Nothing -> do 
                                 -- No current manifest and not shortcut as well, bail out 
-                                pure $ vError $ NoMFT childrenAki certLocations
+                                pure $ vError $ NoMFT childrenAki
                             Just mft ->
                                 -- No shortcut found, so do the full validation for the manifest
                                 pure $ do  
@@ -465,7 +465,7 @@ validateCaNoLimitChecks
                             Nothing -> pure $ do 
                                 -- That is really weird and should normally never happen. 
                                 -- Do not interrupt validation here, but complain in the log
-                                vWarn $ NoMFTButCachedMft childrenAki certLocations
+                                vWarn $ NoMFTButCachedMft childrenAki
                                 let mftKey = mftShortcut ^. #key
                                 let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftKey}.|]
                                 logError logger message
@@ -513,7 +513,7 @@ validateCaNoLimitChecks
                     -- to minimise the false positives where the same object
                     -- is referenced from multiple manifests and we are treating 
                     -- it as a cycle.
-                    vError $ CircularReference (getHash locatedMft) locations
+                    vError $ CircularReference (getHash locatedMft)
 
                 -- General location validation
                 validateObjectLocations locatedMft
@@ -539,13 +539,12 @@ validateCaNoLimitChecks
                 inSubObjectVScope (locationsToText locations) $ do
 
                     -- TODO Add fiddling with shortcut version of CRL here                    
-                    validCrl <- findAndValidateCrl fullCa mft
+                    validCrl <- findAndValidateCrl fullCa keyedMft
                     oneMoreCrl
 
                     -- MFT can be revoked by the CRL that is on this MFT -- detect 
                     -- revocation as well, this is clearly and error                               
-                    validMft <- vHoist $ validateMft now mft
-                                        fullCa validCrl verifiedResources
+                    validMft <- vHoist $ validateMft now mft fullCa validCrl verifiedResources
 
                     -- Validate entry list and filter out CRL itself
                     nonCrlChildren <- validateMftEntries mft (getHash validCrl)
@@ -593,21 +592,21 @@ validateCaNoLimitChecks
             findCrl mft = do 
                 T2 _ crlHash <-
                     case findCrlOnMft mft of
-                        []    -> vError $ NoCRLOnMFT childrenAki certLocations
+                        []    -> vError $ NoCRLOnMFT childrenAki 
                         [crl] -> pure crl
-                        crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
+                        crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
 
                 z <- roTxT database $ \tx db -> getKeyedByHash tx db crlHash
                 case z of
                     Nothing -> 
-                        vError $ NoCRLExists childrenAki certLocations
+                        vError $ NoCRLExists childrenAki
                     Just crl@(Keyed (Located _ (CrlRO _)) _) -> 
                         pure crl
                     _ -> 
-                        vError $ CRLHashPointsToAnotherObject crlHash certLocations   
+                        vError $ CRLHashPointsToAnotherObject crlHash   
 
 
-            findAndValidateCrl fullCa mft = do 
+            findAndValidateCrl fullCa (Keyed (Located _ mft) _) = do 
                 Keyed locatedCrl@(Located crlLocations (CrlRO crl)) _ <- findCrl mft
                 visitObject topDownContext locatedCrl                        
                 validateObjectLocations locatedCrl
@@ -616,6 +615,7 @@ validateCaNoLimitChecks
                         let mftEECert = getEECert $ unCMS $ cmsPayload mft
                         checkCrlLocation locatedCrl mftEECert
                         validateCrl now crl fullCa                
+                        pure $! Validated crl
 
             -- Calculate difference bentween a manifest shortcut 
             -- and a real manifest object.
@@ -800,7 +800,7 @@ validateCaNoLimitChecks
                                     & #verifiedResources ?~ childVerifiedResources
                                     & #currentPathDepth %~ (+ 1)
 
-                            validateCa appContext childTopDownContext (Located locations (CaFull childCert))
+                            validateCa appContext childTopDownContext (Located locations childCert)
 
                 embedState validationState
                 case r of 
@@ -880,7 +880,7 @@ validateCaNoLimitChecks
     collectPayloads :: MftShortcut 
                 -> Maybe [T3 Text Hash ObjectKey] 
                 -> ValidatorT IO (Located CaCerObject)
-                -> ValidatorT IO (Located CrlObject)
+                -> ValidatorT IO (Validated CrlObject)
                 -> ValidatorT IO PayloadsType 
     collectPayloads mftShortcut@MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
         -- TODO Get the CRL as well
@@ -909,14 +909,16 @@ validateCaNoLimitChecks
             -- we have to process full validation for i
             z <- roTxT database $ \tx db -> getLocatedByKey tx db childKey
             case z of 
-                Nothing -> internalError [i|Internal error, can't find a troubled child by its key #{childKey}.|]
-                Just ro -> validateChildObject caFull child validCrl
+                Nothing          -> internalError [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+                Just childObject -> do 
+                    T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
+                    pure $1 payloads
 
         getChildPayloads troubledValidation (_, MftEntry {..}) = do 
             let emptyPayloads = mempty :: Payloads (Set Vrp)
             case child of 
                 CaChild caShortcut _ -> 
-                    validateCaNoLimitChecks appContext topDownContext caShortcut                    
+                    validateCaNoLimitChecks appContext topDownContext caShortcut
 
                 RoaChild r@RoaShortcut {..} _ -> do 
                     vHoist $ validateCertValidityPeriod r now
@@ -941,9 +943,10 @@ validateCaNoLimitChecks
 
                 TroubledChild childKey -> troubledValidation childKey  
 
+
 getFullCa AppContext {..} ca = 
     case ca of     
-        Located _ (CaFull _)                -> pure ca
+        Located loc (CaFull c)              -> pure $! Located loc c
         Located _ (CaShort CaShortcut {..}) -> do   
             z <- roTxT database $ \tx db -> getLocatedByKey tx db key
             case z of 
@@ -951,9 +954,9 @@ getFullCa AppContext {..} ca =
                 _ -> internalError [i|Internal error, can't find a CA by its key #{key}.|]
     
 getCrlByKey AppContext {..} crlKey = do    
-    z <- roTxT database $ \tx db -> getLocatedByKey tx db crlKey
+    z <- roTxT database $ \tx db -> getObjectByKey tx db crlKey
     case z of 
-        Just (Located loc (CrlRO c)) -> pure $! Located loc c
+        Just (CrlRO c) -> pure $! Validated c
         _ -> internalError [i|Internal error, can't find a CRL by its key #{crlKey}.|]
     
 internalError message = do     
@@ -1125,18 +1128,20 @@ data OnceState m a = EmptyO (m a)
                     | WaitO 
                     | ReadyO a
 
-once :: MonadIO m => m a -> Once m a
-once f = fmap Once $ liftIO $ newTVar (Empty f)
+once :: MonadIO m => m a -> m (Once m a)
+once f = liftIO $ do 
+    z <- newTVarIO (Empty f)
+    pure $ Once z
 
 compute :: MonadIO m => Once m a -> m a 
-compute (Once s) = liftIO $ 
-    join $ atomically $ do 
+compute (Once s) =  
+    join $ liftIO $ atomically $ do 
         readTVar s >>= \case 
             WaitO    -> retry
-            ReadyO a -> pure a            
+            ReadyO a -> pure $ pure a            
             EmptyO f -> do 
                 writeTVar s WaitO
                 pure $ do 
                     a <- f
-                    liftIO $ atomically $ writeTVar $ ReadyO a
+                    liftIO $ atomically $ writeTVar s $ ReadyO a
                     pure a

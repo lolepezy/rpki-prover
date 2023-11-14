@@ -165,6 +165,9 @@ instance ToJSON TaName where
 instance ToJSON Count where
     toJSON (Count s) = toJSON s
 
+instance ToJSON ObjectKey where
+    toJSON (ObjectKey (ArtificialKey i)) = toJSON i
+
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
 instance ToJSON (Scope 'Metric)

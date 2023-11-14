@@ -361,17 +361,26 @@ getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
     SystemInfo {..} <- readTVarIO $ appState ^. #system
-    let proverVersion = rpkiProverVersion
+    let proverVersion = rpkiProverVersion    
 
-    let toResources (scope, resourceUsage) = let
-                tag = scopeText scope
+    tag <- fmtScope scope
+
+    let toResources (scope, resourceUsage) = let                
                 aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
                 maxMemory = resourceUsage ^. #maxMemory
                 avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
             in ResourcesDto {..}
 
     let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ metrics ^. #resources        
-    pure SystemDto {..}
+    pure SystemDto {..}  
+  where
+    fmtScope scope =
+        fmap (Text.intercalate "/") $
+            roTxT database $ \tx db -> do         
+                forM (scopeList scope) $ \s -> 
+                    focusToText <$> resolveFocus tx db s 
+
+
 
 getRtr :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m RtrDto
@@ -387,3 +396,6 @@ getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
     sortBy (flip compare) <$> roTx db (`allVersions` db)
+
+
+-- resolveLocations :: Focus -> Focus

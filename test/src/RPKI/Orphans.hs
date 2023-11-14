@@ -574,6 +574,14 @@ instance Arbitrary RrdpMap where
 
 -- errors and warnings
 
+instance Arbitrary ArtificialKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ObjectKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary (ParseError Text.Text) where
     arbitrary = genericArbitrary
     shrink = genericShrink

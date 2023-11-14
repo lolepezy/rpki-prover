@@ -157,7 +157,7 @@ validateBottomUp
                                 ((^. #object) <$> maybeMft) validManifests childrenAki certLocations
         case maybeMft of 
             Nothing -> 
-                vError (NoMFT childrenAki certLocations) `catchError` tryLatestValid                
+                vError (NoMFT childrenAki) `catchError` tryLatestValid                
             Just mft -> 
                 useManifest mft childrenAki certLocations `catchError` tryLatestValid
       where 
@@ -169,14 +169,14 @@ validateBottomUp
             validateObjectLocations locatedMft
             validateMftLocation locatedMft certificate
             T2 _ crlHash <- case findCrlOnMft mft of 
-                        []    -> vError $ NoCRLOnMFT childrenAki certLocations
+                        []    -> vError $ NoCRLOnMFT childrenAki
                         [crl] -> pure crl
-                        crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
+                        crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
             
             crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
             case crlObject of 
                 Nothing -> 
-                    vError $ NoCRLExists childrenAki certLocations    
+                    vError $ NoCRLExists childrenAki    
 
                 Just foundCrl@(Located _ (CrlRO crl)) -> do      
                     validateObjectLocations foundCrl           
@@ -186,5 +186,5 @@ validateBottomUp
                     pure (mft, validCrl)
 
                 Just _ -> 
-                    vError $ CRLHashPointsToAnotherObject crlHash certLocations   
+                    vError $ CRLHashPointsToAnotherObject crlHash   
 

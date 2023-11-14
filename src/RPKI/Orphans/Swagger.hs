@@ -42,6 +42,8 @@ import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 
 -- ToSchema insrances for Swagger doc generation
+instance ToSchema ArtificialKey
+instance ToSchema ObjectKey
 instance ToSchema Focus
 instance ToSchema RpkiURL
 instance ToSchema RsyncURL where

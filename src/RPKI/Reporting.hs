@@ -46,7 +46,6 @@ import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
 
-
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -78,18 +77,18 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         MissingCriticalExtension OID |
                         BrokenKeyUsage Text |
                         ObjectHasMultipleLocations [RpkiURL] |
-                        NoMFT AKI Locations |
-                        NoMFTButCachedMft AKI Locations |
-                        NoCRLOnMFT AKI Locations |
-                        MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
+                        NoMFT AKI |
+                        NoMFTButCachedMft AKI |
+                        NoCRLOnMFT AKI |
+                        MoreThanOneCRLOnMFT AKI [T2 Text Hash] |
                         NoMFTSIA Locations |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |
-                        NoCRLExists AKI Locations |
+                        NoCRLExists AKI |
                         CRLOnDifferentLocation URI Locations |
-                        CRLHashPointsToAnotherObject Hash Locations |
+                        CRLHashPointsToAnotherObject Hash |
                         NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
@@ -106,10 +105,10 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BrokenUri Text Text | 
                         CertificateDoesntHaveSIA | 
                         AIANotSameAsParentLocation Text Locations | 
-                        CircularReference Hash Locations |
-                        CertificatePathTooDeep Locations Int |
-                        TreeIsTooBig Locations Int |
-                        TooManyRepositories Locations Int |
+                        CircularReference Hash |
+                        CertificatePathTooDeep ObjectKey Int |
+                        TreeIsTooBig ObjectKey Int |
+                        TooManyRepositories ObjectKey Int |
                         ValidationTimeout Int |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
@@ -241,14 +240,16 @@ instance Semigroup Validations where
 
 
 data Focus = TAFocus Text 
-            | ObjectFocus Text 
+            | LocationFocus Text
+            | ObjectFocus ObjectKey
+            | HashFocus Hash
             | PPFocus RpkiURL
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
 
-newtype Scope t = Scope (NonEmpty Focus)
+newtype Scope (t :: ScopeKind) = Scope (NonEmpty Focus)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -493,13 +494,13 @@ isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 focusToText :: Focus -> Text
 focusToText = \case
     TAFocus txt         -> txt
-    ObjectFocus txt     -> txt
+    ObjectFocus key     -> fmt key
+    HashFocus hash      -> fmt hash
     PPFocus uri         -> unURI $ getURL uri
     RepositoryFocus uri -> unURI $ getURL uri
     TextFocus txt       -> txt
+  where
+    fmt = Text.pack . show 
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
-
-scopeText :: Scope a -> Text
-scopeText s = Text.intercalate "/" $ Prelude.map focusToText $ scopeList s

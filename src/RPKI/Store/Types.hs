@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 
 module RPKI.Store.Types where
+
 import           Data.Int
 import qualified Data.ByteString.Short    as BSS
 
@@ -18,6 +19,7 @@ import           RPKI.Time                (Instant)
 
 import           RPKI.Repository
 import           RPKI.AppTypes
+import           RPKI.Domain
 import           RPKI.Config
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
@@ -41,17 +43,6 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-newtype UrlKey = UrlKey ArtificialKey
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-newtype ObjectKey = ObjectKey ArtificialKey
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-newtype ArtificialKey = ArtificialKey Int64
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)

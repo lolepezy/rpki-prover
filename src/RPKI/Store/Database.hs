@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE QuasiQuotes           #-}
 
 module RPKI.Store.Database where
 
@@ -28,11 +29,11 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
+import           Data.String.Interpolate.IsString
 import           Data.Generics.Product.Types
 import           GHC.Generics
 import           Text.Read
 
-import           RPKI.Config              (Size)
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
@@ -51,7 +52,7 @@ import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
 
-import           RPKI.Util                (ifJustM)
+import           RPKI.Util                (ifJustM, fmtLocations)
 
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -937,6 +938,19 @@ totalStats = foldOf (types @SStats)
 emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
 emptyDBMaps tx DB {..} = liftIO $ 
     forM_ erasables $ \(EraseWrapper t) -> erase tx t
+
+
+resolveFocus :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> Focus -> m Focus
+resolveFocus tx db = \case     
+    TAFocus txt         -> pure $ TAFocus txt
+    ObjectFocus key     -> do 
+        getLocationsByKey tx db key >>= \case 
+            Nothing        -> pure $ ObjectFocus [i|Not found location for key #{key}.|]
+            Just locations -> pure $ ObjectFocus $ fmtLocations locations        
+    PPFocus uri         -> pure $ PPFocus uri
+    RepositoryFocus uri -> pure $ RepositoryFocus uri
+    TextFocus txt       -> pure $ TextFocus txt        
 
 
 -- Utilities to have storage transaction in ValidatorT monad.

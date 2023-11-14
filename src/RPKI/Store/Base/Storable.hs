@@ -18,7 +18,7 @@ import GHC.Generics
 import Data.Maybe (fromMaybe)
 import Data.Monoid.Generic
 
-import RPKI.Config
+import RPKI.Domain
 import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    

@@ -602,7 +602,7 @@ data CLIOptions wrapped = CLIOptions {
        +++ "finish within this timeout, the repository is considered unavailable"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
-        ("Scope to rsync client. By default rsync client is expected to be in the $PATH."),
+        ("Path to rsync client executable. By default rsync client is expected to be in the $PATH."),
 
     httpApiPort :: wrapped ::: Maybe Word16 <?>
         "Port to listen to for http API (default is 9999)",

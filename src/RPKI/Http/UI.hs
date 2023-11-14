@@ -319,10 +319,10 @@ validaionDetailsHtml result =
                         focusLink p >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
-        where
-            countP z FullVDto {..} = List.foldl' countEW z issues
-            countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
-            countEW (!e, !w) (WarningDto _) = (e, w + 1)
+      where
+        countP z FullVDto {..} = List.foldl' countEW z issues
+        countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
+        countEW (!e, !w) (WarningDto _) = (e, w + 1)
 
 
 primaryRepoTooltip :: Html
@@ -376,16 +376,17 @@ objectLink :: Text -> Html
 objectLink url = 
     H.a ! A.href (textValue ("/api/object?uri=" <> url)) $ toHtml url
 
-focusLink :: Focus -> Html
-focusLink = \case 
-    TAFocus txt         -> toHtml txt
-    ObjectFocus txt     -> objectLink txt
-    PPFocus uri         -> directLink $ unURI $ getURL uri
-    RepositoryFocus uri -> directLink $ unURI $ getURL uri
-    TextFocus txt       -> toHtml txt
-  where
-    directLink url = 
-        H.a ! A.href (textValue url) $ toHtml url
+
+-- focusLink :: Focus -> Html
+-- focusLink = \case 
+--     TAFocus txt         -> toHtml txt
+--     ObjectFocus txt     -> objectLink txt
+--     PPFocus uri         -> directLink $ unURI $ getURL uri
+--     RepositoryFocus uri -> directLink $ unURI $ getURL uri
+--     TextFocus txt       -> toHtml txt
+--   where
+--     directLink url = 
+--         H.a ! A.href (textValue url) $ toHtml url
 
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
@@ -423,3 +424,20 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
+
+
+data FocusUIDto = TextUI Text 
+                | ObjectLink Text
+                | DirectLink Text
+                | TA_UI Text
+    deriving stock (Show, Eq, Ord)                
+
+focusLink1 :: FocusUIDto -> Html
+focusLink1 = \case 
+    TextUI txt      -> toHtml txt
+    TA_UI txt       -> toHtml txt
+    ObjectLink txt  -> objectLink txt
+    DirectLink uri  -> directLink uri        
+  where
+    directLink url = 
+        H.a ! A.href (textValue url) $ toHtml url
