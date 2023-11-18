@@ -157,7 +157,7 @@ validateMftLocation :: (WithRawResourceCertificate c, Monad m, WithLocations c, 
                         mft -> c -> ValidatorT m ()
 validateMftLocation mft certficate = 
     case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of
-        Nothing     -> vError $ NoMFTSIA $ getLocations certficate
+        Nothing     -> vError NoMFTSIA
         Just mftSIA -> do 
             let mftLocations = getLocations mft
             when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
@@ -167,10 +167,9 @@ validateMftLocation mft certficate =
 -- | Validate that the object has only one location: if not, 
 -- it's generally is a warning, not really an error.
 validateObjectLocations :: (WithLocations a, Monad m) => a -> ValidatorT m ()
-validateObjectLocations (getLocations -> locs@(Locations locSet)) =
-    inSubObjectVScope (locationsToText locs) $ 
-        when (NESet.size locSet > 1) $ 
-            vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
+validateObjectLocations (getLocations -> Locations locSet) =    
+    when (NESet.size locSet > 1) $ 
+        vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
 
 -- | Check that CRL URL in the certificate is the same as the one 
 -- the CRL was actually fetched from. 

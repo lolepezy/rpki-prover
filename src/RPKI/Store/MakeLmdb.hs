@@ -21,6 +21,7 @@ import           Lmdb.Types hiding (Size)
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Parallel
 import           RPKI.Logging
 import           RPKI.Time

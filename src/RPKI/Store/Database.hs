@@ -276,6 +276,14 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     pure $ Located locations object
 
 
+-- Very specifis for optimising locations validation
+getLocationCountByKey :: (MonadIO m, Storage s) => 
+                        Tx s mode -> DB s -> ObjectKey -> m Int
+getLocationCountByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $ do         
+    M.get tx objectKeyToUrlKeys k >>= \case 
+        Nothing      -> pure 0
+        Just urlKeys -> pure $! length urlKeys    
+
 getLocationsByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe Locations)
 getLocationsByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $ runMaybeT $ do         
@@ -940,17 +948,17 @@ emptyDBMaps tx DB {..} = liftIO $
     forM_ erasables $ \(EraseWrapper t) -> erase tx t
 
 
-resolveFocus :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Focus -> m Focus
-resolveFocus tx db = \case     
-    TAFocus txt         -> pure $ TAFocus txt
-    ObjectFocus key     -> do 
-        getLocationsByKey tx db key >>= \case 
-            Nothing        -> pure $ ObjectFocus [i|Not found location for key #{key}.|]
-            Just locations -> pure $ ObjectFocus $ fmtLocations locations        
-    PPFocus uri         -> pure $ PPFocus uri
-    RepositoryFocus uri -> pure $ RepositoryFocus uri
-    TextFocus txt       -> pure $ TextFocus txt        
+-- resolveFocus :: (MonadIO m, Storage s) => 
+--                 Tx s 'RW -> DB s -> Focus -> m Focus
+-- resolveFocus tx db = \case     
+--     TAFocus txt         -> pure $ TAFocus txt
+--     ObjectFocus key     -> do 
+--         getLocationsByKey tx db key >>= \case 
+--             Nothing        -> pure $ ObjectFocus [i|Not found location for key #{key}.|]
+--             Just locations -> pure $ ObjectFocus $ fmtLocations locations        
+--     PPFocus uri         -> pure $ PPFocus uri
+--     RepositoryFocus uri -> pure $ RepositoryFocus uri
+--     TextFocus txt       -> pure $ TextFocus txt        
 
 
 -- Utilities to have storage transaction in ValidatorT monad.

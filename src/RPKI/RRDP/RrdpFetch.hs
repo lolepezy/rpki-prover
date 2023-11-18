@@ -193,7 +193,7 @@ downloadAndUpdateRRDP
         pure notification
 
     useSnapshot (SnapshotInfo uri expectedHash) notification = do         
-        inSubObjectVScope (U.convert uri) $ do            
+        inSubVScope' LinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
             (rawContent, _, httpStatus', _) <- 
@@ -398,8 +398,9 @@ saveSnapshot
             Left e -> 
                 pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
-            Right rpkiURL ->
-                case first (RrdpE . BadBase64) $ U.decodeBase64 encodedb64 rpkiURL of
+            Right rpkiURL -> do 
+                let decoded = U.decodeBase64 encodedb64 rpkiURL
+                case first (\t -> RrdpE $ BadBase64 t (U.convert rpkiURL)) decoded of
                     Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
                     Right (DecodedBase64 decoded) -> do                             
                         case validateSizeOfBS validationConfig decoded of 
@@ -420,7 +421,7 @@ saveSnapshot
                                             (Right ro, _) -> Success rpkiURL (toStorableObject ro)    
 
     saveStorable _ _ (Left (e, uri)) = 
-        inSubObjectVScope (unURI uri) $ appWarn e             
+        inSubLocationScope uri $ appWarn e             
     
     saveStorable objectStore tx (Right (uri, a)) = do 
         r <- fromTry (RrdpE . FailedToParseSnapshotItem . U.fmtEx) $ wait a
@@ -429,13 +430,13 @@ saveSnapshot
                 DB.linkObjectToUrl tx objectStore rpkiURL hash
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
-                inSubObjectVScope (unURI uri) $ appWarn e 
+                inSubLocationScope uri $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
+                inSubLocationScope (getURL rpkiUrl) $ appError e                 
             ObjectParsingProblem rpkiUrl (VErr e) -> do                    
                 logError logger [i|Couldn't parse object #{uri}, error #{e} |]
-                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
+                inSubLocationScope (getURL rpkiUrl) $ appError e                 
             Success rpkiUrl so@StorableObject {..} -> do 
                 DB.putObject tx objectStore so worldVersion                    
                 DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
@@ -529,7 +530,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
     saveStorable objectStore tx r = 
         case r of 
-            Left (e, uri)                      -> inSubObjectVScope (unURI uri) $ appWarn e             
+            Left (e, uri)                      -> inSubLocationScope uri $ appWarn e             
             Right (Add uri a)                  -> addObject objectStore tx uri a 
             Right (Replace uri a existingHash) -> replaceObject objectStore tx uri a existingHash
             Right (Delete uri existingHash)    -> deleteObject objectStore tx uri existingHash                                        
@@ -548,13 +549,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         case r of         
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
-                inSubObjectVScope (unURI uri) $ appWarn e 
+                inSubLocationScope uri $ appWarn e 
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                                     
+                inSubLocationScope (getURL rpkiUrl) $ appError e                                     
             ObjectParsingProblem rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't parse object #{uri}, error #{e} |]
-                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e 
+                inSubLocationScope (getURL rpkiUrl) $ appError e 
             Success rpkiUrl so@StorableObject {..} -> do 
                 let hash' = getHash object
                 alreadyThere <- DB.hashExists tx objectStore hash'
@@ -570,13 +571,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         case r of                    
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
-                inSubObjectVScope (unURI uri) $ appWarn e
+                inSubLocationScope uri $ appWarn e
             DecodingTrouble rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                                           
+                inSubLocationScope (getURL rpkiUrl) $ appError e                                           
             ObjectParsingProblem rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't parse object #{uri}, error #{e} |]
-                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e 
+                inSubLocationScope (getURL rpkiUrl) $ appError e 
             Success rpkiUrl so@StorableObject {..} -> do 
                 oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
                 if oldOneIsAlreadyThere
@@ -585,7 +586,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                         deletedObject
                     else do 
                         logError logger [i|No object #{uri} with hash #{oldHash} to replace.|]
-                        inSubObjectVScope (unURI uri) $ 
+                        inSubLocationScope uri $ 
                             appError $ RrdpE $ NoObjectToReplace uri oldHash
 
                 let hash' = getHash object

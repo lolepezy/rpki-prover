@@ -215,8 +215,8 @@ toValidationMessage = \case
       MoreThanOneCRLOnMFT aki entries ->
           [i|Multiple CRLs #{fmtMftEntries entries} found on the manifest manifest found for AKI #{aki} for the CA.|]
 
-      NoMFTSIA locations -> 
-          [i|No SIA pointing to the manifest on the certificate #{fmtLocations locations}.|]
+      NoMFTSIA -> 
+          [i|No SIA pointing to the manifest on the certificate.|]
 
       MFTOnDifferentLocation url locations -> 
           [i|Manifest location #{url} is not the same as SIA on the certificate #{fmtLocations locations}.|]
@@ -254,10 +254,10 @@ toValidationMessage = \case
       RevokedResourceCertificate -> 
           [i|Object's EE certificate is revoked.|]
 
-      CertificateIsInTheFuture {..} -> 
+      ObjectValidityIsInTheFuture {..} -> 
           [i|Certificate's 'not valid before' time #{before} is in the future.|]
 
-      CertificateIsExpired {..} ->
+      ObjectIsExpired {..} ->
           [i|Certificate is expired, its 'not valid after' time #{after} is in the past.|]
 
       AKIIsNotEqualsToParentSKI childAKI parentSKI ->

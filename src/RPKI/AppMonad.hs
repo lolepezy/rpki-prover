@@ -177,6 +177,9 @@ inSubVScope = inSubVScope' TextFocus
 inSubObjectVScope :: Monad m =>  ObjectKey -> ValidatorT m r -> ValidatorT m r
 inSubObjectVScope = inSubVScope' ObjectFocus
 
+inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
+inSubLocationScope = inSubVScope' LocationFocus
+
 inSubVScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 inSubVScope' c t = local (& typed @VScope %~ subScope' c t)
 

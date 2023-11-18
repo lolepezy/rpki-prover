@@ -71,7 +71,7 @@ data CaShortcut = CaShortcut {
     deriving anyclass TheBinary
 
 data Ca = CaShort CaShortcut
-        | CaFull CaCerObject
+        | CaFull (Located CaCerObject)
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
@@ -113,14 +113,14 @@ data GbrShortcut = GbrShortcut {
     deriving anyclass TheBinary
 
 
-instance WithValidityPeriod RoaShortcut where
+instance {-# OVERLAPPING #-}  WithValidityPeriod RoaShortcut where
     getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
 
-instance WithValidityPeriod AspaShortcut where
+instance {-# OVERLAPPING #-}  WithValidityPeriod AspaShortcut where
     getValidityPeriod AspaShortcut {..} = (notValidBefore, notValidAfter)
 
-instance WithValidityPeriod BgpSecShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
     getValidityPeriod BgpSecShortcut {..} = (notValidBefore, notValidAfter)
 
-instance WithValidityPeriod GbrShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod GbrShortcut where
     getValidityPeriod GbrShortcut {..} = (notValidBefore, notValidAfter)

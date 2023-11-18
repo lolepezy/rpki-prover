@@ -1,7 +1,7 @@
 module RPKI.Store.AppStorage where
 
 import           RPKI.AppContext
-import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.AppLmdbStorage
 

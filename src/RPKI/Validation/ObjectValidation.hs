@@ -192,7 +192,7 @@ validateResourceCert now cert parentCert vcrl = do
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate
 
-    validateCertValidityPeriod cert now    
+    validateObjectValidityPeriod cert now    
 
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
@@ -203,13 +203,13 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateCertValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
-validateCertValidityPeriod c (Now now) = do 
+validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
+validateObjectValidityPeriod c (Now now) = do 
     let (before, after) = getValidityPeriod c
     when (now < before) $ 
-        vPureError $ CertificateIsInTheFuture before after
+        vPureError $ ObjectValidityIsInTheFuture before after
     when (now > after) $ 
-        vPureError $ CertificateIsExpired before after
+        vPureError $ ObjectIsExpired before after
 
 
 validateResources ::

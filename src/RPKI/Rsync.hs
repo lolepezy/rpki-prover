@@ -254,10 +254,10 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
                     DB.linkObjectToUrl tx objectStore rpkiURL hash
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
-                    inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
+                    inSubLocationScope (getURL rpkiUrl) $ appError e                 
                 ObjectParsingProblem rpkiUrl (VErr e) -> do                    
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
-                    inSubObjectVScope (unURI $ getURL rpkiUrl) $ appError e                 
+                    inSubLocationScope (getURL rpkiUrl) $ appError e                 
                 Success rpkiUrl so@StorableObject {..} -> do 
                     DB.putObject tx objectStore so worldVersion                    
                     DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)

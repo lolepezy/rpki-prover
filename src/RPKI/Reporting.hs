@@ -81,7 +81,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NoMFTButCachedMft AKI |
                         NoCRLOnMFT AKI |
                         MoreThanOneCRLOnMFT AKI [T2 Text Hash] |
-                        NoMFTSIA Locations |
+                        NoMFTSIA |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |
@@ -94,8 +94,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
                         NextUpdateTimeBeforeThisUpdateTime  { nextUpdateTime :: Instant, thisUpdateTime :: Instant } |
                         RevokedResourceCertificate |
-                        CertificateIsInTheFuture { before :: Instant, after :: Instant } |
-                        CertificateIsExpired { before :: Instant, after :: Instant } |
+                        ObjectValidityIsInTheFuture { before :: Instant, after :: Instant } |
+                        ObjectIsExpired { before :: Instant, after :: Instant } |
                         AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
                         ManifestEntryDoesn'tExist Hash Text |
                         OverclaimedResources PrefixesAndAsns |
@@ -106,9 +106,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertificateDoesntHaveSIA | 
                         AIANotSameAsParentLocation Text Locations | 
                         CircularReference Hash |
-                        CertificatePathTooDeep ObjectKey Int |
-                        TreeIsTooBig ObjectKey Int |
-                        TooManyRepositories ObjectKey Int |
+                        CertificatePathTooDeep Locations Int |
+                        TreeIsTooBig Locations Int |
+                        TooManyRepositories Locations Int |
                         ValidationTimeout Int |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
@@ -240,7 +240,8 @@ instance Semigroup Validations where
 
 
 data Focus = TAFocus Text 
-            | LocationFocus Text
+            | LocationFocus URI
+            | LinkFocus URI
             | ObjectFocus ObjectKey
             | HashFocus Hash
             | PPFocus RpkiURL

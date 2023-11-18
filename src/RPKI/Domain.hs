@@ -418,6 +418,9 @@ data Located a = Located {
 instance WithLocations (Located a) where
     getLocations Located {..} = locations
 
+instance WithLocations Locations where
+    getLocations = id
+
 instance WithAKI a => WithAKI (Located a) where
     getAKI (Located _ o) = getAKI o    
 
