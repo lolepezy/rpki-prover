@@ -45,7 +45,7 @@ data MftEntry = MftEntry {
 
 data MftShortcut = MftShortcut { 
         key            :: ObjectKey,
-        entries        :: Map.Map ObjectKey MftEntry,
+        nonCrlEntries  :: Map.Map ObjectKey MftEntry,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
         crlShortcut    :: CrlShortcut
@@ -124,3 +124,14 @@ instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
 
 instance {-# OVERLAPPING #-} WithValidityPeriod GbrShortcut where
     getValidityPeriod GbrShortcut {..} = (notValidBefore, notValidAfter)
+
+
+getMftChildSerial :: MftChild -> Maybe Serial     
+getMftChildSerial = \case 
+    CaChild _ serial     -> Just serial 
+    RoaChild _ serial    -> Just serial 
+    AspaChild _ serial   -> Just serial 
+    BgpSecChild _ serial -> Just serial 
+    GbrChild _ serial    -> Just serial 
+    _                    -> Nothing
+              

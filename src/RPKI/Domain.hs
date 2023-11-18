@@ -223,6 +223,9 @@ instance Show Hash where
 instance Show KI where
     show (KI b) = hexShow b
 
+instance {-# OVERLAPPING #-} WithSerial Serial where
+    getSerial = id
+
 hexShow :: BSS.ShortByteString -> String
 hexShow = SC.cs . Hex.encode . BSS.fromShort
 
