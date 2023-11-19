@@ -474,28 +474,29 @@ validateCaNoLimitChecks
                                 pure $ vError $ NoMFT childrenAki
                             Just mft ->
                                 -- No shortcut found, so do the full validation for the manifest
-                                pure $ do  
+                                pure $ do                                      
                                     caFull <- getFullCa appContext ca
-                                    T2 payloads _ <- manifestFullValidation caFull mft Nothing
+                                    T2 payloads _ <- manifestFullValidation caFull mft Nothing                                    
                                     oneMoreMft
+                                    visitKey topDownContext (mft ^. typed)
                                     pure $! payloads
 
-                    Just mftShortcut -> do 
+                    Just mftShortcut -> do                         
                         -- Find the key of the latest real manifest
                         findLatestMftKeyByAKI tx db childrenAki >>= \case 
-                            Nothing -> pure $ do 
+                            Nothing -> pure $ do                                 
                                 -- That is really weird and should normally never happen. 
                                 -- Do not interrupt validation here, but complain in the log
                                 vWarn $ NoMFTButCachedMft childrenAki
-                                let mftKey = mftShortcut ^. #key
-                                let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftKey}.|]
+                                let mftShortKey = mftShortcut ^. #key
+                                let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message                                
                                 collectPayloads mftShortcut Nothing 
                                     (getFullCa appContext ca)
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext (mftShortcut ^. #crlKey))                                    
-                                `andThen`
-                                    oneMoreMft
+                                `andThen` 
+                                    (oneMoreMft >> visitKey topDownContext (mftShortcut ^. #key))
 
                             Just mftKey 
                                 | mftShortcut ^. #key == mftKey -> 
@@ -504,18 +505,19 @@ validateCaNoLimitChecks
                                     pure $ collectPayloads mftShortcut Nothing 
                                                 (getFullCa appContext ca)
                                                 (getCrlByKey appContext (mftShortcut ^. #crlKey))
-                                            `andThen`
-                                                oneMoreMft
+                                            `andThen` 
+                                                (oneMoreMft >> visitKey topDownContext mftKey)
                                 | otherwise ->                                     
                                     getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $ 
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
-                                        Just mft -> pure $ do
+                                        Just mft -> pure $ do                                            
                                             fullCa <- getFullCa appContext ca
                                             T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut)
                                             r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
                                                         (pure fullCa)
                                                         (findAndValidateCrl fullCa mft)
+                                            for_ [mft ^. typed, mftKey] $ visitKey topDownContext
                                             (pure $! r1 <> r2) 
                                                  `andThen`
                                                     oneMoreMft
@@ -552,8 +554,8 @@ validateCaNoLimitChecks
                     validateMftLocation locatedMft fullCa
 
                     -- TODO Add fiddling with shortcut version of CRL here                    
-                    keyedValidCrl@(Keyed validCrl _) <- findAndValidateCrl fullCa keyedMft
-                    oneMoreCrl
+                    keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft
+                    oneMoreCrl >> visitKey topDownContext crlKey
 
                     -- MFT can be revoked by the CRL that is on this MFT -- detect 
                     -- revocation as well, this is clearly and error                               
@@ -565,16 +567,16 @@ validateCaNoLimitChecks
                     -- If MFT shortcut is present, filter children that need validation, 
                     -- children that are already on the shortcut are validated and can be 
                     -- skipped here
-                    let (newChildren, overlappingChildren) =
+                    let (newChildren, overlappingChildren, somethingDeleted) =
                             case mftShortcut of 
-                                Nothing       -> (nonCrlChildren, [])
+                                Nothing       -> (nonCrlChildren, [], False)
                                 Just mftShort -> mftDiff mftShort nonCrlChildren
 
                     -- If CRL has changed, we have to recheck if all the children are 
                     -- not revoked. If will be checked by full validation for newChildren
                     -- but it needs to be explicitly checked for overlappingChildren
                     forM_ mftShortcut $ \mftShortcut -> 
-                        checkNoChildrenAreRevoked mftShortcut overlappingChildren validCrl
+                        checkNoChildrenAreRevoked mftShortcut overlappingChildren keyedValidCrl
 
                     -- Mark all manifest entries as visited to avoid the situation
                     -- when some of the children are garbage-collected from the cache 
@@ -607,9 +609,10 @@ validateCaNoLimitChecks
                             when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $  
                                 addMftShortcut topDownContext 
                                     (UpdateMftShortcut aki nextMftShortcut)
-                        
-                            -- TODO Complete it
-                            unless (null newEntries) $
+
+                            -- Update manifest shortcut children in case there are new 
+                            -- or deleted children in the new manifest
+                            when (not (null newChildren) || somethingDeleted)  $
                                 addMftShortcut topDownContext 
                                     (UpdateMftShortcutChildren aki nextMftShortcut)
 
@@ -649,18 +652,33 @@ validateCaNoLimitChecks
 
             -- Calculate difference bentween a manifest shortcut 
             -- and a real manifest object.
-            mftDiff MftShortcut {..} newMftChidlren = 
-                List.partition (\(T3 fileName _  k) -> 
-                        isNewEntry k fileName nonCrlEntries) newMftChidlren
+            mftDiff MftShortcut {..} (newMftChidlren :: [T3 Text a ObjectKey]) =                
+                (newOnes, overlapping, not $ Map.null $ deletedEntries nonCrlEntries)
               where
+                (newOnes, overlapping) = List.partition (\(T3 fileName _  k) -> 
+                        isNewEntry k fileName nonCrlEntries) newMftChidlren                
+
                 -- it's not in the map of shortcut children or it has changed 
                 -- its name (very unlikely but can happen in theory)                
                 isNewEntry key fileName shortcutChildren = 
                     case Map.lookup key shortcutChildren of
                         Nothing -> True
                         Just e  -> e ^. #fileName /= fileName 
+                                
+                deletedEntries shortcutChildren = 
+                    -- If we delete everything from shortcutChildren that is present in newMftChidlren
+                    -- we only have the entries left that were deleted from shortcutChildren
+                    foldr (\(T3 fileName _ key) shortcutChildren -> 
+                            case Map.lookup key shortcutChildren of 
+                                Nothing -> shortcutChildren
+                                Just e 
+                                    | e ^. #fileName == fileName -> Map.delete key shortcutChildren
+                                    | otherwise -> shortcutChildren) 
+                            nonCrlEntries
+                            newMftChidlren
+                
 
-            -- utility for repeated peace of code
+            -- Utility for repeated peace of code
             makeEntriesWithMap childrenList entryMap makeEntry = 
                 [ (key, makeEntry entry fileName) 
                         | (key, fileName, Just entry) <- [ (key, fileName, Map.lookup key entryMap) 
@@ -668,22 +686,14 @@ validateCaNoLimitChecks
 
 
             -- Check if shortcut children are revoked
-            checkNoChildrenAreRevoked MftShortcut {..} children validCrl = do 
-                z <- roTxT database $ \tx db -> getKeyByHash tx db (getHash validCrl)
-                case z of 
-                    Nothing -> internalError appContext 
-                                    [i|Internal error, can't find a CRL child by its hash #{getHash validCrl}.|]
-                    Just newCrlKey 
-                        -- CRL if the same as in the shortcut
-                        | newCrlKey == crlKey -> pure ()
-                        -- CRL has changed, need to re-check childreen
-                        | otherwise -> 
-                            forM_ children $ \(T3 _ _ key) ->
-                                for_ (Map.lookup key nonCrlEntries) $ \MftEntry {..} ->
-                                    for_ (getMftChildSerial child) $ \serial ->
-                                        when (isRevoked serial validCrl) $
-                                            inSubVScope' ObjectFocus key $                                       
-                                                vWarn RevokedResourceCertificate   
+            checkNoChildrenAreRevoked MftShortcut {..} children (Keyed validCrl newCrlKey) = 
+                when (newCrlKey /= crlKey) $ do                        
+                    forM_ children $ \(T3 _ _ key) ->
+                        for_ (Map.lookup key nonCrlEntries) $ \MftEntry {..} ->
+                            for_ (getMftChildSerial child) $ \serial ->
+                                when (isRevoked serial validCrl) $
+                                    inSubVScope' ObjectFocus key $                                       
+                                        vWarn RevokedResourceCertificate   
 
 
             -- this indicates the difeerence between RFC9286-bis 
