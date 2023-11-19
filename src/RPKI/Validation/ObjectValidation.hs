@@ -287,14 +287,16 @@ ipMustBeEmpty ips errConstructor =
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
-    WithRawResourceCertificate c =>
+    (WithRawResourceCertificate c, WithSKI c) =>
     Now ->
     CrlObject ->
     c ->
     PureValidatorT (Validated CrlObject)
-validateCrl now crlObject parentCert = do
-    let SignCRL {..} = signCrl crlObject
+validateCrl now crlObject@CrlObject {..} parentCert = do
+    let SignCRL {..} = signCrl
     signatureCheck $ validateCRLSignature crlObject parentCert
+    when (toAKI (getSKI parentCert) /= aki) $ 
+        vPureError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki
     case nextUpdateTime of 
         Nothing   -> vPureError NextUpdateTimeNotSet
         Just next -> validateUpdateTimes now thisUpdateTime next

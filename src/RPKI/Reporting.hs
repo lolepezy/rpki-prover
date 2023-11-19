@@ -89,6 +89,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NoCRLExists AKI |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
+                        CRL_AKI_DifferentFromCertSKI SKI AKI |
                         NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
