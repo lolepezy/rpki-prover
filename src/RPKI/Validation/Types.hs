@@ -31,6 +31,7 @@ data MftChild = CaChild CaShortcut Serial
               | AspaChild AspaShortcut Serial
               | BgpSecChild BgpSecShortcut Serial
               | GbrChild GbrShortcut Serial
+              -- Invalid, revoked or an object of unknown type
               | TroubledChild ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -48,14 +49,7 @@ data MftShortcut = MftShortcut {
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
-        crlShortcut    :: CrlShortcut
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
-
-data CrlShortcut = CrlShortcut { 
-        key            :: ObjectKey,        
-        revokedSerials :: Set.Set Integer
+        crlKey         :: ObjectKey
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
