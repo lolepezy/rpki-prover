@@ -225,7 +225,7 @@ getValidationsImpl AppContext {..} getVersionF = do
         runMaybeT $ do
             version     <- MaybeT $ getVersionF db tx
             validations <- MaybeT $ validationsForVersion tx db version
-            let validationDtos = map toVR $ validationsToList validations
+            let validationDtos = map toVDto $ validationsToList validations
             pure $ ValidationsDto {
                     worldVersion = version,
                     timestamp    = versionToMoment version,
@@ -398,4 +398,35 @@ getVersions AppContext {..} = liftIO $ do
     sortBy (flip compare) <$> roTx db (`allVersions` db)
 
 
--- resolveLocations :: Focus -> Focus
+resolveVDto :: (MonadIO m, Storage s) => 
+                AppContext s                 
+                -> OriginalVDto 
+                -> m ResolvedVDto
+resolveDto AppContext {..} (OriginalVDto fd) = 
+    roTxT database $ \tx db -> do 
+        resolvedFocuses <- mapM (resolveLocations tx db) $ fd ^. #paths
+        pure $ ResolvedVDto $ fd & #path .~ resolvedFocuses    
+
+resolveLocations :: (MonadIO m, Storage s) => 
+                    tx 
+                -> db 
+                -> Focus 
+                -> m FocusResolvedDto
+resolveLocations tx db = \case 
+    TAFocus t               -> pure $ TextDto t
+    TextFocus t             -> pure $ TextDto t
+    PPFocus u               -> pure $ DirectLink $ totext u
+    RepositoryFocus u       -> pure $ DirectLink $ totext u    
+    LocationFocus (URI uri) -> pure $ ObjectLink uri
+    LinkFocus (URI uri)     -> pure $ DirectLink uri
+    ObjectFocus key         -> locations tx db key
+    HashFocus hash          -> getKeyByHash tx db hash >>= \case 
+                                    Nothing  -> pure $ TextDto [i|Can't find key for hash #{hash}|]
+                                    Just key -> locations tx db key        
+  where
+    locations tx db key = do 
+        getLocationsByKey tx db key >>= \case 
+            Nothing  -> pure $ TextDto [i|Can't find locations for key #{key}|]
+            Just loc -> pure $ ObjectLink $ toText $ pickLocation loc
+
+    

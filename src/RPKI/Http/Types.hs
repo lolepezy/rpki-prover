@@ -65,14 +65,26 @@ data IssueDto = ErrorDto Text | WarningDto Text
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToJSON, ToSchema)
 
-data FullVDto = FullVDto {
+data FocusResolvedDto = TextDto Text 
+                    | ObjectLink Text
+                    | DirectLink Text
+                    | TA_UI Text
+    deriving stock (Show, Eq, Ord)      
+
+data FullVDto focus = FullVDto {
         issues  :: [IssueDto],
-        path    :: [Focus],
+        path    :: [focus],
         url     :: Focus
     } 
     deriving stock (Eq, Show, Generic)
 
-newtype MinimalVDto = MinimalVDto FullVDto
+newtype OriginalVDto = OriginalVDto (FullVDto Focus)
+    deriving stock (Eq, Show, Generic)
+
+newtype ResolvedVDto = ResolvedVDto (FullVDto FocusResolvedDto)
+    deriving stock (Eq, Show, Generic)
+
+newtype MinimalVDto = MinimalVDto ResolvedVDto
     deriving stock (Eq, Show, Generic)
 
 data VrpDto = VrpDto {
@@ -381,17 +393,22 @@ instance ToSchema ResourcesDto
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
 
-instance ToSchema FullVDto
-instance ToJSON FullVDto where
+instance ToSchema (FullVDto Focus)
+instance ToJSON f => ToJSON (FullVDto f) where
     toJSON FullVDto {..} = object [         
             "url"       .= url,
             "full-path" .= path,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
+instance ToSchema FocusResolvedDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance ToSchema (FullVDto FocusResolvedDto)
+instance ToSchema ResolvedVDto
 instance ToSchema MinimalVDto
 instance ToJSON MinimalVDto where
-    toJSON (MinimalVDto FullVDto {..}) = object [         
+    toJSON (MinimalVDto (ResolvedVDto FullVDto {..})) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
@@ -433,7 +450,7 @@ instance ToJSON (DtoScope s) where
 
 instance ToSchema (DtoScope 'Metric)
 
-toMinimalValidations :: ValidationsDto FullVDto -> ValidationsDto MinimalVDto
+toMinimalValidations :: ValidationsDto ResolvedVDto -> ValidationsDto MinimalVDto
 toMinimalValidations = (& #validations %~ map MinimalVDto)
 
 toMetricsDto :: RawMetric -> MetricsDto

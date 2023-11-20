@@ -46,8 +46,8 @@ import           RPKI.Time
 
 
 mainPage :: SystemInfo 
-        -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) 
-        -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) -> Html
+        -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) 
+        -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) -> Html
 mainPage systemInfo validation asyncFecth =     
     H.docTypeHtml $ do
         H.head $ 
@@ -278,7 +278,7 @@ rsyncMetricsHtml rsyncMetricMap =
                     genTd $ toHtml $ rm ^. #totalTimeMs            
 
 
-validaionDetailsHtml :: [FullVDto] -> Html
+validaionDetailsHtml :: [ResolvedVDto] -> Html
 validaionDetailsHtml result = 
     H.table ! A.class_ "gen-t" $ do 
         H.thead $ tr $ do 
@@ -301,7 +301,7 @@ validaionDetailsHtml result =
                         H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml
             
   where      
-    vrHtml (FullVDto{..}, index) = do 
+    vrHtml (ResolvedVDto (FullVDto{..}), index) = do 
         let objectUrl = Prelude.head path         
         forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
@@ -314,9 +314,9 @@ validaionDetailsHtml result =
                     space 
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
-                    H.summary $ focusLink objectUrl
+                    H.summary $ focusLink1 objectUrl
                     forM_ (Prelude.tail path) $ \p -> 
-                        focusLink p >> H.br
+                        focusLink1 p >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
       where
@@ -360,11 +360,11 @@ validationPathTootip = do
     space >> space
         
 
-groupByTa :: [FullVDto] -> Map Text [FullVDto]
+groupByTa :: [ResolvedVDto] -> Map Text [ResolvedVDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
     $ [ (focusToText ta, [vr]) 
-            | vr@FullVDto {..} <- vrs, 
+            | vr@(ResolvedVDto FullVDto {..}) <- vrs, 
               ta <- lastOne path ]    
   where
     lastOne [] = []
@@ -425,16 +425,10 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
 
-
-data FocusUIDto = TextUI Text 
-                | ObjectLink Text
-                | DirectLink Text
-                | TA_UI Text
-    deriving stock (Show, Eq, Ord)                
-
-focusLink1 :: FocusUIDto -> Html
+        
+focusLink1 :: FocusResolvedDto -> Html
 focusLink1 = \case 
-    TextUI txt      -> toHtml txt
+    TextDto txt     -> toHtml txt
     TA_UI txt       -> toHtml txt
     ObjectLink txt  -> objectLink txt
     DirectLink uri  -> directLink uri        

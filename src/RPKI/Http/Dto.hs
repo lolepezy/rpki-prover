@@ -88,16 +88,16 @@ gbrToDto (Gbr vcardBS) = let
     in GbrDto {..}
 
 
-toVR :: (Scope a, Set.Set VIssue) -> FullVDto
-toVR (Scope scope, issues) = FullVDto {
-        issues = map toDto $ Set.toList issues,
-        path   = NonEmpty.toList scope,
-        url    = NonEmpty.head scope
-    }
-  where
-    toDto = \case
-        VErr e               -> ErrorDto $ toMessage e
-        (VWarn (VWarning w)) -> WarningDto $ toMessage w
+-- toVDto :: (Scope a, Set.Set VIssue) -> ResolvedVDto
+-- toVDto (Scope scope, issues) = FullVDto {
+--         issues = map toDto $ Set.toList issues,
+--         path   = NonEmpty.toList scope,
+--         url    = NonEmpty.head scope
+--     }
+--   where
+--     toDto = \case
+--         VErr e               -> ErrorDto $ toMessage e
+--         (VWarn (VWarning w)) -> WarningDto $ toMessage w
 
 
 vrpDtosToCSV :: [VrpDto] -> RawCSV
@@ -125,7 +125,7 @@ vrpSetToCSV vrpDtos =
         str "AS" <> str (show asn) <> ch ',' <>
         str (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
-
+ 
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
