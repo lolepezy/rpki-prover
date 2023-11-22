@@ -478,9 +478,6 @@ mTrace t = Set.singleton t
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty mempty
 
-validationsToList :: Validations -> [(VScope, Set VIssue)]
-validationsToList (Validations vMap) = Map.toList vMap 
-
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
 updateMetricInMap ms f (MetricMap (MonoidalMap mm)) = 

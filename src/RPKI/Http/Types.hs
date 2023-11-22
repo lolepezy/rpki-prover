@@ -70,7 +70,7 @@ data FocusResolvedDto = TextDto Text
                     | ObjectLink Text
                     | DirectLink Text
                     | TA_UI Text
-    deriving stock (Show, Eq, Ord)      
+    deriving stock (Show, Eq, Ord, Generic)      
 
 data FullVDto focus = FullVDto {
         issues  :: [IssueDto],
@@ -409,12 +409,16 @@ instance ToSchema FocusResolvedDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema ResolvedVDto
+instance ToJSON FocusResolvedDto
+instance ToJSON ResolvedVDto
 instance ToSchema f => ToSchema (MinimalVDto f)
 instance ToJSON (MinimalVDto t) where
     toJSON (MinimalVDto FullVDto {..}) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
+
+instance ToJSON OriginalVDto
 
 issuesJson :: [IssueDto] -> [Value]
 issuesJson issues = flip map issues $ \case

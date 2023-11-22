@@ -88,16 +88,16 @@ gbrToDto (Gbr vcardBS) = let
     in GbrDto {..}
 
 
--- toVDto :: (Scope a, Set.Set VIssue) -> ResolvedVDto
--- toVDto (Scope scope, issues) = FullVDto {
---         issues = map toDto $ Set.toList issues,
---         path   = NonEmpty.toList scope,
---         url    = NonEmpty.head scope
---     }
---   where
---     toDto = \case
---         VErr e               -> ErrorDto $ toMessage e
---         (VWarn (VWarning w)) -> WarningDto $ toMessage w
+toVDto :: (Scope a, Set.Set VIssue) -> OriginalVDto
+toVDto (Scope scope, issues) = OriginalVDto $ FullVDto {
+        issues = map toDto $ Set.toList issues,
+        path   = NonEmpty.toList scope,
+        url    = NonEmpty.head scope
+    }
+  where
+    toDto = \case
+        VErr e               -> ErrorDto $ toMessage e
+        (VWarn (VWarning w)) -> WarningDto $ toMessage w
 
 
 vrpDtosToCSV :: [VrpDto] -> RawCSV

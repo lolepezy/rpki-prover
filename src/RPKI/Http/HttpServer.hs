@@ -26,6 +26,7 @@ import           Data.List                        (sortBy)
 import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
+import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
@@ -238,8 +239,8 @@ getValidationsImpl AppContext {..} getVersionF = do
     roTx db $ \tx ->
         runMaybeT $ do
             version     <- MaybeT $ getVersionF db tx
-            validations <- MaybeT $ validationsForVersion tx db version
-            let validationDtos = map toVDto $ validationsToList validations
+            (Validations vMap) <- MaybeT $ validationsForVersion tx db version
+            let validationDtos = map toVDto $ Map.toList vMap
             pure $ ValidationsDto {
                     worldVersion = version,
                     timestamp    = versionToMoment version,
@@ -416,11 +417,12 @@ resolveVDto :: (MonadIO m, Storage s) =>
                 -> DB s 
                 -> ValidationsDto OriginalVDto 
                 -> m (ValidationsDto ResolvedVDto)
-resolveVDto tx db vs = liftIO $ do
-    newValidations <- forM (vs ^. #validations) $ \(OriginalVDto fd) -> do 
-        resolvedFocuses <- mapM (resolveLocations tx db) $ fd ^. #path
-        pure $ ResolvedVDto $ fd & #path .~ resolvedFocuses    
-    pure $! vs & #validations .~ newValidations
+resolveVDto tx db vs = liftIO $ 
+    #validations (mapM resolveOrigDto) vs
+  where
+    resolveOrigDto (OriginalVDto fd) = 
+        fmap ResolvedVDto $ #path (mapM (resolveLocations tx db)) fd
+    
 
 resolveLocations :: Storage s => 
                    Tx s 'RO
