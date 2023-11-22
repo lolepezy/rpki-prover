@@ -21,6 +21,7 @@ import           Data.Text.Encoding          (encodeUtf8)
 
 import           Data.Aeson.Types
 import           Data.Proxy
+import           Data.Coerce
 
 import           GHC.Generics                (Generic)
 import qualified Data.Vector                 as V
@@ -81,10 +82,12 @@ data FullVDto focus = FullVDto {
 newtype OriginalVDto = OriginalVDto (FullVDto Focus)
     deriving stock (Eq, Show, Generic)
 
-newtype ResolvedVDto = ResolvedVDto (FullVDto FocusResolvedDto)
+newtype ResolvedVDto = ResolvedVDto  { 
+        unResolvedVDto :: FullVDto FocusResolvedDto
+    }
     deriving stock (Eq, Show, Generic)
 
-newtype MinimalVDto = MinimalVDto ResolvedVDto
+newtype MinimalVDto focus = MinimalVDto (FullVDto focus)
     deriving stock (Eq, Show, Generic)
 
 data VrpDto = VrpDto {
@@ -393,7 +396,8 @@ instance ToSchema ResourcesDto
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
 
-instance ToSchema (FullVDto Focus)
+instance ToSchema OriginalVDto
+instance ToSchema t => ToSchema (FullVDto t)
 instance ToJSON f => ToJSON (FullVDto f) where
     toJSON FullVDto {..} = object [         
             "url"       .= url,
@@ -404,11 +408,10 @@ instance ToJSON f => ToJSON (FullVDto f) where
 instance ToSchema FocusResolvedDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
-instance ToSchema (FullVDto FocusResolvedDto)
 instance ToSchema ResolvedVDto
-instance ToSchema MinimalVDto
-instance ToJSON MinimalVDto where
-    toJSON (MinimalVDto (ResolvedVDto FullVDto {..})) = object [         
+instance ToSchema f => ToSchema (MinimalVDto f)
+instance ToJSON (MinimalVDto t) where
+    toJSON (MinimalVDto FullVDto {..}) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
@@ -450,8 +453,10 @@ instance ToJSON (DtoScope s) where
 
 instance ToSchema (DtoScope 'Metric)
 
-toMinimalValidations :: ValidationsDto ResolvedVDto -> ValidationsDto MinimalVDto
-toMinimalValidations = (& #validations %~ map MinimalVDto)
+toMinimalValidations :: Coercible dto (FullVDto f) => 
+                        ValidationsDto dto 
+                     -> ValidationsDto (MinimalVDto f)
+toMinimalValidations = (& #validations %~ coerce)
 
 toMetricsDto :: RawMetric -> MetricsDto
 toMetricsDto rawMetrics = MetricsDto {
@@ -471,3 +476,12 @@ parseHash hashText = bimap
     (Text.pack . ("Broken hex: " <>) . show)
     mkHash
     $ Hex.decode $ encodeUtf8 hashText
+
+
+resolvedFocusToText :: FocusResolvedDto -> Text
+resolvedFocusToText = \case  
+    TextDto t    -> t 
+    ObjectLink t -> t
+    DirectLink t -> t
+    TA_UI t      -> t
+ 

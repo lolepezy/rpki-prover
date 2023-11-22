@@ -320,7 +320,7 @@ validaionDetailsHtml result =
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
       where
-        countP z FullVDto {..} = List.foldl' countEW z issues
+        countP z (ResolvedVDto FullVDto {..}) = List.foldl' countEW z issues
         countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
         countEW (!e, !w) (WarningDto _) = (e, w + 1)
 
@@ -363,7 +363,7 @@ validationPathTootip = do
 groupByTa :: [ResolvedVDto] -> Map Text [ResolvedVDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
-    $ [ (focusToText ta, [vr]) 
+    $ [ (resolvedFocusToText ta, [vr]) 
             | vr@(ResolvedVDto FullVDto {..}) <- vrs, 
               ta <- lastOne path ]    
   where

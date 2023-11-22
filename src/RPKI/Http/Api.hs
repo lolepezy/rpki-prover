@@ -61,8 +61,12 @@ data API api = API {
 
         tals :: api :- "tals" :> Get '[JSON] [TalDto],
                 
-        validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),
-        fullValidationResults    :: api :- "validations-full" :> Get '[JSON] (ValidationsDto FullVDto),
+        minimalValidationResults  :: api :- "validations"      
+                                    :> Get '[JSON] (ValidationsDto (MinimalVDto FocusResolvedDto)),
+        fullValidationResults     :: api :- "validations-full" 
+                                    :> Get '[JSON] (ValidationsDto ResolvedVDto),
+        originalValidationResults :: api :- "validations-original" 
+                                    :> Get '[JSON] (ValidationsDto OriginalVDto),
 
         metrics :: api   :- "metrics" :> Get '[JSON] MetricsDto,                
 
@@ -129,6 +133,10 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "Validation results for the latest validation run"),
 
             ("/validations-full", mempty & get ?~ jsonOn200 
+                [i|Returns validation results for the last validation run, but every 
+                object represented with full URL path in the RPKI tree, starting from TA.|]),
+
+            ("/validations-original", mempty & get ?~ jsonOn200 
                 [i|Returns validation results for the last validation run, but every 
                 object represented with full URL path in the RPKI tree, starting from TA.|]),
 

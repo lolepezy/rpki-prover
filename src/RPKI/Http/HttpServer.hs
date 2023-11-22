@@ -7,16 +7,18 @@
 module RPKI.Http.HttpServer where
 
 import           Control.Lens
+import           Control.Monad
 
 import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
 import           FileEmbedLzma
 
 import           Servant.Server.Generic
-import           Servant hiding (contentType)
+import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
 import           Data.Ord
@@ -27,6 +29,7 @@ import qualified Data.List                        as List
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
+import qualified Data.Text                        as Text
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -80,8 +83,9 @@ httpApi appContext = genericServe HttpApi {
         slurms = getAllSlurms appContext,
         tals = getAllTALs appContext,
 
-        fullValidationResults    = getValidationsDto appContext,
-        validationResultsMinimal = toMinimalValidations <$> getValidationsDto appContext,
+        fullValidationResults     = getValidationsDto appContext,
+        minimalValidationResults  = toMinimalValidations <$> getValidationsDto appContext,
+        originalValidationResults = getValidationsOriginalDto appContext,
         metrics = snd <$> getMetrics appContext,
         repositories = getPPs appContext,
         lmdbStats = getStats appContext,
@@ -102,12 +106,14 @@ httpApi appContext = genericServe HttpApi {
                                 afVersion     <- MaybeT $ getLastAsyncFetchVersion appContext
                                 afMetrics     <- MaybeT $ metricsForVersion tx db afVersion
                                 afValidations <- MaybeT $ getValidationsForVersion appContext afVersion
-                                pure (afVersion, afValidations, afMetrics)
+                                resolvedValidations <- lift $ resolveVDto tx db afValidations
+                                pure (afVersion, resolvedValidations, afMetrics)
                     
                 validation <- liftIO $ roTx db $ \tx -> runMaybeT $ do                 
                                 vMetrics     <- MaybeT $ metricsForVersion tx db validationVersion
                                 vValidations <- MaybeT $ getValidationsForVersion appContext validationVersion
-                                pure (validationVersion, vValidations, vMetrics)
+                                resolvedValidations <- lift $ resolveVDto tx db vValidations
+                                pure (validationVersion, resolvedValidations, vMetrics)
 
                 systemInfo <- liftIO $ readTVarIO $ appContext ^. #appState . #system
                 pure $ mainPage systemInfo validation asyncFetch
@@ -205,20 +211,28 @@ getGBRs AppContext {..} = do
 getValidationsForVersion :: Storage s => 
                             AppContext s 
                         -> WorldVersion 
-                        -> IO (Maybe (ValidationsDto FullVDto))
+                        -> IO (Maybe (ValidationsDto OriginalVDto))
 getValidationsForVersion appContext worldVersion = 
     getValidationsImpl appContext (\_ _ -> pure $ Just worldVersion)
 
-getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                    AppContext s -> m (ValidationsDto FullVDto)
-getValidationsDto appContext = do
-    vs <- liftIO $ getValidationsImpl appContext getLastValidationVersion    
+getValidationsOriginalDto :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                            AppContext s -> m (ValidationsDto OriginalVDto)
+getValidationsOriginalDto appContext = do
+    vs <- liftIO (getValidationsImpl appContext getLastValidationVersion)
     maybe notFoundException pure vs
+    
+getValidationsDto :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                    AppContext s -> m (ValidationsDto ResolvedVDto)
+getValidationsDto appContext@AppContext {..} = do
+    liftIO (getValidationsImpl appContext getLastValidationVersion) >>= \case 
+        Nothing -> notFoundException
+        Just vs -> roTxT database $ \tx db -> resolveVDto tx db vs        
+    
 
 getValidationsImpl :: Storage s => 
-                    AppContext s 
+                    AppContext s    
                 -> (DB s -> Tx s 'RO -> IO (Maybe WorldVersion))
-                -> IO (Maybe (ValidationsDto FullVDto))
+                -> IO (Maybe (ValidationsDto OriginalVDto))
 getValidationsImpl AppContext {..} getVersionF = do
     db <- readTVarIO database
     roTx db $ \tx ->
@@ -362,23 +376,22 @@ getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
     SystemInfo {..} <- readTVarIO $ appState ^. #system
     let proverVersion = rpkiProverVersion    
+    
+    let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
+    resources <- forM z $ \(scope, resourceUsage) -> do  
+                    let aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
+                    let maxMemory = resourceUsage ^. #maxMemory
+                    let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
+                    tag <- fmtScope scope
+                    pure ResourcesDto {..}
 
-    tag <- fmtScope scope
-
-    let toResources (scope, resourceUsage) = let                
-                aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
-                maxMemory = resourceUsage ^. #maxMemory
-                avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
-            in ResourcesDto {..}
-
-    let resources = map toResources $ MonoidalMap.toList $ unMetricMap $ metrics ^. #resources        
     pure SystemDto {..}  
   where
     fmtScope scope =
         fmap (Text.intercalate "/") $
             roTxT database $ \tx db -> do         
                 forM (scopeList scope) $ \s -> 
-                    focusToText <$> resolveFocus tx db s 
+                    resolvedFocusToText <$> resolveLocations tx db s 
 
 
 
@@ -399,24 +412,26 @@ getVersions AppContext {..} = liftIO $ do
 
 
 resolveVDto :: (MonadIO m, Storage s) => 
-                AppContext s                 
-                -> OriginalVDto 
-                -> m ResolvedVDto
-resolveDto AppContext {..} (OriginalVDto fd) = 
-    roTxT database $ \tx db -> do 
-        resolvedFocuses <- mapM (resolveLocations tx db) $ fd ^. #paths
+                Tx s 'RO
+                -> DB s 
+                -> ValidationsDto OriginalVDto 
+                -> m (ValidationsDto ResolvedVDto)
+resolveVDto tx db vs = liftIO $ do
+    newValidations <- forM (vs ^. #validations) $ \(OriginalVDto fd) -> do 
+        resolvedFocuses <- mapM (resolveLocations tx db) $ fd ^. #path
         pure $ ResolvedVDto $ fd & #path .~ resolvedFocuses    
+    pure $! vs & #validations .~ newValidations
 
-resolveLocations :: (MonadIO m, Storage s) => 
-                    tx 
-                -> db 
+resolveLocations :: Storage s => 
+                   Tx s 'RO
+                -> DB s 
                 -> Focus 
-                -> m FocusResolvedDto
+                -> IO FocusResolvedDto
 resolveLocations tx db = \case 
     TAFocus t               -> pure $ TextDto t
     TextFocus t             -> pure $ TextDto t
-    PPFocus u               -> pure $ DirectLink $ totext u
-    RepositoryFocus u       -> pure $ DirectLink $ totext u    
+    PPFocus u               -> pure $ DirectLink $ toText u
+    RepositoryFocus u       -> pure $ DirectLink $ toText u    
     LocationFocus (URI uri) -> pure $ ObjectLink uri
     LinkFocus (URI uri)     -> pure $ DirectLink uri
     ObjectFocus key         -> locations tx db key
