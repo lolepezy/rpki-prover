@@ -166,7 +166,7 @@ instance ToJSON Count where
     toJSON (Count s) = toJSON s
 
 instance ToJSON ObjectKey where
-    toJSON (ObjectKey (ArtificialKey i)) = toJSON i
+    toJSON (ObjectKey (ArtificialKey k)) = toJSON k
 
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
@@ -405,6 +405,7 @@ instance ToJSON DecodedBase64 where
 instance ToJSON LogLevel
 instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
+instance ToJSON ValidationAlgorithm
 instance ToJSON TAL
 -- $(deriveToJSON defaultOptions ''TAL)
 instance ToJSON HttpApiConfig

@@ -98,6 +98,13 @@ data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+
+data ValidationAlgorithm = FullEveryIteration | Incremental
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+
+
 data ValidationConfig = ValidationConfig {    
         revalidationInterval           :: Seconds,
         rrdpRepositoryRefreshInterval  :: Seconds,
@@ -124,7 +131,9 @@ data ValidationConfig = ValidationConfig {
         maxObjectSize                  :: Integer,
 
         -- Manimal allowed size of an individual object 
-        minObjectSize                  :: Integer
+        minObjectSize                  :: Integer,
+
+        validationAlgorithm            :: ValidationAlgorithm
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -214,7 +223,8 @@ defaultConfig = Config {
         -- every object contains at least 256 bytes of RSA key, 
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
-        maxTaRepositories              = 3000
+        maxTaRepositories              = 3000,
+        validationAlgorithm            = FullEveryIteration
     },
     httpApiConf = HttpApiConfig {
         port = 9999

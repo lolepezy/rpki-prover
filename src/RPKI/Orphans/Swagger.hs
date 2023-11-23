@@ -134,6 +134,7 @@ instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
 instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
+instance ToSchema ValidationAlgorithm
 
 instance ToSchema a => ToSchema (Located a)
 

@@ -235,6 +235,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
                 & #validationConfig . #manifestProcessing .~
                         (if strictManifestValidation then RFC6486_Strict else RFC9286)
+                & #validationConfig . #validationAlgorithm .~
+                        (if incrementalValidation then Incremental else FullEveryIteration)
                 & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
                 & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
@@ -674,7 +676,10 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",
 
     maxValidationMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."    
+        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
+
+    incrementalValidation :: wrapped ::: Bool <?>
+        "Use incremental validation algorithm (default is false)."    
 
 } deriving (Generic)
 

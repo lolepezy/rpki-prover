@@ -8,11 +8,9 @@
 
 module RPKI.Store.Types where
 
-import           Data.Int
 import qualified Data.ByteString.Short    as BSS
 
 import           GHC.Generics
-import           RPKI.Domain
 import           RPKI.TAL
 
 import           RPKI.Time                (Instant)
@@ -20,7 +18,6 @@ import           RPKI.Time                (Instant)
 import           RPKI.Repository
 import           RPKI.AppTypes
 import           RPKI.Domain
-import           RPKI.Config
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
 
