@@ -121,7 +121,7 @@ getNull f m = getNext >>= \case
 getInteger :: (Integer -> ParseASN1 a) -> String -> ParseASN1 a
 getInteger f m = getNext >>= \case 
     IntVal i -> f i
-    b        -> throwParseError $ m <> "(" <> show b <> ")"
+    b        -> throwParseError $ m <> " (" <> show b <> ")"
 
 getOID :: (OID -> ParseASN1 a) -> String -> ParseASN1 a
 getOID f m = getNext >>= \case 
