@@ -234,6 +234,7 @@ validateTA :: Storage s =>
             -> AllTasTopDownContext
             -> IO TopDownResult
 validateTA appContext@AppContext{..} tal worldVersion allTas = do
+    logDebug logger [i|validateTA 1|]
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
     (r, vs) <- runValidatorT taContext $
             timeoutVT
@@ -448,6 +449,7 @@ validateCaNoLimitChecks
 
     validateThisCertAndGoDown :: ValidatorT IO PayloadsType
     validateThisCertAndGoDown = do    
+        -- logDebug logger [i|validateThisCertAndGoDown 1|]
         aki <- case ca of 
             CaFull c -> 
                 inSubVScope' LocationFocus (getURL $ pickLocation $ getLocations c) $ do
@@ -482,6 +484,7 @@ validateCaNoLimitChecks
                                     pure $! payloads
 
                     Just mftShortcut -> do                         
+                        -- logDebug logger [i|Found shortcut for AKI #{childrenAki}|]
                         -- Find the key of the latest real manifest
                         findLatestMftKeyByAKI tx db childrenAki >>= \case 
                             Nothing -> pure $ do                                 
@@ -499,7 +502,8 @@ validateCaNoLimitChecks
                                     (oneMoreMft >> visitKey topDownContext (mftShortcut ^. #key))
 
                             Just mftKey 
-                                | mftShortcut ^. #key == mftKey -> 
+                                | mftShortcut ^. #key == mftKey -> do
+                                    -- logDebug logger [i|Option 1|]            
                                     -- Nothing has changed, the real manifest is the 
                                     -- same as the shortcut, so use the shortcut
                                     pure $ collectPayloads mftShortcut Nothing 
@@ -507,7 +511,8 @@ validateCaNoLimitChecks
                                                 (getCrlByKey appContext (mftShortcut ^. #crlKey))
                                             `andThen` 
                                                 (oneMoreMft >> visitKey topDownContext mftKey)
-                                | otherwise ->                                     
+                                | otherwise -> do 
+                                    logDebug logger [i|Option 2|]            
                                     getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $ 
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
@@ -606,13 +611,13 @@ validateCaNoLimitChecks
                             let nextMftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts keyedValidCrl
 
                             let aki = toAKI $ getSKI fullCa
-                            when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $  
+                            when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $                                 
                                 addMftShortcut topDownContext 
                                     (UpdateMftShortcut aki nextMftShortcut)
 
                             -- Update manifest shortcut children in case there are new 
                             -- or deleted children in the new manifest
-                            when (not (null newChildren) || somethingDeleted)  $
+                            when (isNothing mftShortcut || not (null newChildren) || somethingDeleted)  $
                                 addMftShortcut topDownContext 
                                     (UpdateMftShortcutChildren aki nextMftShortcut)
 
@@ -982,18 +987,18 @@ validateCaNoLimitChecks
                     Nothing -> Map.toList nonCrlEntries
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
     
+        -- logDebug logger [i|Children: #{length nonCrlEntries}, filteed #{length filteredChildren}|]
         collectResultsInParallel filteredChildren (getChildPayloads troubledValidation)
 
       where
         collectResultsInParallel children f = do 
             scopes <- askScopes
             z <- liftIO $ pooledForConcurrently children (runValidatorT scopes . f)
-            foldM (\payloads (r, vs) ->
-                    case r of 
-                        Left e   -> appError e
-                        Right r' -> do 
-                            embedState vs
-                            pure $! payloads <> r'
+            foldM (\payloads (r, vs) -> do  
+                    embedState vs
+                    pure $! case r of 
+                                Left e   -> payloads
+                                Right r' -> payloads <> r'                            
                 ) mempty z
 
         errorOnTroubledChild = internalError appContext [i|Impossible happened!|]
@@ -1129,10 +1134,7 @@ applyValidationSideEffects
             briefCounter <- newIORef (0 :: Integer)
             rwTx db $ \tx -> do
                 markAsValidated tx db vhs worldVersion
-                saveLatestValidMfts tx db (vmfts ^. #valids)
-                for_ briefs' $ \(BriefUpdate h brief) -> do
-                    saveObjectBrief tx db h brief
-                    modifyIORef' briefCounter (+1)
+                saveLatestValidMfts tx db (vmfts ^. #valids)                
 
             c <- readIORef briefCounter
             pure (Set.size vhs, Map.size (vmfts ^. #valids), c)
@@ -1187,7 +1189,7 @@ addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey =
                 validManifests (& #valids %~ Map.insert aki mftKey)
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
-oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreBrief :: Monad m => ValidatorT m ()
+oneMoreGbr, oneMoreAspa, oneMoreBgp :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
@@ -1195,7 +1197,6 @@ oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
 oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
 oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
-oneMoreBrief = updateMetric @ValidationMetric @_ (& #validBriefNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))

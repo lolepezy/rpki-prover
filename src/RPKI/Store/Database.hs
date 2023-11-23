@@ -129,7 +129,6 @@ data RpkiObjectStore s = RpkiObjectStore {
         urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
-        objectBriefs       :: SMap "object-briefs" s ObjectKey (Compressed EEBrief),
         mftShortcuts       :: MftShortcutStore s        
     } 
     deriving stock (Generic)
@@ -374,7 +373,6 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
             M.delete tx objects objectKey
             M.delete tx objectInsertedBy objectKey        
             M.delete tx hashToKey h        
-            M.delete tx objectBriefs objectKey    
             case ro of 
                 CerRO c -> M.delete tx certBySKI (getSKI c)
                 _       -> pure ()
@@ -468,23 +466,6 @@ markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVers
             ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) ->                
                 M.put tx validatedByVersion previousVersion $ 
                         Compressed $ previousKeys `Set.difference` allKeys
-
-saveObjectBrief :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> Hash -> EEBrief -> m ()
-saveObjectBrief tx DB {         
-        objectStore = RpkiObjectStore {..} } 
-    hash brief = liftIO $ ifJustM (M.get tx hashToKey hash) $ \key -> 
-        M.put tx objectBriefs key (Compressed brief)
-
-
-getOjectBrief :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> Hash -> m (Maybe (Keyed (Located EEBrief)))
-getOjectBrief tx db@DB { objectStore = RpkiObjectStore {..} } h =  
-    liftIO $ runMaybeT $ do 
-        objectKey <- MaybeT $ M.get tx hashToKey h
-        brief <- unCompressed <$> MaybeT (M.get tx objectBriefs objectKey)        
-        locations <- MaybeT $ getLocationsByKey tx db objectKey
-        pure $ Keyed (Located locations brief) objectKey
 
 
 -- This is for testing purposes mostly
@@ -954,8 +935,10 @@ getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do
         objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
 
         objectInsertedByStats <- M.stats tx objectInsertedBy
-        objecBriefStats <- M.stats tx objectBriefs
         validatedByVersionStats <- M.stats tx validatedByVersion
+        let MftShortcutStore {..} = mftShortcuts
+        mftMetasStats <- M.stats tx mftMetas
+        mftChildrenStats <- M.stats tx mftChildren
         pure RpkiObjectStats {..}
 
     repositoryStats' tx = 
@@ -984,20 +967,7 @@ totalStats = foldOf (types @SStats)
 emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
 emptyDBMaps tx DB {..} = liftIO $ 
     forM_ erasables $ \(EraseWrapper t) -> erase tx t
-
-
--- resolveFocus :: (MonadIO m, Storage s) => 
---                 Tx s 'RW -> DB s -> Focus -> m Focus
--- resolveFocus tx db = \case     
---     TAFocus txt         -> pure $ TAFocus txt
---     ObjectFocus key     -> do 
---         getLocationsByKey tx db key >>= \case 
---             Nothing        -> pure $ ObjectFocus [i|Not found location for key #{key}.|]
---             Just locations -> pure $ ObjectFocus $ fmtLocations locations        
---     PPFocus uri         -> pure $ PPFocus uri
---     RepositoryFocus uri -> pure $ RepositoryFocus uri
---     TextFocus txt       -> pure $ TextFocus txt        
-
+   
 
 -- Utilities to have storage transaction in ValidatorT monad.
 

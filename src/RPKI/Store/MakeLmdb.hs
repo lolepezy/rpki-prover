@@ -104,7 +104,6 @@ createDatabase env logger checkAction = do
             urlKeyToObjectKey  <- createMultiMap
             objectKeyToUrlKeys <- createMap
             certBySKI          <- createMap
-            objectBriefs       <- createMap
             validatedByVersion <- createMap        
             mftShortcuts       <- MftShortcutStore <$> createMap <*> createMap
             pure RpkiObjectStore {..}

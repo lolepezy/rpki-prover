@@ -410,8 +410,7 @@ data ValidationMetric = ValidationMetric {
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,
         validAspaNumber :: Count,
-        validBgpNumber  :: Count,
-        validBriefNumber :: Count,
+        validBgpNumber  :: Count,        
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -493,6 +492,7 @@ isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 focusToText :: Focus -> Text
 focusToText = \case
     TAFocus txt         -> txt
+    LocationFocus uri   -> unURI $ getURL uri
     ObjectFocus key     -> fmt key
     HashFocus hash      -> fmt hash
     PPFocus uri         -> unURI $ getURL uri
