@@ -105,15 +105,9 @@ data VrpMinimalDto = VrpMinimalDto {
     } 
     deriving stock (Eq, Show, Generic)
 
-data ProviderAsn = ProviderAsn {
-        asn :: ASN, 
-        afi :: Maybe AddrFamily
-    }
-    deriving stock (Eq, Show, Generic)
-
 data AspaDto = AspaDto {
         customer  :: ASN,
-        providers :: [ProviderAsn]        
+        providers :: [ASN]        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -381,10 +375,6 @@ instance ToSchema TalDto
 instance ToSchema TAL
 instance ToSchema EncodedBase64 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema ProviderAsn
-
-instance ToJSON ProviderAsn where
-    toJSON = genericToJSON $ defaultOptions { omitNothingFields = True } 
 
 instance ToJSON JobsDto     
 instance ToSchema JobsDto   

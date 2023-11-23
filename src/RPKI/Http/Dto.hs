@@ -66,7 +66,7 @@ aspaToDto :: Aspa -> AspaDto
 aspaToDto aspa =
     AspaDto {
         customer = aspa ^. #customer,
-        providers = map (\(asn, afi) -> ProviderAsn {..}) $ aspa ^. #providers
+        providers = Set.toList $ aspa ^. #providers
     }
 
 gbrObjectToDto :: GbrObject -> GbrDto
