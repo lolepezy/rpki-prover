@@ -405,12 +405,13 @@ data ValidationMetric = ValidationMetric {
         vrpCounter      :: Count,        
         uniqueVrpNumber :: Count,        
         validCertNumber :: Count,
-        validRoaNumber  :: Count,
+        validRoaNumber  :: Count,        
         validMftNumber  :: Count,
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,
         validAspaNumber :: Count,
-        validBgpNumber  :: Count,        
+        validBgpNumber  :: Count,
+        mftShortcutNumber :: Count,                
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
