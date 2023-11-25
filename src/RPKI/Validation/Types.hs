@@ -44,12 +44,21 @@ data MftEntry = MftEntry {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+
+data CrlShortcut = CrlShortcut {
+        key         :: ObjectKey,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant        
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
 data MftShortcut = MftShortcut { 
         key            :: ObjectKey,
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
-        crlKey         :: ObjectKey
+        crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary

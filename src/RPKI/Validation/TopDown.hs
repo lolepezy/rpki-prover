@@ -447,21 +447,23 @@ validateCaNoLimitChecks
     validateThisCertAndGoDown = do    
         -- logDebug logger [i|validateThisCertAndGoDown 1|]
         aki <- case ca of 
-            CaFull c -> 
+            CaFull c -> do 
+                markAsReadHash appContext topDownContext (getHash c) 
                 inSubVScope' LocationFocus (getURL $ pickLocation $ getLocations c) $ do
                     validateObjectLocations c
                     pure $ toAKI $ getSKI c
             CaShort c -> do                 
-                validateLocationForShortcut $ c ^. #key
+                markAsRead topDownContext (c ^. #key) 
+                validateLocationForShortcut (c ^. #key)
                 pure $ toAKI $ c ^. #ski
         
         let nextAction =
                 case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
                     FullEveryIteration -> makeNextFullValidationAction
                     Incremental        -> makeNextIncrementalAction
-
+         
         z <- join $ nextAction aki
-        oneMoreCert
+        oneMoreCert         
         pure z
 
       where                
@@ -473,11 +475,11 @@ validateCaNoLimitChecks
                     Nothing ->                        
                         pure $ vError $ NoMFT childrenAki
                     Just mft ->                        
-                        pure $ do                                      
+                        pure $ do                      
+                            markAsRead topDownContext (mft ^. typed)                
                             caFull <- getFullCa appContext ca
                             T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                   
-                            oneMoreMft
-                            visitKey topDownContext (mft ^. typed)
+                            oneMoreMft >> oneMoreCrl                            
                             pure $! payloads
 
 
@@ -492,43 +494,46 @@ validateCaNoLimitChecks
                                 pure $ vError $ NoMFT childrenAki
                             Just mft ->
                                 -- No shortcut found, so do the full validation for the manifest
-                                pure $ do                                      
+                                pure $ do                   
+                                    markAsRead topDownContext (mft ^. typed)                   
                                     caFull <- getFullCa appContext ca
                                     T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                    
-                                    oneMoreMft
-                                    visitKey topDownContext (mft ^. typed)
+                                    oneMoreMft >> oneMoreCrl                                    
                                     pure $! payloads
 
-                    Just mftShortcut -> do                         
+                    Just mftShortcut -> do
+                        let mftShortKey = mftShortcut ^. #key
+                        markAsRead topDownContext mftShortKey
                         -- logDebug logger [i|Found shortcut for AKI #{childrenAki}|]
                         -- Find the key of the latest real manifest
                         action <- findLatestMftKeyByAKI tx db childrenAki >>= \case 
                                 Nothing -> pure $ do                                 
                                     -- That is really weird and should normally never happen. 
                                     -- Do not interrupt validation here, but complain in the log
-                                    vWarn $ NoMFTButCachedMft childrenAki
-                                    let mftShortKey = mftShortcut ^. #key
+                                    vWarn $ NoMFTButCachedMft childrenAki                                    
+                                    let crlKey = mftShortcut ^. #crlShortcut . #key       
                                     let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
-                                    logError logger message                                
+                                    logError logger message
                                     collectPayloads mftShortcut Nothing 
                                         (getFullCa appContext ca)
                                         -- getCrlByKey is the best we can have
-                                        (getCrlByKey appContext (mftShortcut ^. #crlKey))                                    
-                                    `andThen` 
-                                        (visitKey topDownContext (mftShortcut ^. #key))
+                                        (getCrlByKey appContext crlKey)
+                                        `andThen` 
+                                            (markAsRead topDownContext crlKey)
 
                                 Just mftKey 
-                                    | mftShortcut ^. #key == mftKey -> do
+                                    | mftShortKey == mftKey -> do
                                         -- logDebug logger [i|Option 1|]            
                                         -- Nothing has changed, the real manifest is the 
                                         -- same as the shortcut, so use the shortcut
+                                        let crlKey = mftShortcut ^. #crlShortcut . #key       
+                                        markAsRead topDownContext crlKey
                                         pure $ collectPayloads mftShortcut Nothing 
                                                     (getFullCa appContext ca)
-                                                    (getCrlByKey appContext (mftShortcut ^. #crlKey))
-                                                `andThen` 
-                                                    (visitKey topDownContext mftKey)
+                                                    (getCrlByKey appContext crlKey)
+
                                     | otherwise -> do 
-                                        logDebug logger [i|Option 2|]            
+                                        -- logDebug logger [i|Option 2|]            
                                         getMftByKey tx db mftKey >>= \case 
                                             Nothing -> pure $ 
                                                 internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
@@ -538,10 +543,10 @@ validateCaNoLimitChecks
                                                 r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
                                                             (pure fullCa)
                                                             (findAndValidateCrl fullCa mft childrenAki)
-                                                for_ [mft ^. typed, mftKey] $ visitKey topDownContext
+                                                markAsRead topDownContext mftKey
                                                 pure $! r1 <> r2                                                     
                         pure $ action `andThen`
-                                (oneMoreMft >> oneMoreMftShort)          
+                                (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)          
 
         -- Proceed with full validation for children mentioned in the full manifest 
         -- and children mentioned in the manifest shortcut. Create a diff between them,
@@ -575,8 +580,7 @@ validateCaNoLimitChecks
                 validateMftLocation locatedMft fullCa
 
                 -- TODO Add fiddling with shortcut version of CRL here                    
-                keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki
-                oneMoreCrl >> visitKey topDownContext crlKey
+                keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki                
 
                 -- MFT can be revoked by the CRL that is on this MFT -- detect 
                 -- revocation as well, this is clearly and error                               
@@ -596,22 +600,23 @@ validateCaNoLimitChecks
                 -- If CRL has changed, we have to recheck if all the children are 
                 -- not revoked. If will be checked by full validation for newChildren
                 -- but it needs to be explicitly checked for overlappingChildren
-                forM_ mftShortcut $ \mftShor -> 
-                    checkNoChildrenAreRevoked mftShor overlappingChildren keyedValidCrl
+                forM_ mftShortcut $ \mftShort -> 
+                    checkNoChildrenAreRevoked mftShort overlappingChildren keyedValidCrl            
 
-                -- Mark all manifest entries as visited to avoid the situation
+                -- Mark all manifest entries as read to avoid the situation
                 -- when some of the children are garbage-collected from the cache 
                 -- and some are still there. Do it both in case of successful 
                 -- validation or a validation error.
                 let markAllEntriesAsVisited = do                             
                         forM_ (newChildren <> overlappingChildren) $ 
-                            (\(T3 _ _ k) -> visitKey topDownContext k)
+                            (\(T3 _ _ k) -> markAsRead topDownContext k)
 
                 let processChildren = do                                              
                         -- Here we have the payloads for the fully validated MFT children
                         -- and the shortcut objects for these children                        
                         T2 validatedPayloads childrenShortcuts <- 
-                                (gatherMftEntryResults =<< gatherMftEntryValidations fullCa newChildren validCrl)
+                                (gatherMftEntryResults =<< 
+                                    gatherMftEntryValidations fullCa newChildren validCrl)
                                                 
                         let newEntries = makeEntriesWithMap 
                                 newChildren (Map.fromList childrenShortcuts)
@@ -666,8 +671,8 @@ validateCaNoLimitChecks
                         -> AKI
                         -> ValidatorT IO (Keyed (Validated CrlObject))
         findAndValidateCrl fullCa (Keyed (Located _ mft) _) childrenAki = do  
-            Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey <- findCrl mft childrenAki
-            visitObject topDownContext locatedCrl                
+            Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey <- findCrl mft childrenAki            
+            markAsRead topDownContext crlKey
             inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
                 validateObjectLocations locatedCrl
                 vHoist $ do
@@ -680,7 +685,7 @@ validateCaNoLimitChecks
         -- and a real manifest object.
         mftDiff MftShortcut {..} (newMftChidlren :: [T3 Text a ObjectKey]) =                
             (newOnes, overlapping, not $ Map.null $ deletedEntries nonCrlEntries)
-            where
+          where
             (newOnes, overlapping) = List.partition (\(T3 fileName _  k) -> 
                     isNewEntry k fileName nonCrlEntries) newMftChidlren                
 
@@ -713,7 +718,7 @@ validateCaNoLimitChecks
 
         -- Check if shortcut children are revoked
         checkNoChildrenAreRevoked MftShortcut {..} children (Keyed validCrl newCrlKey) = 
-            when (newCrlKey /= crlKey) $ do                        
+            when (newCrlKey /= crlShortcut ^. #key) $ do                        
                 forM_ children $ \(T3 _ _ key) ->
                     for_ (Map.lookup key nonCrlEntries) $ \MftEntry {..} ->
                         for_ (getMftChildSerial child) $ \serial ->
@@ -1132,9 +1137,22 @@ makeMftShortcut :: ObjectKey
                 -> Validated MftObject -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
                 -> MftShortcut   
-makeMftShortcut key (Validated mftObject) (Map.fromList -> nonCrlEntries) (Keyed validCrl crlKey) = let         
-        (notValidBefore, notValidAfter) = getValidityPeriod mftObject                              
-    in MftShortcut { .. }
+makeMftShortcut key 
+    (Validated mftObject) (Map.fromList -> nonCrlEntries) 
+    (Keyed (Validated validCrl) crlKey) = 
+  let 
+    (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
+    crlShortcut = let 
+        SignCRL {..} = validCrl ^. #signCrl
+        -- That must always match, since it's a validated CRL
+        Just nextUpdateTime' = nextUpdateTime            
+        in CrlShortcut {
+            key = crlKey,
+            notValidBefore = thisUpdateTime,
+            notValidAfter = nextUpdateTime'
+        }    
+    in MftShortcut { .. }  
+
 
 -- Mark validated objects in the database, i.e.
 -- 
@@ -1201,9 +1219,19 @@ visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
     liftIO $ forM_ hashes $ \h -> 
                 atomically $ modifyTVar' visitedHashes (Set.insert h)
 
-visitKey :: MonadIO m => TopDownContext -> ObjectKey -> m ()
-visitKey TopDownContext { allTas = AllTasTopDownContext {..} } k =
+markAsRead :: MonadIO m => TopDownContext -> ObjectKey -> m ()
+markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k =
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
+
+markAsReadHash :: (Storage s, MonadIO m) => 
+                AppContext s 
+            -> TopDownContext 
+            -> Hash -> m ()
+markAsReadHash AppContext {..} TopDownContext { allTas = AllTasTopDownContext {..} } hash = 
+    liftIO $ do 
+        key <- roTxT database $ \tx db -> getKeyByHash tx db hash
+        for_ key $ \k ->  
+            atomically $ modifyTVar' visitedKeys (Set.insert k)
 
 -- Add manifest to the map of the valid ones
 addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
