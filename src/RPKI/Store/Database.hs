@@ -29,7 +29,6 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
-import           Data.String.Interpolate.IsString
 import           Data.Generics.Product.Types
 import           GHC.Generics
 import           Text.Read
@@ -52,7 +51,7 @@ import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
 
-import           RPKI.Util                (ifJustM, fmtLocations)
+import           RPKI.Util                (ifJustM)
 
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -231,7 +230,7 @@ data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
-        crlKey         :: ObjectKey    
+        crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -248,8 +247,6 @@ data MftShortcutStore s = MftShortcutStore {
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Compressed MftShortcutChildren)
     }
     deriving stock (Generic)
-
-
 
 
 getKeyByHash :: (MonadIO m, Storage s) => 
@@ -383,8 +380,10 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
             
             for_ (getAKI ro) $ \aki' -> 
                 case ro of
-                    MftRO mft -> MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                    _         -> pure ()        
+                    MftRO mft -> do 
+                        MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                        deleteMftShortcut tx db aki'
+                    _  -> pure ()        
 
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
@@ -423,8 +422,8 @@ getMftShorcut :: (MonadIO m, Storage s) =>
 getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do 
     let MftShortcutStore {..} = mftShortcuts 
     runMaybeT $ do 
-        mftMetas@MftShortcutMeta {..}     <- fmap unCompressed $ MaybeT $ M.get tx mftMetas aki
-        mftMetas@MftShortcutChildren {..} <- fmap unCompressed $ MaybeT $ M.get tx mftChildren aki
+        MftShortcutMeta {..}     <- fmap unCompressed $ MaybeT $ M.get tx mftMetas aki
+        MftShortcutChildren {..} <- fmap unCompressed $ MaybeT $ M.get tx mftChildren aki
         pure $! MftShortcut {..}
 
 saveMftShorcutMeta :: (MonadIO m, Storage s) => 
@@ -442,6 +441,14 @@ saveMftShorcutChildren tx
     aki MftShortcut {..} = liftIO $ do             
         M.put tx mftChildren aki (Compressed MftShortcutChildren {..})
 
+
+deleteMftShortcut :: (MonadIO m, Storage s) => 
+                    Tx s 'RW -> DB s -> AKI -> m ()
+deleteMftShortcut tx 
+    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
+    aki = liftIO $ do             
+        M.delete tx mftMetas aki
+        M.delete tx mftChildren aki
 
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
