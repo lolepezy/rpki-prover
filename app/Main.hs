@@ -155,7 +155,7 @@ runValidatorServer appContext@AppContext {..} = do
     let validationContext = newScopes "validation-root"
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVScope' TAFocus (convert taName) $
+            vFocusOn TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)    
 
     db <- readTVarIO database

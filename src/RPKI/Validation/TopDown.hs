@@ -251,7 +251,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
     validateFromTAL = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
-            inSubVScope' LocationFocus (getURL $ getTaCertURL tal) $ do
+            vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations                 
                 topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
@@ -455,12 +455,14 @@ validateCaNoLimitChecks
         aki <- case ca of 
             CaFull c -> do 
                 markAsReadHash appContext topDownContext (getHash c) 
-                inSubVScope' LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+                vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
                     validateObjectLocations c
+                    vHoist $ validateObjectValidityPeriod c now
                     pure $ toAKI $ getSKI c
             CaShort c -> do                 
                 markAsRead topDownContext (c ^. #key) 
                 validateLocationForShortcut (c ^. #key)
+                vHoist $ validateObjectValidityPeriod c now
                 pure $ toAKI $ c ^. #ski
         
         let nextAction =
@@ -567,7 +569,7 @@ validateCaNoLimitChecks
         manifestFullValidation fullCa keyedMft mftShortcut childrenAki = do 
             let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
 
-            inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do 
+            vFocusOn LocationFocus (getURL $ pickLocation locations) $ do 
                 -- vks <- liftIO $ readTVarIO visitedKeys
                 -- when (mftKey `Set.member` vks) $
                 --     -- We have already visited this manifest before, so 
@@ -730,7 +732,7 @@ validateCaNoLimitChecks
                     for_ (Map.lookup childKey nonCrlEntries) $ \MftEntry {..} ->
                         for_ (getMftChildSerial child) $ \serial ->
                             when (isRevoked serial validCrl) $
-                                inSubVScope' ObjectFocus childKey $                                       
+                                vFocusOn ObjectFocus childKey $                                       
                                     vWarn RevokedResourceCertificate   
 
 
@@ -877,7 +879,7 @@ validateCaNoLimitChecks
                     internalError appContext 
                         [i|Internal error, can't find locations for the object #{key} with positive location count #{count}.|]
                 Just locations -> 
-                    inSubVScope' LocationFocus (getURL $ pickLocation locations) $
+                    vFocusOn LocationFocus (getURL $ pickLocation locations) $
                         validateObjectLocations locations
 
 
@@ -932,7 +934,7 @@ validateCaNoLimitChecks
                             Right ppas -> pure $! createPayloadAndShortcut 
                                 payload (makeCaShortcut childKey (Validated childCert) ppas)
             RoaRO roa -> 
-                inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
+                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validRoa <- vHoist $ validateRoa now roa fullCa validCrl verifiedResources
@@ -945,7 +947,7 @@ validateCaNoLimitChecks
                                     (makeRoaShortcut childKey validRoa vrpList) 
 
             GbrRO gbr ->                 
-                inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
+                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
@@ -958,7 +960,7 @@ validateCaNoLimitChecks
                                     (makeGbrShortcut childKey validGbr gbrPayload)                         
 
             AspaRO aspa -> 
-                inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
+                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validAspa <- vHoist $ validateAspa now aspa fullCa validCrl verifiedResources
@@ -970,7 +972,7 @@ validateCaNoLimitChecks
                                     (makeAspaShortcut childKey validAspa aspaPayload) 
 
             BgpRO bgpCert ->
-                inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
+                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child
                     allowRevoked $ do
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
@@ -1009,8 +1011,14 @@ validateCaNoLimitChecks
                 -> ValidatorT IO (Keyed (Validated CrlObject))
                 -- -> (PayloadsType -> (Text -> MftEntry) -> r)                
                 -> ValidatorT IO PayloadsType 
-    collectPayloads MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
+    collectPayloads mftShortcut@MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
         
+        vHoist $ 
+            vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
+                validateObjectValidityPeriod mftShortcut now
+                vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
+                    validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
+
         -- For children that are invalid we'll have to fall back to full validation, 
         -- for that we beed the parent CA and a valid CRL.
         troubledValidation <-
@@ -1021,7 +1029,7 @@ validateCaNoLimitChecks
                     _  -> do 
                         caFull   <- findFullCa
                         validCrl <- findValidCrl
-                        pure $ \childKey -> validateTroubledChild caFull validCrl childKey
+                        pure $! \childKey -> validateTroubledChild caFull validCrl childKey
 
         -- Filter children that we actually want to go through here
         let filteredChildren = 
@@ -1036,12 +1044,8 @@ validateCaNoLimitChecks
         collectResultsInParallel children f = do 
             scopes <- askScopes
             z <- liftIO $ pooledForConcurrently children (runValidatorT scopes . f)
-            foldM (\payloads (r, vs) -> do  
-                    embedState vs
-                    pure $! case r of 
-                                Left e   -> payloads
-                                Right r' -> payloads <> r'                            
-                ) mempty z
+            embedState $ mconcat $ map snd z
+            pure $! mconcat [ p | (Right p, _) <- z ]            
 
         errorOnTroubledChild = internalError appContext [i|Impossible happened!|]
 
@@ -1055,10 +1059,10 @@ validateCaNoLimitChecks
                     T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
                     pure $! payloads
 
-        getChildPayloads troubledValidation (key, MftEntry {..}) = do 
-            markAsRead topDownContext key
+        getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
+            markAsRead topDownContext childKey
             let emptyPayloads = mempty :: Payloads (Set Vrp)
-            inSubVScope' ObjectFocus key $
+            vFocusOn ObjectFocus childKey $
                 case child of 
                     CaChild caShortcut _ -> 
                         validateCaNoLimitChecks appContext topDownContext (CaShort caShortcut)
@@ -1224,16 +1228,6 @@ storeShortcuts AppContext {..} worldVersion shortcutQueue = liftIO $ do
 -- we read it from the database and looked at it. It will be used to decide when 
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
-visitObject :: (MonadIO m, WithHash ro) =>
-                TopDownContext -> ro -> m ()
-visitObject topDownContext ro =
-    visitObjects topDownContext [getHash ro]
-
-visitObjects :: MonadIO m => TopDownContext -> [Hash] -> m ()
-visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes = 
-    liftIO $ forM_ hashes $ \h -> 
-                atomically $ modifyTVar' visitedHashes (Set.insert h)
-
 markAsRead :: TopDownContext -> ObjectKey -> ValidatorT IO ()
 markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = do 
     -- vks <- liftIO $ readTVarIO visitedKeys

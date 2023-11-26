@@ -67,7 +67,7 @@ validateBottomUp
         -- TODO Make it NonEmpty?
         let taCert = head certPath        
         let locations = getLocations taCert
-        vHoist $ inSubVScope' LocationFocus (getURL $ pickLocation $ getLocations taCert) 
+        vHoist $ vFocusOn LocationFocus (getURL $ pickLocation $ getLocations taCert) 
                $ validateTaCertAKI taCert (pickLocation locations)
         let verifiedResources = createVerifiedResources $ taCert ^. #payload
         go verifiedResources certPath
@@ -75,7 +75,7 @@ validateBottomUp
         go _ [] = pure ()
 
         go verifiedResources [bottomCert] = do            
-            inSubVScope' LocationFocus (getURL $ pickLocation $ getLocations bottomCert) $ do
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations bottomCert) $ do
                 (mft, crl) <- validateManifest db bottomCert vaildManifests
 
                 -- RSC objects are not supposed to be on a manifest
@@ -86,7 +86,7 @@ validateBottomUp
                 validateObjectItself bottomCert crl verifiedResources
 
         go verifiedResources (cert : certs) = do            
-            inSubVScope' LocationFocus (getURL $ pickLocation $ getLocations cert) $ do
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations cert) $ do
                 (mft, crl) <- validateManifest db cert vaildManifests            
                 let childCert = head certs                
                 validateOnMft mft childCert                            
@@ -103,7 +103,7 @@ validateBottomUp
 
 
     validateObjectItself bottomCert crl verifiedResources =         
-        inSubVScope' TextFocus "rpki-object" $ 
+        vFocusOn TextFocus "rpki-object" $ 
             case object of 
                 CerRO child ->
                     void $ vHoist $ validateResourceCert @_ @_ @'CACert 
@@ -165,7 +165,7 @@ validateBottomUp
         -- so nesting doesn't work the same way).
         useManifest keyedMft childrenAki certLocations = do                 
             let locatedMft@(Located mftLocation mft) = keyedMft ^. #object            
-            inSubVScope' ObjectFocus (keyedMft ^. #key) $ do
+            vFocusOn ObjectFocus (keyedMft ^. #key) $ do
                 validateObjectLocations locatedMft
                 validateMftLocation locatedMft certificate
                 T2 _ crlHash <- case findCrlOnMft mft of 
@@ -179,7 +179,7 @@ validateBottomUp
                         vError $ NoCRLExists childrenAki    
 
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
-                        inSubVScope' LocationFocus (getURL $ pickLocation crlLocations) $ do 
+                        vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
                             validateObjectLocations foundCrl
                             let mftEECert = getEECert $ unCMS $ cmsPayload mft
                             checkCrlLocation foundCrl mftEECert

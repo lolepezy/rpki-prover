@@ -172,16 +172,16 @@ askScopes :: MonadReader r m => m r
 askScopes = ask
 
 inSubVScope :: Monad m => Text -> ValidatorT m r -> ValidatorT m r
-inSubVScope = inSubVScope' TextFocus
+inSubVScope = vFocusOn TextFocus
 
 inSubObjectVScope :: Monad m =>  ObjectKey -> ValidatorT m r -> ValidatorT m r
-inSubObjectVScope = inSubVScope' ObjectFocus
+inSubObjectVScope = vFocusOn ObjectFocus
 
 inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
-inSubLocationScope = inSubVScope' LocationFocus
+inSubLocationScope = vFocusOn LocationFocus
 
-inSubVScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-inSubVScope' c t = local (& typed @VScope %~ subScope' c t)
+vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+vFocusOn c t = local (& typed @VScope %~ subScope' c t)
 
 inSubMetricScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 inSubMetricScope' c t = local (& typed @MetricScope %~ subScope' c t)

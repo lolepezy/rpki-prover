@@ -193,7 +193,7 @@ downloadAndUpdateRRDP
         pure notification
 
     useSnapshot (SnapshotInfo uri expectedHash) notification = do         
-        inSubVScope' LinkFocus uri $ do            
+        vFocusOn LinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
             (rawContent, _, httpStatus', _) <- 

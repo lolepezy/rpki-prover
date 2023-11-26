@@ -59,10 +59,10 @@ scopesShouldBeProperlyNested = do
         <- runValidatorT (newScopes "root") $ do
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
-                inSubVScope' TextFocus "snapshot.xml" $ do            
+                vFocusOn TextFocus "snapshot.xml" $ do            
                     timedMetric (Proxy :: Proxy RsyncMetric) $ do                        
                         appWarn $ UnspecifiedE "Error1" "text 1"
-                        inSubVScope' TextFocus "broken.roa" $ do                                        
+                        vFocusOn TextFocus "broken.roa" $ do                                        
                             appError $ UnspecifiedE "Crash" "Crash it"                                                                    
 
     HU.assertEqual "Deepest scope should have 1 error"     

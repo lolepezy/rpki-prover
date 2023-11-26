@@ -14,17 +14,13 @@ module RPKI.Validation.Types where
 
 import qualified Data.Map.Strict             as Map
 import qualified Data.Text                   as Text
-import qualified Data.Set                    as Set
 import           GHC.Generics
 
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Store.Types
 
-
--- Shortcuts
 
 data MftChild = CaChild CaShortcut Serial
               | RoaChild RoaShortcut Serial
@@ -115,6 +111,15 @@ data GbrShortcut = GbrShortcut {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+
+instance {-# OVERLAPPING #-}  WithValidityPeriod CaShortcut where
+    getValidityPeriod CaShortcut {..} = (notValidBefore, notValidAfter)
+
+instance {-# OVERLAPPING #-}  WithValidityPeriod MftShortcut where
+    getValidityPeriod MftShortcut {..} = (notValidBefore, notValidAfter)
+
+instance {-# OVERLAPPING #-}  WithValidityPeriod CrlShortcut where
+    getValidityPeriod CrlShortcut {..} = (notValidBefore, notValidAfter)
 
 instance {-# OVERLAPPING #-}  WithValidityPeriod RoaShortcut where
     getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
