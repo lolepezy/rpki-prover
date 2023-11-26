@@ -443,6 +443,12 @@ validateCaNoLimitChecks
                                 Just rp -> inSubMetricScope' PPFocus rp validateThisCertAndGoDown  
   where
 
+    -- Do not create shortctus when validation algorithm is 
+    createPayloadAndShortcut = 
+        case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+            FullEveryIteration -> \payload _        -> T2 payload Nothing
+            Incremental        -> \payload shortcut -> T2 payload (Just shortcut)
+
     validateThisCertAndGoDown :: ValidatorT IO PayloadsType
     validateThisCertAndGoDown = do    
         -- logDebug logger [i|validateThisCertAndGoDown 1|]
@@ -502,12 +508,11 @@ validateCaNoLimitChecks
                                     pure $! payloads
 
                     Just mftShortcut -> do
-                        let mftShortKey = mftShortcut ^. #key
-                        markAsRead topDownContext mftShortKey
+                        let mftShortKey = mftShortcut ^. #key                        
                         -- logDebug logger [i|Found shortcut for AKI #{childrenAki}|]
                         -- Find the key of the latest real manifest
                         action <- findLatestMftKeyByAKI tx db childrenAki >>= \case 
-                                Nothing -> pure $ do                                 
+                                Nothing -> pure $ do                                             
                                     -- That is really weird and should normally never happen. 
                                     -- Do not interrupt validation here, but complain in the log
                                     vWarn $ NoMFTButCachedMft childrenAki                                    
@@ -526,8 +531,7 @@ validateCaNoLimitChecks
                                         -- logDebug logger [i|Option 1|]            
                                         -- Nothing has changed, the real manifest is the 
                                         -- same as the shortcut, so use the shortcut
-                                        let crlKey = mftShortcut ^. #crlShortcut . #key       
-                                        markAsRead topDownContext crlKey
+                                        let crlKey = mftShortcut ^. #crlShortcut . #key                                               
                                         pure $ collectPayloads mftShortcut Nothing 
                                                     (getFullCa appContext ca)
                                                     (getCrlByKey appContext crlKey)
@@ -545,7 +549,9 @@ validateCaNoLimitChecks
                                                             (findAndValidateCrl fullCa mft childrenAki)
                                                 markAsRead topDownContext mftKey
                                                 pure $! r1 <> r2                                                     
-                        pure $ action `andThen`
+                        pure $ do 
+                            markAsRead topDownContext mftShortKey
+                            action `andThen`
                                 (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)          
 
         -- Proceed with full validation for children mentioned in the full manifest 
@@ -562,16 +568,16 @@ validateCaNoLimitChecks
             let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
 
             inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do 
-                vks <- liftIO $ readTVarIO visitedKeys
-                when (mftKey `Set.member` vks) $
-                    -- We have already visited this manifest before, so 
-                    -- there're some circular references in the objects.
-                    -- 
-                    -- NOTE: Limit cycle detection only to manifests
-                    -- to minimise the false positives where the same object
-                    -- is referenced from multiple manifests and we are treating 
-                    -- it as a cycle. It has happened im the past.
-                    vError $ CircularReference (getHash locatedMft)
+                -- vks <- liftIO $ readTVarIO visitedKeys
+                -- when (mftKey `Set.member` vks) $
+                --     -- We have already visited this manifest before, so 
+                --     -- there're some circular references in the objects.
+                --     -- 
+                --     -- NOTE: Limit cycle detection only to manifests
+                --     -- to minimise the false positives where the same object
+                --     -- is referenced from multiple manifests and we are treating 
+                --     -- it as a cycle. It has happened im the past.
+                --     vError $ CircularReference (getHash locatedMft)
 
                 -- General location validation
                 validateObjectLocations locatedMft
@@ -580,7 +586,7 @@ validateCaNoLimitChecks
                 validateMftLocation locatedMft fullCa
 
                 -- TODO Add fiddling with shortcut version of CRL here                    
-                keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki                
+                keyedValidCrl@(Keyed validCrl _) <- findAndValidateCrl fullCa keyedMft childrenAki                
 
                 -- MFT can be revoked by the CRL that is on this MFT -- detect 
                 -- revocation as well, this is clearly and error                               
@@ -614,10 +620,12 @@ validateCaNoLimitChecks
                 let processChildren = do                                              
                         -- Here we have the payloads for the fully validated MFT children
                         -- and the shortcut objects for these children                        
-                        T2 validatedPayloads childrenShortcuts <- 
+                        T2 validatedPayloads maybeChildrenShortcuts <- 
                                 (gatherMftEntryResults =<< 
                                     gatherMftEntryValidations fullCa newChildren validCrl)
                                                 
+                        let childrenShortcuts = [ (k, s) | (k, Just s) <- maybeChildrenShortcuts ]
+
                         let newEntries = makeEntriesWithMap 
                                 newChildren (Map.fromList childrenShortcuts)
                                 (\entry fileName -> entry fileName)
@@ -648,7 +656,6 @@ validateCaNoLimitChecks
                         pure $! T2 validatedPayloads overlappingChildren
 
                 processChildren `recover` markAllEntriesAsVisited
-
 
         findCrl mft childrenAki = do 
             T2 _ crlHash <-
@@ -719,11 +726,11 @@ validateCaNoLimitChecks
         -- Check if shortcut children are revoked
         checkNoChildrenAreRevoked MftShortcut {..} children (Keyed validCrl newCrlKey) = 
             when (newCrlKey /= crlShortcut ^. #key) $ do                        
-                forM_ children $ \(T3 _ _ key) ->
-                    for_ (Map.lookup key nonCrlEntries) $ \MftEntry {..} ->
+                forM_ children $ \(T3 _ _ childKey) ->
+                    for_ (Map.lookup childKey nonCrlEntries) $ \MftEntry {..} ->
                         for_ (getMftChildSerial child) $ \serial ->
                             when (isRevoked serial validCrl) $
-                                inSubVScope' ObjectFocus key $                                       
+                                inSubVScope' ObjectFocus childKey $                                       
                                     vWarn RevokedResourceCertificate   
 
 
@@ -790,7 +797,7 @@ validateCaNoLimitChecks
                                 Right (T2 payload childShortcut) -> Valid payload vs' childShortcut key
     
     gatherMftEntryResults :: [ManifestValidity AppError PayloadsType ValidationState] 
-                          -> ValidatorT IO (T2 PayloadsType [(ObjectKey, Text -> MftEntry)])
+                          -> ValidatorT IO (T2 PayloadsType [(ObjectKey, Maybe (Text -> MftEntry))])
     gatherMftEntryResults =        
         foldM (\(T2 (payloads :: PayloadsType) childrenShortcuts) r -> do                 
                 case r of 
@@ -799,7 +806,7 @@ validateCaNoLimitChecks
                         appError e
                     InvalidChild _ vs key -> do
                         embedState vs
-                        pure $! T2 payloads ((key, makeTroubledChild key) : childrenShortcuts)
+                        pure $! T2 payloads ((key, Just (makeTroubledChild key)) : childrenShortcuts)
                     Valid (payload :: PayloadsType) vs childShortcut key -> do 
                         embedState vs
                         let payloads' = payload <> payloads
@@ -844,7 +851,8 @@ validateCaNoLimitChecks
             Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
             Just ro -> pure ro
 
-    validateMftChild caFull child@(Keyed (Located objectLocations _) _) filename validCrl = do
+    validateMftChild caFull child@(Keyed (Located objectLocations _) _) 
+                     filename validCrl = do
         -- warn about names on the manifest mismatching names in the object URLs        
         let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ 
                             unLocations objectLocations
@@ -882,7 +890,8 @@ validateCaNoLimitChecks
             Located CaCerObject
             -> Keyed (Located RpkiObject) 
             -> Validated CrlObject
-            -> ValidatorT IO (T2 PayloadsType (Text -> MftEntry))
+            -- -> (PayloadsType -> (Text -> MftEntry) -> r)
+            -> ValidatorT IO (T2 PayloadsType (Maybe (Text -> MftEntry)))
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) validCrl = do        
         let emptyPayloads = mempty :: Payloads (Set Vrp)
         case childRo of
@@ -914,13 +923,13 @@ validateCaNoLimitChecks
 
                 embedState validationState
                 case r of 
-                    Left e        -> pure $! T2 mempty (makeTroubledChild childKey)
+                    Left e        -> pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
                     Right payload -> do 
                         case getPublicationPointsFromCertObject childCert of 
                             -- It's not going to happen?
                             Left e     -> vError e
-                            Right ppas -> pure $! T2 payload (makeCaShortcut childKey (Validated childCert) ppas)
-
+                            Right ppas -> pure $! createPayloadAndShortcut 
+                                payload (makeCaShortcut childKey (Validated childCert) ppas)
             RoaRO roa -> 
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
@@ -929,10 +938,10 @@ validateCaNoLimitChecks
                         let vrpList = getCMSContent $ cmsPayload roa
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
-                        let payload = emptyPayloads & #vrps .~ Set.fromList vrpList                   
-                        let z :: PayloadsType = Seq.singleton payload
-                        pure $! T2 z (makeRoaShortcut childKey validRoa vrpList) 
-
+                        let payload = emptyPayloads & #vrps .~ Set.fromList vrpList                        
+                        pure $! createPayloadAndShortcut 
+                                    (Seq.singleton payload) 
+                                    (makeRoaShortcut childKey validRoa vrpList) 
 
             GbrRO gbr ->                 
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
@@ -943,8 +952,9 @@ validateCaNoLimitChecks
                         let gbr' = getCMSContent $ cmsPayload gbr
                         let gbrPayload = (getHash gbr, gbr')
                         let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload
-                        pure $! T2 (Seq.singleton payload) (makeGbrShortcut childKey validGbr gbrPayload) 
-                        
+                        pure $! createPayloadAndShortcut 
+                                    (Seq.singleton payload) 
+                                    (makeGbrShortcut childKey validGbr gbrPayload)                         
 
             AspaRO aspa -> 
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
@@ -954,7 +964,9 @@ validateCaNoLimitChecks
                         oneMoreAspa
                         let aspaPayload = getCMSContent $ cmsPayload aspa
                         let payload = emptyPayloads & #aspas .~ Set.singleton aspaPayload
-                        pure $! T2 (Seq.singleton payload) (makeAspaShortcut childKey validAspa aspaPayload) 
+                        pure $! createPayloadAndShortcut 
+                                    (Seq.singleton payload) 
+                                    (makeAspaShortcut childKey validAspa aspaPayload) 
 
             BgpRO bgpCert ->
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
@@ -963,14 +975,16 @@ validateCaNoLimitChecks
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
                         oneMoreBgp
                         let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload
-                        pure $! T2 (Seq.singleton payload) (makeBgpSecShortcut childKey validaBgpCert bgpPayload) 
+                        pure $! createPayloadAndShortcut 
+                                    (Seq.singleton payload) 
+                                    (makeBgpSecShortcut childKey validaBgpCert bgpPayload) 
 
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
             _somethingElse -> do
                 logWarn logger [i|Unsupported type of object: #{locations}.|]                
-                pure $! T2 mempty (makeTroubledChild childKey)
+                pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
 
         where
 
@@ -982,7 +996,7 @@ validateCaNoLimitChecks
             allowRevoked childKey f =
                 catchAndEraseError f isRevokedCertError $ do
                     vWarn RevokedResourceCertificate
-                    pure $! T2 mempty (makeTroubledChild childKey)
+                    pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
                 where
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
@@ -992,6 +1006,7 @@ validateCaNoLimitChecks
                 -> Maybe [T3 Text Hash ObjectKey] 
                 -> ValidatorT IO (Located CaCerObject)
                 -> ValidatorT IO (Keyed (Validated CrlObject))
+                -- -> (PayloadsType -> (Text -> MftEntry) -> r)                
                 -> ValidatorT IO PayloadsType 
     collectPayloads mftShortcut@MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
 
@@ -1041,7 +1056,8 @@ validateCaNoLimitChecks
                     T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
                     pure $! payloads
 
-        getChildPayloads troubledValidation (_, MftEntry {..}) = do 
+        getChildPayloads troubledValidation (key, MftEntry {..}) = do 
+            markAsRead topDownContext key
             let emptyPayloads = mempty :: Payloads (Set Vrp)
             inSubVScope' ObjectFocus key $
                 case child of 
@@ -1219,19 +1235,26 @@ visitObjects TopDownContext { allTas = AllTasTopDownContext {..} } hashes =
     liftIO $ forM_ hashes $ \h -> 
                 atomically $ modifyTVar' visitedHashes (Set.insert h)
 
-markAsRead :: MonadIO m => TopDownContext -> ObjectKey -> m ()
-markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k =
+markAsRead :: TopDownContext -> ObjectKey -> ValidatorT IO ()
+markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = do 
+    -- vks <- liftIO $ readTVarIO visitedKeys
+    -- when (k `Set.member` vks) $
+    --     -- We have already visited this object before, so 
+    --     -- there're some circular references createed by the object.
+    --     -- 
+    --     -- NOTE: Limit cycle detection only to manifests
+    --     -- to minimise the false positives where the same object
+    --     -- is referenced from multiple manifests and we are treating 
+    --     -- it as a cycle. It has happened im the past.
+    --     vError $ CircularReference $ KeyIdentity k
+
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
 
-markAsReadHash :: (Storage s, MonadIO m) => 
-                AppContext s 
-            -> TopDownContext 
-            -> Hash -> m ()
-markAsReadHash AppContext {..} TopDownContext { allTas = AllTasTopDownContext {..} } hash = 
-    liftIO $ do 
-        key <- roTxT database $ \tx db -> getKeyByHash tx db hash
-        for_ key $ \k ->  
-            atomically $ modifyTVar' visitedKeys (Set.insert k)
+markAsReadHash :: Storage s => 
+                AppContext s -> TopDownContext -> Hash -> ValidatorT IO ()
+markAsReadHash AppContext {..} topDownContext hash = do
+    key <- roTxT database $ \tx db -> getKeyByHash tx db hash
+    for_ key $ markAsRead topDownContext              
 
 -- Add manifest to the map of the valid ones
 addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
@@ -1274,7 +1297,7 @@ extractPPAs = \case
 
 data ManifestValidity e r v = InvalidEntry e v 
                             | InvalidChild e v ObjectKey 
-                            | Valid r v (Text -> MftEntry) ObjectKey
+                            | Valid r v (Maybe (Text -> MftEntry)) ObjectKey
 
 makeTroubledChild :: ObjectKey -> Text -> MftEntry
 makeTroubledChild childKey fileName = 

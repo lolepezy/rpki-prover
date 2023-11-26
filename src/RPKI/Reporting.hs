@@ -106,7 +106,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BrokenUri Text Text | 
                         CertificateDoesntHaveSIA | 
                         AIANotSameAsParentLocation Text Locations | 
-                        CircularReference Hash |
+                        CircularReference ObjectIdentity |
                         CertificatePathTooDeep Locations Int |
                         TreeIsTooBig Locations Int |
                         TooManyRepositories Locations Int |

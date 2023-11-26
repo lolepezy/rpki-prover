@@ -28,7 +28,6 @@ import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
 import qualified Data.Set                 as Set
-import qualified Data.Map.Strict          as Map
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
@@ -737,6 +736,12 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving anyclass (TheBinary)
 
 newtype ArtificialKey = ArtificialKey Int64
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
+data ObjectIdentity = KeyIdentity ObjectKey
+                    | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
