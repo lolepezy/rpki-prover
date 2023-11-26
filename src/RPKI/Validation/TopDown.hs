@@ -447,7 +447,7 @@ validateCaNoLimitChecks
     createPayloadAndShortcut = 
         case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
             FullEveryIteration -> \payload _        -> T2 payload Nothing
-            Incremental        -> \payload shortcut -> T2 payload (Just shortcut)
+            Incremental        -> \payload shortcut -> T2 payload (Just $! shortcut)
 
     validateThisCertAndGoDown :: ValidatorT IO PayloadsType
     validateThisCertAndGoDown = do    
@@ -865,6 +865,7 @@ validateCaNoLimitChecks
     -- Optimised version of location validation when all we have is a key of the CA
     -- 
     validateLocationForShortcut key = do  
+        -- pure ()
         -- TODO Measure how much it costs and if it's noticeably costly 
         -- validate them all after the main traverse
         count <- roTxT database $ \tx db -> getLocationCountByKey tx db key
@@ -923,7 +924,7 @@ validateCaNoLimitChecks
 
                 embedState validationState
                 case r of 
-                    Left e        -> pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
+                    Left _        -> pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
                     Right payload -> do 
                         case getPublicationPointsFromCertObject childCert of 
                             -- It's not going to happen?
@@ -933,7 +934,7 @@ validateCaNoLimitChecks
             RoaRO roa -> 
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
-                    allowRevoked childKey $ do
+                    allowRevoked $ do
                         validRoa <- vHoist $ validateRoa now roa fullCa validCrl verifiedResources
                         let vrpList = getCMSContent $ cmsPayload roa
                         oneMoreRoa
@@ -946,7 +947,7 @@ validateCaNoLimitChecks
             GbrRO gbr ->                 
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
-                    allowRevoked childKey $ do
+                    allowRevoked $ do
                         validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
                         oneMoreGbr
                         let gbr' = getCMSContent $ cmsPayload gbr
@@ -959,7 +960,7 @@ validateCaNoLimitChecks
             AspaRO aspa -> 
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child                    
-                    allowRevoked childKey $ do
+                    allowRevoked $ do
                         validAspa <- vHoist $ validateAspa now aspa fullCa validCrl verifiedResources
                         oneMoreAspa
                         let aspaPayload = getCMSContent $ cmsPayload aspa
@@ -971,7 +972,7 @@ validateCaNoLimitChecks
             BgpRO bgpCert ->
                 inSubVScope' LocationFocus (getURL $ pickLocation locations) $ do
                     validateObjectLocations child
-                    allowRevoked childKey $ do
+                    allowRevoked $ do
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
                         oneMoreBgp
                         let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload
@@ -993,7 +994,7 @@ validateCaNoLimitChecks
             -- Replace RevokedResourceCertificate error with a warmning and don't break the 
             -- validation process.            
             -- This is a hacky and ad-hoc, but it works fine.
-            allowRevoked childKey f =
+            allowRevoked f =
                 catchAndEraseError f isRevokedCertError $ do
                     vWarn RevokedResourceCertificate
                     pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
@@ -1008,10 +1009,8 @@ validateCaNoLimitChecks
                 -> ValidatorT IO (Keyed (Validated CrlObject))
                 -- -> (PayloadsType -> (Text -> MftEntry) -> r)                
                 -> ValidatorT IO PayloadsType 
-    collectPayloads mftShortcut@MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
-
-        let troubled = [ () | (_, MftEntry { child = TroubledChild _} ) <- Map.toList nonCrlEntries ]
-
+    collectPayloads MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
+        
         -- For children that are invalid we'll have to fall back to full validation, 
         -- for that we beed the parent CA and a valid CRL.
         troubledValidation <-
