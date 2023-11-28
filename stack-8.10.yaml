@@ -29,5 +29,7 @@ extra-deps:
   - monoidal-containers-0.6.0.1@sha256:f56ea8fe91ff93da140e38b8dab4b94437b901818c13ba72fc7fc802290323ee,2583
   - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
   - lz4-0.2.3.1@sha256:9d286f1c8e3e3aab86ebb8cd39b485af57c0a05d9da5baf921641012a3c83cf0,1821
+  - stm-containers-1.2
+  - stm-hamt-1.2.0.9
   
 allow-newer: true
