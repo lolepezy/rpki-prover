@@ -243,8 +243,8 @@ newtype MftShortcutChildren = MftShortcutChildren {
 
 
 data MftShortcutStore s = MftShortcutStore {
-        mftMetas :: SMap "mfts-shortcut-meta" s AKI (Compressed MftShortcutMeta),
-        mftChildren :: SMap "mfts-shortcut-children" s AKI (Compressed MftShortcutChildren)
+        mftMetas :: SMap "mfts-shortcut-meta" s AKI (Raw (Compressed MftShortcutMeta)),
+        mftChildren :: SMap "mfts-shortcut-children" s AKI (Raw (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)
 
@@ -422,24 +422,23 @@ getMftShorcut :: (MonadIO m, Storage s) =>
 getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do 
     let MftShortcutStore {..} = mftShortcuts 
     runMaybeT $ do 
-        MftShortcutMeta {..}     <- fmap unCompressed $ MaybeT $ M.get tx mftMetas aki
-        MftShortcutChildren {..} <- fmap unCompressed $ MaybeT $ M.get tx mftChildren aki
+        mftMeta_ <- MaybeT $ M.get tx mftMetas aki
+        let MftShortcutMeta {..} = unCompressed $ restoreFromRaw mftMeta_
+        mftChildren_ <- MaybeT $ M.get tx mftChildren aki
+        let MftShortcutChildren {..} = unCompressed $ restoreFromRaw mftChildren_
         pure $! MftShortcut {..}
 
 saveMftShorcutMeta :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> DB s -> AKI -> MftShortcut -> m ()
+                    Tx s 'RW -> DB s -> AKI -> Raw (Compressed MftShortcutMeta) -> m ()
 saveMftShorcutMeta tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki MftShortcut {..} = liftIO $ do     
-        let mftMeta = MftShortcutMeta {..}
-        M.put tx mftMetas aki (Compressed mftMeta)
+    aki raw = liftIO $ M.put tx mftMetas aki raw
 
 saveMftShorcutChildren :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> AKI -> MftShortcut -> m ()
+                        Tx s 'RW -> DB s -> AKI -> Raw (Compressed MftShortcutChildren) -> m ()
 saveMftShorcutChildren tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki MftShortcut {..} = liftIO $ do             
-        M.put tx mftChildren aki (Compressed MftShortcutChildren {..})
+    aki raw = liftIO $ M.put tx mftChildren aki raw
 
 
 deleteMftShortcut :: (MonadIO m, Storage s) => 

@@ -41,6 +41,14 @@ data StorableObject a = StorableObject {
     }
     deriving stock (Show, Eq, Generic)
 
+
+newtype Raw a = Raw { unRaw :: Storable }
+    deriving stock (Show, Eq, Generic)
+
+-- data WannaStore a = OriginalWS a 
+--                   | StorableWS Storable
+--     deriving stock (Show, Eq, Generic)                  
+
 toStorableObject :: AsStorable a => a -> StorableObject a
 toStorableObject a = StorableObject a (force (toStorable a))
 
@@ -61,6 +69,10 @@ instance {-# OVERLAPPING #-} AsStorable Storable where
     toStorable = id
     fromStorable = id
 
+instance {-# OVERLAPPING #-} AsStorable (Raw a) where
+    toStorable   = unRaw
+    fromStorable = Raw
+
 instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
     toStorable = Storable . serialise_
     fromStorable (Storable a) = deserialise_ a
@@ -75,6 +87,9 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
     fromStorable (Storable b) = 
         Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
+
+restoreFromRaw :: AsStorable a => Raw a -> a
+restoreFromRaw = fromStorable . unRaw
 
 data SStats = SStats {
         statSize          :: Size,
