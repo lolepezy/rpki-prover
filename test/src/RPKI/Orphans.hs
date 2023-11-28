@@ -582,6 +582,10 @@ instance Arbitrary ObjectKey where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ObjectIdentity where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary (ParseError Text.Text) where
     arbitrary = genericArbitrary
     shrink = genericShrink
