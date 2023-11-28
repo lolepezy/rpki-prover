@@ -84,7 +84,8 @@ data AllTasTopDownContext = AllTasTopDownContext {
         validManifests       :: TVar ValidManifests,        
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
-        shortcutQueue        :: ClosableQueue MftShortcutOp
+        shortcutQueue        :: ClosableQueue MftShortcutOp,
+        shortcutsCreated     :: TVar [MftShortcutOp]
     }
     deriving stock (Generic)
 
@@ -130,6 +131,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = do
     liftIO $ atomically $ do        
         visitedKeys    <- newTVar mempty
         validManifests <- newTVar makeValidManifests        
+        shortcutsCreated <- newTVar []
         pure $ AllTasTopDownContext {..}
 
 
@@ -848,7 +850,6 @@ validateCaNoLimitChecks
             Located CaCerObject
             -> Keyed (Located RpkiObject) 
             -> Validated CrlObject
-            -- -> (PayloadsType -> (Text -> MftEntry) -> r)
             -> ValidatorT IO (T2 PayloadsType (Maybe (Text -> MftEntry)))
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) validCrl = do        
         let emptyPayloads = mempty :: Payloads (Set Vrp)
@@ -1172,56 +1173,71 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
 applyValidationSideEffects
     AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do
+    shortcutMetaUpdates     <- newIORef 0
+    shortcutChildrenUpdates <- newIORef 0 
     ((visitedSize, validMftsSize), elapsed) <- timedMS $ do
-            (vks, vmfts, db) <- atomically $ (,,) <$>
+            (vks, vmfts, shortcuts) <- atomically $ (,,) <$>
                                 readTVar visitedKeys <*>                                
                                 readTVar validManifests <*>
-                                readTVar database
-
-            rwTx db $ \tx -> do
+                                readTVar shortcutsCreated                                
+            
+            rwTxT database $ \tx db -> do
                 markAsValidated tx db vks worldVersion
-                saveLatestValidMfts tx db (vmfts ^. #valids)                
-
+                saveLatestValidMfts tx db (vmfts ^. #valids)         
+                for_ shortcuts $ \case 
+                    UpdateMftShortcut aki s -> do 
+                        saveMftShorcutMeta tx db aki s
+                        increment shortcutMetaUpdates
+                    UpdateMftShortcutChildren aki s -> do 
+                        saveMftShorcutChildren tx db aki s
+                        increment shortcutChildrenUpdates       
+            
             pure (Set.size vks, Map.size (vmfts ^. #valids))
 
-    logDebug logger [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
+    sm :: Int <- readIORef shortcutMetaUpdates
+    sc :: Int <- readIORef shortcutChildrenUpdates
+    logDebug logger $ [i|Marked #{visitedSize} objects as used, updated #{sm} MFT shortcuts, |] <> 
+                      [i|#{sc} MFT shortcut children, took #{elapsed}ms.|]
 
 
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let raw = Raw $ toStorable $ Compressed MftShortcutMeta {..}
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)
+        -- atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)
+        atomically $ modifyTVar' shortcutsCreated (UpdateMftShortcut aki raw :)
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Raw $ toStorable $ Compressed MftShortcutChildren {..}
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)
+        -- atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)        
+        atomically $ modifyTVar' shortcutsCreated (UpdateMftShortcutChildren aki raw :)
     
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $ do
-    shortcutMetaUpdates     <- newIORef 0
-    shortcutChildrenUpdates <- newIORef 0 
-    totalDbTime             <- newIORef 0 
-    readQueueChunked shortcutQueue 2000 $ \mftShortcuts -> do 
-        (_, ms) <- timedMS $ rwTxT database $ \tx db -> 
-            for_ mftShortcuts $ \case 
-                UpdateMftShortcut aki s -> do 
-                    saveMftShorcutMeta tx db aki s
-                    increment shortcutMetaUpdates
-                UpdateMftShortcutChildren aki s -> do 
-                    saveMftShorcutChildren tx db aki s
-                    increment shortcutChildrenUpdates
-        modifyIORef totalDbTime $ (<> ms)
-        logDebug logger [i|Saved a batch of MFT shortcut metadata and children, took #{ms}ms.|]
-    sm :: Int <- readIORef shortcutMetaUpdates
-    sc :: Int <- readIORef shortcutChildrenUpdates
-    ms <- readIORef totalDbTime
-    when (sm > 0 || sc > 0) $
-        logDebug logger [i|Created/updated #{sm} MFT shortcut metadata and #{sc} shortcut children, took #{ms}ms.|]
+    pure ()
+    -- shortcutMetaUpdates     <- newIORef 0
+    -- shortcutChildrenUpdates <- newIORef 0 
+    -- totalDbTime             <- newIORef 0 
+    -- readQueueChunked shortcutQueue 2000 $ \mftShortcuts -> do 
+    --     (_, ms) <- timedMS $ rwTxT database $ \tx db -> 
+    --         for_ mftShortcuts $ \case 
+    --             UpdateMftShortcut aki s -> do 
+    --                 saveMftShorcutMeta tx db aki s
+    --                 increment shortcutMetaUpdates
+    --             UpdateMftShortcutChildren aki s -> do 
+    --                 saveMftShorcutChildren tx db aki s
+    --                 increment shortcutChildrenUpdates
+    --     modifyIORef totalDbTime $ (<> ms)
+    --     logDebug logger [i|Saved a batch of MFT shortcut metadata and children, took #{ms}ms.|]
+    -- sm :: Int <- readIORef shortcutMetaUpdates
+    -- sc :: Int <- readIORef shortcutChildrenUpdates
+    -- ms <- readIORef totalDbTime
+    -- when (sm > 0 || sc > 0) $
+    --     logDebug logger [i|Created/updated #{sm} MFT shortcut metadata and #{sc} shortcut children, took #{ms}ms.|]
             
 
 data MftShortcutOp = UpdateMftShortcut AKI (Raw (Compressed MftShortcutMeta))
