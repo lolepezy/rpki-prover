@@ -292,7 +292,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     let ValidationResult vs maybeSlurm = payload
                     
                     logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "validation" cpuTime maxMemory
+                    pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
                 
                     let topDownState = workerVS <> vs
                     logDebug logger [i|Validation result: 
@@ -331,7 +331,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right wr@WorkerResult {..} -> do 
                     logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime maxMemory
+                    pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
                     pure $ Right payload                                       
 
     -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.

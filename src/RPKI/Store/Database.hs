@@ -452,16 +452,12 @@ deleteMftShortcut tx
 
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
-                -> Set.Set Hash 
+                -> Set.Set ObjectKey 
                 -> WorldVersion -> m ()
-markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } hashes worldVersion = liftIO $ do 
-    existingVersions <- validationVersions tx db    
-        
-    allKeys <- fmap (Set.fromList . catMaybes) 
-                $ forM (Set.toList hashes) $ \h -> M.get tx hashToKey h                    
+markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } allKeys worldVersion = liftIO $ do 
+    existingVersions <- validationVersions tx db                
 
-    M.put tx validatedByVersion worldVersion (Compressed allKeys)
-    
+    M.put tx validatedByVersion worldVersion (Compressed allKeys)    
     case existingVersions of 
         [] -> pure ()
         _ -> do

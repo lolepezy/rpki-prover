@@ -81,7 +81,7 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
         
     let RrdpFetchResult z = payload
     logWorkerDone logger workerId wr
-    pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
+    pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
     embedValidatorT $ pure z
 
 

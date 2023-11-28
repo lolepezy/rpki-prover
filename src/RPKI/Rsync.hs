@@ -110,8 +110,8 @@ runRsyncFetchWorker AppContext {..} fetchConfig worldVersion rsyncRepo = do
                                 (Timebox $ fetchConfig ^. #rsyncTimeout)
                                 arguments                        
     let RsyncFetchResult z = payload        
-    logWorkerDone logger workerId wr
-    pushSystem logger $ cpuMemMetric "fetch" cpuTime maxMemory
+    logWorkerDone logger workerId wr    
+    pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
     embedValidatorT $ pure z
     
 

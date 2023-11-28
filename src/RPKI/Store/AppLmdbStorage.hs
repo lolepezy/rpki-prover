@@ -302,7 +302,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             throwIO $ AppException $ InternalE $ InternalError message
         Right wr@WorkerResult { payload = CompactionResult _, .. } -> do
             logWorkerDone logger workerId wr
-            pushSystem logger $ cpuMemMetric "compaction" cpuTime maxMemory                     
+            pushSystem logger $ cpuMemMetric "compaction" cpuTime clockTime maxMemory                     
             
 -- 
 cleanupReaders :: AppContext LmdbStorage -> IO Int

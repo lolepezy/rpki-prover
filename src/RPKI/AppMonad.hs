@@ -183,8 +183,8 @@ inSubLocationScope = vFocusOn LocationFocus
 vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 vFocusOn c t = local (& typed @VScope %~ subScope' c t)
 
-inSubMetricScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-inSubMetricScope' c t = local (& typed @MetricScope %~ subScope' c t)
+metricFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+metricFocusOn c t = local (& typed @MetricScope %~ subScope' c t)
 
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 

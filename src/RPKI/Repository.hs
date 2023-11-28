@@ -22,8 +22,11 @@ import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
+import           Data.Hashable
 import qualified Data.Set                    as Set
 import           Data.Monoid.Generic
+
+import qualified StmContainers.Map           as StmMap
 
 import           GHC.Generics
 
@@ -89,7 +92,7 @@ newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass TheBinary        
+    deriving anyclass TheBinary       
 
 data Repository = RrdpR RrdpRepository | 
                   RsyncR RsyncRepository
@@ -134,15 +137,18 @@ data FetchTask a = Stub
                 | Fetching (Async a)                 
     deriving stock (Eq, Ord, Generic)                    
 
+instance Hashable PublicationPointAccess where  
+    hashWithSalt s (PublicationPointAccess ppas) = 
+        hashWithSalt s $ map (unURI . getURL . getRpkiURL) $ NonEmpty.toList ppas
 
 data RepositoryProcessing = RepositoryProcessing {
-        individualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
-        indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
-        ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
+        individualFetchRuns    :: StmMap.Map RpkiURL (FetchTask (Either AppError Repository, ValidationState)),
+        indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
+        ppSeqFetchRuns         :: StmMap.Map [RpkiURL] (FetchTask [FetchResult]),
         publicationPoints      :: TVar PublicationPoints,
         fetchSemaphore         :: Semaphore
     }
-    deriving stock (Eq, Generic)
+    deriving stock (Generic)
 
 instance WithRpkiURL PublicationPoint where
     getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
@@ -168,9 +174,10 @@ instance Semigroup RrdpRepository where
 instance Ord FetchStatus where
     compare = comparing timeAndStatus
       where             
-        timeAndStatus Pending       = (Nothing, 0 :: Int)
-        timeAndStatus (FailedAt t)  = (Just t,  0)
-        timeAndStatus (FetchedAt t) = (Just t,  1) 
+        timeAndStatus = \case 
+            Pending     -> (Nothing, 0 :: Int)
+            FailedAt t  -> (Just t,  0)
+            FetchedAt t -> (Just t,  1) 
 
 instance Monoid FetchStatus where    
     mempty = Pending
@@ -209,9 +216,9 @@ newPPs = PublicationPoints mempty newRsyncTree mempty
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
-        newTVar mempty <*> 
-        newTVar mempty <*>          
-        newTVar mempty <*>          
+        StmMap.new <*> 
+        StmMap.new <*>          
+        StmMap.new <*>                  
         newTVar newPPs <*>
         createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
 

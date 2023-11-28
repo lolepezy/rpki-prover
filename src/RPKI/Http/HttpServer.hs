@@ -381,6 +381,7 @@ getSystem AppContext {..} = do
     let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
     resources <- forM z $ \(scope, resourceUsage) -> do  
                     let aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
+                    let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
                     let maxMemory = resourceUsage ^. #maxMemory
                     let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
                     tag <- fmtScope scope
@@ -436,12 +437,12 @@ resolveLocations tx db = \case
     RepositoryFocus u       -> pure $ DirectLink $ toText u    
     LocationFocus (URI uri) -> pure $ ObjectLink uri
     LinkFocus (URI uri)     -> pure $ DirectLink uri
-    ObjectFocus key         -> locations tx db key
+    ObjectFocus key         -> locations key
     HashFocus hash          -> getKeyByHash tx db hash >>= \case 
                                     Nothing  -> pure $ TextDto [i|Can't find key for hash #{hash}|]
-                                    Just key -> locations tx db key        
+                                    Just key -> locations key        
   where
-    locations tx db key = do 
+    locations key = do 
         getLocationsByKey tx db key >>= \case 
             Nothing  -> pure $ TextDto [i|Can't find locations for key #{key}|]
             Just loc -> pure $ ObjectLink $ toText $ pickLocation loc

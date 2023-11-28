@@ -30,6 +30,7 @@ import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
+import           Data.Hashable
 
 import           Data.Bifunctor
 import           Data.Monoid
@@ -87,36 +88,44 @@ newtype Hash = Hash BSS.ShortByteString
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 data RsyncHost = RsyncHost RsyncHostName (Maybe RsyncPort)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RsyncHostName = RsyncHostName { unRsyncHostName :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RsyncPort = RsyncPort { unRsyncPort :: Int }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving newtype Monoid    
     deriving newtype Semigroup
+    deriving anyclass Hashable
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RrdpURL = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving  (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 class WithValidityPeriod a where
     getValidityPeriod :: a -> (Instant, Instant)
@@ -677,36 +686,6 @@ data TA = TA {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
   
-
-data BriefType = RoaBrief 
-           | AspaBrief
-           | BgpBrief
-           | GbrBrief
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary        
-
-{- 
-This is a short version of an object that is used as an optimisation 
-for leafs of the RPKI trae, i.e. ROAs, ASPAs and such. Once validated
-they can only expire or be revoked. If none of that happened, we can 
-safely assume that it can be used for extracting it's payload.
--} 
-data EEBrief = EEBrief {
-        briefType      :: BriefType,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
-        parentHash     :: Hash,
-        serial         :: Serial,
-        payload        :: Payloads (Set.Set Vrp)
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary        
-
-instance {-# OVERLAPPING #-} WithValidityPeriod EEBrief where
-    getValidityPeriod EEBrief {.. } = (notValidBefore, notValidAfter)
-        
-instance {-# OVERLAPPING #-} WithSerial EEBrief where
-    getSerial EEBrief {..} = serial
 
 data Payloads a = Payloads {
         vrps     :: a,

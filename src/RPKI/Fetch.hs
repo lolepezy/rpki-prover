@@ -24,8 +24,9 @@ import           Control.Monad.Except
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
-import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
+import qualified StmContainers.Map           as StmMap
+import qualified ListT                       as ListT
 
 import           Time.Types
 
@@ -78,7 +79,7 @@ fetchPPWithFallback
         frs <- liftIO $ fetchOnce parentScope ppAccess        
         setValidationStateOfFetches repositoryProcessing frs            
   where
-    runForKey runs key = Map.lookup key <$> readTVar runs            
+    runForKey runs key = StmMap.lookup key runs            
 
     -- Use "run only once" logic for the whole list of PPs
     fetchOnce parentScope ppAccess' =          
@@ -87,13 +88,13 @@ fetchPPWithFallback
             runForKey ppSeqFetchRuns ppsKey >>= \case            
                 Just Stub         -> retry
                 Just (Fetching a) -> pure $ wait a
-
                 Nothing -> do                                         
-                    modifyTVar' ppSeqFetchRuns $ Map.insert ppsKey Stub
+                    StmMap.insert Stub ppsKey ppSeqFetchRuns
                     pure $ bracketOnError 
-                                (async $ evaluate =<< fetchWithFallback parentScope (ppsToList ppAccess'))
-                                (stopAndDrop ppSeqFetchRuns ppsKey) 
-                                (rememberAndWait ppSeqFetchRuns ppsKey)                
+                            (async $ evaluate =<< 
+                                    fetchWithFallback parentScope (ppsToList ppAccess'))
+                            (stopAndDrop ppSeqFetchRuns ppsKey) 
+                            (rememberAndWait ppSeqFetchRuns ppsKey)
       where   
         ppsToList = NonEmpty.toList . unPublicationPointAccess
 
@@ -173,8 +174,8 @@ fetchPPWithFallback
                     Just Stub         -> retry
                     Just (Fetching a) -> pure (rpkiUrl, AttemptedFetch, wait a)
 
-                    Nothing -> do                                         
-                        modifyTVar' individualFetchRuns $ Map.insert rpkiUrl Stub
+                    Nothing -> do       
+                        StmMap.insert Stub rpkiUrl individualFetchRuns
                         pure (rpkiUrl, AttemptedFetch, fetchPP parentScope repo)
             else
                 pure (rpkiUrl, UpToDate, pure (Right repo, mempty))                
@@ -203,7 +204,7 @@ fetchPPWithFallback
                     ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
                                                     $ fetchRepository appContext fetchConfig worldVersion repo                                
                     atomically $ do
-                        modifyTVar' individualFetchRuns $ Map.delete rpkiUrl                    
+                        StmMap.delete rpkiUrl individualFetchRuns
 
                         let (newRepo, newStatus) = case r of                             
                                 Left _      -> (repo, FailedAt fetchTime)
@@ -221,11 +222,11 @@ fetchPPWithFallback
                 (rememberAndWait individualFetchRuns rpkiUrl)                        
 
     stopAndDrop stubs key asyncR = liftIO $ do         
-        atomically $ modifyTVar' stubs $ Map.delete key
+        atomically $ StmMap.delete key stubs
         cancel asyncR
 
     rememberAndWait stubs key asyncR = liftIO $ do 
-        atomically $ modifyTVar' stubs $ Map.insert key (Fetching asyncR)
+        atomically $ StmMap.insert (Fetching asyncR) key stubs
         wait asyncR
 
     needsAFetch pp now' = do 
@@ -350,12 +351,12 @@ needsFetching r status ValidationConfig {..} (Now now) =
         interval (RrdpU _)  = rrdpRepositoryRefreshInterval
         interval (RsyncU _) = rsyncRepositoryRefreshInterval          
 
-
 validationStateOfFetches :: MonadIO m => RepositoryProcessing -> m ValidationState 
-validationStateOfFetches repositoryProcessing = liftIO $
-    mconcat . Map.elems 
-        <$> readTVarIO (repositoryProcessing ^. #indivudualFetchResults)    
-
+validationStateOfFetches repositoryProcessing = liftIO $ 
+    atomically $ 
+        fmap (foldr (\(_, vs) r -> r <> vs) mempty) $ 
+            ListT.toList $ StmMap.listT $ 
+                repositoryProcessing ^. #indivudualFetchResults    
 
 setValidationStateOfFetches :: MonadIO m => RepositoryProcessing -> [FetchResult] -> m [FetchResult] 
 setValidationStateOfFetches repositoryProcessing frs = liftIO $ do    
@@ -364,19 +365,17 @@ setValidationStateOfFetches repositoryProcessing frs = liftIO $ do
                 FetchFailure r vs'    -> (r, vs')
                 FetchSuccess repo vs' -> (getRpkiURL repo, vs')
             
-        atomically $ modifyTVar' (repositoryProcessing ^. #indivudualFetchResults)
-                   $ Map.insert u vs
+        atomically $ StmMap.insert vs u (repositoryProcessing ^. #indivudualFetchResults)                   
     pure frs
 
--- 
 cancelFetchTasks :: RepositoryProcessing -> IO ()    
-cancelFetchTasks rp = do 
+cancelFetchTasks RepositoryProcessing {..} = do 
     (ifr, ppSeqFr) <- atomically $ (,) <$>
-                        readTVar (rp ^. #individualFetchRuns) <*>
-                        readTVar (rp ^. #ppSeqFetchRuns)
-
-    mapM_ cancel [ a | (_, Fetching a) <- Map.toList ifr]
-    mapM_ cancel [ a | (_, Fetching a) <- Map.toList ppSeqFr]
+                        (ListT.toList $ StmMap.listT individualFetchRuns) <*>
+                        (ListT.toList $ StmMap.listT ppSeqFetchRuns)        
+    
+    mapM_ cancel [ a | (_, Fetching a) <- ifr ]
+    mapM_ cancel [ a | (_, Fetching a) <- ppSeqFr ]
 
 
 getPrimaryRepositoryFromPP :: MonadIO m => RepositoryProcessing -> PublicationPointAccess -> m (Maybe RpkiURL)

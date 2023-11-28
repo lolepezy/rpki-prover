@@ -67,6 +67,7 @@ dependencies:
 - lmdb-high-level
 - lifted-async
 - lifted-base
+- list-t
 - lz4
 - memory
 - mmorph
@@ -90,6 +91,7 @@ dependencies:
 - shower
 - split
 - stm
+- stm-containers
 - store
 - streaming
 - strict-tuple

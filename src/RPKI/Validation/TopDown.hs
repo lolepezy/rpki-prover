@@ -16,7 +16,7 @@ import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.Reader
 
-import           Control.Lens
+import           Control.Lens hiding (children)
 import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
 import           GHC.Generics (Generic)
@@ -39,7 +39,7 @@ import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
 
-import           UnliftIO.Async                   (pooledForConcurrently)
+import           UnliftIO.Async                   (pooledForConcurrently, pooledForConcurrentlyN)
 
 import           RPKI.AppContext
 import           RPKI.AppState
@@ -58,7 +58,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx, fmtLocations)
+import           RPKI.Util                        (fmtEx, fmtLocations, increment)
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.Common
@@ -80,11 +80,9 @@ data TopDownContext = TopDownContext {
 data AllTasTopDownContext = AllTasTopDownContext {
         now                  :: Now,
         worldVersion         :: WorldVersion,
-        validManifests       :: TVar ValidManifests,
-        visitedHashes        :: TVar (Set Hash),
+        validManifests       :: TVar ValidManifests,        
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
-        briefs               :: TVar [BriefUpdate],
         shortcutQueue        :: ClosableQueue MftShortcutOp
     }
     deriving stock (Generic)
@@ -92,12 +90,6 @@ data AllTasTopDownContext = AllTasTopDownContext {
 
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
-
-data BriefUpdate = BriefUpdate Hash EEBrief
-    deriving stock (Show, Eq, Generic)
-
-data ObjectOrBrief = RObject (Located RpkiObject) | RBrief (Located EEBrief) Hash
-    deriving stock (Show, Eq, Generic)
 
 data TopDownResult = TopDownResult {
         payloads           :: Payloads Vrps,
@@ -134,11 +126,9 @@ newAllTasTopDownContext :: MonadIO m =>
                         -> m AllTasTopDownContext
 newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = do 
     let now = Now $ versionToMoment worldVersion
-    liftIO $ atomically $ do
-        visitedHashes  <- newTVar mempty
+    liftIO $ atomically $ do        
         visitedKeys    <- newTVar mempty
         validManifests <- newTVar makeValidManifests        
-        briefs         <- newTVar []            
         pure $ AllTasTopDownContext {..}
 
 
@@ -197,9 +187,9 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     fst <$> bracketChanClosable
-                1000
+                10000
                 validateMutlipleTAs'
-                (storeShortcuts appContext worldVersion)
+                (storeShortcuts appContext)
                 (\_ -> pure ())
 
   where
@@ -361,7 +351,7 @@ validateCa
 
     -- Check and report for the maximal number of objects in the tree
     let visitedObjectCountLimit = (
-            (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedHashes,
+            (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedKeys,
             do
                 logError logger [i|Interrupting validation on #{fmtLocations $ getLocations ca}, maximum total object number in the tree is reached.|]
                 vError $ TreeIsTooBig
@@ -440,10 +430,10 @@ validateCaNoLimitChecks
                             primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
                             case primaryUrl of
                                 Nothing -> validateThisCertAndGoDown                                            
-                                Just rp -> inSubMetricScope' PPFocus rp validateThisCertAndGoDown  
+                                Just rp -> metricFocusOn PPFocus rp validateThisCertAndGoDown  
   where
 
-    -- Do not create shortctus when validation algorithm is 
+    -- Do not create shortctus when validation algorithm is not incremental
     createPayloadAndShortcut = 
         case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
             FullEveryIteration -> \payload _        -> T2 payload Nothing
@@ -451,7 +441,6 @@ validateCaNoLimitChecks
 
     validateThisCertAndGoDown :: ValidatorT IO PayloadsType
     validateThisCertAndGoDown = do    
-        -- logDebug logger [i|validateThisCertAndGoDown 1|]
         aki <- case ca of 
             CaFull c -> do 
                 markAsReadHash appContext topDownContext (getHash c) 
@@ -570,17 +559,6 @@ validateCaNoLimitChecks
             let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
 
             vFocusOn LocationFocus (getURL $ pickLocation locations) $ do 
-                -- vks <- liftIO $ readTVarIO visitedKeys
-                -- when (mftKey `Set.member` vks) $
-                --     -- We have already visited this manifest before, so 
-                --     -- there're some circular references in the objects.
-                --     -- 
-                --     -- NOTE: Limit cycle detection only to manifests
-                --     -- to minimise the false positives where the same object
-                --     -- is referenced from multiple manifests and we are treating 
-                --     -- it as a cycle. It has happened im the past.
-                --     vError $ CircularReference (getHash locatedMft)
-
                 -- General location validation
                 validateObjectLocations locatedMft
 
@@ -588,7 +566,7 @@ validateCaNoLimitChecks
                 validateMftLocation locatedMft fullCa
 
                 -- TODO Add fiddling with shortcut version of CRL here                    
-                keyedValidCrl@(Keyed validCrl _) <- findAndValidateCrl fullCa keyedMft childrenAki                
+                keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki                
 
                 -- MFT can be revoked by the CRL that is on this MFT -- detect 
                 -- revocation as well, this is clearly and error                               
@@ -598,18 +576,24 @@ validateCaNoLimitChecks
                 nonCrlChildren <- validateMftEntries mft (getHash validCrl)
 
                 -- If MFT shortcut is present, filter children that need validation, 
-                -- children that are already on the shortcut are validated and can be 
-                -- skipped here
-                let (newChildren, overlappingChildren, somethingDeleted) =
+                -- children that are on the shortcut are already validated.
+                let (newChildren, overlappingChildren, isSomethingDeleted) =
                         case mftShortcut of 
                             Nothing       -> (nonCrlChildren, [], False)
-                            Just mftShort -> mftDiff mftShort nonCrlChildren
+                            Just mftShort -> manifestDiff mftShort nonCrlChildren
 
-                -- If CRL has changed, we have to recheck if all the children are 
-                -- not revoked. If will be checked by full validation for newChildren
-                -- but it needs to be explicitly checked for overlappingChildren
+                when (not (null newChildren) && not (null overlappingChildren)) $ do  
+                    let fileName :: Text = case newChildren of 
+                                        (T3 fn _ _) : [] -> [i|file = #{fn}, |]
+                                        _                -> ""
+                    logDebug logger [i|New children: #{length newChildren}, #{fileName} same children #{length overlappingChildren}.|]
+
+                -- If CRL has changed, we have to recheck if children are not revoked. 
+                -- If will be checked by full validation for newChildren but it needs 
+                -- to be explicitly checked for overlappingChildren
                 forM_ mftShortcut $ \mftShort -> 
-                    checkNoChildrenAreRevoked mftShort overlappingChildren keyedValidCrl            
+                    when (crlKey /= mftShort ^. #crlShortcut . #key) $
+                        checkNoChildrenAreRevoked mftShort overlappingChildren keyedValidCrl            
 
                 -- Mark all manifest entries as read to avoid the situation
                 -- when some of the children are garbage-collected from the cache 
@@ -651,7 +635,7 @@ validateCaNoLimitChecks
 
                                 -- Update manifest shortcut children in case there are new 
                                 -- or deleted children in the new manifest
-                                when (isNothing mftShortcut || not (null newChildren) || somethingDeleted)  $
+                                when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted)  $
                                     addMftShortcut topDownContext 
                                         (UpdateMftShortcutChildren aki nextMftShortcut)
 
@@ -689,33 +673,6 @@ validateCaNoLimitChecks
                     checkCrlLocation locatedCrl mftEECert
                     void $ validateCrl now crl fullCa                
                     pure $! Keyed (Validated crl) crlKey
-
-        -- Calculate difference bentween a manifest shortcut 
-        -- and a real manifest object.
-        mftDiff MftShortcut {..} (newMftChidlren :: [T3 Text a ObjectKey]) =                
-            (newOnes, overlapping, not $ Map.null $ deletedEntries nonCrlEntries)
-          where
-            (newOnes, overlapping) = List.partition (\(T3 fileName _  k) -> 
-                    isNewEntry k fileName nonCrlEntries) newMftChidlren                
-
-            -- it's not in the map of shortcut children or it has changed 
-            -- its name (very unlikely but can happen in theory)                
-            isNewEntry key_ fileName shortcutChildren = 
-                case Map.lookup key_ shortcutChildren of
-                    Nothing -> True
-                    Just e  -> e ^. #fileName /= fileName 
-                            
-            deletedEntries shortcutChildren = 
-                -- If we delete everything from shortcutChildren that is present in newMftChidlren
-                -- we only have the entries left that were deleted from shortcutChildren
-                foldr (\(T3 fileName _ key_) shortcutChildren -> 
-                        case Map.lookup key shortcutChildren of 
-                            Nothing -> shortcutChildren
-                            Just e 
-                                | e ^. #fileName == fileName -> Map.delete key_ shortcutChildren
-                                | otherwise -> shortcutChildren) 
-                        nonCrlEntries
-                        newMftChidlren
                 
 
         -- Utility for repeated peace of code
@@ -847,9 +804,8 @@ validateCaNoLimitChecks
                 []  -> False
                 _   -> True
 
-    getManifestEntry filename hash' = do
-        ro <- roTxT database $ \tx db -> getKeyedByHash tx db hash'
-        case ro of
+    getManifestEntry filename hash' = 
+        roTxT database (\tx db -> getKeyedByHash tx db hash') >>= \case        
             Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
             Just ro -> pure ro
 
@@ -1008,11 +964,11 @@ validateCaNoLimitChecks
     collectPayloads :: MftShortcut 
                 -> Maybe [T3 Text Hash ObjectKey] 
                 -> ValidatorT IO (Located CaCerObject)
-                -> ValidatorT IO (Keyed (Validated CrlObject))
-                -- -> (PayloadsType -> (Text -> MftEntry) -> r)                
+                -> ValidatorT IO (Keyed (Validated CrlObject))             
                 -> ValidatorT IO PayloadsType 
-    collectPayloads mftShortcut@MftShortcut {..} maybeChildren findFullCa findValidCrl = do      
+    collectPayloads mftShortcut maybeChildren findFullCa findValidCrl = do      
         
+        let nonCrlEntries = mftShortcut ^. #nonCrlEntries
         vHoist $ 
             vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
                 validateObjectValidityPeriod mftShortcut now
@@ -1037,6 +993,9 @@ validateCaNoLimitChecks
                     Nothing -> Map.toList nonCrlEntries
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
     
+        -- TODO 
+        -- Gather all PPAs from all Ca on the MftShortcut and fetch all of them beforehand?
+
         -- logDebug logger [i|Children: #{length nonCrlEntries}, filteed #{length filteredChildren}|]
         collectResultsInParallel filteredChildren (getChildPayloads troubledValidation)
 
@@ -1092,9 +1051,40 @@ validateCaNoLimitChecks
                         oneMoreGbr                   
                         pure $! Seq.singleton $! emptyPayloads & #gbrs .~ Set.singleton gbr
 
-                    TroubledChild childKey -> troubledValidation childKey  
+                    TroubledChild childKey_ -> troubledValidation childKey_
+
+-- Calculate difference bentween a manifest shortcut 
+-- and the list of children of the new manifest object.
+manifestDiff :: MftShortcut 
+            -> [T3 Text a ObjectKey] 
+            -> ([T3 Text a ObjectKey], [T3 Text a ObjectKey], Bool)
+manifestDiff mftShortcut newMftChidlren =                
+    (newOnes, overlapping, not $ Map.null deletedEntries)
+    where
+    (newOnes, overlapping) = List.partition 
+            (\(T3 fileName _  k) -> isNewEntry k fileName) newMftChidlren                
+
+    -- it's not in the map of shortcut children or it has changed 
+    -- its name (very unlikely but can happen in theory)                
+    isNewEntry key_ fileName  = 
+        case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of
+            Nothing -> True
+            Just e  -> e ^. #fileName /= fileName 
+                    
+    deletedEntries = 
+        -- If we delete everything from mftShortcut.nonCrlEntries that is present in 
+        -- newMftChidlren, we only have the entries that are not present on the new manifest
+        foldr (\(T3 fileName _ key_) entries -> 
+                case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of 
+                    Nothing -> entries
+                    Just e 
+                        | e ^. #fileName == fileName -> Map.delete key_ entries
+                        | otherwise -> entries) 
+                (mftShortcut ^. #nonCrlEntries)
+                newMftChidlren
 
 
+getFullCa :: Storage s => AppContext s -> Ca -> ValidatorT IO (Located CaCerObject)
 getFullCa appContext@AppContext {..} ca = 
     case ca of     
         CaFull c  -> pure c            
@@ -1104,12 +1094,14 @@ getFullCa appContext@AppContext {..} ca =
                 Just (Located loc (CerRO c)) -> pure $! Located loc c
                 _ -> internalError appContext [i|Internal error, can't find a CA by its key #{key}.|]
     
+getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
 getCrlByKey appContext@AppContext {..} crlKey = do    
     z <- roTxT database $ \tx db -> getObjectByKey tx db crlKey
     case z of 
         Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
         _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
     
+internalError :: AppContext s -> Text -> ValidatorT IO a
 internalError AppContext {..} message = do     
     logError logger message
     appError $ InternalE $ InternalError message  
@@ -1143,14 +1135,12 @@ makeGbrShortcut key (Validated gbrObject) gbr fileName = let
         child = GbrChild (GbrShortcut {..}) serial       
     in MftEntry {..}    
 
-
 makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> Text -> MftEntry
 makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let         
         (notValidBefore, notValidAfter) = getValidityPeriod bgpCert                  
         serial = getSerial bgpCert
         child = BgpSecChild (BgpSecShortcut {..}) serial
     in MftEntry {..}    
-
 
 makeMftShortcut :: ObjectKey 
                 -> Validated MftObject -> [(ObjectKey, MftEntry)] 
@@ -1177,31 +1167,25 @@ makeMftShortcut key
 -- 
 -- - save all the visited hashes together with the current world version
 -- - save all the valid manifests for each CA/AKI
--- - save all the object validation briefs
 -- 
 applyValidationSideEffects :: (MonadIO m, Storage s) =>
                               AppContext s -> AllTasTopDownContext -> m ()
 applyValidationSideEffects
     AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do
-    ((visitedSize, validMftsSize, briefNumber), elapsed) <- timedMS $ do
-            (vhs, vmfts, briefs', db) <- atomically $ (,,,) <$>
-                                readTVar visitedHashes <*>                                
+    ((visitedSize, validMftsSize), elapsed) <- timedMS $ do
+            (vks, vmfts, db) <- atomically $ (,,) <$>
+                                readTVar visitedKeys <*>                                
                                 readTVar validManifests <*>
-                                readTVar briefs <*>
                                 readTVar database
 
-            briefCounter <- newIORef (0 :: Integer)
             rwTx db $ \tx -> do
-                markAsValidated tx db vhs worldVersion
+                markAsValidated tx db vks worldVersion
                 saveLatestValidMfts tx db (vmfts ^. #valids)                
 
-            c <- readIORef briefCounter
-            pure (Set.size vhs, Map.size (vmfts ^. #valids), c)
+            pure (Set.size vks, Map.size (vmfts ^. #valids))
 
-    logInfo logger $
-        [i|Marked #{visitedSize} objects as used, #{validMftsSize} manifests as valid, |] <>
-        [i|saved #{briefNumber} brief objects, took #{elapsed}ms.|]
+    logDebug logger [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
 addMftShortcut :: MonadIO m => TopDownContext -> MftShortcutOp -> m ()
@@ -1212,15 +1196,25 @@ addMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } mftShortcut
 data MftShortcutOp = UpdateMftShortcut AKI MftShortcut
                    | UpdateMftShortcutChildren AKI MftShortcut
 
-storeShortcuts :: (Storage s, MonadIO m) => AppContext s 
-            -> WorldVersion 
-            -> ClosableQueue MftShortcutOp -> m ()
-storeShortcuts AppContext {..} worldVersion shortcutQueue = liftIO $ do 
-    readQueueChunked shortcutQueue 100 $ \mftShortcuts -> 
+storeShortcuts :: (Storage s, MonadIO m) => 
+                AppContext s 
+             -> ClosableQueue MftShortcutOp -> m ()
+storeShortcuts AppContext {..} shortcutQueue = liftIO $ do
+    shortcutMetaUpdates     <- newIORef 0
+    shortcutChildrenUpdates <- newIORef 0 
+    readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
-                UpdateMftShortcut aki s         -> saveMftShorcutMeta tx db aki s
-                UpdateMftShortcutChildren aki s -> saveMftShorcutChildren tx db aki s
+                UpdateMftShortcut aki s -> do 
+                    saveMftShorcutMeta tx db aki s
+                    increment shortcutMetaUpdates
+                UpdateMftShortcutChildren aki s -> do 
+                    saveMftShorcutChildren tx db aki s
+                    increment shortcutChildrenUpdates
+    sm :: Int <- readIORef shortcutMetaUpdates
+    sc :: Int <- readIORef shortcutChildrenUpdates
+    when (sm > 0 || sc > 0) $
+        logDebug logger [i|Created/updated #{sm} MFT shortcut metadata and #{sc} shortcut children.|]
             
 
 -- Do whatever is required to notify other subsystems that the object was touched 
@@ -1248,12 +1242,6 @@ markAsReadHash :: Storage s =>
 markAsReadHash AppContext {..} topDownContext hash = do
     key <- roTxT database $ \tx db -> getKeyByHash tx db hash
     for_ key $ markAsRead topDownContext              
-
--- Add manifest to the map of the valid ones
-addValidMft :: MonadIO m => TopDownContext -> AKI -> ObjectKey -> m ()
-addValidMft TopDownContext { allTas = AllTasTopDownContext {..}} aki mftKey =
-    liftIO $ atomically $ modifyTVar'
-                validManifests (& #valids %~ Map.insert aki mftKey)
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp :: Monad m => ValidatorT m ()

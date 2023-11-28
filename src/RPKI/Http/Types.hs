@@ -268,6 +268,7 @@ newtype JobsDto = JobsDto {
 data ResourcesDto = ResourcesDto {
         tag                 :: Text,
         aggregatedCpuTime   :: CPUTime,
+        aggregatedClockTime :: TimeMs,
         maxMemory           :: MaxMemory,        
         avgCpuTimeMsPerSecond :: Double
     }

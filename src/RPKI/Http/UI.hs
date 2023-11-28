@@ -315,8 +315,8 @@ validaionDetailsHtml result =
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
                     H.summary $ focusLink1 objectUrl
-                    forM_ (Prelude.tail path) $ \p -> 
-                        focusLink1 p >> H.br
+                    forM_ (Prelude.tail path) $ \f -> 
+                        focusLink1 f >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
       where

@@ -17,8 +17,9 @@ import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
 
 data ResourceUsage = ResourceUsage {
-        aggregatedCpuTime :: CPUTime,
-        maxMemory         :: MaxMemory
+        aggregatedCpuTime   :: CPUTime,
+        aggregatedClockTime :: TimeMs,
+        maxMemory           :: MaxMemory
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
@@ -44,10 +45,12 @@ data SystemInfo = SystemInfo {
 newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 
 
-cpuMemMetric :: Text -> CPUTime -> MaxMemory -> SystemMetrics
-cpuMemMetric scope cpuTime maxMemory' = SystemMetrics {
+cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> SystemMetrics
+cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
         resources = updateMetricInMap 
                         (newScope scope) 
-                        ((& #aggregatedCpuTime %~ (<> cpuTime)) . (& #maxMemory %~ (<> maxMemory')))
+                        ((& #aggregatedCpuTime %~ (<> cpuTime)) . 
+                         (& #aggregatedClockTime %~ (<> clockTime)) .  
+                         (& #maxMemory %~ (<> maxMemory')))
                         mempty
     }
