@@ -326,8 +326,22 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
         fetchTaCert = do                     
             logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
-                RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
-                RrdpU rrdpU   -> fetchRpkiObject appContext fetchConfig rrdpU
+                RsyncU rsyncU -> do 
+                    let Seconds maxDuration = fetchConfig ^. #rsyncTimeout
+                    timeoutVT 
+                        (1_000_000 * fromIntegral maxDuration)                 
+                        (rsyncRpkiObject appContext fetchConfig rsyncU)
+                        (do 
+                            logError logger [i|Couldn't fetch TA certificate #{getURL u} after #{maxDuration}s.|]
+                            appError $ RsyncE $ RsyncDownloadTimeout maxDuration)
+                RrdpU rrdpU   -> do 
+                    let Seconds maxDuration = fetchConfig ^. #rrdpTimeout
+                    timeoutVT 
+                        (1_000_000 * fromIntegral maxDuration)           
+                        (fetchRpkiObject appContext fetchConfig rrdpU)
+                        (do 
+                            logError logger [i|Couldn't fetch TA certificate #{getURL u} after #{maxDuration}s.|]
+                            appError $ RrdpE $ RrdpDownloadTimeout maxDuration)
             pure (u, ro)
 
 
