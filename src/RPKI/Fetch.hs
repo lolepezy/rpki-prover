@@ -27,6 +27,7 @@ import           Data.String.Interpolate.IsString
 import qualified Data.Set                    as Set
 import qualified StmContainers.Map           as StmMap
 import qualified ListT                       as ListT
+import           Data.Maybe                  (catMaybes)
 
 import           Time.Types
 
@@ -378,12 +379,38 @@ cancelFetchTasks RepositoryProcessing {..} = do
     mapM_ cancel [ a | (_, Fetching a) <- ppSeqFr ]
 
 
-getPrimaryRepositoryFromPP :: MonadIO m => RepositoryProcessing -> PublicationPointAccess -> m (Maybe RpkiURL)
+getPrimaryRepositoryFromPP :: MonadIO m => 
+                            RepositoryProcessing 
+                         -> PublicationPointAccess 
+                         -> m (Maybe RpkiURL)
 getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
     pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
     let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
     pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
 
+getFetchablePPAs :: MonadIO m => 
+                    RepositoryProcessing 
+                -> [PublicationPointAccess] 
+                -> m (Set.Set PublicationPointAccess)
+getFetchablePPAs repositoryProcessing ppas = liftIO $ do
+    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+    pure $ Set.fromList $ catMaybes $ map (ppaToFetch pps) ppas
+  where
+    ppaToFetch pps ppa = fmap PublicationPointAccess 
+                        $ NonEmpty.nonEmpty 
+                        $ catMaybes 
+                        $ map (ppToFetchablePP pps) 
+                        $ NonEmpty.toList 
+                        $ unPublicationPointAccess ppa
+
+    ppToFetchablePP pps = \case 
+        r@(RrdpPP _)  -> Just r
+        RsyncPP rpp@(RsyncPublicationPoint rsyncUrl) -> 
+            (\r -> RsyncPP $ r ^. #repoPP) <$> 
+                rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl
+
+
+    
 
 
 onlyForSyncFetch :: PublicationPoints 
