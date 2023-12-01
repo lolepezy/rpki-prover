@@ -379,39 +379,41 @@ cancelFetchTasks RepositoryProcessing {..} = do
     mapM_ cancel [ a | (_, Fetching a) <- ppSeqFr ]
 
 
-getPrimaryRepositoryFromPP :: MonadIO m => 
-                            RepositoryProcessing 
+readPublicationPoints :: MonadIO m => 
+                        RepositoryProcessing                         
+                        -> m PublicationPoints
+readPublicationPoints repositoryProcessing = liftIO $ 
+    readTVarIO $ repositoryProcessing ^. #publicationPoints    
+
+getPrimaryRepositoryFromPP :: PublicationPoints 
                          -> PublicationPointAccess 
-                         -> m (Maybe RpkiURL)
-getPrimaryRepositoryFromPP repositoryProcessing ppAccess = liftIO $ do
-    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
+                         -> Maybe RpkiURL
+getPrimaryRepositoryFromPP pps ppAccess = 
     let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
-    pure $ getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
+    in getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
 
-getFetchablePPAs :: MonadIO m => 
-                    RepositoryProcessing 
-                -> [PublicationPointAccess] 
-                -> m (Set.Set PublicationPointAccess)
-getFetchablePPAs repositoryProcessing ppas = liftIO $ do
-    pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints    
-    pure $ Set.fromList $ catMaybes $ map (ppaToFetch pps) ppas
+
+getFetchablePPA :: PublicationPoints 
+                -> PublicationPointAccess
+                -> PublicationPointAccess
+getFetchablePPA pps ppa = 
+    PublicationPointAccess 
+        $ NonEmpty.map (ppToFetchablePP pps)                         
+        $ unPublicationPointAccess ppa
   where
-    ppaToFetch pps ppa = fmap PublicationPointAccess 
-                        $ NonEmpty.nonEmpty 
-                        $ catMaybes 
-                        $ map (ppToFetchablePP pps) 
-                        $ NonEmpty.toList 
-                        $ unPublicationPointAccess ppa
-
     ppToFetchablePP pps = \case 
-        r@(RrdpPP _)  -> Just r
-        RsyncPP rpp@(RsyncPublicationPoint rsyncUrl) -> 
-            (\r -> RsyncPP $ r ^. #repoPP) <$> 
-                rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl
+        r@(RrdpPP _) -> r
+        r@(RsyncPP rpp@(RsyncPublicationPoint rsyncUrl)) -> 
+            case rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl of 
+                Nothing   -> r
+                Just repo -> RsyncPP $ repo ^. #repoPP            
 
 
-    
-
+getFetchablePPAs :: PublicationPoints 
+                -> [PublicationPointAccess] 
+                -> [PublicationPointAccess]
+getFetchablePPAs pps ppas = 
+    Set.toList $ Set.fromList $ map (getFetchablePPA pps) ppas
 
 onlyForSyncFetch :: PublicationPoints 
             -> PublicationPointAccess 

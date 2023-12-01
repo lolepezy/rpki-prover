@@ -410,11 +410,9 @@ filterPPAccess Config {..} ppAccess =
             NonEmpty.filter filter_ $ 
             unPublicationPointAccess ppAccess
   where
-    filter_ pp = 
-        case (pp, rrdpConf ^. #enabled, rsyncConf ^. #enabled) of
-            (RrdpPP _,  True, _   ) -> True
-            (RsyncPP _, _,    True) -> True
-            _                       -> False
+    filter_ = \case
+        RrdpPP _  -> rrdpConf ^. #enabled
+        RsyncPP _ -> rsyncConf ^. #enabled        
 
 
 findSpeedProblems :: PublicationPoints -> [(RpkiURL, Repository)]

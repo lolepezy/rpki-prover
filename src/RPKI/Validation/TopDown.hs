@@ -396,7 +396,7 @@ validateCaNoLimitChecks :: Storage s =>
                         ValidatorT IO PayloadsType
 validateCaNoLimitChecks
         appContext@AppContext {..}
-        topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
+        topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
         ca = 
     case extractPPAs ca of        
         Left e         -> vError e
@@ -407,9 +407,9 @@ validateCaNoLimitChecks
                     -- disabled, don't fetch at all.
                     validateThisCertAndGoDown
                 Just filteredPPAccess -> do
-                    -- Skip repositories that are marked as "slow"
-                    pps <- liftIO $ readTVarIO $ repositoryProcessing ^. #publicationPoints    
-                    let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess                                                
+                    -- Skip repositories that are marked as "slow"          
+                    pps <- readPublicationPoints repositoryProcessing      
+                    let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess
                     case quickPPs of 
                         Nothing -> do 
                             -- Even though we are skipping the repository we still need to remember
@@ -419,308 +419,317 @@ validateCaNoLimitChecks
 
                         Just quickPPAccess -> do                                     
                             fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
-                                            repositoryProcessing worldVersion quickPPAccess                                    
+                                            repositoryProcessing worldVersion quickPPAccess
                             -- Based on 
                             --   * which repository(-ries) were mentioned on the certificate
                             --   * which ones succeded, 
                             --   * which were skipped because they are slow,
                             -- derive which repository(-ies) should be picked up 
                             -- for async fetching later.
+                            ppsAfterFetch <- readPublicationPoints repositoryProcessing
                             markForAsyncFetch repositoryProcessing 
-                                $ filterForAsyncFetch filteredPPAccess fetches slowRepos
+                                $ filterForAsyncFetch (getFetchablePPA ppsAfterFetch filteredPPAccess) fetches slowRepos
 
-                            -- primaryUrl is used for set the focus to the publication point
-                            primaryUrl <- getPrimaryRepositoryFromPP repositoryProcessing filteredPPAccess
-                            case primaryUrl of
-                                Nothing -> validateThisCertAndGoDown                                            
-                                Just rp -> metricFocusOn PPFocus rp validateThisCertAndGoDown  
+                            -- primaryUrl is used for set the focus to the publication point                            
+                            case getPrimaryRepositoryFromPP ppsAfterFetch filteredPPAccess of
+                                Nothing         -> validateThisCertAndGoDown                                            
+                                Just primaryUrl -> metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
   where
+    validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
 
+
+validateCaNoFetch :: Storage s =>
+                    AppContext s 
+                -> TopDownContext 
+                -> Ca 
+                -> ValidatorT IO PayloadsType
+validateCaNoFetch
+    appContext@AppContext {..}
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
+    ca = do 
+    
+    aki <- case ca of 
+        CaFull c -> do 
+            markAsReadHash appContext topDownContext (getHash c) 
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+                validateObjectLocations c
+                vHoist $ validateObjectValidityPeriod c now
+                pure $ toAKI $ getSKI c
+        CaShort c -> do                 
+            markAsRead topDownContext (c ^. #key) 
+            validateLocationForShortcut (c ^. #key)
+            vHoist $ validateObjectValidityPeriod c now
+            pure $ toAKI $ c ^. #ski
+    
+    let nextAction =
+            case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+                FullEveryIteration -> makeNextFullValidationAction
+                Incremental        -> makeNextIncrementalAction
+        
+    z <- join $ nextAction aki
+    oneMoreCert         
+    pure z
+
+  where
     -- Do not create shortctus when validation algorithm is not incremental
     createPayloadAndShortcut = 
         case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
             FullEveryIteration -> \payload _        -> T2 payload Nothing
-            Incremental        -> \payload shortcut -> T2 payload (Just $! shortcut)
+            Incremental        -> \payload shortcut -> T2 payload (Just $! shortcut)               
 
-    validateThisCertAndGoDown :: ValidatorT IO PayloadsType
-    validateThisCertAndGoDown = do    
-        aki <- case ca of 
-            CaFull c -> do 
-                markAsReadHash appContext topDownContext (getHash c) 
-                vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
-                    validateObjectLocations c
-                    vHoist $ validateObjectValidityPeriod c now
-                    pure $ toAKI $ getSKI c
-            CaShort c -> do                 
-                markAsRead topDownContext (c ^. #key) 
-                validateLocationForShortcut (c ^. #key)
-                vHoist $ validateObjectValidityPeriod c now
-                pure $ toAKI $ c ^. #ski
-        
-        let nextAction =
-                case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
-                    FullEveryIteration -> makeNextFullValidationAction
-                    Incremental        -> makeNextIncrementalAction
-         
-        z <- join $ nextAction aki
-        oneMoreCert         
-        pure z
-
-      where                
-
-        makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO PayloadsType)
-        makeNextFullValidationAction childrenAki = do 
-            roTxT database $ \tx db -> do 
-                findLatestMftByAKI tx db childrenAki >>= \case 
-                    Nothing ->                        
-                        pure $ vError $ NoMFT childrenAki
-                    Just mft ->                        
-                        pure $ do                      
-                            markAsRead topDownContext (mft ^. typed)                
-                            caFull <- getFullCa appContext ca
-                            T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                   
-                            oneMoreMft >> oneMoreCrl                            
-                            pure $! payloads
+    makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO PayloadsType)
+    makeNextFullValidationAction childrenAki = do 
+        roTxT database $ \tx db -> do 
+            findLatestMftByAKI tx db childrenAki >>= \case 
+                Nothing ->                        
+                    pure $ vError $ NoMFT childrenAki
+                Just mft ->                        
+                    pure $ do                      
+                        markAsRead topDownContext (mft ^. typed)                
+                        caFull <- getFullCa appContext ca
+                        T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                   
+                        oneMoreMft >> oneMoreCrl                            
+                        pure $! payloads
 
 
-        makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO PayloadsType)
-        makeNextIncrementalAction childrenAki = 
-            roTxT database $ \tx db -> do 
-                getMftShorcut tx db childrenAki >>= \case
-                    Nothing -> do 
-                        findLatestMftByAKI tx db childrenAki >>= \case 
-                            Nothing -> do 
-                                -- No current manifest and not shortcut as well, bail out 
-                                pure $ vError $ NoMFT childrenAki
-                            Just mft ->
-                                -- No shortcut found, so do the full validation for the manifest
-                                pure $ do                   
-                                    markAsRead topDownContext (mft ^. typed)                   
-                                    caFull <- getFullCa appContext ca
-                                    T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                    
-                                    oneMoreMft >> oneMoreCrl                                    
-                                    pure $! payloads
+    makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO PayloadsType)
+    makeNextIncrementalAction childrenAki = 
+        roTxT database $ \tx db -> do 
+            getMftShorcut tx db childrenAki >>= \case
+                Nothing -> do 
+                    findLatestMftByAKI tx db childrenAki >>= \case 
+                        Nothing -> do 
+                            -- No current manifest and not shortcut as well, bail out 
+                            pure $ vError $ NoMFT childrenAki
+                        Just mft ->
+                            -- No shortcut found, so do the full validation for the manifest
+                            pure $ do                   
+                                markAsRead topDownContext (mft ^. typed)                   
+                                caFull <- getFullCa appContext ca
+                                T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                    
+                                oneMoreMft >> oneMoreCrl                                    
+                                pure $! payloads
 
-                    Just mftShortcut -> do
-                        let mftShortKey = mftShortcut ^. #key                        
-                        -- logDebug logger [i|Found shortcut for AKI #{childrenAki}|]
-                        -- Find the key of the latest real manifest
-                        action <- findLatestMftKeyByAKI tx db childrenAki >>= \case 
-                                Nothing -> pure $ do                                             
-                                    -- That is really weird and should normally never happen. 
-                                    -- Do not interrupt validation here, but complain in the log
-                                    vWarn $ NoMFTButCachedMft childrenAki                                    
-                                    let crlKey = mftShortcut ^. #crlShortcut . #key       
-                                    let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
-                                    logError logger message
-                                    collectPayloads mftShortcut Nothing 
-                                        (getFullCa appContext ca)
-                                        -- getCrlByKey is the best we can have
-                                        (getCrlByKey appContext crlKey)
-                                        `andThen` 
-                                            (markAsRead topDownContext crlKey)
+                Just mftShortcut -> do
+                    let mftShortKey = mftShortcut ^. #key                        
+                    -- logDebug logger [i|Found shortcut for AKI #{childrenAki}|]
+                    -- Find the key of the latest real manifest
+                    action <- findLatestMftKeyByAKI tx db childrenAki >>= \case 
+                            Nothing -> pure $ do                                             
+                                -- That is really weird and should normally never happen. 
+                                -- Do not interrupt validation here, but complain in the log
+                                vWarn $ NoMFTButCachedMft childrenAki                                    
+                                let crlKey = mftShortcut ^. #crlShortcut . #key       
+                                let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
+                                logError logger message
+                                collectPayloads mftShortcut Nothing 
+                                    (getFullCa appContext ca)
+                                    -- getCrlByKey is the best we can have
+                                    (getCrlByKey appContext crlKey)
+                                    `andThen` 
+                                        (markAsRead topDownContext crlKey)
 
-                                Just mftKey 
-                                    | mftShortKey == mftKey -> do
-                                        -- logDebug logger [i|Option 1|]            
-                                        -- Nothing has changed, the real manifest is the 
-                                        -- same as the shortcut, so use the shortcut
-                                        let crlKey = mftShortcut ^. #crlShortcut . #key                                               
-                                        pure $ collectPayloads mftShortcut Nothing 
-                                                    (getFullCa appContext ca)
-                                                    (getCrlByKey appContext crlKey)
+                            Just mftKey 
+                                | mftShortKey == mftKey -> do
+                                    -- logDebug logger [i|Option 1|]            
+                                    -- Nothing has changed, the real manifest is the 
+                                    -- same as the shortcut, so use the shortcut
+                                    let crlKey = mftShortcut ^. #crlShortcut . #key                                               
+                                    pure $ collectPayloads mftShortcut Nothing 
+                                                (getFullCa appContext ca)
+                                                (getCrlByKey appContext crlKey)
 
-                                    | otherwise -> do 
-                                        -- logDebug logger [i|Option 2|]            
-                                        getMftByKey tx db mftKey >>= \case 
-                                            Nothing -> pure $ 
-                                                internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
-                                            Just mft -> pure $ do                                            
-                                                fullCa <- getFullCa appContext ca
-                                                T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                                r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
-                                                            (pure fullCa)
-                                                            (findAndValidateCrl fullCa mft childrenAki)
-                                                markAsRead topDownContext mftKey
-                                                pure $! r1 <> r2                                                     
-                        pure $ do 
-                            markAsRead topDownContext mftShortKey
-                            action `andThen`
-                                (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)          
+                                | otherwise -> do 
+                                    -- logDebug logger [i|Option 2|]            
+                                    getMftByKey tx db mftKey >>= \case 
+                                        Nothing -> pure $ 
+                                            internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
+                                        Just mft -> pure $ do                                            
+                                            fullCa <- getFullCa appContext ca
+                                            T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
+                                            r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
+                                                        (pure fullCa)
+                                                        (findAndValidateCrl fullCa mft childrenAki)
+                                            markAsRead topDownContext mftKey
+                                            pure $! r1 <> r2                                                     
+                    pure $ do 
+                        markAsRead topDownContext mftShortKey
+                        action `andThen`
+                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)          
 
-        -- Proceed with full validation for children mentioned in the full manifest 
-        -- and children mentioned in the manifest shortcut. Create a diff between them,
-        -- run full validation only for new children and create a new manifest shortcut
-        -- with updated set children.
-        manifestFullValidation :: 
-                        Located CaCerObject
-                        -> Keyed (Located MftObject) 
-                        -> Maybe MftShortcut 
-                        -> AKI
-                        -> ValidatorT IO (T2 PayloadsType [T3 Text Hash ObjectKey]) 
-        manifestFullValidation fullCa keyedMft mftShortcut childrenAki = do 
-            let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
+    -- Proceed with full validation for children mentioned in the full manifest 
+    -- and children mentioned in the manifest shortcut. Create a diff between them,
+    -- run full validation only for new children and create a new manifest shortcut
+    -- with updated set children.
+    manifestFullValidation :: 
+                    Located CaCerObject
+                    -> Keyed (Located MftObject) 
+                    -> Maybe MftShortcut 
+                    -> AKI
+                    -> ValidatorT IO (T2 PayloadsType [T3 Text Hash ObjectKey]) 
+    manifestFullValidation fullCa keyedMft mftShortcut childrenAki = do 
+        let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
 
-            vFocusOn LocationFocus (getURL $ pickLocation locations) $ do 
-                -- General location validation
-                validateObjectLocations locatedMft
+        vFocusOn LocationFocus (getURL $ pickLocation locations) $ do 
+            -- General location validation
+            validateObjectLocations locatedMft
 
-                -- Manifest-specific location validation
-                validateMftLocation locatedMft fullCa
+            -- Manifest-specific location validation
+            validateMftLocation locatedMft fullCa
 
-                -- TODO Add fiddling with shortcut version of CRL here                    
-                keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki                
+            -- TODO Add fiddling with shortcut version of CRL here                    
+            keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki                
 
-                -- MFT can be revoked by the CRL that is on this MFT -- detect 
-                -- revocation as well, this is clearly and error                               
-                validMft <- vHoist $ validateMft now mft fullCa validCrl verifiedResources
+            -- MFT can be revoked by the CRL that is on this MFT -- detect 
+            -- revocation as well, this is clearly and error                               
+            validMft <- vHoist $ validateMft now mft fullCa validCrl verifiedResources
 
-                -- Validate entry list and filter out CRL itself
-                nonCrlChildren <- validateMftEntries mft (getHash validCrl)
+            -- Validate entry list and filter out CRL itself
+            nonCrlChildren <- validateMftEntries mft (getHash validCrl)
 
-                -- If MFT shortcut is present, filter children that need validation, 
-                -- children that are on the shortcut are already validated.
-                let (newChildren, overlappingChildren, isSomethingDeleted) =
-                        case mftShortcut of 
-                            Nothing       -> (nonCrlChildren, [], False)
-                            Just mftShort -> manifestDiff mftShort nonCrlChildren
+            -- If MFT shortcut is present, filter children that need validation, 
+            -- children that are on the shortcut are already validated.
+            let (newChildren, overlappingChildren, isSomethingDeleted) =
+                    case mftShortcut of 
+                        Nothing       -> (nonCrlChildren, [], False)
+                        Just mftShort -> manifestDiff mftShort nonCrlChildren
 
-                when (not (null newChildren) && not (null overlappingChildren)) $ do  
-                    let fileName :: Text = case newChildren of 
-                                        (T3 fn _ _) : [] -> [i|file = #{fn}, |]
-                                        _                -> ""
-                    logDebug logger [i|New children: #{length newChildren}, #{fileName} same children #{length overlappingChildren}.|]
+            when (not (null newChildren) && not (null overlappingChildren)) $ do  
+                let fileName :: Text = case newChildren of 
+                                    (T3 fn _ _) : [] -> [i|file = #{fn}, |]
+                                    _                -> ""
+                logDebug logger [i|New children: #{length newChildren}, #{fileName} same children #{length overlappingChildren}.|]
 
-                -- If CRL has changed, we have to recheck if children are not revoked. 
-                -- If will be checked by full validation for newChildren but it needs 
-                -- to be explicitly checked for overlappingChildren
-                forM_ mftShortcut $ \mftShort -> 
-                    when (crlKey /= mftShort ^. #crlShortcut . #key) $
-                        checkNoChildrenAreRevoked mftShort overlappingChildren keyedValidCrl            
+            -- If CRL has changed, we have to recheck if children are not revoked. 
+            -- If will be checked by full validation for newChildren but it needs 
+            -- to be explicitly checked for overlappingChildren
+            forM_ mftShortcut $ \mftShort -> 
+                when (crlKey /= mftShort ^. #crlShortcut . #key) $
+                    checkNoChildrenAreRevoked mftShort overlappingChildren keyedValidCrl            
 
-                -- Mark all manifest entries as read to avoid the situation
-                -- when some of the children are garbage-collected from the cache 
-                -- and some are still there. Do it both in case of successful 
-                -- validation or a validation error.
-                let markAllEntriesAsVisited = do                             
-                        forM_ (newChildren <> overlappingChildren) $ 
-                            (\(T3 _ _ k) -> markAsRead topDownContext k)
+            -- Mark all manifest entries as read to avoid the situation
+            -- when some of the children are garbage-collected from the cache 
+            -- and some are still there. Do it both in case of successful 
+            -- validation or a validation error.
+            let markAllEntriesAsVisited = do                             
+                    forM_ (newChildren <> overlappingChildren) $ 
+                        (\(T3 _ _ k) -> markAsRead topDownContext k)
 
-                let processChildren = do                                              
-                        -- Here we have the payloads for the fully validated MFT children
-                        -- and the shortcut objects for these children                        
-                        T2 validatedPayloads maybeChildrenShortcuts <- 
-                                (gatherMftEntryResults =<< 
-                                    gatherMftEntryValidations fullCa newChildren validCrl)
-                                                
-                        let childrenShortcuts = [ (k, s) | (k, Just s) <- maybeChildrenShortcuts ]
+            let processChildren = do                                              
+                    -- Here we have the payloads for the fully validated MFT children
+                    -- and the shortcut objects for these children                        
+                    T2 validatedPayloads maybeChildrenShortcuts <- 
+                            (gatherMftEntryResults =<< 
+                                gatherMftEntryValidations fullCa newChildren validCrl)
+                                            
+                    let childrenShortcuts = [ (k, s) | (k, Just s) <- maybeChildrenShortcuts ]
 
-                        let newEntries = makeEntriesWithMap 
-                                newChildren (Map.fromList childrenShortcuts)
-                                (\entry fileName -> entry fileName)
+                    let newEntries = makeEntriesWithMap 
+                            newChildren (Map.fromList childrenShortcuts)
+                            (\entry fileName -> entry fileName)
 
-                        let nextChildrenShortcuts = 
-                                case mftShortcut of 
-                                    Nothing               -> newEntries
-                                    Just MftShortcut {..} -> 
-                                        newEntries <> makeEntriesWithMap 
-                                            overlappingChildren nonCrlEntries (\entry _ -> entry)
-                                    
-                        let nextMftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts keyedValidCrl
+                    let nextChildrenShortcuts = 
+                            case mftShortcut of 
+                                Nothing               -> newEntries
+                                Just MftShortcut {..} -> 
+                                    newEntries <> makeEntriesWithMap 
+                                        overlappingChildren nonCrlEntries (\entry _ -> entry)
+                                
+                    let nextMftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts keyedValidCrl
 
-                        case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
-                            FullEveryIteration -> pure ()
-                            Incremental        -> do 
-                                let aki = toAKI $ getSKI fullCa                        
-                                when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $                                 
-                                    updateMftShortcut topDownContext aki nextMftShortcut
+                    case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+                        FullEveryIteration -> pure ()
+                        Incremental        -> do 
+                            let aki = toAKI $ getSKI fullCa                        
+                            when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $                                 
+                                updateMftShortcut topDownContext aki nextMftShortcut
 
-                                -- Update manifest shortcut children in case there are new 
-                                -- or deleted children in the new manifest
-                                when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $
-                                    updateMftShortcutChildren topDownContext aki nextMftShortcut
+                            -- Update manifest shortcut children in case there are new 
+                            -- or deleted children in the new manifest
+                            when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $
+                                updateMftShortcutChildren topDownContext aki nextMftShortcut
 
-                        pure $! T2 validatedPayloads overlappingChildren
+                    pure $! T2 validatedPayloads overlappingChildren
 
-                processChildren `recover` markAllEntriesAsVisited
+            processChildren `recover` markAllEntriesAsVisited
 
-        findCrl mft childrenAki = do 
-            T2 _ crlHash <-
-                case findCrlOnMft mft of
-                    []    -> vError $ NoCRLOnMFT childrenAki 
-                    [crl] -> pure crl
-                    crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
+    findCrl mft childrenAki = do 
+        T2 _ crlHash <-
+            case findCrlOnMft mft of
+                []    -> vError $ NoCRLOnMFT childrenAki 
+                [crl] -> pure crl
+                crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
 
-            z <- roTxT database $ \tx db -> getKeyedByHash tx db crlHash
-            case z of
-                Nothing -> 
-                    vError $ NoCRLExists childrenAki
-                Just crl@(Keyed (Located _ (CrlRO _)) _) -> 
-                    pure crl
-                _ -> 
-                    vError $ CRLHashPointsToAnotherObject crlHash   
+        z <- roTxT database $ \tx db -> getKeyedByHash tx db crlHash
+        case z of
+            Nothing -> 
+                vError $ NoCRLExists childrenAki
+            Just crl@(Keyed (Located _ (CrlRO _)) _) -> 
+                pure crl
+            _ -> 
+                vError $ CRLHashPointsToAnotherObject crlHash   
 
-        findAndValidateCrl :: Located CaCerObject 
-                        -> (Keyed (Located MftObject)) 
-                        -> AKI
-                        -> ValidatorT IO (Keyed (Validated CrlObject))
-        findAndValidateCrl fullCa (Keyed (Located _ mft) _) childrenAki = do  
-            Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey <- findCrl mft childrenAki            
-            markAsRead topDownContext crlKey
-            inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
-                validateObjectLocations locatedCrl
-                vHoist $ do
-                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                    checkCrlLocation locatedCrl mftEECert
-                    void $ validateCrl now crl fullCa                
-                    pure $! Keyed (Validated crl) crlKey
-                
+    findAndValidateCrl :: Located CaCerObject 
+                    -> (Keyed (Located MftObject)) 
+                    -> AKI
+                    -> ValidatorT IO (Keyed (Validated CrlObject))
+    findAndValidateCrl fullCa (Keyed (Located _ mft) _) childrenAki = do  
+        Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey <- findCrl mft childrenAki            
+        markAsRead topDownContext crlKey
+        inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
+            validateObjectLocations locatedCrl
+            vHoist $ do
+                let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                checkCrlLocation locatedCrl mftEECert
+                void $ validateCrl now crl fullCa                
+                pure $! Keyed (Validated crl) crlKey
+            
 
-        -- Utility for repeated peace of code
-        makeEntriesWithMap childrenList entryMap makeEntry = 
-            [ (key, makeEntry entry fileName) 
-                    | (key, fileName, Just entry) <- [ (key, fileName, Map.lookup key entryMap) 
-                    | (T3 fileName _ key) <- childrenList ]]
-
-
-        -- Check if shortcut children are revoked
-        checkNoChildrenAreRevoked MftShortcut {..} children (Keyed validCrl newCrlKey) = 
-            when (newCrlKey /= crlShortcut ^. #key) $ do                        
-                forM_ children $ \(T3 _ _ childKey) ->
-                    for_ (Map.lookup childKey nonCrlEntries) $ \MftEntry {..} ->
-                        for_ (getMftChildSerial child) $ \serial ->
-                            when (isRevoked serial validCrl) $
-                                vFocusOn ObjectFocus childKey $                                       
-                                    vWarn RevokedResourceCertificate   
+    -- Utility for repeated peace of code
+    makeEntriesWithMap childrenList entryMap makeEntry = 
+        [ (key, makeEntry entry fileName) 
+                | (key, fileName, Just entry) <- [ (key, fileName, Map.lookup key entryMap) 
+                | (T3 fileName _ key) <- childrenList ]]
 
 
-        -- this indicates the difeerence between RFC9286-bis 
-        -- version 02 (strict) and version 03 and later (more loose).                                                                                            
-        gatherMftEntryValidations =
-            case config ^. #validationConfig . #manifestProcessing of
-                {-                                             
-                https://datatracker.ietf.org/doc/rfc9286/
-                item 6.4 says
-                    "If there are files listed in the manifest that cannot be retrieved 
-                    from the publication point, the fetch has failed.." 
+    -- Check if shortcut children are revoked
+    checkNoChildrenAreRevoked MftShortcut {..} children (Keyed validCrl newCrlKey) = 
+        when (newCrlKey /= crlShortcut ^. #key) $ do                        
+            forM_ children $ \(T3 _ _ childKey) ->
+                for_ (Map.lookup childKey nonCrlEntries) $ \MftEntry {..} ->
+                    for_ (getMftChildSerial child) $ \serial ->
+                        when (isRevoked serial validCrl) $
+                            vFocusOn ObjectFocus childKey $                                       
+                                vWarn RevokedResourceCertificate   
 
-                For that case validity of every object on the manifest is completely 
-                separate from each other and don't influence the manifest validity.
-                -}
-                RFC9286 -> independentMftChildrenResults
 
-                {- 
-                https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/
-                item 6.4 says
-                    "If there are files listed in the manifest that cannot be retrieved 
-                    from the publication point, or if they fail the validity tests 
-                    specified in [RFC6488], the fetch has failed...". 
+    -- this indicates the difeerence between RFC9286-bis 
+    -- version 02 (strict) and version 03 and later (more loose).                                                                                            
+    gatherMftEntryValidations =
+        case config ^. #validationConfig . #manifestProcessing of
+            {-                                             
+            https://datatracker.ietf.org/doc/rfc9286/
+            item 6.4 says
+                "If there are files listed in the manifest that cannot be retrieved 
+                from the publication point, the fetch has failed.." 
 
-                For that case invalidity of some of the objects (except child CA certificates, 
-                because that would be completeely insane) on the manifest make the whole 
-                manifest invalid.
-                -}
-                RFC6486_Strict -> allOrNothingMftChildrenResults
+            For that case validity of every object on the manifest is completely 
+            separate from each other and don't influence the manifest validity.
+            -}
+            RFC9286 -> independentMftChildrenResults
+
+            {- 
+            https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/
+            item 6.4 says
+                "If there are files listed in the manifest that cannot be retrieved 
+                from the publication point, or if they fail the validity tests 
+                specified in [RFC6488], the fetch has failed...". 
+
+            For that case invalidity of some of the objects (except child CA certificates, 
+            because that would be completeely insane) on the manifest make the whole 
+            manifest invalid.
+            -}
+            RFC6486_Strict -> allOrNothingMftChildrenResults
 
     
     allOrNothingMftChildrenResults fullCa nonCrlChildren validCrl = do
@@ -979,9 +988,10 @@ validateCaNoLimitChecks
         -- for that we beed the parent CA and a valid CRL.
         troubledValidation <-
                 case [ () | (_, MftEntry { child = TroubledChild _} ) <- Map.toList nonCrlEntries ] of 
-                    [] -> 
-                        -- Should never happen
-                        pure $ \_ -> errorOnTroubledChild
+                    [] ->                         
+                        pure $ \_ -> 
+                            -- Should never happen, there are no troubled children
+                            errorOnTroubledChild
                     _  -> do 
                         caFull   <- findFullCa
                         validCrl <- findValidCrl
@@ -993,9 +1003,10 @@ validateCaNoLimitChecks
                     Nothing -> Map.toList nonCrlEntries
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
     
-        -- TODO 
-        -- Gather all PPAs from all Ca on the MftShortcut and fetch all of them beforehand?
-
+        -- Gather all PPAs from all Ca on the MftShortcut and fetch all of them beforehand to avoid
+        -- a lot of STM transactio restarts in `fetchPPWithFallback`                
+        prefetchRepositories filteredChildren            
+                
         -- logDebug logger [i|Children: #{length nonCrlEntries}, filteed #{length filteredChildren}|]
         collectResultsInParallel filteredChildren (getChildPayloads troubledValidation)
 
@@ -1021,10 +1032,13 @@ validateCaNoLimitChecks
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey
             let emptyPayloads = mempty :: Payloads (Set Vrp)
+            pps <- readPublicationPoints repositoryProcessing
             vFocusOn ObjectFocus childKey $
                 case child of 
-                    CaChild caShortcut _ -> 
-                        validateCaNoLimitChecks appContext topDownContext (CaShort caShortcut)
+                    CaChild caShortcut _ -> do                   
+                        -- TODO 
+                        -- Do the metricFocusOn PPFocus primaryUrl thing                      
+                        validateCaNoFetch appContext topDownContext (CaShort caShortcut)
 
                     RoaChild r@RoaShortcut {..} _ -> do 
                         vHoist $ validateObjectValidityPeriod r now
@@ -1052,6 +1066,46 @@ validateCaNoLimitChecks
                         pure $! Seq.singleton $! emptyPayloads & #gbrs .~ Set.singleton gbr
 
                     TroubledChild childKey_ -> troubledValidation childKey_
+
+
+        prefetchRepositories children = do 
+            let allPpas = [ ppas | (_, MftEntry { child = CaChild CaShortcut {..} _}) <- children ]
+
+            -- Do all the necessary filtering based on fetch config and 
+            -- sync(quick) and async(slow) repository statuses.
+            pps <- readPublicationPoints repositoryProcessing
+            let T2 allSyncPpas allSlowRepos =
+                    foldr (\ppa r@(T2 allSyncPpas allSlowRepos) ->
+                        case filterPPAccess config ppa of 
+                            Nothing          -> r
+                            Just filteredPpa -> 
+                                let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPpa
+                                in case quickPPs of 
+                                    Nothing       -> T2 allSyncPpas (slowRepos <> allSlowRepos)
+                                    Just quickPpa -> T2 (quickPpa : allSyncPpas) (slowRepos <> allSlowRepos))
+                        mempty 
+                        allPpas
+            
+            let uniquePpas = getFetchablePPAs pps allSyncPpas
+
+            unless (null uniquePpas) $
+                logDebug logger [i|Will prefetch (if it's time): #{uniquePpas}|]
+
+            -- Fetch 
+            scopes <- askScopes
+            let fetchConfig = syncFetchConfig config
+            z <- liftIO $ pooledForConcurrently uniquePpas $ \ppa -> 
+                    fmap (ppa,) $ runValidatorT scopes $                     
+                        fetchPPWithFallback appContext fetchConfig repositoryProcessing worldVersion ppa
+                        
+            ppsAfterFetch <- readPublicationPoints repositoryProcessing
+            forM_ z $ \(ppa, (r, vs)) -> do 
+                embedState vs
+                for_ r $ \fetches -> do 
+                    let (_, slowRepos) = onlyForSyncFetch pps ppa
+                    markForAsyncFetch repositoryProcessing 
+                            $ filterForAsyncFetch ppa fetches slowRepos                            
+
 
 -- Calculate difference bentween a manifest shortcut 
 -- and the list of children of the new manifest object.
