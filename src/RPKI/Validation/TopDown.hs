@@ -440,9 +440,9 @@ validateCaNoLimitChecks :: Storage s =>
                         Ca ->
                         ValidatorT IO PayloadsType
 validateCaNoLimitChecks
-        appContext@AppContext {..}
-        topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
-        ca = 
+    appContext@AppContext {..}
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
+    ca = 
     case extractPPAs ca of        
         Left e         -> vError e
         Right ppAccess ->
@@ -493,29 +493,28 @@ validateCaNoFetch
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     ca = do 
     
-    aki <- case ca of 
-        CaFull c -> do 
-            increment $ topDownCounters ^. #originalCa 
-            markAsReadHash appContext topDownContext (getHash c) 
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
-                validateObjectLocations c
-                vHoist $ validateObjectValidityPeriod c now
-                pure $ toAKI $ getSKI c
-        CaShort c -> do
-            increment $ topDownCounters ^. #shortcutCa 
-            markAsRead topDownContext (c ^. #key) 
-            validateLocationForShortcut (c ^. #key)
-            vHoist $ validateObjectValidityPeriod c now
-            pure $ toAKI $ c ^. #ski
-    
     let nextAction =
             case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
                 FullEveryIteration -> makeNextFullValidationAction
                 Incremental        -> makeNextIncrementalAction
-        
-    z <- join $ nextAction aki
-    oneMoreCert         
-    pure z
+
+    z <- case ca of 
+            CaFull c -> do             
+                vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+                    increment $ topDownCounters ^. #originalCa             
+                    markAsReadHash appContext topDownContext (getHash c)                         
+                    validateObjectLocations c
+                    vHoist $ validateObjectValidityPeriod c now                
+                    join $ nextAction $ toAKI $ getSKI c
+            CaShort c -> do
+                vFocusOn ObjectFocus (c ^. #key) $ do 
+                    increment $ topDownCounters ^. #shortcutCa 
+                    markAsRead topDownContext (c ^. #key) 
+                    validateLocationForShortcut (c ^. #key)
+                    vHoist $ validateObjectValidityPeriod c now
+                    join $ nextAction $ toAKI (c ^. #ski)    
+    oneMoreCert            
+    pure $! z
 
   where
     -- Do not create shortctus when validation algorithm is not incremental
@@ -922,23 +921,23 @@ validateCaNoFetch
                     otherwise an error in child validation would interrupt validation of the parent with
                     ExceptT's exception logic.
                 -}
-                (r, validationState) <- liftIO $ runValidatorT parentScope $
-                        inSubLocationScope (getURL $ pickLocation locations) $ do
-                            childVerifiedResources <- vHoist $ do
-                                    Validated validCert <- validateResourceCert @_ @_ @'CACert
-                                            now childCert fullCa validCrl
-                                    validateResources verifiedResources childCert validCert
+                (r, validationState) <- liftIO $ runValidatorT parentScope $ do
+                    childVerifiedResources <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                        -- Check that AIA of the child points to the correct location of the parent
+                        -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
+                        --                             
+                        vHoist $ validateAIA @_ @_ @'CACert childCert fullCa
 
-                            -- Check that AIA of the child points to the correct location of the parent
-                            -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
-                            --                             
-                            vHoist $ validateAIA @_ @_ @'CACert childCert fullCa
+                        vHoist $ do
+                            Validated validCert <- validateResourceCert @_ @_ @'CACert
+                                    now childCert fullCa validCrl
+                            validateResources verifiedResources childCert validCert
 
-                            let childTopDownContext = topDownContext
-                                    & #verifiedResources ?~ childVerifiedResources
-                                    & #currentPathDepth %~ (+ 1)
+                    let childTopDownContext = topDownContext
+                            & #verifiedResources ?~ childVerifiedResources
+                            & #currentPathDepth %~ (+ 1)
 
-                            validateCa appContext childTopDownContext (Located locations childCert)
+                    validateCa appContext childTopDownContext (Located locations childCert)
 
                 embedState validationState
                 case r of 
@@ -1031,7 +1030,7 @@ validateCaNoFetch
     collectPayloads mftShortcut maybeChildren findFullCa findValidCrl = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
-                
+
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
             vHoist $ validateObjectValidityPeriod mftShortcut now
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
@@ -1138,10 +1137,9 @@ validateCaNoFetch
                         oneMoreGbr                   
                         pure $! Seq.singleton $! emptyPayloads & #gbrs .~ Set.singleton gbr
 
-                TroubledChild childKey_ -> 
-                    vFocusOn ObjectFocus childKey $ do 
-                        increment $ topDownCounters ^. #shortcutTroubled
-                        troubledValidation childKey_
+                TroubledChild childKey_ -> do
+                    increment $ topDownCounters ^. #shortcutTroubled
+                    troubledValidation childKey_
 
 
         prefetchRepositories children = do 
@@ -1304,34 +1302,16 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
 applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do
-    shortcutMetaUpdates     <- newIORef 0
-    shortcutChildrenUpdates <- newIORef 0 
-    ((visitedSize, validMftsSize), elapsed) <- timedMS $ do
-            (vks, vmfts, shortcuts) <- atomically $ (,,) <$>
-                                readTVar visitedKeys <*>                                
-                                readTVar validManifests <*>
-                                readTVar shortcutsCreated                                
-            
-            rwTxT database $ \tx db -> do
-                markAsValidated tx db vks worldVersion
-                saveLatestValidMfts tx db (vmfts ^. #valids)         
-                for_ shortcuts $ \case 
-                    UpdateMftShortcut aki s -> do 
-                        saveMftShorcutMeta tx db aki s
-                        increment shortcutMetaUpdates
-                    UpdateMftShortcutChildren aki s -> do 
-                        saveMftShorcutChildren tx db aki s
-                        increment shortcutChildrenUpdates       
-            
-            pure (Set.size vks, Map.size (vmfts ^. #valids))
-
-    sm :: Int <- readIORef shortcutMetaUpdates
-    sc :: Int <- readIORef shortcutChildrenUpdates
+    (visitedSize, elapsed) <- timedMS $ do
+        vks <- atomically $ readTVar visitedKeys            
+        rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
+        pure $ Set.size vks
+    
     liftIO $ reportCounters appContext topDownCounters
-    logDebug logger $ [i|Marked #{visitedSize} objects as used, updated #{sm} MFT shortcuts, |] <> 
-                      [i|#{sc} MFT shortcut children, took #{elapsed}ms.|]
+    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
+reportCounters :: AppContext s -> TopDownCounters -> IO ()
 reportCounters AppContext {..} TopDownCounters {..} = do
     originalCaN <- readIORef originalCa
     shortcutCaN <- readIORef shortcutCa
@@ -1367,41 +1347,24 @@ updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let raw = Raw $ toStorable $ Compressed MftShortcutMeta {..}
-        -- atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)
-        atomically $ modifyTVar' shortcutsCreated (UpdateMftShortcut aki raw :)
+        atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Raw $ toStorable $ Compressed MftShortcutChildren {..}
-        -- atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)        
-        atomically $ modifyTVar' shortcutsCreated (UpdateMftShortcutChildren aki raw :)
+        atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)                
     
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
-storeShortcuts AppContext {..} shortcutQueue = liftIO $ do
-    pure ()
-    -- shortcutMetaUpdates     <- newIORef 0
-    -- shortcutChildrenUpdates <- newIORef 0 
-    -- totalDbTime             <- newIORef 0 
-    -- readQueueChunked shortcutQueue 2000 $ \mftShortcuts -> do 
-    --     (_, ms) <- timedMS $ rwTxT database $ \tx db -> 
-    --         for_ mftShortcuts $ \case 
-    --             UpdateMftShortcut aki s -> do 
-    --                 saveMftShorcutMeta tx db aki s
-    --                 increment shortcutMetaUpdates
-    --             UpdateMftShortcutChildren aki s -> do 
-    --                 saveMftShorcutChildren tx db aki s
-    --                 increment shortcutChildrenUpdates
-    --     modifyIORef totalDbTime $ (<> ms)
-    --     logDebug logger [i|Saved a batch of MFT shortcut metadata and children, took #{ms}ms.|]
-    -- sm :: Int <- readIORef shortcutMetaUpdates
-    -- sc :: Int <- readIORef shortcutChildrenUpdates
-    -- ms <- readIORef totalDbTime
-    -- when (sm > 0 || sc > 0) $
-    --     logDebug logger [i|Created/updated #{sm} MFT shortcut metadata and #{sc} shortcut children, took #{ms}ms.|]
-            
+storeShortcuts AppContext {..} shortcutQueue = liftIO $   
+    readQueueChunked shortcutQueue 2000 $ \mftShortcuts -> 
+        rwTxT database $ \tx db -> 
+            for_ mftShortcuts $ \case 
+                UpdateMftShortcut aki s         -> saveMftShorcutMeta tx db aki s                    
+                UpdateMftShortcutChildren aki s -> saveMftShorcutChildren tx db aki s
+                 
 
 data MftShortcutOp = UpdateMftShortcut AKI (Raw (Compressed MftShortcutMeta))
                    | UpdateMftShortcutChildren AKI (Raw (Compressed MftShortcutChildren))            
@@ -1474,12 +1437,7 @@ makeTroubledChild childKey fileName =
     MftEntry { child = TroubledChild childKey, .. }     
 
 
--- bumpCounter :: Monad m => 
---             TopDownCounters 
---         -> LensLike m TopDownCounters () (IORef a) () 
---         -> m ()
-bumpCounter counters counterLens = 
-     increment $ counters ^. counterLens
-
+bumpCounterBy :: (MonadIO m, Num a) =>
+                s -> Getting (IORef a) s (IORef a) -> a -> m ()
 bumpCounterBy counters counterLens n = liftIO $     
     atomicModifyIORef' (counters ^. counterLens) $ \c -> (c + n, ())        
