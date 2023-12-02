@@ -252,6 +252,6 @@ timeoutVT s toDo timedOut = do
 
 andThen :: ValidatorT IO a -> ValidatorT IO () -> ValidatorT IO a
 andThen f action = do
-    z <- f
+    !z <- f
     action
     pure $! z
