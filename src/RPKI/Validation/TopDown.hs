@@ -498,13 +498,14 @@ validateCaNoFetch
                 FullEveryIteration -> makeNextFullValidationAction
                 Incremental        -> makeNextIncrementalAction
 
-    z <- case ca of 
+    case ca of 
             CaFull c -> do             
                 vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
                     increment $ topDownCounters ^. #originalCa             
                     markAsReadHash appContext topDownContext (getHash c)                         
                     validateObjectLocations c
-                    vHoist $ validateObjectValidityPeriod c now                
+                    vHoist $ validateObjectValidityPeriod c now
+                    oneMoreCert
                     join $ nextAction $ toAKI $ getSKI c
             CaShort c -> do
                 vFocusOn ObjectFocus (c ^. #key) $ do 
@@ -512,10 +513,8 @@ validateCaNoFetch
                     markAsRead topDownContext (c ^. #key) 
                     validateLocationForShortcut (c ^. #key)
                     vHoist $ validateObjectValidityPeriod c now
-                    join $ nextAction $ toAKI (c ^. #ski)    
-    oneMoreCert            
-    pure $! z
-
+                    oneMoreCert
+                    join $ nextAction $ toAKI (c ^. #ski)
   where
     -- Do not create shortctus when validation algorithm is not incremental
     createPayloadAndShortcut = 
