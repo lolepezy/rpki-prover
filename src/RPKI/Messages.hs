@@ -236,6 +236,9 @@ toValidationMessage = \case
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
 
+      CRL_AKI_DifferentFromCertSKI parentSki crlAki -> 
+          [i|The AKI of the CRL #{crlAki} is different from SKI of the parent certificate #{parentSki}.|]
+
       CRLHashPointsToAnotherObject hash -> 
           [i|CRL hash #{hash} points to different object for CA.|]
 
