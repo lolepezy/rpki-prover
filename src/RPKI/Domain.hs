@@ -30,7 +30,7 @@ import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
-import           Data.Hashable
+import           Data.Hashable hiding (hash)
 
 import           Data.Bifunctor
 import           Data.Monoid

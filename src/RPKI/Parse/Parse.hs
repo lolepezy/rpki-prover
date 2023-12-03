@@ -39,9 +39,9 @@ import           RPKI.Util (fmtGen)
 -- | 
 supportedExtension :: String -> Bool
 supportedExtension filename = 
-    let 
-        dot : ext = map toLower $ List.drop (List.length filename - 4) filename        
-        in dot == '.' && isSupportedExtension ext
+    case map toLower $ List.drop (List.length filename - 4) filename of 
+        dot : ext -> dot == '.' && isSupportedExtension ext
+        _         -> False
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension s = s `elem` 

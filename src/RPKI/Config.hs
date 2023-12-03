@@ -14,7 +14,6 @@ import Data.Word ( Word16 )
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
-import Data.Monoid
 
 import RPKI.Domain
 import RPKI.Logging

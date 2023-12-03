@@ -710,6 +710,7 @@ validateCaNoFetch
 
             processChildren `recover` markAllEntriesAsVisited
 
+
     findAndValidateCrl :: Located CaCerObject 
                     -> (Keyed (Located MftObject)) 
                     -> AKI
@@ -976,7 +977,20 @@ validateCaNoFetch
                         increment $ topDownCounters ^. #originalRoa                        
                         makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
                                                 (makeRoaShortcut childKey validRoa vrpList)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut                                    
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut                        
+
+            GbrRO gbr ->                 
+                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                    validateObjectLocations child                    
+                    allowRevoked $ do
+                        validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
+                        oneMoreGbr
+                        let gbr' = getCMSContent $ cmsPayload gbr
+                        let gbrPayload = (getHash gbr, gbr')
+                        let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload                        
+                        pure $! createPayloadAndShortcut 
+                                    (Seq.singleton payload) 
+                                    (makeGbrShortcut childKey validGbr gbrPayload)                         
 
             AspaRO aspa -> 
                 childFocus $ do
@@ -1000,7 +1014,6 @@ validateCaNoFetch
                         let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload                                            
                         makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
                                                 (makeBgpSecShortcut childKey validaBgpCert bgpPayload)
-
                         pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
 
             GbrRO gbr ->                 
@@ -1143,6 +1156,11 @@ validateCaNoFetch
                         validateLocationForShortcut key
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps             
+                        -- z <- roTxT database $ \tx db -> getLocatedByKey tx db childKey
+                        -- for_ z $ \(Located locations _) -> 
+                        --     when ("zRvDu8xcDoVzPDpHt4AxNsE0HcY.roa" `Text.isInfixOf` locationsToText locations) $ 
+                        --         logDebug logger [i|Roa VRPs 2: #{vrps}|]
+                            
                         increment $ topDownCounters ^. #shortcutRoa               
                         pure $! Seq.singleton $! emptyPayloads & #vrps .~ Set.fromList vrps
                     
