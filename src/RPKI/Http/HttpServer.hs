@@ -41,6 +41,7 @@ import           RPKI.Config
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time
+import           RPKI.TAL
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Http.Api
@@ -352,17 +353,24 @@ getRpkiObject AppContext {..} uri hash =
                 Left _ ->
                     throwError $ err400 { errBody = "'uri' is not a valid object URL." }
 
-                Right rpkiUrl -> liftIO $ do
-                    db <- readTVarIO database
-                    roTx db $ \tx ->
-                        (locatedDto <$>) <$> getByUri tx db rpkiUrl
-
+                Right rpkiUrl ->                     
+                    roTxT database $ \tx db ->
+                        getByUri tx db rpkiUrl >>= \case     
+                            [] -> do                                
+                                -- try TA certificates
+                                tas <- getTAs tx db                                 
+                                pure [ locatedDto (Located locations (CerRO taCert)) | 
+                                        (_, StorableTA {..}) <- tas, 
+                                        let locations = talCertLocations tal, 
+                                        oneOfLocations locations rpkiUrl ]                                
+                                
+                            os -> pure $ map locatedDto os
+                        
         (Nothing, Just hash') ->
             case parseHash hash' of
                 Left _  -> throwError err400
-                Right h -> liftIO $ do
-                    db <- readTVarIO database
-                    roTx db $ \tx -> 
+                Right h -> 
+                    roTxT database $ \tx db ->
                         (locatedDto <$>) . maybeToList <$> getByHash tx db h
 
         (Just _, Just _) ->
