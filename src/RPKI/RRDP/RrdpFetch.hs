@@ -435,8 +435,11 @@ saveSnapshot
                 logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                 inSubLocationScope (getURL rpkiUrl) $ appError e                 
             ObjectParsingProblem rpkiUrl (VErr e) -> do                    
+                logError logger [i|Couldn't parse object #{uri}, error #{e} |]                
+                inSubLocationScope (unURI $ getURL rpkiUrl) $ appWarn e                 
+            ObjectParsingProblem rpkiUrl (VErr e) -> do                    
                 logError logger [i|Couldn't parse object #{uri}, error #{e} |]
-                inSubLocationScope (getURL rpkiUrl) $ appError e                 
+                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appWarn e                 
             Success rpkiUrl so@StorableObject {..} -> do 
                 DB.putObject tx objectStore so worldVersion                    
                 DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
@@ -554,8 +557,11 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                 inSubLocationScope (getURL rpkiUrl) $ appError e                                     
             ObjectParsingProblem rpkiUrl (VErr e) -> do
+                logError logger [i|Couldn't parse object #{uri}, error #{e} |]                
+                inSubLocationScope (unURI $ getURL rpkiUrl) $ appWarn e                                     
+            ObjectParsingProblem rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't parse object #{uri}, error #{e} |]
-                inSubLocationScope (getURL rpkiUrl) $ appError e 
+                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appWarn e 
             Success rpkiUrl so@StorableObject {..} -> do 
                 let hash' = getHash object
                 alreadyThere <- DB.hashExists tx objectStore hash'
@@ -576,8 +582,11 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
                 inSubLocationScope (getURL rpkiUrl) $ appError e                                           
             ObjectParsingProblem rpkiUrl (VErr e) -> do
+                logError logger [i|Couldn't parse object #{uri}, error #{e} |]                
+                inSubLocationScope (unURI $ getURL rpkiUrl) $ appWarn e                                           
+            ObjectParsingProblem rpkiUrl (VErr e) -> do
                 logError logger [i|Couldn't parse object #{uri}, error #{e} |]
-                inSubLocationScope (getURL rpkiUrl) $ appError e 
+                inSubObjectVScope (unURI $ getURL rpkiUrl) $ appWarn e 
             Success rpkiUrl so@StorableObject {..} -> do 
                 oldOneIsAlreadyThere <- DB.hashExists tx objectStore oldHash                           
                 if oldOneIsAlreadyThere
