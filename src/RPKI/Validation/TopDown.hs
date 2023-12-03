@@ -699,36 +699,31 @@ validateCaNoFetch
 
             processChildren `recover` markAllEntriesAsVisited
 
-    findCrl mft childrenAki = do 
-        T2 _ crlHash <-
-            case findCrlOnMft mft of
-                []    -> vError $ NoCRLOnMFT childrenAki 
-                [crl] -> pure crl
-                crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
-
-        z <- roTxT database $ \tx db -> getKeyedByHash tx db crlHash
-        case z of
-            Nothing -> 
-                vError $ NoCRLExists childrenAki
-            Just crl@(Keyed (Located _ (CrlRO _)) _) -> 
-                pure crl
-            _ -> 
-                vError $ CRLHashPointsToAnotherObject crlHash   
-
     findAndValidateCrl :: Located CaCerObject 
                     -> (Keyed (Located MftObject)) 
                     -> AKI
                     -> ValidatorT IO (Keyed (Validated CrlObject))
-    findAndValidateCrl fullCa (Keyed (Located _ mft) _) childrenAki = do  
-        Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey <- findCrl mft childrenAki            
-        markAsRead topDownContext crlKey
-        inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
-            validateObjectLocations locatedCrl
-            vHoist $ do
-                let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                checkCrlLocation locatedCrl mftEECert
-                void $ validateCrl now crl fullCa                
-                pure $! Keyed (Validated crl) crlKey
+    findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
+        T2 _ crlHash <-
+            case findCrlOnMft mft of
+                []    -> vError $ NoCRLOnMFT aki 
+                [crl] -> pure crl
+                crls  -> vError $ MoreThanOneCRLOnMFT aki crls
+
+        roTxT database (\tx db -> getKeyedByHash tx db crlHash) >>= \case         
+            Nothing -> 
+                vError $ NoCRLExists aki
+            Just (Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey) -> do
+                markAsRead topDownContext crlKey
+                inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
+                    validateObjectLocations locatedCrl
+                    vHoist $ do
+                        let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                        checkCrlLocation locatedCrl mftEECert
+                        void $ validateCrl now crl fullCa                
+                        pure $! Keyed (Validated crl) crlKey                                        
+            _ -> 
+                vError $ CRLHashPointsToAnotherObject crlHash   
             
 
     -- Utility for repeated peace of code
