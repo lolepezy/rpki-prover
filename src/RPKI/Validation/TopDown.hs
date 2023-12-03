@@ -92,24 +92,21 @@ data AllTasTopDownContext = AllTasTopDownContext {
 
 
 data TopDownCounters = TopDownCounters {
-        originalCa :: IORef Int,
-        shortcutCa :: IORef Int,
-        originalMft :: IORef Int,
-        shortcutMft :: IORef Int,
-        originalCrl :: IORef Int,
-        shortcutCrl :: IORef Int,
-        newChildren :: IORef Int,
+        originalCa   :: IORef Int,
+        shortcutCa   :: IORef Int,
+        originalMft  :: IORef Int,
+        shortcutMft  :: IORef Int,
+        originalCrl  :: IORef Int,
+        shortcutCrl  :: IORef Int,        
+        originalRoa  :: IORef Int,
+        originalAspa :: IORef Int,        
+        shortcutRoa  :: IORef Int,
+        shortcutAspa :: IORef Int,        
+        shortcutTroubled :: IORef Int,
+        newChildren         :: IORef Int,
         overlappingChildren :: IORef Int,
         updateMftMeta       :: IORef Int,
-        updateMftChildren   :: IORef Int,
-
-        originalRoa    :: IORef Int,
-        originalAspa   :: IORef Int,        
-
-        shortcutRoa    :: IORef Int,
-        shortcutAspa   :: IORef Int,        
-
-        shortcutTroubled :: IORef Int
+        updateMftChildren   :: IORef Int
     }
     deriving stock (Generic)
 
