@@ -248,16 +248,16 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
         embedState vs
         case r of 
-            Left e  -> appError e
+            Left e  -> appWarn e
             Right z -> case z of 
                 HashExists rpkiURL hash ->
                     DB.linkObjectToUrl tx objectStore rpkiURL hash
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
-                    inSubLocationScope (getURL rpkiUrl) $ appError e                 
+                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
                 ObjectParsingProblem rpkiUrl (VErr e) -> do                    
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
-                    inSubLocationScope (getURL rpkiUrl) $ appError e                 
+                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                                                     
                 Success rpkiUrl so@StorableObject {..} -> do 
                     DB.putObject tx objectStore so worldVersion                    
                     DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
