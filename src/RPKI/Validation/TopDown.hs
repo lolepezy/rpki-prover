@@ -1151,10 +1151,7 @@ validateCaNoFetch
                         mempty 
                         allPpas
             
-            let uniquePpas = getFetchablePPAs pps allSyncPpas
-
-            unless (null uniquePpas) $
-                logDebug logger [i|Will prefetch (if it's time): #{uniquePpas}|]
+            let uniquePpas = getFetchablePPAs pps allSyncPpas            
 
             scopes <- askScopes
             let fetchConfig = syncFetchConfig config
