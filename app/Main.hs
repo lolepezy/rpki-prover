@@ -41,7 +41,7 @@ import qualified Network.Wai.Handler.Warp         as Warp
 import           System.Directory
 import           System.Environment
 import           System.FilePath                  ((</>))
-import           System.IO (hPutStrLn, stderr)
+import           System.IO                        (hPutStrLn, stderr)
 
 import           Options.Generic
 
@@ -181,7 +181,7 @@ runValidatorServer appContext@AppContext {..} = do
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext = let
     httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    in Warp.run httpPort $ httpApi appContext
+    in Warp.run httpPort $ httpServer appContext
 
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv

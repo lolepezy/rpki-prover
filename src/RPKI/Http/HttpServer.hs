@@ -57,8 +57,8 @@ import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
 
-httpApi :: (Storage s, MaintainableStorage s) => AppContext s -> Application
-httpApi appContext = genericServe HttpApi {
+httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
+httpServer appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,
