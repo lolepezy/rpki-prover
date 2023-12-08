@@ -8,7 +8,13 @@
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
 
-module RPKI.Validation.TopDown where
+module RPKI.Validation.TopDown (
+    TopDownResult(..),
+    validateMutlipleTAs,    
+    withRepositoriesProcessing,
+    addUniqueVRPCount
+)
+where
 
 import           Control.Concurrent.Async        (forConcurrently)
 import           Control.Concurrent.STM
@@ -86,7 +92,8 @@ data AllTasTopDownContext = AllTasTopDownContext {
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
         shortcutsCreated     :: TVar [MftShortcutOp],
-        topDownCounters      :: TopDownCounters
+        topDownCounters      :: TopDownCounters,
+        validationSemaphore  :: Semaphore
     }
     deriving stock (Generic)
 
@@ -102,7 +109,7 @@ data TopDownCounters = TopDownCounters {
         originalAspa :: IORef Int,        
         shortcutRoa  :: IORef Int,
         shortcutAspa :: IORef Int,        
-        shortcutTroubled :: IORef Int,
+        shortcutTroubled    :: IORef Int,
         newChildren         :: IORef Int,
         overlappingChildren :: IORef Int,
         updateMftMeta       :: IORef Int,
@@ -153,6 +160,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
         visitedKeys    <- newTVar mempty
         validManifests <- newTVar makeValidManifests        
         shortcutsCreated <- newTVar []
+        validationSemaphore <- newSemaphore 100
         pure $ AllTasTopDownContext {..}
 
 newTopDownCounters :: IO TopDownCounters
@@ -490,32 +498,32 @@ validateCaNoFetch
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     ca = do 
     
-    let nextAction =
-            case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
-                FullEveryIteration -> makeNextFullValidationAction
-                Incremental        -> makeNextIncrementalAction
-
     case ca of 
-            CaFull c -> do             
-                vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
-                    increment $ topDownCounters ^. #originalCa             
-                    markAsReadHash appContext topDownContext (getHash c)                         
-                    validateObjectLocations c
-                    vHoist $ validateObjectValidityPeriod c now
-                    oneMoreCert
-                    join $ nextAction $ toAKI $ getSKI c
-            CaShort c -> do
-                vFocusOn ObjectFocus (c ^. #key) $ do 
-                    increment $ topDownCounters ^. #shortcutCa 
-                    markAsRead topDownContext (c ^. #key) 
-                    validateLocationForShortcut (c ^. #key)
-                    vHoist $ validateObjectValidityPeriod c now
-                    oneMoreCert
-                    join $ nextAction $ toAKI (c ^. #ski)
-  where
-    -- Do not create shortctus when validation algorithm is not incremental
+        CaFull c -> 
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+                increment $ topDownCounters ^. #originalCa             
+                markAsReadByHash appContext topDownContext (getHash c)                         
+                validateObjectLocations c
+                vHoist $ validateObjectValidityPeriod c now
+                oneMoreCert
+                join $ nextAction $ toAKI $ getSKI c
+        CaShort c -> 
+            vFocusOn ObjectFocus (c ^. #key) $ do 
+                increment $ topDownCounters ^. #shortcutCa 
+                markAsRead topDownContext (c ^. #key) 
+                validateLocationForShortcut (c ^. #key)
+                vHoist $ validateObjectValidityPeriod c now
+                oneMoreCert
+                join $ nextAction $ toAKI (c ^. #ski)
+  where    
+    nextAction =
+        case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+            FullEveryIteration -> makeNextFullValidationAction
+            Incremental        -> makeNextIncrementalAction
+
     createPayloadAndShortcut = 
         case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+            -- Do not create shortctus when validation algorithm is not incremental
             FullEveryIteration -> \payload _        -> T2 payload Nothing
             Incremental        -> \payload shortcut -> T2 payload (Just $! shortcut)               
 
@@ -684,6 +692,9 @@ validateCaNoFetch
                     case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
                         FullEveryIteration -> pure ()
                         Incremental        -> do 
+                            
+                            
+
                             let aki = toAKI $ getSKI fullCa                        
                             when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
                                 updateMftShortcut topDownContext aki nextMftShortcut
@@ -734,12 +745,15 @@ validateCaNoFetch
 
 
     -- Check if shortcut children are revoked
-    checkForRevokedChildren MftShortcut {..} children (Keyed validCrl newCrlKey) = 
-        when (newCrlKey /= crlShortcut ^. #key) $ do                        
+    checkForRevokedChildren mftShortcut children (Keyed validCrl newCrlKey) = do
+        when (newCrlKey /= mftShortcut ^. #crlShortcut . #key) $ do                        
+            when (isRevoked (mftShortcut ^. #serial) validCrl) $ 
+                vFocusOn ObjectFocus (mftShortcut ^. #key) $                                       
+                    vWarn RevokedResourceCertificate   
             forM_ children $ \(T3 _ _ childKey) ->
-                for_ (Map.lookup childKey nonCrlEntries) $ \MftEntry {..} ->
-                    for_ (getMftChildSerial child) $ \serial ->
-                        when (isRevoked serial validCrl) $
+                for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
+                    for_ (getMftChildSerial child) $ \childSerial ->
+                        when (isRevoked childSerial validCrl) $
                             vFocusOn ObjectFocus childKey $                                       
                                 vWarn RevokedResourceCertificate   
 
@@ -810,17 +824,23 @@ validateCaNoFetch
                           -> ValidatorT IO (T2 PayloadsType [(ObjectKey, Maybe (Text -> MftEntry))])
     gatherMftEntryResults =        
         foldM (\(T2 (payloads :: PayloadsType) childrenShortcuts) r -> do                 
-                case r of 
-                    InvalidEntry e vs -> do
-                        embedState vs
-                        appError e
-                    InvalidChild _ vs key -> do
-                        embedState vs
-                        pure $! T2 payloads ((key, Just (makeTroubledChild key)) : childrenShortcuts)
-                    Valid (payload :: PayloadsType) vs childShortcut key -> do 
-                        embedState vs
-                        let payloads' = payload <> payloads
-                        pure $! T2 payloads' ((key, childShortcut) : childrenShortcuts)
+            case r of 
+                InvalidEntry e vs -> do
+                    embedState vs
+                    appError e
+                InvalidChild _ vs key -> do
+                    embedState vs
+                    pure $! T2 payloads ((key, Just (makeTroubledChild key)) : childrenShortcuts)
+                Valid (payload :: PayloadsType) vs childShortcut key -> do 
+                    embedState vs
+                    -- Don't create shortcuts for objects having either errors or warnings,
+                    -- otherwise warnings will disappear after the first validation 
+                    if emptyValidations (vs ^. typed)
+                        then do
+                            let payloads' = payload <> payloads
+                            pure $! T2 payloads' ((key, childShortcut) : childrenShortcuts)
+                        else do 
+                            pure $! T2 payloads ((key, Just (makeTroubledChild key)) : childrenShortcuts)
             ) mempty
 
         
@@ -903,16 +923,17 @@ validateCaNoFetch
             -> ValidatorT IO (T2 PayloadsType (Maybe (Text -> MftEntry)))
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) validCrl = do        
         let emptyPayloads = mempty :: Payloads (Set Vrp)
+        let childFocus = vFocusOn LocationFocus (getURL $ pickLocation locations)
         case childRo of
             CerRO childCert -> do
-                parentScope <- ask
+                parentScope <- askScopes                
                 {- 
                     Note that recursive validation of the child CA happens in the separate   
                     runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT:
                     otherwise an error in child validation would interrupt validation of the parent with
                     ExceptT's exception logic.
                 -}
-                (r, validationState) <- liftIO $ runValidatorT parentScope $ do
+                (r, validationState) <- liftIO $ runValidatorT parentScope $ do        
                     childVerifiedResources <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                         -- Check that AIA of the child points to the correct location of the parent
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
@@ -921,7 +942,7 @@ validateCaNoFetch
 
                         vHoist $ do
                             Validated validCert <- validateResourceCert @_ @_ @'CACert
-                                    now childCert fullCa validCrl
+                                                    now childCert fullCa validCrl
                             validateResources verifiedResources childCert validCert
 
                     let childTopDownContext = topDownContext
@@ -937,10 +958,14 @@ validateCaNoFetch
                         case getPublicationPointsFromCertObject childCert of 
                             -- It's not going to happen?
                             Left e     -> vError e
-                            Right ppas -> pure $! createPayloadAndShortcut 
-                                payload (makeCaShortcut childKey (Validated childCert) ppas)
+                            Right ppas -> do 
+                                -- 
+                                makeShortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
+                                                    vHoist $ shortcutIfNoIssues childKey 
+                                                            (makeCaShortcut childKey (Validated childCert) ppas)
+                                pure $! createPayloadAndShortcut payload makeShortcut
             RoaRO roa -> 
-                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                childFocus $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validRoa <- vHoist $ validateRoa now roa fullCa validCrl verifiedResources
@@ -948,26 +973,13 @@ validateCaNoFetch
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = emptyPayloads & #vrps .~ Set.fromList vrpList      
-                        increment $ topDownCounters ^. #originalRoa 
-                        pure $! createPayloadAndShortcut 
-                                    (Seq.singleton payload) 
-                                    (makeRoaShortcut childKey validRoa vrpList) 
-
-            GbrRO gbr ->                 
-                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
-                    validateObjectLocations child                    
-                    allowRevoked $ do
-                        validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
-                        oneMoreGbr
-                        let gbr' = getCMSContent $ cmsPayload gbr
-                        let gbrPayload = (getHash gbr, gbr')
-                        let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload                        
-                        pure $! createPayloadAndShortcut 
-                                    (Seq.singleton payload) 
-                                    (makeGbrShortcut childKey validGbr gbrPayload)                         
+                        increment $ topDownCounters ^. #originalRoa                        
+                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                                (makeRoaShortcut childKey validRoa vrpList)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut                                    
 
             AspaRO aspa -> 
-                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                childFocus $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validAspa <- vHoist $ validateAspa now aspa fullCa validCrl verifiedResources
@@ -975,21 +987,34 @@ validateCaNoFetch
                         let aspaPayload = getCMSContent $ cmsPayload aspa
                         let payload = emptyPayloads & #aspas .~ Set.singleton aspaPayload
                         increment $ topDownCounters ^. #originalAspa
-                        pure $! createPayloadAndShortcut 
-                                    (Seq.singleton payload) 
-                                    (makeAspaShortcut childKey validAspa aspaPayload) 
+                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                                (makeAspaShortcut childKey validAspa aspaPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
 
             BgpRO bgpCert ->
-                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                childFocus $ do
                     validateObjectLocations child
                     allowRevoked $ do
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
                         oneMoreBgp
-                        let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload
-                        pure $! createPayloadAndShortcut 
-                                    (Seq.singleton payload) 
-                                    (makeBgpSecShortcut childKey validaBgpCert bgpPayload) 
+                        let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload                                            
+                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                                (makeBgpSecShortcut childKey validaBgpCert bgpPayload)
 
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
+
+            GbrRO gbr ->                 
+                childFocus $ do
+                    validateObjectLocations child                    
+                    allowRevoked $ do
+                        validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
+                        oneMoreGbr
+                        let gbr' = getCMSContent $ cmsPayload gbr
+                        let gbrPayload = (getHash gbr, gbr')
+                        let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload                                                
+                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                                (makeGbrShortcut childKey validGbr gbrPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut       
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
@@ -998,7 +1023,6 @@ validateCaNoFetch
                 pure $! createPayloadAndShortcut mempty (makeTroubledChild childKey)
 
         where
-
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
             -- Replace RevokedResourceCertificate error with a warmning and don't break the 
@@ -1011,6 +1035,20 @@ validateCaNoFetch
                 where
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
+
+            -- Don't create shortcuts with warnings in their scope, 
+            -- otherwise warnings will be reported only once for the 
+            -- original and never for shortcuts.
+            shortcutIfNoIssues key makeShortcut = do 
+                issues <- thisScopeIssues
+                pure $! if Set.null issues 
+                            then makeShortcut
+                            else makeTroubledChild key
+
+            thisScopeIssues :: PureValidatorT (Set VIssue)
+            thisScopeIssues = 
+                fromCurrentScope $ \scopes vs -> 
+                    getIssues (scopes ^. typed) (vs ^. typed)
 
 
     collectPayloads :: MftShortcut 
@@ -1057,18 +1095,20 @@ validateCaNoFetch
             -- Pick up some good parallelism to avoid too many threads, 
             -- but also process big manifests quicker
             let caPerThread = 50            
-            let eePerThread = 100
+            let eePerThread = 500
             let threads = min 
                     (caCount `div` caPerThread + (length children - caCount) `div` eePerThread)
-                    (fromIntegral $ config ^. #parallelism . #cpuParallelism)            
+                    (fromIntegral $ config ^. #parallelism . #cpuParallelism)                        
 
             scopes <- askScopes
             let forAllChidlren = 
                     if threads <= 1
-                        then forM
-                        else pooledForConcurrentlyN threads
-            z <- liftIO $ forAllChidlren children (runValidatorT scopes . f)
-            embedState $ mconcat $ map snd z
+                        then forM children (runValidatorT scopes . f)
+                        else pooledForConcurrentlyN threads children 
+                                (withSemaphore validationSemaphore . runValidatorT scopes . f)
+
+            z <- liftIO forAllChidlren
+            embedState $! mconcat $ map snd z
             pure $! mconcat [ p | (Right p, _) <- z ]            
 
         errorOnTroubledChild = internalError appContext [i|Impossible happened!|]
@@ -1076,9 +1116,9 @@ validateCaNoFetch
         validateTroubledChild caFull (Keyed validCrl _) childKey = do  
             -- It was an invalid child and nothing about it is cached, so 
             -- we have to process full validation for it
-            z <- roTxT database $ \tx db -> getLocatedByKey tx db childKey
-            case z of 
-                Nothing          -> internalError appContext [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+            roTxT database (\tx db -> getLocatedByKey tx db childKey) >>= \case            
+                Nothing -> internalError appContext 
+                                [i|Internal error, can't find a troubled child by its key #{childKey}.|]
                 Just childObject -> do 
                     T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
                     pure $! payloads
@@ -1268,6 +1308,7 @@ makeMftShortcut key
     (Keyed (Validated validCrl) crlKey) = 
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
+    serial = getSerial mftObject
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1377,9 +1418,9 @@ markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = do
 
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
 
-markAsReadHash :: Storage s => 
-                AppContext s -> TopDownContext -> Hash -> ValidatorT IO ()
-markAsReadHash AppContext {..} topDownContext hash = do
+markAsReadByHash :: Storage s => 
+                    AppContext s -> TopDownContext -> Hash -> ValidatorT IO ()
+markAsReadByHash AppContext {..} topDownContext hash = do
     key <- roTxT database $ \tx db -> getKeyByHash tx db hash
     for_ key $ markAsRead topDownContext              
 

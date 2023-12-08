@@ -312,10 +312,6 @@ mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
 emptyValidations :: Validations -> Bool 
 emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
 
-findError :: Validations -> Maybe AppError
-findError (Validations m) = 
-    listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
-
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
     Validations $ Map.adjust removeFromSet vScope vs    
@@ -323,6 +319,9 @@ removeValidation vScope predicate (Validations vs) =
         removeFromSet = Set.filter $ \case 
             VErr e             -> not $ predicate e
             VWarn (VWarning e) -> not $ predicate e
+
+getIssues :: VScope -> Validations -> Set VIssue
+getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
 
 
 ------------------------------------------------
@@ -474,7 +473,6 @@ data ValidationState = ValidationState {
 mTrace :: Trace -> Set Trace
 mTrace t = Set.singleton t
     
-
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty mempty
 
@@ -486,19 +484,19 @@ updateMetricInMap ms f (MetricMap (MonoidalMap mm)) =
 lookupMetric :: MetricScope -> MetricMap a -> Maybe a
 lookupMetric ms (MetricMap (MonoidalMap mm)) = Map.lookup ms mm
 
-
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
 focusToText :: Focus -> Text
-focusToText = \case
-    TAFocus txt         -> txt
-    LocationFocus uri   -> unURI $ getURL uri
-    ObjectFocus key     -> fmt key
-    HashFocus hash      -> fmt hash
-    PPFocus uri         -> unURI $ getURL uri
-    RepositoryFocus uri -> unURI $ getURL uri
-    TextFocus txt       -> txt
+focusToText = \case    
+    LocationFocus   (getURL -> URI u) -> u
+    PPFocus         (getURL -> URI u) -> u
+    RepositoryFocus (getURL -> URI u) -> u
+    LinkFocus (URI u) -> u
+    TAFocus txt       -> txt
+    ObjectFocus key   -> fmt key
+    HashFocus hash_   -> fmt hash_    
+    TextFocus txt     -> txt    
   where
     fmt = Text.pack . show 
 

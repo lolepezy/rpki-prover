@@ -113,11 +113,6 @@ runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 runValidatorT :: Scopes -> ValidatorT m r -> m (Either AppError r, ValidationState)
 runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
--- | Shorthand version for cases when we need to actually 
--- run IO or something similar like that
-voidRun :: Functor m => Text -> ValidatorT m r -> m ()
-voidRun t = void <$> runValidatorT (newScopes t)
-
 validatorWarning :: Monad m => VWarning -> ValidatorT m ()
 validatorWarning = vHoist . pureWarning
 
@@ -158,6 +153,12 @@ catchAndEraseError f predicate errorHandler = do
                 errorHandler 
             else throwError e
 
+
+fromCurrentScope :: (Scopes -> ValidationState -> a) -> PureValidatorT a
+fromCurrentScope f = do 
+    scopes <- askScopes
+    s <- get
+    pure $ f scopes s
 
 vWarn :: Monad m => ValidationError -> ValidatorT m ()
 vWarn = validatorWarning . VWarning . ValidationE
@@ -214,19 +215,6 @@ timedMetric' _ f v = do
     embedState vs
     updateMetric (f elapsed)
     vHoist $ fromValue r
-
-
-getMetric :: forall metric m . 
-            (Monad m, MetricC metric) => 
-            ValidatorT m (Maybe metric)
-getMetric = vHoist getPureMetric
-
-getPureMetric :: forall metric . MetricC metric => 
-                 PureValidatorT (Maybe metric)
-getPureMetric = do 
-    metricScope <- asks (^. typed)
-    metricMap   <- gets (^. typed . metricLens)
-    pure $ lookupMetric metricScope metricMap
             
 
 recover :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a

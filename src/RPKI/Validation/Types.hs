@@ -54,6 +54,7 @@ data MftShortcut = MftShortcut {
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
+        serial         :: Serial,
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
