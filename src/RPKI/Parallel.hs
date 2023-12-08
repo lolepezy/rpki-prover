@@ -1,7 +1,8 @@
 -- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE AllowAmbiguousTypes        #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE StrictData          #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE RecordWildCards     #-}
 
 module RPKI.Parallel where
 
@@ -176,36 +177,47 @@ killAll queue kill = do
     for_ a $ \as -> kill as >> killAll queue kill
 
 -- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
-data Semaphore = Semaphore Int (TVar Int)
+data Semaphore = Semaphore { 
+        capacity :: Int,
+        current  :: TVar Int, 
+        highest  :: TVar Int
+    }
     deriving (Eq)
 
 newSemaphoreIO :: Int -> IO Semaphore
 newSemaphoreIO = atomically . newSemaphore
 
 newSemaphore :: Int -> STM Semaphore
-newSemaphore n = Semaphore n <$> newTVar 0
+newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
 
 -- Execute using a semaphore as a barrier
 withSemaphore :: Semaphore -> IO a -> IO a
-withSemaphore (Semaphore maxCounter current) f = 
+withSemaphore Semaphore {..} f = 
     bracket incr decr (const f)
     where 
         incr = atomically $ do 
             c <- readTVar current
-            if c >= maxCounter 
+            if c >= capacity 
                 then retry
-                else writeTVar current (c + 1)
+                else do 
+                    let c' = c + 1
+                    writeTVar current c'
+                    h <- readTVar highest 
+                    when (c' > h) $ writeTVar highest c'
         decr _ = atomically $ modifyTVar' current $ \c -> c - 1
+
+getSemaphoreState :: Semaphore -> STM (Int, Int)
+getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
 
 -- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
 withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
-withSemaphoreAndTimeout (Semaphore maxCounter current) intervalMicroSeconds f =     
+withSemaphoreAndTimeout Semaphore {..} intervalMicroSeconds f =     
     bracket aquireSlot releaseSlot (const f)
   where  
     thereIsSpaceToRun = do 
         c <- readTVar current
-        if c >= maxCounter 
+        if c >= capacity 
             then retry
             else writeTVar current (c + 1)                                        
 

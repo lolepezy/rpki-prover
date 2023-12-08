@@ -160,7 +160,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
         visitedKeys    <- newTVar mempty
         validManifests <- newTVar makeValidManifests        
         shortcutsCreated <- newTVar []
-        validationSemaphore <- newSemaphore 100
+        validationSemaphore <- newSemaphore 1000
         pure $ AllTasTopDownContext {..}
 
 newTopDownCounters :: IO TopDownCounters
@@ -624,7 +624,7 @@ validateCaNoFetch
                     -> ValidatorT IO (T2 PayloadsType [T3 Text Hash ObjectKey]) 
     manifestFullValidation fullCa keyedMft mftShortcut childrenAki = do 
         let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
-
+  
         vFocusOn LocationFocus (getURL $ pickLocation locations) $ do 
             -- General location validation
             validateObjectLocations locatedMft
@@ -655,9 +655,9 @@ validateCaNoFetch
             -- If CRL has changed, we have to recheck if children are not revoked. 
             -- If will be checked by full validation for newChildren but it needs 
             -- to be explicitly checked for overlappingChildren
-            forM_ mftShortcut $ \mftShort -> 
-                when (crlKey /= mftShort ^. #crlShortcut . #key) $
-                    checkForRevokedChildren mftShort overlappingChildren keyedValidCrl            
+            forM_ mftShortcut $ \mftShort ->           
+                when (crlKey /= mftShort ^. #crlShortcut . #key) $ do                              
+                    checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
 
             -- Mark all manifest entries as read to avoid the situation
             -- when some of the children are garbage-collected from the cache 
@@ -692,9 +692,6 @@ validateCaNoFetch
                     case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
                         FullEveryIteration -> pure ()
                         Incremental        -> do 
-                            
-                            
-
                             let aki = toAKI $ getSKI fullCa                        
                             when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
                                 updateMftShortcut topDownContext aki nextMftShortcut
@@ -746,17 +743,15 @@ validateCaNoFetch
 
 
     -- Check if shortcut children are revoked
-    checkForRevokedChildren mftShortcut children (Keyed validCrl newCrlKey) = do
-        when (newCrlKey /= mftShortcut ^. #crlShortcut . #key) $ do                        
-            when (isRevoked (mftShortcut ^. #serial) validCrl) $ 
-                vFocusOn ObjectFocus (mftShortcut ^. #key) $                                       
-                    vWarn RevokedResourceCertificate   
-            forM_ children $ \(T3 _ _ childKey) ->
-                for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
-                    for_ (getMftChildSerial child) $ \childSerial ->
-                        when (isRevoked childSerial validCrl) $
-                            vFocusOn ObjectFocus childKey $                                       
-                                vWarn RevokedResourceCertificate   
+    checkForRevokedChildren mftShortcut (Keyed (Located _ mft) _) children validCrl = do        
+        when (isRevoked (getSerial mft) validCrl) $
+            vWarn RevokedResourceCertificate   
+        forM_ children $ \(T3 _ _ childKey) ->
+            for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
+                for_ (getMftChildSerial child) $ \childSerial ->
+                    when (isRevoked childSerial validCrl) $
+                        vFocusOn ObjectFocus childKey $
+                            vWarn RevokedResourceCertificate
 
 
     -- this indicates the difeerence between RFC9286-bis 
@@ -960,7 +955,7 @@ validateCaNoFetch
                             -- It's not going to happen?
                             Left e     -> vError e
                             Right ppas -> do 
-                                -- 
+                                -- Look at the issues for the child CA to decide if CA shortcut should be made
                                 makeShortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
                                                     vHoist $ shortcutIfNoIssues childKey 
                                                             (makeCaShortcut childKey (Validated childCert) ppas)
@@ -978,19 +973,6 @@ validateCaNoFetch
                         makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
                                                 (makeRoaShortcut childKey validRoa vrpList)
                         pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut                        
-
-            GbrRO gbr ->                 
-                vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
-                    validateObjectLocations child                    
-                    allowRevoked $ do
-                        validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
-                        oneMoreGbr
-                        let gbr' = getCMSContent $ cmsPayload gbr
-                        let gbrPayload = (getHash gbr, gbr')
-                        let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload                        
-                        pure $! createPayloadAndShortcut 
-                                    (Seq.singleton payload) 
-                                    (makeGbrShortcut childKey validGbr gbrPayload)                         
 
             AspaRO aspa -> 
                 childFocus $ do
@@ -1208,7 +1190,7 @@ validateCaNoFetch
                                     Just quickPpa -> quickPpa : syncPpas)
                         mempty 
                         allPpas
-            
+
             let uniquePpas = getFetchablePPAs pps allSyncPpas            
 
             scopes <- askScopes
@@ -1216,7 +1198,7 @@ validateCaNoFetch
             z <- liftIO $ pooledForConcurrently uniquePpas $ \ppa -> 
                     fmap (ppa,) $ runValidatorT scopes $                     
                         fetchPPWithFallback appContext fetchConfig repositoryProcessing worldVersion ppa
-                        
+
             ppsAfterFetch <- readPublicationPoints repositoryProcessing
             forM_ z $ \(ppa, (r, vs)) -> do 
                 embedState vs
@@ -1354,8 +1336,9 @@ applyValidationSideEffects
         rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
         pure $ Set.size vks
     
-    liftIO $ reportCounters appContext topDownCounters
-    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
+    liftIO $ reportCounters appContext topDownCounters    
+    (_, maxThreads) <- liftIO $ atomically $ getSemaphoreState validationSemaphore
+    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms, maxThreads = #{maxThreads}.|]
 
 
 reportCounters :: AppContext s -> TopDownCounters -> IO ()
