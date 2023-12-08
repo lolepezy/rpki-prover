@@ -220,7 +220,7 @@ newRepositoryProcessing Config {..} = RepositoryProcessing <$>
         StmMap.new <*>          
         StmMap.new <*>                  
         newTVar newPPs <*>
-        createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
+        newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
 
 addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
 addRsyncPrefetchUrls Config {..} pps =     

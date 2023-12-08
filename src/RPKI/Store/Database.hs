@@ -230,6 +230,7 @@ data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
+        serial         :: Serial,
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)

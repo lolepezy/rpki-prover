@@ -132,7 +132,7 @@ mkLmdb fileName config = do
                     maxReaders maxDatabases fileName
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
-        createSemaphoreIO maxBottleNeck
+        newSemaphoreIO maxBottleNeck
   where    
     mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    

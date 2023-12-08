@@ -179,11 +179,11 @@ killAll queue kill = do
 data Semaphore = Semaphore Int (TVar Int)
     deriving (Eq)
 
-createSemaphoreIO :: Int -> IO Semaphore
-createSemaphoreIO = atomically . createSemaphore
+newSemaphoreIO :: Int -> IO Semaphore
+newSemaphoreIO = atomically . newSemaphore
 
-createSemaphore :: Int -> STM Semaphore
-createSemaphore n = Semaphore n <$> newTVar 0
+newSemaphore :: Int -> STM Semaphore
+newSemaphore n = Semaphore n <$> newTVar 0
 
 -- Execute using a semaphore as a barrier
 withSemaphore :: Semaphore -> IO a -> IO a
