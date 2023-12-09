@@ -402,11 +402,11 @@ saveSnapshot
                 let decoded = U.decodeBase64 encodedb64 rpkiURL
                 case first (\t -> RrdpE $ BadBase64 t (U.convert rpkiURL)) decoded of
                     Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
-                    Right (DecodedBase64 decoded) -> do                             
-                        case validateSizeOfBS validationConfig decoded of 
+                    Right (DecodedBase64 blob) -> do                             
+                        case validateSizeOfBS validationConfig blob of 
                             Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)
                             Right _ -> do
-                                let hash = U.sha256s decoded  
+                                let hash = U.sha256s blob  
                                 exists <- roTx objectStore $ \tx -> DB.hashExists tx objectStore hash
                                 pure $! if exists 
                                     -- The object is already in cache. Do not parse-serialise
@@ -416,7 +416,7 @@ saveSnapshot
                                     -- since deletion is never concurrent with insertion.
                                     then HashExists rpkiURL hash
                                     else 
-                                        case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL decoded) of 
+                                        case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 
                                             (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e)
                                             (Right ro, _) -> Success rpkiURL (toStorableObject ro)    
 
