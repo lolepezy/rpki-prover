@@ -80,16 +80,16 @@ instance WithTx LmdbStorage where
                 nEnv <- atomically $ getNativeEnv e
                 withROTransaction nEnv (f . LmdbTx)        
 
-    readWriteTx lmdb f = withTransaction1 (getEnv lmdb) (f . LmdbTx)        
+    readWriteTx lmdb f = withTransactionWrapper (getEnv lmdb) (f . LmdbTx)        
 
-withTransaction1 :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
-withTransaction1 LmdbEnv {..} f = do        
-        nEnv <- atomically $ do 
-            readTVar nativeEnv >>= \case         
-                Disabled     -> retry           
-                ROEnv _      -> retry
-                RWEnv native -> pure native
-        withSemaphore txSem $ withTransaction nEnv f
+withTransactionWrapper :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
+withTransactionWrapper LmdbEnv {..} f = do        
+    nEnv <- atomically $ do 
+        readTVar nativeEnv >>= \case         
+            Disabled     -> retry           
+            ROEnv _      -> retry
+            RWEnv native -> pure native
+    withSemaphore txSem $ withTransaction nEnv f
 
 
 -- | Basic storage implemented using LMDB
@@ -167,14 +167,14 @@ createLmdbStore :: forall name . KnownSymbol name =>
                     LmdbEnv -> IO (LmdbStore name)
 createLmdbStore env@LmdbEnv {} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransaction1 env $ \tx -> openDatabase tx (Just name') defaultDbSettings     
+    db <- withTransactionWrapper env $ \tx -> openDatabase tx (Just name') defaultDbSettings     
     pure $ LmdbStore db env    
 
 createLmdbMultiStore :: forall name . KnownSymbol name =>  
                         LmdbEnv -> IO (LmdbMultiStore name)
 createLmdbMultiStore env@LmdbEnv {} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransaction1 env $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
+    db <- withTransactionWrapper env $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
     pure $ LmdbMultiStore db env    
 
 
