@@ -93,8 +93,7 @@ data AllTasTopDownContext = AllTasTopDownContext {
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
         shortcutsCreated     :: TVar [MftShortcutOp],
-        topDownCounters      :: TopDownCounters,
-        validationSemaphore  :: Semaphore
+        topDownCounters      :: TopDownCounters        
     }
     deriving stock (Generic)
 
@@ -160,8 +159,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
     atomically $ do        
         visitedKeys    <- newTVar mempty
         validManifests <- newTVar makeValidManifests        
-        shortcutsCreated <- newTVar []
-        validationSemaphore <- newSemaphore 1000
+        shortcutsCreated <- newTVar []        
         pure $ AllTasTopDownContext {..}
 
 newTopDownCounters :: IO TopDownCounters
@@ -517,13 +515,15 @@ validateCaNoFetch
                 oneMoreCert
                 join $ nextAction $ toAKI (c ^. #ski)
   where    
+    validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
+
     nextAction =
-        case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+        case validationAlgorithm of 
             FullEveryIteration -> makeNextFullValidationAction
             Incremental        -> makeNextIncrementalAction
 
     createPayloadAndShortcut = 
-        case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
+        case validationAlgorithm of 
             -- Do not create shortctus when validation algorithm is not incremental
             FullEveryIteration -> \payload _        -> T2 payload Nothing
             Incremental        -> \payload shortcut -> T2 payload (Just $! shortcut)               
@@ -694,9 +694,10 @@ validateCaNoFetch
                                 
                     let nextMftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts keyedValidCrl
 
-                    case config ^. typed @ValidationConfig . typed @ValidationAlgorithm of 
-                        FullEveryIteration -> pure ()
-                        Incremental        -> do 
+                    case (validationAlgorithm, getRFC fullCa) of 
+                        -- Only create shortcuts for case of incremental validation and 
+                        -- if CA prescribes to use standard validation instead of reconsidered.                        
+                        (Incremental, StrictRFC) -> do  
                             let aki = toAKI $ getSKI fullCa                        
                             when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
                                 updateMftShortcut topDownContext aki nextMftShortcut
@@ -707,6 +708,8 @@ validateCaNoFetch
                             when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $ do
                                 updateMftShortcutChildren topDownContext aki nextMftShortcut
                                 increment $ topDownCounters ^. #updateMftChildren
+
+                        _  -> pure ()
 
                     pure $! T2 validatedPayloads overlappingChildren
 
@@ -1103,11 +1106,10 @@ validateCaNoFetch
             scopes <- askScopes
             let forAllChidlren = 
                     if threads <= 1
-                        then forM children (runValidatorT scopes . f)
-                        else pooledForConcurrentlyN threads children 
-                                (withSemaphore validationSemaphore . runValidatorT scopes . f)
+                        then forM 
+                        else pooledForConcurrentlyN threads
 
-            z <- liftIO forAllChidlren
+            z <- liftIO $ forAllChidlren children $ runValidatorT scopes . f
             embedState $! mconcat $ map snd z
             pure $! mconcat [ p | (Right p, _) <- z ]            
 
@@ -1142,12 +1144,7 @@ validateCaNoFetch
                         vHoist $ validateObjectValidityPeriod r now
                         validateLocationForShortcut key
                         oneMoreRoa
-                        moreVrps $ Count $ fromIntegral $ length vrps             
-                        -- z <- roTxT database $ \tx db -> getLocatedByKey tx db childKey
-                        -- for_ z $ \(Located locations _) -> 
-                        --     when ("zRvDu8xcDoVzPDpHt4AxNsE0HcY.roa" `Text.isInfixOf` locationsToText locations) $ 
-                        --         logDebug logger [i|Roa VRPs 2: #{vrps}|]
-                            
+                        moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa               
                         pure $! Seq.singleton $! emptyPayloads & #vrps .~ Set.fromList vrps
                     
@@ -1351,9 +1348,8 @@ applyValidationSideEffects
         rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
         pure $ Set.size vks
     
-    liftIO $ reportCounters appContext topDownCounters    
-    (_, maxThreads) <- liftIO $ atomically $ getSemaphoreState validationSemaphore
-    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms, maxThreads = #{maxThreads}.|]
+    liftIO $ reportCounters appContext topDownCounters        
+    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
 reportCounters :: AppContext s -> TopDownCounters -> IO ()
