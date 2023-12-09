@@ -154,8 +154,8 @@ catchAndEraseError f predicate errorHandler = do
             else throwError e
 
 
-fromCurrentScope :: (Scopes -> ValidationState -> a) -> PureValidatorT a
-fromCurrentScope f = do 
+withCurrentScope :: (Scopes -> ValidationState -> a) -> PureValidatorT a
+withCurrentScope f = do 
     scopes <- askScopes
     s <- get
     pure $ f scopes s
@@ -182,7 +182,7 @@ inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
 inSubLocationScope = vFocusOn LocationFocus
 
 vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-vFocusOn c t = local (& typed @VScope %~ subScope' c t)
+vFocusOn c f = local (& typed @VScope %~ subScope' c f)
 
 metricFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 metricFocusOn c t = local (& typed @MetricScope %~ subScope' c t)

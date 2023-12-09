@@ -30,6 +30,7 @@ import           GHC.Generics (Generic)
 import           Data.Foldable
 import           Data.IORef
 import           Data.Maybe
+import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
@@ -622,10 +623,14 @@ validateCaNoFetch
                     -> Maybe MftShortcut 
                     -> AKI
                     -> ValidatorT IO (T2 PayloadsType [T3 Text Hash ObjectKey]) 
-    manifestFullValidation fullCa keyedMft mftShortcut childrenAki = do 
-        let (Keyed locatedMft@(Located locations mft) mftKey) = keyedMft
-  
-        vFocusOn LocationFocus (getURL $ pickLocation locations) $ do 
+    manifestFullValidation fullCa 
+        keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey) 
+        mftShortcut childrenAki = do         
+        vUniqueFocusOn LocationFocus (getURL $ pickLocation mftLocations)
+            doValidate
+            (vError $ CircularReference $ KeyIdentity mftKey)
+      where
+        doValidate = do 
             -- General location validation
             validateObjectLocations locatedMft
 
@@ -1042,7 +1047,7 @@ validateCaNoFetch
 
             thisScopeIssues :: PureValidatorT (Set VIssue)
             thisScopeIssues = 
-                fromCurrentScope $ \scopes vs -> 
+                withCurrentScope $ \scopes vs -> 
                     getIssues (scopes ^. typed) (vs ^. typed)
 
 
@@ -1217,7 +1222,7 @@ manifestDiff :: MftShortcut
             -> ([T3 Text a ObjectKey], [T3 Text a ObjectKey], Bool)
 manifestDiff mftShortcut newMftChidlren =                
     (newOnes, overlapping, not $ Map.null deletedEntries)
-    where
+  where
     (newOnes, overlapping) = List.partition 
             (\(T3 fileName _  k) -> isNewEntry k fileName) newMftChidlren                
 
@@ -1320,6 +1325,16 @@ makeMftShortcut key
         }    
     in MftShortcut { .. }  
 
+-- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
+-- i.e. we are not returning to the same object again. That would mean we have detected
+-- a loop in manifest references.
+vUniqueFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m () -> ValidatorT m r
+vUniqueFocusOn c a f nonUniqueError = do
+    Scopes { validationScope = Scope vs } <- vHoist $ withCurrentScope $ \scopes _ -> scopes
+    let focus = c a
+    unless (null (NonEmpty.filter (==focus) vs)) nonUniqueError
+    vFocusOn c a f 
+        
 
 -- Mark validated objects in the database, i.e.
 -- 
