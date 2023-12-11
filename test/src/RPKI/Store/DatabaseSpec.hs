@@ -116,7 +116,7 @@ shouldMergeObjectLocations io = do
     extraLocations :: Locations <- QC.generate arbitrary    
 
     let storeIt obj url = rwTx objectStore $ \tx -> do        
-            putObject tx objectStore (toStorableObject obj) (instantToVersion now)
+            saveObject tx objectStore (toStorableObject obj) (instantToVersion now)
             linkObjectToUrl tx objectStore url (getHash obj)
 
     let getIt hash = roTx objectStore $ \tx -> getByHash tx db hash    
@@ -166,7 +166,7 @@ shouldCreateAndDeleteAllTheMaps io = do
 
     rwTx objectStore $ \tx -> 
         for_ ros $ \ro -> 
-            putObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            saveObject tx objectStore (toStorableObject ro) (instantToVersion now)
 
     -- roTx objectStore $ \tx -> 
     --     forM ros $ \ro -> do 
@@ -194,7 +194,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx objectStore $ \tx -> 
         for_ ros' $ \(Located (Locations locations) ro) -> do             
-            putObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            saveObject tx objectStore (toStorableObject ro) (instantToVersion now)
             forM_ locations $ \url -> 
                 linkObjectToUrl tx objectStore url (getHash ro)
 
@@ -243,8 +243,8 @@ shouldOrderManifests io = do
     let worldVersion = instantToVersion now
 
     rwTx objectStore $ \tx -> do        
-            putObject tx objectStore (toStorableObject mft1) worldVersion
-            putObject tx objectStore (toStorableObject mft2) worldVersion
+            saveObject tx objectStore (toStorableObject mft1) worldVersion
+            saveObject tx objectStore (toStorableObject mft2) worldVersion
             linkObjectToUrl tx objectStore url1 (getHash mft1)
             linkObjectToUrl tx objectStore url2 (getHash mft2)
 

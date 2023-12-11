@@ -12,7 +12,8 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.RSC,
     readObject,
     supportedExtension,
-    isSupportedExtension
+    isSupportedExtension,
+    isManifest
 )
 where
 
@@ -46,6 +47,9 @@ supportedExtension filename =
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension s = s `elem` 
     ["cer", "mft", "crl", "roa", "gbr", "sig", "asa"]
+
+isManifest :: RpkiURL -> Bool
+isManifest (getURL -> URI u) = ".mft" `Text.isSuffixOf` u
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename

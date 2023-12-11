@@ -1387,13 +1387,13 @@ reportCounters AppContext {..} TopDownCounters {..} = do
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let raw = Raw $ toStorable $ Compressed MftShortcutMeta {..}
+        let raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let !raw = Raw $ toStorable $ Compressed MftShortcutChildren {..}
+        let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)                
     
 storeShortcuts :: (Storage s, MonadIO m) => 
@@ -1407,8 +1407,8 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
                 UpdateMftShortcutChildren aki s -> saveMftShorcutChildren tx db aki s
                  
 
-data MftShortcutOp = UpdateMftShortcut AKI (Raw (Compressed MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI (Raw (Compressed MftShortcutChildren))            
+data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed MftShortcutMeta))
+                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed MftShortcutChildren))            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 

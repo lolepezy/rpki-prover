@@ -8,6 +8,7 @@
 
 module RPKI.Store.Types where
 
+import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 
 import           GHC.Generics
@@ -40,7 +41,6 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
@@ -49,6 +49,10 @@ data Keyed a = Keyed {
         object :: a,
         key    :: {-# UNPACK #-} ObjectKey
     }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)        
+
+newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 

@@ -398,10 +398,10 @@ getFetchablePPA :: PublicationPoints
                 -> PublicationPointAccess
 getFetchablePPA pps ppa = 
     PublicationPointAccess 
-        $ NonEmpty.map (ppToFetchablePP pps)                         
+        $ NonEmpty.map ppToFetchablePP                         
         $ unPublicationPointAccess ppa
   where
-    ppToFetchablePP pps = \case 
+    ppToFetchablePP = \case 
         r@(RrdpPP _) -> r
         r@(RsyncPP rpp@(RsyncPublicationPoint rsyncUrl)) -> 
             case rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl of 

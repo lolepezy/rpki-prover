@@ -31,23 +31,15 @@ newtype SValue = SValue { unSValue :: Storable }
 newtype SKey = SKey { unSKey :: Storable }
     deriving stock (Eq, Ord, Show)    
 
-data StorableUnit a e = 
-    SObject {-# UNPACK #-} (StorableObject a) 
-  | SError e
-
 data StorableObject a = StorableObject {
         object   :: a, 
         storable :: Storable 
     }
     deriving stock (Show, Eq, Generic)
 
-
-newtype Raw a = Raw { unRaw :: Storable }
+newtype Verbatim a = Verbatim { unRaw :: Storable }
     deriving stock (Show, Eq, Generic)
-
--- data WannaStore a = OriginalWS a 
---                   | StorableWS Storable
---     deriving stock (Show, Eq, Generic)                  
+              
 
 toStorableObject :: AsStorable a => a -> StorableObject a
 toStorableObject a = StorableObject a (force (toStorable a))
@@ -69,9 +61,9 @@ instance {-# OVERLAPPING #-} AsStorable Storable where
     toStorable = id
     fromStorable = id
 
-instance {-# OVERLAPPING #-} AsStorable (Raw a) where
+instance {-# OVERLAPPING #-} AsStorable (Verbatim a) where
     toStorable   = unRaw
-    fromStorable = Raw
+    fromStorable = Verbatim
 
 instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
     toStorable = Storable . serialise_
@@ -88,7 +80,7 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
         Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
 
-restoreFromRaw :: AsStorable a => Raw a -> a
+restoreFromRaw :: AsStorable a => Verbatim a -> a
 restoreFromRaw = fromStorable . unRaw
 
 data SStats = SStats {

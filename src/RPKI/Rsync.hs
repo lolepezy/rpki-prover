@@ -39,9 +39,10 @@ import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
+import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database              as DB
+import           RPKI.Store.Database
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
@@ -157,7 +158,7 @@ updateObjectForRsyncRepository
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
-        objectStore <- fmap (^. #objectStore) $ liftIO $ readTVarIO database        
+        db <- liftIO $ readTVarIO database        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
@@ -170,7 +171,7 @@ updateObjectForRsyncRepository
             ExitSuccess -> do 
                 -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
                 -- they will hold too much files open.            
-                loadRsyncRepository appContext worldVersion uri destination objectStore
+                loadRsyncRepository appContext worldVersion uri destination db
                             `finally` liftIO performGC            
                 pure repo
             ExitFailure errorCode -> do
@@ -190,13 +191,13 @@ loadRsyncRepository :: Storage s =>
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
-                    -> DB.RpkiObjectStore s 
+                    -> DB s 
                     -> ValidatorT IO ()
-loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectStore =    
+loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =    
     txFoldPipeline 
             (2 * cpuParallelism)
             traverseFS
-            (DB.rwAppTx objectStore)
+            (rwAppTx db)
             saveStorable   
   where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
@@ -223,25 +224,28 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
         readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
                 Left e        -> pure $ CantReadFile rpkiURL filePath $ VErr e
-                Right (_, bs) -> 
-                    liftIO $ roTx objectStore $ \tx -> do
+                Right (_, blob) -> 
+                    liftIO $ roTx db $ \tx -> do
                         -- Check if the object is already in the storage
                         -- before parsing ASN1 and serialising it.
-                        let hash = U.sha256s bs  
-                        exists <- DB.hashExists tx objectStore hash
+                        let hash = U.sha256s blob  
+                        exists <- hashExists tx db hash
                         pure $! if exists 
                             then HashExists rpkiURL hash
-                            else let 
-                                scope = newScopes $ unURI $ getURL rpkiURL
-                                in case runPureValidator scope (readObject rpkiURL bs) of 
-                                    (Left e, _)  -> ObjectParsingProblem rpkiURL (VErr e)
-                                    -- All these bangs here make sense because
-                                    -- 
-                                    -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                                    -- force computation of the serialised object and gain some parallelism
-                                    -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                    -- a slow CPU-intensive transaction (verify that it's the case)                                    
-                                    (Right ro, _) -> Success rpkiURL (toStorableObject ro)
+                            else 
+                                if isManifest rpkiURL 
+                                then let 
+                                    scope = newScopes $ unURI $ getURL rpkiURL
+                                    in case runPureValidator scope (readObject rpkiURL blob) of 
+                                        (Left e, _)  -> ObjectParsingProblem rpkiURL (VErr e)
+                                        -- 
+                                        -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
+                                        -- force computation of the serialised object and gain some parallelism
+                                        -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
+                                        -- a slow CPU-intensive transaction (verify that it's the case)                                    
+                                        (Right ro, _) -> SuccessParsed rpkiURL (toStorableObject ro)
+                                else 
+                                    SuccessOriginal rpkiURL (ObjectOriginal blob) hash
             
 
     saveStorable tx a = do 
@@ -251,16 +255,20 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath objectSto
             Left e  -> appWarn e
             Right z -> case z of 
                 HashExists rpkiURL hash ->
-                    DB.linkObjectToUrl tx objectStore rpkiURL hash
+                    linkObjectToUrl tx db rpkiURL hash
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
                 ObjectParsingProblem rpkiUrl (VErr e) -> do                    
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                                                     
-                Success rpkiUrl so@StorableObject {..} -> do 
-                    DB.putObject tx objectStore so worldVersion                    
-                    DB.linkObjectToUrl tx objectStore rpkiUrl (getHash object)
+                SuccessParsed rpkiUrl so@StorableObject {..} -> do 
+                    saveObject tx db so worldVersion                    
+                    linkObjectToUrl tx db rpkiUrl (getHash object)
+                    updateMetric @RsyncMetric @_ (& #processed %~ (+1))
+                SuccessOriginal rpkiUrl original hash -> do 
+                    saveOriginal tx db original hash
+                    linkObjectToUrl tx db rpkiUrl hash
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
@@ -332,5 +340,6 @@ data RsyncObjectProcessingResult =
           CantReadFile RpkiURL FilePath VIssue
         | HashExists RpkiURL Hash
         | ObjectParsingProblem RpkiURL VIssue
-        | Success RpkiURL (StorableObject RpkiObject)
+        | SuccessOriginal RpkiURL ObjectOriginal Hash
+        | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving Show
