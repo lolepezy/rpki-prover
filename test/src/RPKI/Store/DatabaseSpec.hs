@@ -115,11 +115,11 @@ shouldMergeObjectLocations io = do
     ro2 :: RpkiObject <- QC.generate arbitrary        
     extraLocations :: Locations <- QC.generate arbitrary    
 
-    let storeIt obj url = rwTx objectStore $ \tx -> do        
-            saveObject tx objectStore (toStorableObject obj) (instantToVersion now)
-            linkObjectToUrl tx objectStore url (getHash obj)
+    let storeIt obj url = rwTx db $ \tx -> do        
+            saveObject tx db (toStorableObject obj) (instantToVersion now)
+            linkObjectToUrl tx db url (getHash obj)
 
-    let getIt hash = roTx objectStore $ \tx -> getByHash tx db hash    
+    let getIt hash = roTx db $ \tx -> getByHash tx db hash    
 
     storeIt ro1 url1
     storeIt ro1 url2
@@ -133,24 +133,24 @@ shouldMergeObjectLocations io = do
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 2" loc2 (toLocations url3)    
 
-    verifyUrlCount objectStore "case 1" 3    
+    verifyUrlCount db "case 1" 3    
 
-    rwTx objectStore $ \tx -> deleteObject tx db (getHash ro1)    
+    rwTx db $ \tx -> deleteObject tx db (getHash ro1)    
 
-    verifyUrlCount objectStore "case 2" 3
+    verifyUrlCount db "case 2" 3
 
     -- should only clean up URLs
     deletedUrls <- rwTx db $ deleteDanglingUrls db
     HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
-    verifyUrlCount objectStore "case 3" 1
+    verifyUrlCount db "case 3" 1
 
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
     where 
-        verifyUrlCount objectStore s count = do 
-            uriToUriKey <- roTx objectStore $ \tx -> M.all tx (uriToUriKey objectStore)
-            uriKeyToUri <- roTx objectStore $ \tx -> M.all tx (uriKeyToUri objectStore)
+        verifyUrlCount db@DB {..} s count = do 
+            uriToUriKey <- roTx db $ \tx -> M.all tx (uriToUriKey objectStore)
+            uriKeyToUri <- roTx db $ \tx -> M.all tx (uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
 
@@ -158,15 +158,15 @@ shouldMergeObjectLocations io = do
 shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
 shouldCreateAndDeleteAllTheMaps io = do 
     
-    DB {..} <- io
+    db@DB {..} <- io
     Now now <- thisInstant 
 
     url :: RpkiURL <- QC.generate arbitrary    
     ros :: [RpkiObject] <- generateSome
 
-    rwTx objectStore $ \tx -> 
+    rwTx db $ \tx -> 
         for_ ros $ \ro -> 
-            saveObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            saveObject tx db (toStorableObject ro) (instantToVersion now)
 
     -- roTx objectStore $ \tx -> 
     --     forM ros $ \ro -> do 
@@ -192,13 +192,13 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     Now now <- thisInstant     
 
-    rwTx objectStore $ \tx -> 
+    rwTx db $ \tx -> 
         for_ ros' $ \(Located (Locations locations) ro) -> do             
-            saveObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            saveObject tx db (toStorableObject ro) (instantToVersion now)
             forM_ locations $ \url -> 
-                linkObjectToUrl tx objectStore url (getHash ro)
+                linkObjectToUrl tx db url (getHash ro)
 
-    allObjects <- roTx objectStore $ \tx -> getAll tx db
+    allObjects <- roTx db $ \tx -> getAll tx db
     HU.assertEqual 
         "Not the same objects" 
         (List.sortOn (getHash . (^. #payload)) allObjects) 
@@ -223,9 +223,8 @@ shouldInsertAndGetAllBackFromObjectStore io = do
                     getMftTimingMark mft1 == getMftTimingMark mft2
                 _ -> False
 
-    compareLatestMfts objectStore ros a = do
-        mftLatest <- roTx objectStore $ \tx -> 
-                        findLatestMftByAKI tx objectStore a         
+    compareLatestMfts db ros a = do
+        mftLatest <- roTx db $ \tx -> findLatestMftByAKI tx db a         
         
         let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
@@ -243,10 +242,10 @@ shouldOrderManifests io = do
     let worldVersion = instantToVersion now
 
     rwTx objectStore $ \tx -> do        
-            saveObject tx objectStore (toStorableObject mft1) worldVersion
-            saveObject tx objectStore (toStorableObject mft2) worldVersion
-            linkObjectToUrl tx objectStore url1 (getHash mft1)
-            linkObjectToUrl tx objectStore url2 (getHash mft2)
+            saveObject tx db (toStorableObject mft1) worldVersion
+            saveObject tx db (toStorableObject mft2) worldVersion
+            linkObjectToUrl tx db url1 (getHash mft1)
+            linkObjectToUrl tx db url2 (getHash mft2)
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
