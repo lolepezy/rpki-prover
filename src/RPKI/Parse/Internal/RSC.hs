@@ -45,7 +45,7 @@ parseRsc bs = do
             Just (DigestAlgorithmIdentifier -> digestAlgorithm) -> do             
                 checkList <- parseCheckList
                 let rscResources = PrefixesAndAsns v4 v6 asn        
-                pure RSC {..}
+                pure Rsc {..}
 
     parseResourceSet = 
         onNextContainer Sequence $ do

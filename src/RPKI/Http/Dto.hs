@@ -288,7 +288,7 @@ objectToDto = \case
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
 
     rscDto r = let 
-            rsc@RSC {..} = getCMSContent $ r ^. #cmsPayload
+            rsc@Rsc {..} = getCMSContent $ r ^. #cmsPayload
         in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, ..}
 
     bgpSecDto :: BgpCerObject -> BgpCertDto

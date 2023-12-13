@@ -271,7 +271,7 @@ instance Arbitrary Gbr where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RSC where
+instance Arbitrary Rsc where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -981,8 +981,8 @@ instance Arbitrary RevokedCertificate where
                                     <*> arbitrary
                                     <*> pure (Extensions Nothing)
 
-instance Arbitrary CRL where
-    arbitrary = CRL 1 <$> arbitrary
+instance Arbitrary X509.CRL where
+    arbitrary = X509.CRL 1 <$> arbitrary
                     <*> arbitrary
                     <*> arbitrary
                     <*> arbitrary

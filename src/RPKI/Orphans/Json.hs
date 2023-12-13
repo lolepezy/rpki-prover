@@ -327,7 +327,7 @@ $(deriveToJSON defaultOptions ''X509.RevokedCertificate)
 $(deriveToJSON defaultOptions ''X509.CRL)
 
 $(deriveToJSON defaultOptions ''Aspa)
-$(deriveToJSON defaultOptions ''RSC)
+$(deriveToJSON defaultOptions ''Rsc)
 $(deriveToJSON defaultOptions ''Vrp)
 $(deriveToJSON defaultOptions ''Manifest)
 $(deriveToJSON defaultOptions ''CertificateWithSignature)

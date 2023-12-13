@@ -223,7 +223,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
       where
         readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
-                Left e        -> pure $ CantReadFile rpkiURL filePath $ VErr e
+                Left e          -> pure $ CantReadFile rpkiURL filePath $ VErr e
                 Right (_, blob) -> 
                     liftIO $ roTx db $ \tx -> do
                         -- Check if the object is already in the storage
@@ -233,20 +233,19 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                         pure $! if exists 
                             then HashExists rpkiURL hash
                             else 
-                                if isManifest rpkiURL 
-                                then let 
-                                    scope = newScopes $ unURI $ getURL rpkiURL
-                                    in case runPureValidator scope (readObject rpkiURL blob) of 
-                                        (Left e, _)  -> ObjectParsingProblem rpkiURL (VErr e)
-                                        -- 
-                                        -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                                        -- force computation of the serialised object and gain some parallelism
-                                        -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                                        -- a slow CPU-intensive transaction (verify that it's the case)                                    
-                                        (Right ro, _) -> SuccessParsed rpkiURL (toStorableObject ro)
-                                else 
-                                    SuccessOriginal rpkiURL (ObjectOriginal blob) hash
-            
+                                case urlObjectType rpkiURL of 
+                                    Just MFT -> parseIt hash blob
+                                    Just CER -> parseIt hash blob
+                                    _        -> SuccessOriginal rpkiURL (ObjectOriginal blob) hash
+          where
+            parseIt hash blob = 
+                case runPureValidator (newScopes $ unURI $ getURL rpkiURL) (readObject rpkiURL blob) of 
+                    (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e) (ObjectOriginal blob) hash
+                    -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
+                    -- force computation of the serialised object and gain some parallelism
+                    -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
+                    -- a slow CPU-intensive transaction (verify that it's the case)                                                        
+                    (Right ro, _) -> SuccessParsed rpkiURL (toStorableObject ro)            
 
     saveStorable tx a = do 
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
@@ -259,9 +258,11 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
-                ObjectParsingProblem rpkiUrl (VErr e) -> do                    
-                    logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e} |]
-                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                                                     
+                ObjectParsingProblem rpkiUrl (VErr e) original hash -> do                    
+                    logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
+                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
+                    saveOriginal tx db original hash
+                    linkObjectToUrl tx db rpkiUrl hash                                  
                 SuccessParsed rpkiUrl so@StorableObject {..} -> do 
                     saveObject tx db so worldVersion                    
                     linkObjectToUrl tx db rpkiUrl (getHash object)
@@ -339,7 +340,7 @@ restoreUriFromPath url@(RsyncURL host rootPath) rsyncRoot filePath =
 data RsyncObjectProcessingResult =           
           CantReadFile RpkiURL FilePath VIssue
         | HashExists RpkiURL Hash
-        | ObjectParsingProblem RpkiURL VIssue
+        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash
         | SuccessOriginal RpkiURL ObjectOriginal Hash
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving Show

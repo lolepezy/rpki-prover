@@ -501,15 +501,6 @@ getMftTimingMark mft = let
     in MftTimingMark (thisTime m) (nextTime m)
 
 
-saveLatestValidMfts :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> Map AKI ObjectKey -> m ()
-saveLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} valids = liftIO $ do
-    z <- M.get tx lastValidMfts lastValidMftKey
-    let valids' = case z of 
-            Nothing              -> valids
-            Just (Compressed vs) -> Map.unionWith (\a _ -> a) valids vs
-    M.put tx lastValidMfts lastValidMftKey (Compressed valids')
-
 
 getLatestValidMfts :: (MonadIO m, Storage s) => 
                         Tx s mode -> DB s -> m (Map AKI ObjectKey)

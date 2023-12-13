@@ -287,7 +287,7 @@ data CMSBasedObject a = CMSBasedObject {
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
-type RscObject = CMSBasedObject RSC
+type RscObject = CMSBasedObject Rsc
 type AspaObject = CMSBasedObject Aspa
 
     
@@ -302,6 +302,9 @@ data RpkiObject = CerRO CaCerObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | BGPSec | RSC
+    deriving (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary
 
 instance WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
@@ -499,7 +502,7 @@ data Gbr = Gbr BSS.ShortByteString
     deriving anyclass TheBinary
 
 
-data RSC = RSC {        
+data Rsc = Rsc {        
         rscResources    :: PrefixesAndAsns,        
         checkList       :: [T2 (Maybe Text) Hash],
         digestAlgorithm :: DigestAlgorithmIdentifier
