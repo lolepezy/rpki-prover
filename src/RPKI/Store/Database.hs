@@ -916,70 +916,17 @@ getRtrPayloads tx db worldVersion =
             vrps <- MaybeT $ getVrps tx db worldVersion
             bgps <- MaybeT $ getBgps tx db worldVersion
             pure $ mkRtrPayloads vrps bgps
-
-getTotalDbStats :: (MonadIO m, Storage s) => DB s -> m (DBStats, SStats)
-getTotalDbStats db = do 
-    dbStats <- getDbStats db        
-    pure (dbStats, totalStats dbStats)
-
--- Compute database stats
-getDbStats :: (MonadIO m, Storage s) => DB s -> m DBStats
-getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do 
-    taStats         <- let TAStore sm = taStore in M.stats tx sm
-    repositoryStats <- repositoryStats' tx
-    rpkiObjectStats <- rpkiObjectStats' tx
-    vResultStats    <- vResultStats' tx    
-    vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
-    aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
-    bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
-    gbrStats        <- let GbrStore sm = gbrStore in M.stats tx sm
-    metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
-    versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
-    sequenceStats   <- M.stats tx sequences
-    slurmStats      <- let SlurmStore sm = slurmStore in M.stats tx sm
-    pure DBStats {..}
-  where
-    rpkiObjectStats' tx = do 
-        let RpkiObjectStore {..} = objectStore
-        objectsStats  <- M.stats tx objects
-        mftByAKIStats <- MM.stats tx mftByAKI                                    
-        hashToKeyStats  <- M.stats tx hashToKey
-        lastValidMftsStats <- M.stats tx lastValidMfts
-
-        uriToUriKeyStat <- M.stats tx uriToUriKey
-        uriKeyToUriStat <- M.stats tx uriKeyToUri
-        uriKeyToObjectKeyStat <- MM.stats tx urlKeyToObjectKey
-        objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
-
-        objectInsertedByStats <- M.stats tx objectInsertedBy
-        validatedByVersionStats <- M.stats tx validatedByVersion
-        let MftShortcutStore {..} = mftShortcuts
-        mftMetasStats <- M.stats tx mftMetas
-        mftChildrenStats <- M.stats tx mftChildren
-        pure RpkiObjectStats {..}
-
-    repositoryStats' tx = 
-        let RepositoryStore {..} = repositoryStore
-        in RepositoryStats <$>
-            M.stats tx rrdpS <*>
-            M.stats tx rsyncS <*>            
-            M.stats tx forAsyncS
-
-    vResultStats' tx = 
-        let ValidationsStore results = validationsStore
-        in VResultStats <$> M.stats tx results
-   
                        
 -- | Return total amount of bytes taken by the data in the DB
 -- 
-totalSpace :: DBStats -> Size
+totalSpace :: StorageStats -> Size
 totalSpace stats = 
     let SStats {..} = totalStats stats
     in statKeyBytes + statValueBytes
 
 -- Get all SStats and `<>` them
-totalStats :: DBStats -> SStats
-totalStats = foldOf (types @SStats)
+totalStats :: StorageStats -> SStats
+totalStats (StorageStats s) = mconcat $ Map.elems s
 
 emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
 emptyDBMaps tx DB {..} = liftIO $ 

@@ -9,6 +9,8 @@
 module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
+import qualified Data.Text       as Text
+import qualified Data.Map.Strict as Map
 
 import Control.DeepSeq
 import Codec.Compression.LZ4
@@ -112,3 +114,6 @@ incrementStats stat (SKey (Storable k)) (SValue (Storable v)) =
         statMaxKeyBytes = statMaxKeyBytes stat `max` fromIntegral (BS.length k),
         statMaxValueBytes = statMaxValueBytes stat `max` fromIntegral (BS.length v)
     }  
+
+newtype StorageStats = StorageStats (Map.Map Text.Text SStats)
+    deriving stock (Show, Eq, Generic)    

@@ -319,8 +319,9 @@ getAllTALs AppContext {..} = do
 
 
 getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
-getStats appContext@AppContext {..} = liftIO $ do 
-    (dbStats, total) <- getTotalDbStats =<< readTVarIO database
+getStats appContext = liftIO $ do 
+    storageStats <- getStorageStats appContext
+    let total = totalStats storageStats    
     fileSize <- getCacheFsSize appContext
     let fileStats = DBFileStats {..}
     pure TotalDBStats {..}

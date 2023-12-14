@@ -56,52 +56,13 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
-data RpkiObjectStats = RpkiObjectStats {
-    objectsStats       :: SStats,
-    mftByAKIStats      :: SStats,    
-    hashToKeyStats     :: SStats,
-    lastValidMftsStats :: SStats,
-    uriToUriKeyStat    :: SStats,
-    uriKeyToUriStat    :: SStats,
-    uriKeyToObjectKeyStat  :: SStats,
-    objectKeyToUrlKeysStat :: SStats,
-    objectInsertedByStats  :: SStats,    
-    validatedByVersionStats :: SStats,
-    mftMetasStats           :: SStats,
-    mftChildrenStats        :: SStats
-} deriving stock (Show, Eq, Generic)
-
-data VResultStats = VResultStats {     
-    resultsStats :: SStats    
-} deriving  (Show, Eq, Generic)
-
-data RepositoryStats = RepositoryStats {
-    rrdpStats  :: SStats,
-    rsyncStats :: SStats,        
-    slowSStats :: SStats    
-} deriving stock (Show, Eq, Generic)
-
-data DBStats = DBStats {
-    taStats         :: SStats,
-    repositoryStats :: RepositoryStats,
-    rpkiObjectStats :: RpkiObjectStats,        
-    vResultStats    :: VResultStats,    
-    vrpStats        :: SStats,        
-    aspaStats       :: SStats,        
-    bgpStats        :: SStats,        
-    gbrStats        :: SStats,        
-    metricsStats    :: SStats,    
-    versionStats    :: SStats,    
-    sequenceStats   :: SStats,
-    slurmStats      :: SStats
-} deriving stock (Show, Eq, Generic)
 
 data DBFileStats = DBFileStats {
     fileSize :: Size
 } deriving stock (Show, Eq, Generic)
 
 data TotalDBStats = TotalDBStats {
-    dbStats :: DBStats,
-    total   :: SStats,
-    fileStats :: DBFileStats
+    storageStats :: StorageStats,
+    total        :: SStats,
+    fileStats    :: DBFileStats
 } deriving stock (Show, Eq, Generic)

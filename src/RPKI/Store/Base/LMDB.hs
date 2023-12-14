@@ -13,13 +13,16 @@ import Control.Monad (forM, forever)
 import Control.Concurrent.STM
 
 import qualified Data.ByteString as BS
+import qualified Data.Text       as Text
+import qualified Data.Map.Strict as Map
 import Data.Coerce (coerce)
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
 import RPKI.Store.Base.Serialisation
 import RPKI.Parallel
-import RPKI.Util
+import RPKI.Domain
+import RPKI.Util (convert)
 
 import Data.IORef
 
@@ -233,43 +236,84 @@ copyEnv srcN dstN = do
                         dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
                         (copied, biggest) <- copyMap srcMap dstMap srcTx dstTx                        
                         pure $! CopyStat mapName copied biggest
-    where
-        getMapNames tx db =
-            withCursor tx db $ \c -> do 
-                maps <- newIORef []
+  where           
+    copyMap srcMap dstMap srcTx dstTx = 
+        withKVs $ \bytes maxKV -> do                 
+            withCursor srcTx srcMap $ \c ->                
                 void $ runEffect $ LMap.firstForward c >-> do
                     forever $ do
-                        Lmdb.KeyValue name _ <- await
-                        lift $ modifyIORef' maps ([name] <>)
-                readIORef maps          
-        
-        copyMap srcMap dstMap srcTx dstTx = 
-            withKVs $ \bytes maxKV -> do                 
-                withCursor srcTx srcMap $ \c ->                
-                    void $ runEffect $ LMap.firstForward c >-> do
+                        Lmdb.KeyValue name value <- await
+                        void $ lift $ LMap.insertSuccess' dstTx dstMap name value
+                        let kvSize = BS.length name + BS.length value
+                        lift $ do 
+                            modifyIORef' bytes ( + kvSize)
+                            modifyIORef' maxKV (max kvSize)
+
+    copyMultiMap srcMap dstMap srcTx dstTx =
+        withKVs $ \bytes maxKV -> do 
+            withMultiCursor dstTx dstMap $ \dstC -> 
+                withMultiCursor srcTx srcMap $ \srcC ->                 
+                    void $ runEffect $ LMMap.firstForward srcC >-> do
                         forever $ do
                             Lmdb.KeyValue name value <- await
-                            void $ lift $ LMap.insertSuccess' dstTx dstMap name value
+                            lift $ LMMap.insert dstC name value
                             let kvSize = BS.length name + BS.length value
                             lift $ do 
                                 modifyIORef' bytes ( + kvSize)
                                 modifyIORef' maxKV (max kvSize)
+    
+    withKVs processThem = do 
+        bytes <- newIORef 0
+        maxKV <- newIORef 0
+        void $ processThem bytes maxKV
+        (,) <$> readIORef bytes <*> readIORef maxKV
 
-        copyMultiMap srcMap dstMap srcTx dstTx =
-            withKVs $ \bytes maxKV -> do 
-                withMultiCursor dstTx dstMap $ \dstC -> 
-                    withMultiCursor srcTx srcMap $ \srcC ->                 
-                        void $ runEffect $ LMMap.firstForward srcC >-> do
-                            forever $ do
-                                Lmdb.KeyValue name value <- await
-                                lift $ LMMap.insert dstC name value
-                                let kvSize = BS.length name + BS.length value
-                                lift $ do 
-                                    modifyIORef' bytes ( + kvSize)
-                                    modifyIORef' maxKV (max kvSize)
         
-        withKVs processThem = do 
-            bytes <- newIORef 0
-            maxKV <- newIORef 0
-            void $ processThem bytes maxKV
-            (,) <$> readIORef bytes <*> readIORef maxKV
+getEnvStats :: Env -> IO StorageStats
+getEnvStats env = 
+    fmap (StorageStats . Map.fromList) $ 
+        withROTransaction env $ \tx -> do     
+            db <- openDatabase tx Nothing defaultDbSettings    
+            mapNames <- getMapNames tx db
+            forM mapNames $ \mapName -> do 
+                -- first open it as is
+                m <- openDatabase tx (Just $ convert mapName) defaultDbSettings           
+                isMulti <- isMultiDatabase tx m                            
+                stat <- if isMulti
+                        then do 
+                            -- close and reopen as multi map
+                            closeDatabase env m
+                            m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs                        
+                            gatherStats tx m' withMultiCursor LMMap.firstForward                        
+                        else 
+                            gatherStats tx m withCursor LMap.firstForward           
+                pure (convert mapName, stat)
+  where
+    gatherStats tx m cursorF forwardF = do
+        stats <- newIORef mempty
+        void $ cursorF tx m $ \c -> 
+            void $ runEffect $ forwardF c >-> do
+                forever $ do
+                    Lmdb.KeyValue key value <- await
+                    let keySize   = Size $ fromIntegral $ BS.length key
+                    let valueSize = Size $ fromIntegral $ BS.length value
+                    let stat = SStats { 
+                                    statSize          = Size 1, 
+                                    statKeyBytes      = keySize,
+                                    statValueBytes    = valueSize,
+                                    statMaxKeyBytes   = keySize,
+                                    statMaxValueBytes = valueSize
+                                }  
+                    lift $ modifyIORef' stats (<> stat)
+        readIORef stats
+
+
+getMapNames :: Lmdb.Transaction e -> Lmdb.Database a v -> IO [a]
+getMapNames tx db =
+    withCursor tx db $ \c -> do 
+        maps <- newIORef []
+        void $ runEffect $ LMap.firstForward c >-> do
+            forever $ do
+                Lmdb.KeyValue name _ <- await
+                lift $ modifyIORef' maps ([name] <>)
+        readIORef maps     
