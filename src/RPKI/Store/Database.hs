@@ -125,7 +125,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
-        urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
+        urlKeyToObjectKey  :: SMultiMap "uri-key-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
         mftShortcuts       :: MftShortcutStore s,
