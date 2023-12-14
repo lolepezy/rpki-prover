@@ -99,6 +99,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ObjectIsExpired { before :: Instant, after :: Instant } |
                         AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
                         ManifestEntryDoesn'tExist Hash Text |
+                        ManifestEntryHasWrongFileType Hash Text RpkiObjectType |
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         ResourceSetMustBeInherit |

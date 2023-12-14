@@ -888,12 +888,13 @@ validateCaNoFetch
     -- Give MFT entry with hash and filename, get the object it referes to
     -- 
     getManifestEntry filename hash' = do
+        let objectType = textObjectType filename
         db <- liftIO $ readTVarIO database
-        roAppTx db $ \tx -> do 
+        ro <- roAppTx db $ \tx -> do             
             getKeyByHash tx db hash' >>= \case                     
                 Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
                 Just key -> do                    
-                    case textObjectType filename of 
+                    case objectType of 
                         Just CER -> 
                             -- we expect certificates to be stored in the parsed-serialised form                                                            
                             getParsedObject tx db key $ 
@@ -914,7 +915,15 @@ validateCaNoFetch
                             -- wrong
                             getParsedObject tx db key $ 
                                 vError $ ManifestEntryDoesn'tExist hash' filename
-    --   where
+
+        -- The type of the object that is deserialised doesn't correspond 
+        -- file extension on the manifest
+        let realObjectType = getRpkiObjectType $ ro ^. #object
+        when (Just realObjectType /= objectType) $ 
+            vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
+
+        pure ro                        
+
     getObjectOriginal tx db key type_ ifNotFound = do
         getOriginalBlob tx db key >>= \case 
             Nothing                    -> ifNotFound
