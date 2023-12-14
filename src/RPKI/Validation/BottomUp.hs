@@ -176,7 +176,7 @@ validateBottomUp
                 crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
                 case crlObject of 
                     Nothing -> 
-                        vError $ NoCRLExists childrenAki    
+                        vError $ NoCRLExists childrenAki crlHash
 
                     Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
                         vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 

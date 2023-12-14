@@ -230,8 +230,8 @@ toValidationMessage = \case
       NonUniqueManifestEntries nonUniqueEntries -> 
             [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
 
-      NoCRLExists aki -> 
-            [i|No CRL exists with AKI #{aki} for CA.|]
+      NoCRLExists aki hash -> 
+            [i|No CRL exists with AKI #{aki} and hash #{hash} for CA.|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]

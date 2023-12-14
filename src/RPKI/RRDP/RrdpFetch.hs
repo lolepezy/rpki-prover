@@ -419,14 +419,7 @@ saveSnapshot
                                         case urlObjectType rpkiURL of 
                                             Just MFT -> parseIt rpkiURL hash blob
                                             Just CER -> parseIt rpkiURL hash blob
-                                            _        -> SuccessOriginal rpkiURL (ObjectOriginal blob) hash                                                                                
-                                        
-                                        -- if isManifest rpkiURL
-                                        -- then case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 
-                                        --     (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e) (ObjectOriginal blob) hash
-                                        --     (Right ro, _) -> SuccessParsed rpkiURL (toStorableObject ro)    
-                                        -- else 
-                                        --     SuccessOriginal rpkiURL (ObjectOriginal blob) hash
+                                            _        -> SuccessOriginal rpkiURL (ObjectOriginal blob) hash
           where
             parseIt rpkiURL hash blob = 
                 case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 

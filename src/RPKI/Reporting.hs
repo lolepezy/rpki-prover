@@ -86,7 +86,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |
-                        NoCRLExists AKI |
+                        NoCRLExists AKI Hash |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
                         CRL_AKI_DifferentFromCertSKI SKI AKI |

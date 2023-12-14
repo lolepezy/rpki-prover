@@ -731,10 +731,10 @@ validateCaNoFetch
         db <- liftIO $ readTVarIO database
         roAppTx db $ \tx -> 
             getKeyByHash tx db crlHash >>= \case         
-                Nothing  -> vError $ NoCRLExists aki
+                Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do                    
                     -- CRLs are not parsed right after fetching, so try to get the blob
-                    z <- getObjectOriginal tx db key CRL $ vError $ NoCRLExists aki
+                    z <- getObjectOriginal tx db key CRL $ vError $ NoCRLExists aki crlHash
                     case z of 
                         Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
                             markAsRead topDownContext crlKey
