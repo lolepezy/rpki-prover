@@ -331,11 +331,11 @@ saveObject tx DB { objectStore = RpkiObjectStore {..} } so@StorableObject {..} w
             _ -> pure ()        
 
 saveOriginal :: (MonadIO m, Storage s) => 
-            Tx s 'RW 
-            -> DB s 
-            -> ObjectOriginal
-            -> Hash            
-            -> m ()
+                Tx s 'RW 
+                -> DB s 
+                -> ObjectOriginal
+                -> Hash            
+                -> m ()
 saveOriginal tx DB { objectStore = RpkiObjectStore {..} } (ObjectOriginal blob) hash = liftIO $ do    
     exists <- M.exists tx hashToKey hash    
     unless exists $ do          
@@ -343,6 +343,14 @@ saveOriginal tx DB { objectStore = RpkiObjectStore {..} } (ObjectOriginal blob) 
         let key = ObjectKey $ ArtificialKey k
         M.put tx originals key (Verbatim $ Storable blob)       
 
+
+getOriginalBlob :: (MonadIO m, Storage s) => 
+                Tx s mode
+                -> DB s 
+                -> ObjectKey            
+                -> m (Maybe ObjectOriginal)
+getOriginalBlob tx DB { objectStore = RpkiObjectStore {..} } key = liftIO $ do    
+    fmap (ObjectOriginal . unStorable . unVerbatim) <$> M.get tx originals key
 
 linkObjectToUrl :: (MonadIO m, Storage s) => 
                 Tx s 'RW 

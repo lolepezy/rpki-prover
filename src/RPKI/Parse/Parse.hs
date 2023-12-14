@@ -11,10 +11,12 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.GBR,
     module RPKI.Parse.Internal.RSC,
     readObject,
+    readObjectOfType,
     supportedExtension,
     isSupportedExtension,
     rpkiObjectType,
-    urlObjectType
+    urlObjectType,
+    textObjectType
 )
 where
 
@@ -63,14 +65,24 @@ isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension = isJust . rpkiObjectType
 
 urlObjectType :: RpkiURL -> Maybe RpkiObjectType
-urlObjectType (getURL -> URI u) = rpkiObjectType $ Text.takeEnd 3 u 
+urlObjectType (getURL -> URI u) = textObjectType u
+
+textObjectType :: Text.Text -> Maybe RpkiObjectType
+textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
 readObject :: RpkiURL -> BS.ByteString -> PureValidatorT RpkiObject
 readObject objectURL content =     
     case urlObjectType objectURL of 
-        Just CER -> do 
+        Just type_ -> readObjectOfType type_ content
+        Nothing    -> pureError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
+
+
+readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT RpkiObject        
+readObjectOfType objectType content = 
+    case objectType of 
+        CER -> do 
             (rc, certType, rfc, ski, aki, hash) <- parseResourceCertificate content
             case certType of 
                 CACert -> do 
@@ -82,14 +94,12 @@ readObject objectURL content =
                 EECert -> 
                     pureError $ parseErr "Cannot have EE certificate as a separate object."
 
-        Just MFT  -> parse_ parseMft MftRO content
-        Just ROA  -> parse_ parseRoa RoaRO content
-        Just CRL  -> parse_ parseCrl CrlRO content            
-        Just GBR  -> parse_ parseGbr GbrRO content            
-        Just RSC  -> parse_ parseRsc RscRO content            
-        Just ASPA -> parse_ parseAspa AspaRO content            
-        _         -> pureError $ parseErr $ "Unknown object type: " <> fmtGen objectURL
+        MFT  -> parse_ parseMft MftRO content
+        ROA  -> parse_ parseRoa RoaRO content
+        CRL  -> parse_ parseCrl CrlRO content            
+        GBR  -> parse_ parseGbr GbrRO content            
+        RSC  -> parse_ parseRsc RscRO content            
+        ASPA -> parse_ parseAspa AspaRO content     
   where
     parse_ parse constructor bs = 
-        constructor <$> parse bs
-                
+        constructor <$> parse bs        

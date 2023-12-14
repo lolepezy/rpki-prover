@@ -55,6 +55,7 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Fetch
+import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
@@ -727,20 +728,25 @@ validateCaNoFetch
                 [crl] -> pure crl
                 crls  -> vError $ MoreThanOneCRLOnMFT aki crls
 
-        roTxT database (\tx db -> getKeyedByHash tx db crlHash) >>= \case         
-            Nothing -> 
-                vError $ NoCRLExists aki
-            Just (Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey) -> do
-                markAsRead topDownContext crlKey
-                inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
-                    validateObjectLocations locatedCrl
-                    vHoist $ do
-                        let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                        checkCrlLocation locatedCrl mftEECert
-                        void $ validateCrl now crl fullCa                
-                        pure $! Keyed (Validated crl) crlKey                                        
-            _ -> 
-                vError $ CRLHashPointsToAnotherObject crlHash   
+        db <- liftIO $ readTVarIO database
+        roAppTx db $ \tx -> 
+            getKeyByHash tx db crlHash >>= \case         
+                Nothing  -> vError $ NoCRLExists aki
+                Just key -> do                    
+                    -- CRLs are not parsed right after fetching, so try to get the blob
+                    z <- getObjectOriginal tx db key CRL $ vError $ NoCRLExists aki
+                    case z of 
+                        Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
+                            markAsRead topDownContext crlKey
+                            inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
+                                validateObjectLocations locatedCrl
+                                vHoist $ do
+                                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                                    checkCrlLocation locatedCrl mftEECert
+                                    void $ validateCrl now crl fullCa                
+                                    pure $! Keyed (Validated crl) crlKey                                        
+                        _ -> 
+                            vError $ CRLHashPointsToAnotherObject crlHash   
             
 
     -- Utility for repeated peace of code
@@ -879,10 +885,50 @@ validateCaNoFetch
                 []  -> False
                 _   -> True
 
-    getManifestEntry filename hash' = 
-        roTxT database (\tx db -> getKeyedByHash tx db hash') >>= \case        
-            Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
-            Just ro -> pure ro
+    -- Give MFT entry with hash and filename, get the object it referes to
+    -- 
+    getManifestEntry filename hash' = do
+        db <- liftIO $ readTVarIO database
+        roAppTx db $ \tx -> do 
+            getKeyByHash tx db hash' >>= \case                     
+                Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
+                Just key -> do                    
+                    case textObjectType filename of 
+                        Just CER -> 
+                            -- we expect certificates to be stored in the parsed-serialised form                                                            
+                            getParsedObject tx db key $ 
+                                -- try to get the original blob and (re-)parse 
+                                -- it to at least complain about it at the right place
+                                getObjectOriginal tx db key CER $ 
+                                    vError $ ManifestEntryDoesn'tExist hash' filename
+                        Just type_ -> do     
+                            -- all other types are stored as original blobs
+                            -- so we have to parse them first
+                            getObjectOriginal tx db key type_ $ 
+                                getParsedObject tx db key $ 
+                                    vError $ ManifestEntryDoesn'tExist hash' filename
+                        Nothing -> 
+                            -- If we don't know anything about the type from the manifest, 
+                            -- it may still be possible that the object was parsed based
+                            -- on the rsync/rrdp url and the entry in the manifest is just
+                            -- wrong
+                            getParsedObject tx db key $ 
+                                vError $ ManifestEntryDoesn'tExist hash' filename
+    --   where
+    getObjectOriginal tx db key type_ ifNotFound = do
+        getOriginalBlob tx db key >>= \case 
+            Nothing                    -> ifNotFound
+            Just (ObjectOriginal blob) -> do 
+                ro <- vHoist $ readObjectOfType type_ blob
+                getLocationsByKey tx db key >>= \case                                             
+                    Nothing        -> ifNotFound
+                    Just locations -> pure $ Keyed (Located locations ro) key
+
+    getParsedObject tx db key ifNotFound = do
+        getLocatedByKey tx db key >>= \case 
+            Just ro -> pure $ Keyed ro key
+            Nothing -> ifNotFound
+
 
     validateMftChild caFull child@(Keyed (Located objectLocations _) _) 
                      filename validCrl = do
@@ -1324,7 +1370,7 @@ makeMftShortcut key
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected
--- a loop in manifest references.
+-- a loop in references.
 vUniqueFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m () -> ValidatorT m r
 vUniqueFocusOn c a f nonUniqueError = do
     Scopes { validationScope = Scope vs } <- vHoist $ withCurrentScope $ \scopes _ -> scopes

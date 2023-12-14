@@ -37,7 +37,7 @@ data StorableObject a = StorableObject {
     }
     deriving stock (Show, Eq, Generic)
 
-newtype Verbatim a = Verbatim { unRaw :: Storable }
+newtype Verbatim a = Verbatim { unVerbatim :: Storable }
     deriving stock (Show, Eq, Generic)
               
 
@@ -62,7 +62,7 @@ instance {-# OVERLAPPING #-} AsStorable Storable where
     fromStorable = id
 
 instance {-# OVERLAPPING #-} AsStorable (Verbatim a) where
-    toStorable   = unRaw
+    toStorable   = unVerbatim
     fromStorable = Verbatim
 
 instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
@@ -81,7 +81,7 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
 
 
 restoreFromRaw :: AsStorable a => Verbatim a -> a
-restoreFromRaw = fromStorable . unRaw
+restoreFromRaw = fromStorable . unVerbatim
 
 data SStats = SStats {
         statSize          :: Size,
