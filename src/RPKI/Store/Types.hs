@@ -56,7 +56,6 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
-
 data DBFileStats = DBFileStats {
     fileSize :: Size
 } deriving stock (Show, Eq, Generic)

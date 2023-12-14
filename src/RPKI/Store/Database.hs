@@ -915,14 +915,7 @@ getRtrPayloads tx db worldVersion =
     liftIO $ runMaybeT $ do 
             vrps <- MaybeT $ getVrps tx db worldVersion
             bgps <- MaybeT $ getBgps tx db worldVersion
-            pure $ mkRtrPayloads vrps bgps
-                       
--- | Return total amount of bytes taken by the data in the DB
--- 
-totalSpace :: StorageStats -> Size
-totalSpace stats = 
-    let SStats {..} = totalStats stats
-    in statKeyBytes + statValueBytes
+            pure $ mkRtrPayloads vrps bgps                       
 
 -- Get all SStats and `<>` them
 totalStats :: StorageStats -> SStats

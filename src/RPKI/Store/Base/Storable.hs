@@ -105,15 +105,5 @@ instance Semigroup SStats where
             statMaxValueBytes = statMaxValueBytes ss1 `max` statMaxValueBytes ss2
         }
 
-incrementStats :: SStats -> SKey -> SValue -> SStats
-incrementStats stat (SKey (Storable k)) (SValue (Storable v)) = 
-    SStats { 
-        statSize = statSize stat + 1, 
-        statKeyBytes = statKeyBytes stat + fromIntegral (BS.length k),
-        statValueBytes = statValueBytes stat + fromIntegral (BS.length v),
-        statMaxKeyBytes = statMaxKeyBytes stat `max` fromIntegral (BS.length k),
-        statMaxValueBytes = statMaxValueBytes stat `max` fromIntegral (BS.length v)
-    }  
-
 newtype StorageStats = StorageStats (Map.Map Text.Text SStats)
     deriving stock (Show, Eq, Generic)    

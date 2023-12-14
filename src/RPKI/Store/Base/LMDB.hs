@@ -13,7 +13,6 @@ import Control.Monad (forM, forever)
 import Control.Concurrent.STM
 
 import qualified Data.ByteString as BS
-import qualified Data.Text       as Text
 import qualified Data.Map.Strict as Map
 import Data.Coerce (coerce)
 
