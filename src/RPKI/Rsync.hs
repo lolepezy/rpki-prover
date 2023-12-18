@@ -223,29 +223,36 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
       where
         readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
-                Left e          -> pure $ CantReadFile rpkiURL filePath $ VErr e
-                Right (_, blob) -> 
-                    liftIO $ roTx db $ \tx -> do
-                        -- Check if the object is already in the storage
-                        -- before parsing ASN1 and serialising it.
-                        let hash = U.sha256s blob  
-                        exists <- hashExists tx db hash
-                        pure $! if exists 
-                            then HashExists rpkiURL hash
-                            else 
-                                case urlObjectType rpkiURL of 
-                                    Just MFT -> parseIt hash blob
-                                    Just CER -> parseIt hash blob
-                                    _        -> SuccessOriginal rpkiURL (ObjectOriginal blob) hash
+                Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
+                Right (_, blob) ->                     
+                    case urlObjectType rpkiURL of 
+                        Just type_ -> do 
+                            -- Check if the object is already in the storage
+                            -- before parsing ASN1 and serialising it.
+                            let hash = U.sha256s blob  
+                            exists <- liftIO $ roTx db $ \tx -> hashExists tx db hash
+                            pure $! if exists 
+                                then HashExists rpkiURL hash
+                                else                                 
+                                    case type_ of                                                                                             
+                                        -- Parse-serialise certificates and manifests, 
+                                        -- we need their SKIs and AKIs for indexing
+                                        MFT -> parseIt hash blob type_
+                                        CER -> parseIt hash blob type_
+                                        _   -> SuccessOriginal rpkiURL 
+                                                    (ObjectOriginal blob) hash 
+                                                    (ObjectMeta worldVersion type_)
+                        Nothing -> 
+                            pure $! UknownObjectType rpkiURL filePath
+
           where
-            parseIt hash blob = 
+            parseIt hash blob type_ = 
                 case runPureValidator (newScopes $ unURI $ getURL rpkiURL) (readObject rpkiURL blob) of 
-                    (Left e, _)   -> ObjectParsingProblem rpkiURL (VErr e) (ObjectOriginal blob) hash
-                    -- 1) "toStorableObject ro" has to happen in this thread, as it is the way to 
-                    -- force computation of the serialised object and gain some parallelism
-                    -- 2) "toStorableObject ro" shouldn't happen inside of "atomically" to prevent
-                    -- a slow CPU-intensive transaction (verify that it's the case)                                                        
-                    (Right ro, _) -> SuccessParsed rpkiURL (toStorableObject ro)            
+                    (Left e, _) -> ObjectParsingProblem rpkiURL (VErr e) 
+                                        (ObjectOriginal blob) hash 
+                                        (ObjectMeta worldVersion type_)
+                    (Right ro, _) -> 
+                        SuccessParsed rpkiURL (toStorableObject ro)            
 
     saveStorable tx a = do 
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
@@ -258,17 +265,21 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
-                ObjectParsingProblem rpkiUrl (VErr e) original hash -> do                    
+                UknownObjectType rpkiUrl filePath -> do
+                    logError logger [i|Unknown object type: url = #{rpkiUrl}, path = #{filePath}.|]
+                    inSubLocationScope (getURL rpkiUrl) $ 
+                        appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert rpkiUrl
+                ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
-                    saveOriginal tx db original hash
+                    saveOriginal tx db original hash objectMeta
                     linkObjectToUrl tx db rpkiUrl hash                                  
                 SuccessParsed rpkiUrl so@StorableObject {..} -> do 
                     saveObject tx db so worldVersion                    
                     linkObjectToUrl tx db rpkiUrl (getHash object)
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
-                SuccessOriginal rpkiUrl original hash -> do 
-                    saveOriginal tx db original hash
+                SuccessOriginal rpkiUrl original hash objectMeta -> do 
+                    saveOriginal tx db original hash objectMeta
                     linkObjectToUrl tx db rpkiUrl hash
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                 other -> 
@@ -340,7 +351,8 @@ restoreUriFromPath url@(RsyncURL host rootPath) rsyncRoot filePath =
 data RsyncObjectProcessingResult =           
           CantReadFile RpkiURL FilePath VIssue
         | HashExists RpkiURL Hash
-        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash
-        | SuccessOriginal RpkiURL ObjectOriginal Hash
+        | UknownObjectType RpkiURL String
+        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
+        | SuccessOriginal RpkiURL ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving Show

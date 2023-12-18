@@ -30,9 +30,9 @@ data StorableTA = StorableTA {
     } 
     deriving (Show, Eq, Generic, TheBinary)
 
-data ROMeta = ROMeta {
-        insertedBy  :: {-# UNPACK #-} WorldVersion,
-        validatedBy :: Maybe WorldVersion
+data ObjectMeta = ObjectMeta {
+        insertedBy :: {-# UNPACK #-} WorldVersion,
+        objectType :: RpkiObjectType
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)

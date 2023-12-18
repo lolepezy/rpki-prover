@@ -77,8 +77,11 @@ data API api = API {
         repositories :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
-                                    :> QueryParam "hash" Text 
-                                    :> Get '[JSON] [RObject],
+                                      :> QueryParam "hash" Text 
+                                      :> Get '[JSON] [RObject],
+
+        originals :: api :- "original" :> QueryParam "hash" Text 
+                                       :> Get '[ObjectBlob] ObjectOriginal,
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 

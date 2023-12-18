@@ -717,8 +717,8 @@ validateCaNoFetch
             processChildren `recover` markAllEntriesAsVisited
 
 
-    findAndValidateCrl :: Located CaCerObject 
-                    -> (Keyed (Located MftObject)) 
+    findAndValidateCrl :: Located CaCerObject
+                    -> Keyed (Located MftObject) 
                     -> AKI
                     -> ValidatorT IO (Keyed (Validated CrlObject))
     findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
@@ -734,7 +734,7 @@ validateCaNoFetch
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do                    
                     -- CRLs are not parsed right after fetching, so try to get the blob
-                    z <- getObjectOriginal tx db key CRL $ vError $ NoCRLExists aki crlHash
+                    z <- getLocatedOriginal tx db key CRL $ vError $ NoCRLExists aki crlHash
                     case z of 
                         Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
                             markAsRead topDownContext crlKey
@@ -900,12 +900,12 @@ validateCaNoFetch
                             getParsedObject tx db key $ 
                                 -- try to get the original blob and (re-)parse 
                                 -- it to at least complain about it at the right place
-                                getObjectOriginal tx db key CER $ 
+                                getLocatedOriginal tx db key CER $ 
                                     vError $ ManifestEntryDoesn'tExist hash' filename
                         Just type_ -> do     
                             -- all other types are stored as original blobs
                             -- so we have to parse them first
-                            getObjectOriginal tx db key type_ $ 
+                            getLocatedOriginal tx db key type_ $ 
                                 getParsedObject tx db key $ 
                                     vError $ ManifestEntryDoesn'tExist hash' filename
                         Nothing -> 
@@ -923,20 +923,6 @@ validateCaNoFetch
             vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
 
         pure ro                        
-
-    getObjectOriginal tx db key type_ ifNotFound = do
-        getOriginalBlob tx db key >>= \case 
-            Nothing                    -> ifNotFound
-            Just (ObjectOriginal blob) -> do 
-                ro <- vHoist $ readObjectOfType type_ blob
-                getLocationsByKey tx db key >>= \case                                             
-                    Nothing        -> ifNotFound
-                    Just locations -> pure $ Keyed (Located locations ro) key
-
-    getParsedObject tx db key ifNotFound = do
-        getLocatedByKey tx db key >>= \case 
-            Just ro -> pure $ Keyed ro key
-            Nothing -> ifNotFound
 
 
     validateMftChild caFull child@(Keyed (Located objectLocations _) _) 
@@ -1019,10 +1005,10 @@ validateCaNoFetch
                             Left e     -> vError e
                             Right ppas -> do 
                                 -- Look at the issues for the child CA to decide if CA shortcut should be made
-                                makeShortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
-                                                    vHoist $ shortcutIfNoIssues childKey 
-                                                            (makeCaShortcut childKey (Validated childCert) ppas)
-                                pure $! createPayloadAndShortcut payload makeShortcut
+                                shortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
+                                                vHoist $ shortcutIfNoIssues childKey 
+                                                        (makeCaShortcut childKey (Validated childCert) ppas)
+                                pure $! createPayloadAndShortcut payload shortcut
             RoaRO roa -> 
                 childFocus $ do
                     validateObjectLocations child                    
@@ -1033,9 +1019,9 @@ validateCaNoFetch
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = emptyPayloads & #vrps .~ Set.fromList vrpList      
                         increment $ topDownCounters ^. #originalRoa                        
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeRoaShortcut childKey validRoa vrpList)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut                        
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeRoaShortcut childKey validRoa vrpList)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut                        
 
             AspaRO aspa -> 
                 childFocus $ do
@@ -1046,9 +1032,9 @@ validateCaNoFetch
                         let aspaPayload = getCMSContent $ cmsPayload aspa
                         let payload = emptyPayloads & #aspas .~ Set.singleton aspaPayload
                         increment $ topDownCounters ^. #originalAspa
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeAspaShortcut childKey validAspa aspaPayload)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeAspaShortcut childKey validAspa aspaPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut
 
             BgpRO bgpCert ->
                 childFocus $ do
@@ -1057,9 +1043,9 @@ validateCaNoFetch
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
                         oneMoreBgp
                         let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload                                            
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeBgpSecShortcut childKey validaBgpCert bgpPayload)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeBgpSecShortcut childKey validaBgpCert bgpPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut
 
             GbrRO gbr ->                 
                 childFocus $ do
@@ -1070,9 +1056,9 @@ validateCaNoFetch
                         let gbr' = getCMSContent $ cmsPayload gbr
                         let gbrPayload = (getHash gbr, gbr')
                         let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload                                                
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeGbrShortcut childKey validGbr gbrPayload)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut       
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeGbrShortcut childKey validGbr gbrPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut       
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
@@ -1110,10 +1096,10 @@ validateCaNoFetch
 
 
     collectPayloads :: MftShortcut 
-                -> Maybe [T3 Text Hash ObjectKey] 
-                -> ValidatorT IO (Located CaCerObject)
-                -> ValidatorT IO (Keyed (Validated CrlObject))             
-                -> ValidatorT IO PayloadsType 
+                    -> Maybe [T3 Text Hash ObjectKey] 
+                    -> ValidatorT IO (Located CaCerObject)
+                    -> ValidatorT IO (Keyed (Validated CrlObject))             
+                    -> ValidatorT IO PayloadsType 
     collectPayloads mftShortcut maybeChildren findFullCa findValidCrl = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
@@ -1172,18 +1158,28 @@ validateCaNoFetch
 
         validateTroubledChild caFull (Keyed validCrl _) childKey = do  
             -- It was an invalid child and nothing about it is cached, so 
-            -- we have to process full validation for it
-            roTxT database (\tx db -> getLocatedByKey tx db childKey) >>= \case            
-                Nothing -> internalError appContext 
-                                [i|Internal error, can't find a troubled child by its key #{childKey}.|]
-                Just childObject -> do 
-                    T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
-                    pure $! payloads
+            -- we have to process full validation for it           
+            db <- liftIO $ readTVarIO database
+            roAppTx db $ \tx -> do
+                childObject <- getLocatedOriginalUnknownType tx db childKey $ 
+                                    getParsedObject tx db childKey $  
+                                        internalError appContext 
+                                            [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+                    
+                T2 payloads _ <- validateChildObject caFull childObject validCrl
+                pure $! payloads
+
+            -- roTxT database (\tx db -> getLocatedByKey tx db childKey) >>= \case            
+            --     Nothing -> internalError appContext 
+            --                     [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+            --     Just childObject -> do 
+            --         T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
+            --         pure $! payloads
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey
             let emptyPayloads = mempty :: Payloads (Set Vrp)
-            pps <- readPublicationPoints repositoryProcessing            
+            pps <- readPublicationPoints repositoryProcessing
             case child of 
                 CaChild caShortcut _ -> do      
                     let validateCaShortcut = validateCaNoFetch appContext topDownContext (CaShort caShortcut)              
@@ -1298,21 +1294,81 @@ manifestDiff mftShortcut newMftChidlren =
                 newMftChidlren
 
 
+getLocatedOriginal :: Storage s => Tx s mode -> DB s -> ObjectKey -> RpkiObjectType         
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+getLocatedOriginal tx db key type_ ifNotFound =
+    getLocatedOriginal' tx db key (Just type_) ifNotFound
+
+getLocatedOriginalUnknownType :: Storage s => Tx s mode -> DB s -> ObjectKey                                           
+                                -> ValidatorT IO (Keyed (Located RpkiObject))
+                                -> ValidatorT IO (Keyed (Located RpkiObject))
+getLocatedOriginalUnknownType tx db key ifNotFound =
+    getLocatedOriginal' tx db key Nothing ifNotFound
+
+getLocatedOriginal' :: Storage s =>
+                    Tx s mode
+                    -> DB s
+                    -> ObjectKey           
+                    -> Maybe RpkiObjectType         
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+getLocatedOriginal' tx db key type_ ifNotFound = do
+    getOriginalBlob tx db key >>= \case 
+        Nothing                    -> ifNotFound
+        Just (ObjectOriginal blob) -> do 
+            case type_  of 
+                Nothing -> 
+                    getObjectMeta tx db key >>= \case            
+                        Nothing               -> ifNotFound
+                        Just (ObjectMeta _ t) -> parse blob t
+                Just t -> 
+                    parse blob t
+  where                    
+    parse blob t = do
+        ro <- vHoist $ readObjectOfType t blob
+        getLocationsByKey tx db key >>= \case                                             
+            Nothing        -> ifNotFound
+            Just locations -> pure $ Keyed (Located locations ro) key
+
+getParsedObject :: Storage s =>
+                    Tx s mode
+                    -> DB s
+                    -> ObjectKey
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+getParsedObject tx db key ifNotFound = do
+    getLocatedByKey tx db key >>= \case 
+        Just ro -> pure $ Keyed ro key
+        Nothing -> ifNotFound
+
+
 getFullCa :: Storage s => AppContext s -> Ca -> ValidatorT IO (Located CaCerObject)
 getFullCa appContext@AppContext {..} ca = 
     case ca of     
-        CaFull c  -> pure c            
+        CaFull c -> pure c            
         CaShort CaShortcut {..} -> do   
-            z <- roTxT database $ \tx db -> getLocatedByKey tx db key
-            case z of 
-                Just (Located loc (CerRO c)) -> pure $! Located loc c
-                _ -> internalError appContext [i|Internal error, can't find a CA by its key #{key}.|]
+            db <- liftIO $ readTVarIO database
+            roAppTx db $ \tx -> do 
+                z <- getParsedObject tx db key $                 
+                        getLocatedOriginal tx db key CER $ 
+                            internalError appContext 
+                                [i|Internal error, can't find a CA by its key #{key}.|]            
+                case z of 
+                    Keyed (Located locations (CerRO ca_)) _ -> pure $ Located locations ca_
+                    _ -> internalError appContext 
+                            [i|Internal error, wrong type of the CA found by its key #{key}.|]            
     
+
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
 getCrlByKey appContext@AppContext {..} crlKey = do    
-    z <- roTxT database $ \tx db -> getObjectByKey tx db crlKey
+    db <- liftIO $ readTVarIO database
+    z <- roAppTx db $ \tx -> 
+        getOriginalBlob tx db crlKey >>= \case 
+            Just (ObjectOriginal blob) -> vHoist $ readObjectOfType CRL blob
+            Nothing -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
     case z of 
-        Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
+        CrlRO c -> pure $! Keyed (Validated c) crlKey 
         _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
     
 internalError :: AppContext s -> Text -> ValidatorT IO a
@@ -1471,18 +1527,7 @@ data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed MftShortcutMeta
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
 markAsRead :: TopDownContext -> ObjectKey -> ValidatorT IO ()
-markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = do 
-    -- vks <- liftIO $ readTVarIO visitedKeys
-    -- when (k `Set.member` vks) $
-    --     -- We have already visited this object before, so 
-    --     -- there're some circular references createed by the object.
-    --     -- 
-    --     -- NOTE: Limit cycle detection only to manifests
-    --     -- to minimise the false positives where the same object
-    --     -- is referenced from multiple manifests and we are treating 
-    --     -- it as a cycle. It has happened im the past.
-    --     vError $ CircularReference $ KeyIdentity k
-
+markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = 
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
 
 markAsReadByHash :: Storage s => 

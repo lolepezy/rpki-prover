@@ -167,7 +167,7 @@ data RrdpError = BrokenXml Text |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType Text | 
+                RrdpUnsupportedObjectType Text | 
                 RrdpDownloadTimeout Int64 | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
@@ -177,6 +177,7 @@ data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |         
                     RsyncDownloadTimeout Int64 | 
+                    RsyncUnsupportedObjectType Text | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

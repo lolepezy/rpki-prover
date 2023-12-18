@@ -93,6 +93,7 @@ httpServer appContext = genericServe HttpApi {
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
+        originals  = getOriginal appContext,
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext
@@ -380,6 +381,23 @@ getRpkiObject AppContext {..} uri hash =
   where
     locatedDto located = RObject $ located & #payload %~ objectToDto
 
+getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> Maybe Text           
+                -> m ObjectOriginal
+getOriginal AppContext {..} hash =
+    case hash of
+        Nothing ->
+            throwError $ err400 { errBody = "or 'hash' must be provided." }
+                        
+        Just hash' ->
+            case parseHash hash' of
+                Left _  -> throwError err400
+                Right h -> do
+                    z <- roTxT database $ \tx db -> getOriginalBlobByHash tx db h
+                    case z of 
+                        Nothing -> throwError err404
+                        Just b  -> pure b
 
 getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do

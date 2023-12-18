@@ -53,18 +53,11 @@ toRsyncMessage = \case
     RsyncProcessError errorCode e ->
         [i|Rsync client returned code #{errorCode}, error = #{e}.|]
 
-    FileReadError e ->
-        [i|Can't read local file created by rsync client #{e}.|]
-
-    RsyncRunningError e ->
-        [i|Error running rsync client #{e}.|]
-
-    RsyncDownloadTimeout t ->
-        [i|Could not update repository in #{t}s.|]
-
-    UnknownRsyncProblem e ->
-        [i|Unknown problem with rsync #{e}.|]
-
+    FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
+    RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
+    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}s.|]
+    RsyncUnsupportedObjectType url -> [i|Unsupported object type #{url}.|]             
+    UnknownRsyncProblem e          -> [i|Unknown problem with rsync #{e}.|]
 
 toRrdpMessage :: RrdpError -> Text
 toRrdpMessage = \case
@@ -150,7 +143,7 @@ toRrdpMessage = \case
     ObjectExistsWhenReplacing url hash -> 
         [i|Cannot replace object with url #{url}: object with hash #{hash} already exists.|]        
 
-    UnsupportedObjectType url -> 
+    RrdpUnsupportedObjectType url -> 
         [i|Unsupported object type #{url}.|]        
         
     RrdpDownloadTimeout t -> 
@@ -268,6 +261,9 @@ toValidationMessage = \case
 
       ManifestEntryDoesn'tExist hash filename -> 
           [i|Manifest entry #{filename} with hash #{hash} not found.|]
+
+      ManifestEntryHasWrongFileType hash filename type_ ->         
+        [i|Manifest entry #{filename} with hash #{hash} points to an object that has type #{type_}.|]
 
       OverclaimedResources resources -> 
           [i|Certificate (or EE) claims resources #{resources} not present on parent certificate.|]

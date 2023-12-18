@@ -65,7 +65,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 23
+currentDatabaseVersion = 24
 
 -- Some constant keys
 databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
@@ -118,7 +118,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI ObjectKey)),    
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
-        objectInsertedBy   :: SMap "object-inserted-by" s ObjectKey WorldVersion,
+        objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
         validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
 
         -- Object URL mapping
@@ -321,7 +321,7 @@ saveObject tx DB { objectStore = RpkiObjectStore {..} } so@StorableObject {..} w
         let objectKey = ObjectKey $ ArtificialKey k
         M.put tx hashToKey h objectKey
         M.put tx objects objectKey (Compressed so)
-        M.put tx objectInsertedBy objectKey wv
+        M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
         case object of
             CerRO c -> 
                 M.put tx certBySKI (getSKI c) objectKey
@@ -334,14 +334,17 @@ saveOriginal :: (MonadIO m, Storage s) =>
                 Tx s 'RW 
                 -> DB s 
                 -> ObjectOriginal
-                -> Hash            
+                -> Hash          
+                -> ObjectMeta  
                 -> m ()
-saveOriginal tx DB { objectStore = RpkiObjectStore {..} } (ObjectOriginal blob) hash = liftIO $ do    
+saveOriginal tx DB { objectStore = RpkiObjectStore {..} } (ObjectOriginal blob) hash objectMeta = liftIO $ do    
     exists <- M.exists tx hashToKey hash    
     unless exists $ do          
         SequenceValue k <- nextValue tx keys
         let key = ObjectKey $ ArtificialKey k
+        M.put tx hashToKey hash key
         M.put tx originals key (Verbatim $ Storable blob)       
+        M.put tx objectMetas key objectMeta
 
 
 getOriginalBlob :: (MonadIO m, Storage s) => 
@@ -351,6 +354,24 @@ getOriginalBlob :: (MonadIO m, Storage s) =>
                 -> m (Maybe ObjectOriginal)
 getOriginalBlob tx DB { objectStore = RpkiObjectStore {..} } key = liftIO $ do    
     fmap (ObjectOriginal . unStorable . unVerbatim) <$> M.get tx originals key
+
+getOriginalBlobByHash :: (MonadIO m, Storage s) => 
+                        Tx s mode
+                        -> DB s 
+                        -> Hash 
+                        -> m (Maybe ObjectOriginal)
+getOriginalBlobByHash tx db hash =     
+    getKeyByHash tx db hash >>= \case 
+        Nothing  -> pure Nothing
+        Just key -> getOriginalBlob tx db key    
+
+getObjectMeta :: (MonadIO m, Storage s) => 
+                Tx s mode
+                -> DB s 
+                -> ObjectKey            
+                -> m (Maybe ObjectMeta)
+getObjectMeta tx DB { objectStore = RpkiObjectStore {..} } key = 
+    liftIO $ M.get tx objectMetas key                
 
 linkObjectToUrl :: (MonadIO m, Storage s) => 
                 Tx s 'RW 
@@ -392,7 +413,7 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey ->             
         ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
             M.delete tx objects objectKey
-            M.delete tx objectInsertedBy objectKey        
+            M.delete tx objectMetas objectKey        
             M.delete tx hashToKey h        
             case ro of 
                 CerRO c -> M.delete tx certBySKI (getSKI c)
@@ -816,8 +837,8 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         -- We want to preseve these objects in the cache even if they are 
         -- never used, they may still be used later. That may happens if
         -- a repository updates a manifest aftert updating its children.
-        recentlyInsertedObjectKeys <- M.fold tx objectInsertedBy 
-            (\allKeys key version -> 
+        recentlyInsertedObjectKeys <- M.fold tx objectMetas 
+            (\allKeys key (ObjectMeta version _) -> 
                 pure $! if tooOld version 
                     then allKeys 
                     else key `Set.insert` allKeys) mempty
