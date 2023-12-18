@@ -214,7 +214,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
             liftIO (doesDirectoryExist path) >>= \case
                 True  -> traverseDirectory path
                 False -> 
-                    when (supportedExtension path) $ do         
+                    when (supportedExtension name) $ do         
                         let uri = restoreUriFromPath repositoryUrl rootPath path
                         s <- askScopes                     
                         let task = runValidatorT s (readAndParseObject path (RsyncU uri))

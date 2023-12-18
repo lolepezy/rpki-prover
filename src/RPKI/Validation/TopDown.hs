@@ -936,7 +936,7 @@ validateCaNoFetch
         validateChildObject caFull child validCrl
 
 
-    -- Optimised version of location validation when all we have is a key of the CA
+    -- Optimised version of location validation when all we have is a key of an object
     -- 
     validateLocationForShortcut key = do  
         -- pure ()
