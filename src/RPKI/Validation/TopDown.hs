@@ -114,7 +114,9 @@ data TopDownCounters = TopDownCounters {
         newChildren         :: IORef Int,
         overlappingChildren :: IORef Int,
         updateMftMeta       :: IORef Int,
-        updateMftChildren   :: IORef Int
+        updateMftChildren   :: IORef Int,
+        readOriginal :: IORef Int,
+        readParsed   :: IORef Int
     }
     deriving stock (Generic)
 
@@ -181,7 +183,10 @@ newTopDownCounters = do
     shortcutTroubled <- newIORef 0        
 
     originalRoa  <- newIORef 0        
-    originalAspa <- newIORef 0                  
+    originalAspa <- newIORef 0        
+
+    readOriginal <- newIORef 0   
+    readParsed   <- newIORef 0             
    
     pure TopDownCounters {..}
 
@@ -538,7 +543,7 @@ validateCaNoFetch
                 Just mft ->                        
                     pure $ do                      
                         markAsRead topDownContext (mft ^. typed)                
-                        caFull <- getFullCa appContext ca
+                        caFull <- getFullCa appContext topDownContext ca
                         T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                   
                         oneMoreMft >> oneMoreCrl                            
                         pure $! payloads
@@ -558,7 +563,7 @@ validateCaNoFetch
                             -- No shortcut found, so do the full validation for the manifest
                             pure $ do                   
                                 markAsRead topDownContext (mft ^. typed)                   
-                                caFull <- getFullCa appContext ca
+                                caFull <- getFullCa appContext topDownContext ca
                                 T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                    
                                 oneMoreMft >> oneMoreCrl                                    
                                 pure $! payloads
@@ -577,7 +582,7 @@ validateCaNoFetch
                                 let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message
                                 collectPayloads mftShortcut Nothing 
-                                    (getFullCa appContext ca)
+                                    (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
                                     `andThen` 
@@ -590,7 +595,7 @@ validateCaNoFetch
                                     -- same as the shortcut, so use the shortcut
                                     let crlKey = mftShortcut ^. #crlShortcut . #key                                                                        
                                     pure $ collectPayloads mftShortcut Nothing 
-                                                (getFullCa appContext ca)
+                                                (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                             `andThen` 
                                                 (markAsRead topDownContext crlKey)
@@ -601,8 +606,8 @@ validateCaNoFetch
                                         Nothing -> pure $ 
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $ do
-                                            increment $ topDownCounters ^. #shortcutMft                      
-                                            fullCa <- getFullCa appContext ca
+                                            increment $ topDownCounters ^. #shortcutMft
+                                            fullCa <- getFullCa appContext topDownContext ca
                                             T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
                                             r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
                                                         (pure fullCa)
@@ -662,7 +667,8 @@ validateCaNoFetch
                 -- If CRL has changed, we have to recheck if children are not revoked. 
                 -- If will be checked by full validation for newChildren but it needs 
                 -- to be explicitly checked for overlappingChildren                
-                when (crlKey /= mftShort ^. #crlShortcut . #key) $ do                              
+                when (crlKey /= mftShort ^. #crlShortcut . #key) $ do     
+                    increment $ topDownCounters ^. #originalCrl                         
                     checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
 
             -- Mark all manifest entries as read to avoid the situation
@@ -732,7 +738,8 @@ validateCaNoFetch
         roAppTx db $ \tx -> 
             getKeyByHash tx db crlHash >>= \case         
                 Nothing  -> vError $ NoCRLExists aki crlHash
-                Just key -> do                    
+                Just key -> do           
+                    increment $ topDownCounters ^. #readOriginal
                     -- CRLs are not parsed right after fetching, so try to get the blob
                     z <- getLocatedOriginal tx db key CRL $ vError $ NoCRLExists aki crlHash
                     case z of 
@@ -903,9 +910,11 @@ validateCaNoFetch
                 Just key -> 
                     vFocusOn ObjectFocus key $
                         case objectType of 
-                            Just CER -> 
+                            Just CER -> do
+                                increment $ topDownCounters ^. #readParsed
                                 -- we expect certificates to be stored in the parsed-serialised form                                                            
-                                getParsedObject tx db key $ 
+                                getParsedObject tx db key $ do
+                                    increment $ topDownCounters ^. #readOriginal
                                     -- try to get the original blob and (re-)parse 
                                     -- it to at least complain about it at the right place
                                     getLocatedOriginal tx db key CER $ 
@@ -913,7 +922,9 @@ validateCaNoFetch
                             Just type_ -> do     
                                 -- all other types are stored as original blobs
                                 -- so we have to parse them first
-                                getLocatedOriginal tx db key type_ $ 
+                                increment $ topDownCounters ^. #readOriginal
+                                getLocatedOriginal tx db key type_ $ do
+                                    increment $ topDownCounters ^. #readParsed
                                     getParsedObject tx db key $ 
                                         vError $ ManifestEntryDoesn'tExist hash' filename
                             Nothing -> 
@@ -1307,8 +1318,8 @@ getLocatedOriginalUnknownType :: Storage s => Tx s mode -> DB s -> ObjectKey
 getLocatedOriginalUnknownType tx db key ifNotFound =
     getLocatedOriginal' tx db key Nothing ifNotFound
 
-getLocatedOriginal' :: Storage s =>
-                    Tx s mode
+getLocatedOriginal' :: Storage s =>                    
+                    Tx s mode                    
                     -> DB s
                     -> ObjectKey           
                     -> Maybe RpkiObjectType         
@@ -1345,14 +1356,15 @@ getParsedObject tx db key ifNotFound = do
         Nothing -> ifNotFound
 
 
-getFullCa :: Storage s => AppContext s -> Ca -> ValidatorT IO (Located CaCerObject)
-getFullCa appContext@AppContext {..} ca = 
+getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located CaCerObject)
+getFullCa appContext@AppContext {..} topDownContext ca = 
     case ca of     
         CaFull c -> pure c            
         CaShort CaShortcut {..} -> do   
             db <- liftIO $ readTVarIO database
             roAppTx db $ \tx -> do 
-                z <- getParsedObject tx db key $                 
+                z <- getParsedObject tx db key $ do
+                        increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
                         getLocatedOriginal tx db key CER $ 
                             internalError appContext 
                                 [i|Internal error, can't find a CA by its key #{key}.|]            
@@ -1487,6 +1499,9 @@ reportCounters AppContext {..} TopDownCounters {..} = do
     originalRoaN <- readIORef originalRoa
     originalAspaN <- readIORef originalAspa    
 
+    readOriginalN <- readIORef readOriginal
+    readParsedN <- readIORef readParsed    
+
     logDebug logger $ [i|Counters: originalCaN = #{originalCaN}, shortcutCaN = #{shortcutCaN}, |] <> 
                       [i|originalMftN = #{originalMftN}, shortcutMftN = #{shortcutMftN}, |] <>
                       [i|originalCrlN = #{originalCrlN}, shortcutCrlN = #{shortcutCrlN}, |] <>
@@ -1494,7 +1509,8 @@ reportCounters AppContext {..} TopDownCounters {..} = do
                       [i|updateMftMetaN = #{updateMftMetaN}, updateMftChildrenN = #{updateMftChildrenN}, |] <>
                       [i|shortcutRoaN = #{shortcutRoaN}, , originalRoaN = #{originalRoaN}, |] <>
                       [i|shortcutAspaN = #{shortcutAspaN}, originalAspaN = #{originalAspaN}, |] <>
-                      [i|shortcutTroubledN = #{shortcutTroubledN}|]
+                      [i|shortcutTroubledN = #{shortcutTroubledN}, |] <>
+                      [i|readOriginalN = #{readOriginalN}, readParsedN = #{readParsedN}.|]
                       
 
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
