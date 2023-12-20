@@ -657,11 +657,11 @@ validateCaNoFetch
 
             bumpCounterBy topDownCounters (#newChildren) (length newChildren)
             bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
-
-            -- If CRL has changed, we have to recheck if children are not revoked. 
-            -- If will be checked by full validation for newChildren but it needs 
-            -- to be explicitly checked for overlappingChildren
-            forM_ mftShortcut $ \mftShort ->           
+            
+            forM_ mftShortcut $ \mftShort -> do          
+                -- If CRL has changed, we have to recheck if children are not revoked. 
+                -- If will be checked by full validation for newChildren but it needs 
+                -- to be explicitly checked for overlappingChildren                
                 when (crlKey /= mftShort ^. #crlShortcut . #key) $ do                              
                     checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
 
@@ -806,7 +806,7 @@ validateCaNoFetch
                                 ro <- getManifestEntry filename hash'
                                 -- if failed this one interrupts the whole MFT valdiation
                                 validateMftChild fullCa ro filename validCrl
-                pure $ case z of
+                pure $! case z of
                     -- In this case invalid child is considered invalid entry 
                     -- and the whole manifest is invalid
                     Left e                           -> InvalidEntry e vs
@@ -816,17 +816,24 @@ validateCaNoFetch
         scopes <- askScopes
         liftIO $ pooledForConcurrently
             nonCrlChildren
-            $ \(T3 filename hash' key) -> do
-                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash'
+            $ \(T3 filename hash key) -> do
+                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash
                 case r of
-                    Left e   -> pure $ InvalidEntry e vs
+                    Left e   -> do 
+                        -- Decide if the error is related to the manifest itself 
+                        -- of to the object it points to based on the scope of the 
+                        -- reported issues. It's a bit hacky, but it works nicely.                        
+                        let manifestIssues = getIssues (scopes ^. typed) (vs ^. typed )
+                        pure $! if Set.null manifestIssues 
+                            then InvalidChild e vs key
+                            else InvalidEntry e vs
                     Right ro -> do
                         -- We are cheating here a little by faking empty payload set.
                         -- 
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
                         (z, vs') <- runValidatorT scopes $ validateMftChild fullCa ro filename validCrl
-                        pure $ case z of
+                        pure $! case z of
                                 Left e                           -> InvalidChild e vs' key
                                 Right (T2 payload childShortcut) -> Valid payload vs' childShortcut key
     
@@ -893,28 +900,29 @@ validateCaNoFetch
         ro <- roAppTx db $ \tx -> do             
             getKeyByHash tx db hash' >>= \case                     
                 Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
-                Just key -> do                    
-                    case objectType of 
-                        Just CER -> 
-                            -- we expect certificates to be stored in the parsed-serialised form                                                            
-                            getParsedObject tx db key $ 
-                                -- try to get the original blob and (re-)parse 
-                                -- it to at least complain about it at the right place
-                                getLocatedOriginal tx db key CER $ 
-                                    vError $ ManifestEntryDoesn'tExist hash' filename
-                        Just type_ -> do     
-                            -- all other types are stored as original blobs
-                            -- so we have to parse them first
-                            getLocatedOriginal tx db key type_ $ 
+                Just key -> 
+                    vFocusOn ObjectFocus key $
+                        case objectType of 
+                            Just CER -> 
+                                -- we expect certificates to be stored in the parsed-serialised form                                                            
+                                getParsedObject tx db key $ 
+                                    -- try to get the original blob and (re-)parse 
+                                    -- it to at least complain about it at the right place
+                                    getLocatedOriginal tx db key CER $ 
+                                        vError $ ManifestEntryDoesn'tExist hash' filename
+                            Just type_ -> do     
+                                -- all other types are stored as original blobs
+                                -- so we have to parse them first
+                                getLocatedOriginal tx db key type_ $ 
+                                    getParsedObject tx db key $ 
+                                        vError $ ManifestEntryDoesn'tExist hash' filename
+                            Nothing -> 
+                                -- If we don't know anything about the type from the manifest, 
+                                -- it may still be possible that the object was parsed based
+                                -- on the rsync/rrdp url and the entry in the manifest is just
+                                -- wrong
                                 getParsedObject tx db key $ 
                                     vError $ ManifestEntryDoesn'tExist hash' filename
-                        Nothing -> 
-                            -- If we don't know anything about the type from the manifest, 
-                            -- it may still be possible that the object was parsed based
-                            -- on the rsync/rrdp url and the entry in the manifest is just
-                            -- wrong
-                            getParsedObject tx db key $ 
-                                vError $ ManifestEntryDoesn'tExist hash' filename
 
         -- The type of the object that is deserialised doesn't correspond 
         -- file extension on the manifest
@@ -1169,13 +1177,6 @@ validateCaNoFetch
                 T2 payloads _ <- validateChildObject caFull childObject validCrl
                 pure $! payloads
 
-            -- roTxT database (\tx db -> getLocatedByKey tx db childKey) >>= \case            
-            --     Nothing -> internalError appContext 
-            --                     [i|Internal error, can't find a troubled child by its key #{childKey}.|]
-            --     Just childObject -> do 
-            --         T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
-            --         pure $! payloads
-
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey
             let emptyPayloads = mempty :: Payloads (Set Vrp)
@@ -1326,7 +1327,8 @@ getLocatedOriginal' tx db key type_ ifNotFound = do
                     parse blob t
   where                    
     parse blob t = do
-        ro <- vHoist $ readObjectOfType t blob
+        ro <- vFocusOn ObjectFocus key $ 
+                    vHoist $ readObjectOfType t blob
         getLocationsByKey tx db key >>= \case                                             
             Nothing        -> ifNotFound
             Just locations -> pure $ Keyed (Located locations ro) key
