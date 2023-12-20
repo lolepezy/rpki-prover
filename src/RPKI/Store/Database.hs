@@ -269,15 +269,17 @@ getKeyedByHash tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runM
             
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
-getByUri tx db@DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
+getByUri tx db uri = liftIO $ do
+    keys' <- getKeysByUri tx db uri
+    fmap catMaybes $ mapM (getLocatedByKey tx db) keys'
+
+getKeysByUri :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
+getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
     M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
-        Nothing -> pure []
-        Just uriKey ->         
-            fmap catMaybes $ 
-                MM.allForKey tx urlKeyToObjectKey uriKey >>=
-                mapM (getLocatedByKey tx db)
-
-
+        Nothing     -> pure []
+        Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
+                
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObject)
 getObjectByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $
