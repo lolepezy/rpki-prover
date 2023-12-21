@@ -55,6 +55,7 @@ data MftShortcut = MftShortcut {
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
         serial         :: Serial,
+        manifestNumber :: Serial,
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)

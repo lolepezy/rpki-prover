@@ -245,7 +245,7 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     fst <$> bracketChanClosable
-                10000
+                5000
                 validateMutlipleTAs'
                 (storeShortcuts appContext)
                 (\_ -> pure ())
@@ -564,7 +564,7 @@ validateCaNoFetch
                             pure $ do                   
                                 markAsRead topDownContext (mft ^. typed)                   
                                 caFull <- getFullCa appContext topDownContext ca
-                                T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                    
+                                T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                              
                                 oneMoreMft >> oneMoreCrl                                    
                                 pure $! payloads
 
@@ -664,6 +664,12 @@ validateCaNoFetch
             bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
             
             forM_ mftShortcut $ \mftShort -> do          
+                -- manifest number must increase 
+                -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
+                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
+                when (mftNumber < mftShort ^. #manifestNumber) $
+                    vError $ ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
+
                 -- If CRL has changed, we have to recheck if children are not revoked. 
                 -- If will be checked by full validation for newChildren but it needs 
                 -- to be explicitly checked for overlappingChildren                
@@ -826,7 +832,7 @@ validateCaNoFetch
             $ \(T3 filename hash key) -> do
                 (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash
                 case r of
-                    Left e   -> do 
+                    Left e -> do 
                         -- Decide if the error is related to the manifest itself 
                         -- of to the object it points to based on the scope of the 
                         -- reported issues. It's a bit hacky, but it works nicely.                        
@@ -899,7 +905,7 @@ validateCaNoFetch
                 []  -> False
                 _   -> True
 
-    -- Give MFT entry with hash and filename, get the object it referes to
+    -- Given MFT entry with hash and filename, get the object it referes to
     -- 
     getManifestEntry filename hash' = do
         let objectType = textObjectType filename
@@ -1436,6 +1442,7 @@ makeMftShortcut key
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
+    manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1529,7 +1536,7 @@ storeShortcuts :: (Storage s, MonadIO m) =>
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $   
-    readQueueChunked shortcutQueue 2000 $ \mftShortcuts -> 
+    readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
                 UpdateMftShortcut aki s         -> saveMftShorcutMeta tx db aki s                    

@@ -226,6 +226,15 @@ toValidationMessage = \case
       NoCRLExists aki hash -> 
             [i|No CRL exists with AKI #{aki} and hash #{hash} for CA.|]
 
+      ManifestEntryDoesn'tExist hash filename -> 
+          [i|Manifest entry #{filename} with hash #{hash} not found.|]
+
+      ManifestEntryHasWrongFileType hash filename type_ ->         
+        [i|Manifest entry #{filename} with hash #{hash} points to an object that has type #{type_}.|]
+
+      ManifestNumberDecreased {..} ->
+        [i|Manifest number #{newMftNumber} is smaller then the previous #{oldMftNumber}, will use previous manifest.|]
+
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
 
@@ -258,12 +267,6 @@ toValidationMessage = \case
 
       AKIIsNotEqualsToParentSKI childAKI parentSKI ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
-
-      ManifestEntryDoesn'tExist hash filename -> 
-          [i|Manifest entry #{filename} with hash #{hash} not found.|]
-
-      ManifestEntryHasWrongFileType hash filename type_ ->         
-        [i|Manifest entry #{filename} with hash #{hash} points to an object that has type #{type_}.|]
 
       OverclaimedResources resources -> 
           [i|Certificate (or EE) claims resources #{resources} not present on parent certificate.|]

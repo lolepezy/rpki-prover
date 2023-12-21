@@ -57,10 +57,7 @@ parseMft bs = do
 
                     s -> throwParseError $ "Unexpected manifest content: " ++ show s
 
-        makeMftNumber n = 
-            case makeSerial n of 
-                Left e  -> throwParseError e
-                Right s -> pure s
+        makeMftNumber n = either throwParseError pure $ makeSerial n
 
         getEntries _ = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $

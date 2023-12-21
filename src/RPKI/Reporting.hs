@@ -87,6 +87,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |
                         NoCRLExists AKI Hash |
+                        ManifestEntryDoesn'tExist Hash Text |
+                        ManifestEntryHasWrongFileType Hash Text RpkiObjectType |                        
+                        ManifestNumberDecreased { oldMftNumber :: Serial, newMftNumber :: Serial } |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
                         CRL_AKI_DifferentFromCertSKI SKI AKI |
@@ -97,9 +100,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         RevokedResourceCertificate |
                         ObjectValidityIsInTheFuture { before :: Instant, after :: Instant } |
                         ObjectIsExpired { before :: Instant, after :: Instant } |
-                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
-                        ManifestEntryDoesn'tExist Hash Text |
-                        ManifestEntryHasWrongFileType Hash Text RpkiObjectType |
+                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |                        
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         ResourceSetMustBeInherit |
