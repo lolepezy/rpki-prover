@@ -19,6 +19,7 @@ where
 import           Control.Concurrent.Async        (forConcurrently)
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
+import           Control.Monad.Except
 import           Control.Monad
 import           Control.Monad.Reader
 
@@ -58,6 +59,7 @@ import           RPKI.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Messages
 import           RPKI.Parallel
 import           RPKI.Repository
 import           RPKI.Resources.Types
@@ -593,7 +595,7 @@ validateCaNoFetch
                                     -- logDebug logger [i|Option 1|]            
                                     -- Nothing has changed, the real manifest is the 
                                     -- same as the shortcut, so use the shortcut
-                                    let crlKey = mftShortcut ^. #crlShortcut . #key                                                                        
+                                    let crlKey = mftShortcut ^. #crlShortcut . #key
                                     pure $ collectPayloads mftShortcut Nothing 
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
@@ -608,12 +610,30 @@ validateCaNoFetch
                                         Just mft -> pure $ do
                                             increment $ topDownCounters ^. #shortcutMft
                                             fullCa <- getFullCa appContext topDownContext ca
-                                            T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                            r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
-                                                        (pure fullCa)
-                                                        (findAndValidateCrl fullCa mft childrenAki)
-                                            markAsRead topDownContext mftKey
-                                            pure $! r1 <> r2                                                     
+                                            let combineShortcutAndNewMft = do 
+                                                    T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
+                                                    r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
+                                                                (pure fullCa)
+                                                                (findAndValidateCrl fullCa mft childrenAki)
+                                                    markAsRead topDownContext mftKey
+                                                    pure $! r1 <> r2    
+
+                                            let useShortcutOnly = do 
+                                                    let crlKey = mftShortcut ^. #crlShortcut . #key
+                                                    collectPayloads mftShortcut Nothing 
+                                                            (getFullCa appContext topDownContext ca)
+                                                            (getCrlByKey appContext crlKey)
+                                                        `andThen` 
+                                                            (do 
+                                                                markAsRead topDownContext crlKey
+                                                                markAsRead topDownContext crlKey)
+
+                                            combineShortcutAndNewMft
+                                                `catchError`
+                                                (\e -> do 
+                                                    appWarn e
+                                                    logDebug logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
+                                                    useShortcutOnly)                                            
                     pure $ do 
                         markAsRead topDownContext mftShortKey
                         action `andThen`
