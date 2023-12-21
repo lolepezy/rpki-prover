@@ -418,16 +418,11 @@ saveSnapshot
                                             -- since deletion is never concurrent with insertion.
                                             then HashExists rpkiURL hash
                                             else 
-                                                case type_ of 
-                                                    MFT -> parseIt rpkiURL hash blob type_
-                                                    CER -> parseIt rpkiURL hash blob type_
-                                                    _   -> SuccessOriginal rpkiURL 
-                                                                (ObjectOriginal blob) hash
-                                                                (ObjectMeta worldVersion type_)
+                                                tryToParse rpkiURL hash blob type_                                                 
                                     Nothing -> 
                                         pure $! UknownObjectType rpkiURL
           where
-            parseIt rpkiURL hash blob type_ = 
+            tryToParse rpkiURL hash blob type_ = 
                 case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 
                     (Left e, _) -> 
                         ObjectParsingProblem rpkiURL (VErr e) 
@@ -468,11 +463,6 @@ saveSnapshot
             SuccessParsed rpkiUrl so@StorableObject {..} -> do 
                 DB.saveObject tx db so worldVersion                    
                 DB.linkObjectToUrl tx db rpkiUrl (getHash object)
-                addedObject                     
-
-            SuccessOriginal rpkiUrl original hash objectMeta -> do 
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash                
                 addedObject
 
             other -> 
@@ -554,19 +544,12 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             case validateSizeOfBS validationConfig blob of 
                                 Left e  -> DecodingTrouble rpkiURL (VErr $ ValidationE e)                                
                                 Right _ -> do 
-                                    let hash = U.sha256s blob
+                                    let hash = U.sha256s blob                                    
                                     case urlObjectType rpkiURL of 
-                                        Just type_ -> 
-                                            case type_ of 
-                                                MFT -> parseIt rpkiURL hash blob type_
-                                                CER -> parseIt rpkiURL hash blob type_
-                                                _   -> SuccessOriginal rpkiURL 
-                                                            (ObjectOriginal blob) hash
-                                                            (ObjectMeta worldVersion type_)
-                                        Nothing -> 
-                                            UknownObjectType rpkiURL                                                            
+                                        Just type_ -> tryToParse rpkiURL hash blob type_                                                
+                                        Nothing    -> UknownObjectType rpkiURL                                                            
           where
-            parseIt rpkiURL hash blob type_ = 
+            tryToParse rpkiURL hash blob type_ = 
                 case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 
                     (Left e, _)   -> 
                         ObjectParsingProblem rpkiURL (VErr e) 
@@ -619,11 +602,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject
-                DB.linkObjectToUrl tx db rpkiUrl newHash
-
-            SuccessOriginal rpkiUrl original hash objectMeta -> do 
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash                
+                DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
@@ -666,11 +645,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                     addedObject
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
-            SuccessOriginal rpkiUrl original hash objectMeta -> do 
-                validateOldHash
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash
-
             other -> 
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
 
@@ -690,7 +664,6 @@ data RrdpObjectProcessingResult =
         | HashExists RpkiURL Hash
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta    
-        | SuccessOriginal RpkiURL ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving Show
 

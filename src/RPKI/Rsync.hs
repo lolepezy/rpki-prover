@@ -233,20 +233,12 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                             exists <- liftIO $ roTx db $ \tx -> hashExists tx db hash
                             pure $! if exists 
                                 then HashExists rpkiURL hash
-                                else                                 
-                                    case type_ of                                                                                             
-                                        -- Parse-serialise certificates and manifests, 
-                                        -- we need their SKIs and AKIs for indexing
-                                        MFT -> parseIt hash blob type_
-                                        CER -> parseIt hash blob type_
-                                        _   -> SuccessOriginal rpkiURL 
-                                                    (ObjectOriginal blob) hash 
-                                                    (ObjectMeta worldVersion type_)
+                                else tryToParse hash blob type_                                    
                         Nothing -> 
                             pure $! UknownObjectType rpkiURL filePath
 
           where
-            parseIt hash blob type_ = 
+            tryToParse hash blob type_ = 
                 case runPureValidator (newScopes $ unURI $ getURL rpkiURL) (readObject rpkiURL blob) of 
                     (Left e, _) -> ObjectParsingProblem rpkiURL (VErr e) 
                                         (ObjectOriginal blob) hash 
@@ -277,10 +269,6 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                 SuccessParsed rpkiUrl so@StorableObject {..} -> do 
                     saveObject tx db so worldVersion                    
                     linkObjectToUrl tx db rpkiUrl (getHash object)
-                    updateMetric @RsyncMetric @_ (& #processed %~ (+1))
-                SuccessOriginal rpkiUrl original hash objectMeta -> do 
-                    saveOriginal tx db original hash objectMeta
-                    linkObjectToUrl tx db rpkiUrl hash
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
@@ -353,6 +341,5 @@ data RsyncObjectProcessingResult =
         | HashExists RpkiURL Hash
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SuccessOriginal RpkiURL ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving Show

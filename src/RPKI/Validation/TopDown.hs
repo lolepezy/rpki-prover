@@ -747,7 +747,7 @@ validateCaNoFetch
                 Just key -> do           
                     increment $ topDownCounters ^. #readOriginal
                     -- CRLs are not parsed right after fetching, so try to get the blob
-                    z <- getLocatedOriginal tx db key CRL $ vError $ NoCRLExists aki crlHash
+                    z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
                     case z of 
                         Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
                             markAsRead topDownContext crlKey
@@ -916,22 +916,14 @@ validateCaNoFetch
                 Just key -> 
                     vFocusOn ObjectFocus key $
                         case objectType of 
-                            Just CER -> do
+                            Just type_ -> do
                                 increment $ topDownCounters ^. #readParsed
                                 -- we expect certificates to be stored in the parsed-serialised form                                                            
                                 getParsedObject tx db key $ do
                                     increment $ topDownCounters ^. #readOriginal
                                     -- try to get the original blob and (re-)parse 
                                     -- it to at least complain about it at the right place
-                                    getLocatedOriginal tx db key CER $ 
-                                        vError $ ManifestEntryDoesn'tExist hash' filename
-                            Just type_ -> do     
-                                -- all other types are stored as original blobs
-                                -- so we have to parse them first
-                                increment $ topDownCounters ^. #readOriginal
-                                getLocatedOriginal tx db key type_ $ do
-                                    increment $ topDownCounters ^. #readParsed
-                                    getParsedObject tx db key $ 
+                                    getLocatedOriginal tx db key type_ $ 
                                         vError $ ManifestEntryDoesn'tExist hash' filename
                             Nothing -> 
                                 -- If we don't know anything about the type from the manifest, 
@@ -1186,8 +1178,8 @@ validateCaNoFetch
             -- we have to process full validation for it           
             db <- liftIO $ readTVarIO database
             roAppTx db $ \tx -> do
-                childObject <- getLocatedOriginalUnknownType tx db childKey $ 
-                                    getParsedObject tx db childKey $  
+                childObject <- getParsedObject tx db childKey $
+                                    getLocatedOriginalUnknownType tx db childKey $                                       
                                         internalError appContext 
                                             [i|Internal error, can't find a troubled child by its key #{childKey}.|]
                     
@@ -1381,15 +1373,12 @@ getFullCa appContext@AppContext {..} topDownContext ca =
     
 
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
-getCrlByKey appContext@AppContext {..} crlKey = do    
-    db <- liftIO $ readTVarIO database
-    z <- roAppTx db $ \tx -> 
-        getOriginalBlob tx db crlKey >>= \case 
-            Just (ObjectOriginal blob) -> vHoist $ readObjectOfType CRL blob
-            Nothing -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
+getCrlByKey appContext@AppContext {..} crlKey = do        
+    z <- roTxT database $ \tx db -> getObjectByKey tx db crlKey
     case z of 
-        CrlRO c -> pure $! Keyed (Validated c) crlKey 
+        Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
         _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
+     
     
 internalError :: AppContext s -> Text -> ValidatorT IO a
 internalError AppContext {..} message = do     
