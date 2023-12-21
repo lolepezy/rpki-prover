@@ -511,7 +511,7 @@ validateCaNoFetch
                 validateObjectLocations c
                 vHoist $ validateObjectValidityPeriod c now
                 oneMoreCert
-                join $ nextAction $ toAKI $ getSKI c
+                join $! nextAction $ toAKI $ getSKI c
         CaShort c -> 
             vFocusOn ObjectFocus (c ^. #key) $ do 
                 increment $ topDownCounters ^. #shortcutCa 
@@ -519,7 +519,7 @@ validateCaNoFetch
                 validateLocationForShortcut (c ^. #key)
                 vHoist $ validateObjectValidityPeriod c now
                 oneMoreCert
-                join $ nextAction $ toAKI (c ^. #ski)
+                join $! nextAction $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
 
@@ -1516,12 +1516,14 @@ reportCounters AppContext {..} TopDownCounters {..} = do
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
+        let !raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
+        -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
+        -- that creates the 
         let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)                
     
