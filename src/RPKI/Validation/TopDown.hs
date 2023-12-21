@@ -667,7 +667,7 @@ validateCaNoFetch
                 -- manifest number must increase 
                 -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
                 let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
-                when (mftNumber < mftShort ^. #manifestNumber) $
+                when (mftNumber <= mftShort ^. #manifestNumber) $
                     vError $ ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
 
                 -- If CRL has changed, we have to recheck if children are not revoked. 
@@ -745,7 +745,7 @@ validateCaNoFetch
             getKeyByHash tx db crlHash >>= \case         
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
-                    increment $ topDownCounters ^. #readOriginal
+                    increment $ topDownCounters ^. #readParsed
                     -- CRLs are not parsed right after fetching, so try to get the blob
                     z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
                     case z of 
@@ -925,11 +925,12 @@ validateCaNoFetch
                                     -- it to at least complain about it at the right place
                                     getLocatedOriginal tx db key type_ $ 
                                         vError $ ManifestEntryDoesn'tExist hash' filename
-                            Nothing -> 
+                            Nothing -> do
                                 -- If we don't know anything about the type from the manifest, 
                                 -- it may still be possible that the object was parsed based
                                 -- on the rsync/rrdp url and the entry in the manifest is just
                                 -- wrong
+                                increment $ topDownCounters ^. #readParsed
                                 getParsedObject tx db key $ 
                                     vError $ ManifestEntryDoesn'tExist hash' filename
 
@@ -1178,7 +1179,9 @@ validateCaNoFetch
             -- we have to process full validation for it           
             db <- liftIO $ readTVarIO database
             roAppTx db $ \tx -> do
-                childObject <- getParsedObject tx db childKey $
+                increment $ topDownCounters ^. #readParsed
+                childObject <- getParsedObject tx db childKey $ do 
+                                    increment $ topDownCounters ^. #readOriginal
                                     getLocatedOriginalUnknownType tx db childKey $                                       
                                         internalError appContext 
                                             [i|Internal error, can't find a troubled child by its key #{childKey}.|]
@@ -1361,6 +1364,7 @@ getFullCa appContext@AppContext {..} topDownContext ca =
         CaShort CaShortcut {..} -> do   
             db <- liftIO $ readTVarIO database
             roAppTx db $ \tx -> do 
+                increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
                 z <- getParsedObject tx db key $ do
                         increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
                         getLocatedOriginal tx db key CER $ 
@@ -1503,7 +1507,7 @@ reportCounters AppContext {..} TopDownCounters {..} = do
                       [i|originalCrlN = #{originalCrlN}, shortcutCrlN = #{shortcutCrlN}, |] <>
                       [i|newChildrenN = #{newChildrenN}, overlappingChildrenN = #{overlappingChildrenN}, |] <>
                       [i|updateMftMetaN = #{updateMftMetaN}, updateMftChildrenN = #{updateMftChildrenN}, |] <>
-                      [i|shortcutRoaN = #{shortcutRoaN}, , originalRoaN = #{originalRoaN}, |] <>
+                      [i|shortcutRoaN = #{shortcutRoaN}, originalRoaN = #{originalRoaN}, |] <>
                       [i|shortcutAspaN = #{shortcutAspaN}, originalAspaN = #{originalAspaN}, |] <>
                       [i|shortcutTroubledN = #{shortcutTroubledN}, |] <>
                       [i|readOriginalN = #{readOriginalN}, readParsedN = #{readParsedN}.|]
