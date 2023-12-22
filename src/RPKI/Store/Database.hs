@@ -29,6 +29,7 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
+import           Data.Tuple.Strict
 import           Data.Generics.Product.Types
 import           GHC.Generics
 import           Text.Read
@@ -178,7 +179,7 @@ newtype AspaStore s = AspaStore {
 
 -- | GBR store
 newtype GbrStore s = GbrStore {    
-        gbrs :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (Hash, Gbr)))
+        gbrs :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (T2 Hash Gbr)))
     } 
     deriving stock (Generic)
 
@@ -599,16 +600,16 @@ saveAspas tx DB { aspaStore = AspaStore m } aspas worldVersion =
     liftIO $ M.put tx m worldVersion (Compressed aspas)
 
 getGbrs :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (Hash, Gbr)))
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
 getGbrs tx DB { gbrStore = GbrStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv    
+    liftIO $ fmap unCompressed <$> M.get tx m wv        
 
 deleteGbrs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteGbrs tx DB { gbrStore = GbrStore m } wv = liftIO $ M.delete tx m wv
 
 saveGbrs :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set (Hash, Gbr) -> WorldVersion -> m ()
+            Tx s 'RW -> DB s -> Set.Set (T2 Hash Gbr) -> WorldVersion -> m ()
 saveGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed gbrs)
 
@@ -918,7 +919,7 @@ getLatestGbrs :: Storage s => DB s -> IO [Located RpkiObject]
 getLatestGbrs db = 
     roTx db $ \tx -> do 
         gbrs <- Set.toList <$> getLatestX tx db getGbrs 
-        fmap catMaybes $ forM gbrs $ \(hash, _) -> getByHash tx db hash                       
+        fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash                       
 
 getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
 getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    

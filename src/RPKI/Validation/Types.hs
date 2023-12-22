@@ -14,6 +14,7 @@ module RPKI.Validation.Types where
 
 import qualified Data.Map.Strict             as Map
 import qualified Data.Text                   as Text
+import           Data.Tuple.Strict
 import           GHC.Generics
 
 import           RPKI.Time
@@ -106,7 +107,7 @@ data BgpSecShortcut = BgpSecShortcut {
 
 data GbrShortcut = GbrShortcut {
         key            :: ObjectKey,    
-        gbr            :: (Hash, Gbr),
+        gbr            :: T2 Hash Gbr,
         notValidBefore :: Instant,
         notValidAfter  :: Instant
     }

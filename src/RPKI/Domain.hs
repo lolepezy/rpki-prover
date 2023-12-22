@@ -712,7 +712,7 @@ data TA = TA {
 data Payloads a = Payloads {
         vrps     :: a,
         aspas    :: Set.Set Aspa,
-        gbrs     :: Set.Set (Hash, Gbr),
+        gbrs     :: Set.Set (T2 Hash Gbr),
         bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
