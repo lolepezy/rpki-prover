@@ -731,16 +731,20 @@ validateCaNoFetch
                         -- Only create shortcuts for case of incremental validation and 
                         -- if CA prescribes to use standard validation instead of reconsidered.                        
                         (Incremental, StrictRFC) -> do  
-                            let aki = toAKI $ getSKI fullCa                        
-                            when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
-                                updateMftShortcut topDownContext aki nextMftShortcut
-                                increment $ topDownCounters ^. #updateMftMeta
+                            issues <- vHoist thisScopeIssues
+                            -- Do no create shortcuts for manifests with warnings 
+                            -- (or errors, obviously)
+                            when (Set.null issues) $ do   
+                                let aki = toAKI $ getSKI fullCa                        
+                                when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
+                                    updateMftShortcut topDownContext aki nextMftShortcut
+                                    increment $ topDownCounters ^. #updateMftMeta
 
-                            -- Update manifest shortcut children in case there are new 
-                            -- or deleted children in the new manifest
-                            when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $ do
-                                updateMftShortcutChildren topDownContext aki nextMftShortcut
-                                increment $ topDownCounters ^. #updateMftChildren
+                                -- Update manifest shortcut children in case there are new 
+                                -- or deleted children in the new manifest
+                                when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $ do
+                                    updateMftShortcutChildren topDownContext aki nextMftShortcut
+                                    increment $ topDownCounters ^. #updateMftChildren
 
                         _  -> pure ()
 
@@ -1118,19 +1122,19 @@ validateCaNoFetch
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
 
-            -- Don't create shortcuts with warnings in their scope, 
-            -- otherwise warnings will be reported only once for the 
-            -- original and never for shortcuts.
-            shortcutIfNoIssues key makeShortcut = do 
-                issues <- thisScopeIssues
-                pure $! if Set.null issues 
-                            then makeShortcut
-                            else makeTroubledChild key
+    -- Don't create shortcuts with warnings in their scope, 
+    -- otherwise warnings will be reported only once for the 
+    -- original and never for shortcuts.
+    shortcutIfNoIssues key makeShortcut = do 
+        issues <- thisScopeIssues
+        pure $! if Set.null issues 
+                    then makeShortcut
+                    else makeTroubledChild key
 
-            thisScopeIssues :: PureValidatorT (Set VIssue)
-            thisScopeIssues = 
-                withCurrentScope $ \scopes vs -> 
-                    getIssues (scopes ^. typed) (vs ^. typed)
+    thisScopeIssues :: PureValidatorT (Set VIssue)
+    thisScopeIssues = 
+        withCurrentScope $ \scopes vs -> 
+            getIssues (scopes ^. typed) (vs ^. typed)
 
 
     collectPayloads :: MftShortcut 
