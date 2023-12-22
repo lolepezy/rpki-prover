@@ -96,7 +96,7 @@ createDatabase env logger checkAction = do
             let keys = Sequence "object-key" seqMap
             objects          <- createMap
             mftByAKI         <- createMultiMap
-            objectInsertedBy <- createMap        
+            objectMetas      <- createMap        
             hashToKey        <- createMap
             lastValidMfts    <- createMap
             uriToUriKey      <- createMap
@@ -104,8 +104,9 @@ createDatabase env logger checkAction = do
             urlKeyToObjectKey  <- createMultiMap
             objectKeyToUrlKeys <- createMap
             certBySKI          <- createMap
-            validatedByVersion <- createMap        
+            validatedByVersion <- createMap                    
             mftShortcuts       <- MftShortcutStore <$> createMap <*> createMap
+            originals          <- createMap
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 

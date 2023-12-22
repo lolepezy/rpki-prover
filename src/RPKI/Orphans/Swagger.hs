@@ -116,12 +116,9 @@ instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
 instance ToSchema DBFileStats
+instance ToSchema StorageStats
 instance ToSchema TotalDBStats
-instance ToSchema DBStats
 instance ToSchema SStats
-instance ToSchema RepositoryStats
-instance ToSchema RpkiObjectStats
-instance ToSchema VResultStats
 
 instance ToSchema Config
 instance ToSchema Parallelism
@@ -157,7 +154,7 @@ instance ToSchema a => ToSchema (EncapsulatedContentInfo a)
 instance ToSchema Vrp
 instance ToSchema Gbr where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema RSC
+instance ToSchema Rsc
 instance ToSchema Aspa
 instance ToSchema Manifest
 instance ToSchema CertificateWithSignature  where

@@ -19,6 +19,7 @@ where
 import           Control.Concurrent.Async        (forConcurrently)
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
+import           Control.Monad.Except
 import           Control.Monad
 import           Control.Monad.Reader
 
@@ -55,8 +56,10 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Fetch
+import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Messages
 import           RPKI.Parallel
 import           RPKI.Repository
 import           RPKI.Resources.Types
@@ -113,7 +116,9 @@ data TopDownCounters = TopDownCounters {
         newChildren         :: IORef Int,
         overlappingChildren :: IORef Int,
         updateMftMeta       :: IORef Int,
-        updateMftChildren   :: IORef Int
+        updateMftChildren   :: IORef Int,
+        readOriginal :: IORef Int,
+        readParsed   :: IORef Int
     }
     deriving stock (Generic)
 
@@ -180,7 +185,10 @@ newTopDownCounters = do
     shortcutTroubled <- newIORef 0        
 
     originalRoa  <- newIORef 0        
-    originalAspa <- newIORef 0                  
+    originalAspa <- newIORef 0        
+
+    readOriginal <- newIORef 0   
+    readParsed   <- newIORef 0             
    
     pure TopDownCounters {..}
 
@@ -239,7 +247,7 @@ validateMutlipleTAs :: Storage s =>
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     fst <$> bracketChanClosable
-                10000
+                5000
                 validateMutlipleTAs'
                 (storeShortcuts appContext)
                 (\_ -> pure ())
@@ -505,7 +513,7 @@ validateCaNoFetch
                 validateObjectLocations c
                 vHoist $ validateObjectValidityPeriod c now
                 oneMoreCert
-                join $ nextAction $ toAKI $ getSKI c
+                join $! nextAction $ toAKI $ getSKI c
         CaShort c -> 
             vFocusOn ObjectFocus (c ^. #key) $ do 
                 increment $ topDownCounters ^. #shortcutCa 
@@ -513,7 +521,7 @@ validateCaNoFetch
                 validateLocationForShortcut (c ^. #key)
                 vHoist $ validateObjectValidityPeriod c now
                 oneMoreCert
-                join $ nextAction $ toAKI (c ^. #ski)
+                join $! nextAction $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
 
@@ -537,7 +545,7 @@ validateCaNoFetch
                 Just mft ->                        
                     pure $ do                      
                         markAsRead topDownContext (mft ^. typed)                
-                        caFull <- getFullCa appContext ca
+                        caFull <- getFullCa appContext topDownContext ca
                         T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                   
                         oneMoreMft >> oneMoreCrl                            
                         pure $! payloads
@@ -557,8 +565,8 @@ validateCaNoFetch
                             -- No shortcut found, so do the full validation for the manifest
                             pure $ do                   
                                 markAsRead topDownContext (mft ^. typed)                   
-                                caFull <- getFullCa appContext ca
-                                T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                                    
+                                caFull <- getFullCa appContext topDownContext ca
+                                T2 payloads _ <- manifestFullValidation caFull mft Nothing childrenAki                              
                                 oneMoreMft >> oneMoreCrl                                    
                                 pure $! payloads
 
@@ -576,7 +584,7 @@ validateCaNoFetch
                                 let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message
                                 collectPayloads mftShortcut Nothing 
-                                    (getFullCa appContext ca)
+                                    (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
                                     `andThen` 
@@ -587,9 +595,9 @@ validateCaNoFetch
                                     -- logDebug logger [i|Option 1|]            
                                     -- Nothing has changed, the real manifest is the 
                                     -- same as the shortcut, so use the shortcut
-                                    let crlKey = mftShortcut ^. #crlShortcut . #key                                                                        
+                                    let crlKey = mftShortcut ^. #crlShortcut . #key
                                     pure $ collectPayloads mftShortcut Nothing 
-                                                (getFullCa appContext ca)
+                                                (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                             `andThen` 
                                                 (markAsRead topDownContext crlKey)
@@ -600,14 +608,32 @@ validateCaNoFetch
                                         Nothing -> pure $ 
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $ do
-                                            increment $ topDownCounters ^. #shortcutMft                      
-                                            fullCa <- getFullCa appContext ca
-                                            T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                            r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
-                                                        (pure fullCa)
-                                                        (findAndValidateCrl fullCa mft childrenAki)
-                                            markAsRead topDownContext mftKey
-                                            pure $! r1 <> r2                                                     
+                                            increment $ topDownCounters ^. #shortcutMft
+                                            fullCa <- getFullCa appContext topDownContext ca
+                                            let combineShortcutAndNewMft = do 
+                                                    T2 r1 overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
+                                                    r2 <- collectPayloads mftShortcut (Just overlappingChildren) 
+                                                                (pure fullCa)
+                                                                (findAndValidateCrl fullCa mft childrenAki)
+                                                    markAsRead topDownContext mftKey
+                                                    pure $! r1 <> r2    
+
+                                            let useShortcutOnly = do 
+                                                    let crlKey = mftShortcut ^. #crlShortcut . #key
+                                                    collectPayloads mftShortcut Nothing 
+                                                            (getFullCa appContext topDownContext ca)
+                                                            (getCrlByKey appContext crlKey)
+                                                        `andThen` 
+                                                            (do 
+                                                                markAsRead topDownContext crlKey
+                                                                markAsRead topDownContext crlKey)
+
+                                            combineShortcutAndNewMft
+                                                `catchError`
+                                                (\e -> do 
+                                                    appWarn e
+                                                    logDebug logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
+                                                    useShortcutOnly)                                            
                     pure $ do 
                         markAsRead topDownContext mftShortKey
                         action `andThen`
@@ -656,12 +682,19 @@ validateCaNoFetch
 
             bumpCounterBy topDownCounters (#newChildren) (length newChildren)
             bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
+            
+            forM_ mftShortcut $ \mftShort -> do          
+                -- manifest number must increase 
+                -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
+                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
+                when (mftNumber <= mftShort ^. #manifestNumber) $
+                    vError $ ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
 
-            -- If CRL has changed, we have to recheck if children are not revoked. 
-            -- If will be checked by full validation for newChildren but it needs 
-            -- to be explicitly checked for overlappingChildren
-            forM_ mftShortcut $ \mftShort ->           
-                when (crlKey /= mftShort ^. #crlShortcut . #key) $ do                              
+                -- If CRL has changed, we have to recheck if children are not revoked. 
+                -- If will be checked by full validation for newChildren but it needs 
+                -- to be explicitly checked for overlappingChildren                
+                when (crlKey /= mftShort ^. #crlShortcut . #key) $ do     
+                    increment $ topDownCounters ^. #originalCrl                         
                     checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
 
             -- Mark all manifest entries as read to avoid the situation
@@ -716,8 +749,8 @@ validateCaNoFetch
             processChildren `recover` markAllEntriesAsVisited
 
 
-    findAndValidateCrl :: Located CaCerObject 
-                    -> (Keyed (Located MftObject)) 
+    findAndValidateCrl :: Located CaCerObject
+                    -> Keyed (Located MftObject) 
                     -> AKI
                     -> ValidatorT IO (Keyed (Validated CrlObject))
     findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
@@ -727,20 +760,26 @@ validateCaNoFetch
                 [crl] -> pure crl
                 crls  -> vError $ MoreThanOneCRLOnMFT aki crls
 
-        roTxT database (\tx db -> getKeyedByHash tx db crlHash) >>= \case         
-            Nothing -> 
-                vError $ NoCRLExists aki
-            Just (Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey) -> do
-                markAsRead topDownContext crlKey
-                inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
-                    validateObjectLocations locatedCrl
-                    vHoist $ do
-                        let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                        checkCrlLocation locatedCrl mftEECert
-                        void $ validateCrl now crl fullCa                
-                        pure $! Keyed (Validated crl) crlKey                                        
-            _ -> 
-                vError $ CRLHashPointsToAnotherObject crlHash   
+        db <- liftIO $ readTVarIO database
+        roAppTx db $ \tx -> 
+            getKeyByHash tx db crlHash >>= \case         
+                Nothing  -> vError $ NoCRLExists aki crlHash
+                Just key -> do           
+                    increment $ topDownCounters ^. #readParsed
+                    -- CRLs are not parsed right after fetching, so try to get the blob
+                    z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
+                    case z of 
+                        Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
+                            markAsRead topDownContext crlKey
+                            inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
+                                validateObjectLocations locatedCrl
+                                vHoist $ do
+                                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                                    checkCrlLocation locatedCrl mftEECert
+                                    void $ validateCrl now crl fullCa                
+                                    pure $! Keyed (Validated crl) crlKey                                        
+                        _ -> 
+                            vError $ CRLHashPointsToAnotherObject crlHash   
             
 
     -- Utility for repeated peace of code
@@ -800,7 +839,7 @@ validateCaNoFetch
                                 ro <- getManifestEntry filename hash'
                                 -- if failed this one interrupts the whole MFT valdiation
                                 validateMftChild fullCa ro filename validCrl
-                pure $ case z of
+                pure $! case z of
                     -- In this case invalid child is considered invalid entry 
                     -- and the whole manifest is invalid
                     Left e                           -> InvalidEntry e vs
@@ -810,17 +849,24 @@ validateCaNoFetch
         scopes <- askScopes
         liftIO $ pooledForConcurrently
             nonCrlChildren
-            $ \(T3 filename hash' key) -> do
-                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash'
+            $ \(T3 filename hash key) -> do
+                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash
                 case r of
-                    Left e   -> pure $ InvalidEntry e vs
+                    Left e -> do 
+                        -- Decide if the error is related to the manifest itself 
+                        -- of to the object it points to based on the scope of the 
+                        -- reported issues. It's a bit hacky, but it works nicely.                        
+                        let manifestIssues = getIssues (scopes ^. typed) (vs ^. typed )
+                        pure $! if Set.null manifestIssues 
+                            then InvalidChild e vs key
+                            else InvalidEntry e vs
                     Right ro -> do
                         -- We are cheating here a little by faking empty payload set.
                         -- 
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
                         (z, vs') <- runValidatorT scopes $ validateMftChild fullCa ro filename validCrl
-                        pure $ case z of
+                        pure $! case z of
                                 Left e                           -> InvalidChild e vs' key
                                 Right (T2 payload childShortcut) -> Valid payload vs' childShortcut key
     
@@ -879,10 +925,43 @@ validateCaNoFetch
                 []  -> False
                 _   -> True
 
-    getManifestEntry filename hash' = 
-        roTxT database (\tx db -> getKeyedByHash tx db hash') >>= \case        
-            Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
-            Just ro -> pure ro
+    -- Given MFT entry with hash and filename, get the object it referes to
+    -- 
+    getManifestEntry filename hash' = do
+        let objectType = textObjectType filename
+        db <- liftIO $ readTVarIO database
+        ro <- roAppTx db $ \tx -> do             
+            getKeyByHash tx db hash' >>= \case                     
+                Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
+                Just key -> 
+                    vFocusOn ObjectFocus key $
+                        case objectType of 
+                            Just type_ -> do
+                                increment $ topDownCounters ^. #readParsed
+                                -- we expect certificates to be stored in the parsed-serialised form                                                            
+                                getParsedObject tx db key $ do
+                                    increment $ topDownCounters ^. #readOriginal
+                                    -- try to get the original blob and (re-)parse 
+                                    -- it to at least complain about it at the right place
+                                    getLocatedOriginal tx db key type_ $ 
+                                        vError $ ManifestEntryDoesn'tExist hash' filename
+                            Nothing -> do
+                                -- If we don't know anything about the type from the manifest, 
+                                -- it may still be possible that the object was parsed based
+                                -- on the rsync/rrdp url and the entry in the manifest is just
+                                -- wrong
+                                increment $ topDownCounters ^. #readParsed
+                                getParsedObject tx db key $ 
+                                    vError $ ManifestEntryDoesn'tExist hash' filename
+
+        -- The type of the object that is deserialised doesn't correspond 
+        -- file extension on the manifest
+        let realObjectType = getRpkiObjectType $ ro ^. #object
+        when (Just realObjectType /= objectType) $ 
+            vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
+
+        pure ro                        
+
 
     validateMftChild caFull child@(Keyed (Located objectLocations _) _) 
                      filename validCrl = do
@@ -895,7 +974,7 @@ validateCaNoFetch
         validateChildObject caFull child validCrl
 
 
-    -- Optimised version of location validation when all we have is a key of the CA
+    -- Optimised version of location validation when all we have is a key of an object
     -- 
     validateLocationForShortcut key = do  
         -- pure ()
@@ -964,10 +1043,10 @@ validateCaNoFetch
                             Left e     -> vError e
                             Right ppas -> do 
                                 -- Look at the issues for the child CA to decide if CA shortcut should be made
-                                makeShortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
-                                                    vHoist $ shortcutIfNoIssues childKey 
-                                                            (makeCaShortcut childKey (Validated childCert) ppas)
-                                pure $! createPayloadAndShortcut payload makeShortcut
+                                shortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
+                                                vHoist $ shortcutIfNoIssues childKey 
+                                                        (makeCaShortcut childKey (Validated childCert) ppas)
+                                pure $! createPayloadAndShortcut payload shortcut
             RoaRO roa -> 
                 childFocus $ do
                     validateObjectLocations child                    
@@ -978,9 +1057,9 @@ validateCaNoFetch
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         let payload = emptyPayloads & #vrps .~ Set.fromList vrpList      
                         increment $ topDownCounters ^. #originalRoa                        
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeRoaShortcut childKey validRoa vrpList)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut                        
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeRoaShortcut childKey validRoa vrpList)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut                        
 
             AspaRO aspa -> 
                 childFocus $ do
@@ -991,9 +1070,9 @@ validateCaNoFetch
                         let aspaPayload = getCMSContent $ cmsPayload aspa
                         let payload = emptyPayloads & #aspas .~ Set.singleton aspaPayload
                         increment $ topDownCounters ^. #originalAspa
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeAspaShortcut childKey validAspa aspaPayload)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeAspaShortcut childKey validAspa aspaPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut
 
             BgpRO bgpCert ->
                 childFocus $ do
@@ -1002,9 +1081,9 @@ validateCaNoFetch
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
                         oneMoreBgp
                         let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload                                            
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeBgpSecShortcut childKey validaBgpCert bgpPayload)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeBgpSecShortcut childKey validaBgpCert bgpPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut
 
             GbrRO gbr ->                 
                 childFocus $ do
@@ -1015,9 +1094,9 @@ validateCaNoFetch
                         let gbr' = getCMSContent $ cmsPayload gbr
                         let gbrPayload = (getHash gbr, gbr')
                         let payload = emptyPayloads & #gbrs .~ Set.singleton gbrPayload                                                
-                        makeShortcut <- vHoist $ shortcutIfNoIssues childKey 
-                                                (makeGbrShortcut childKey validGbr gbrPayload)
-                        pure $! createPayloadAndShortcut (Seq.singleton payload) makeShortcut       
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey 
+                                            (makeGbrShortcut childKey validGbr gbrPayload)
+                        pure $! createPayloadAndShortcut (Seq.singleton payload) shortcut       
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
@@ -1055,10 +1134,10 @@ validateCaNoFetch
 
 
     collectPayloads :: MftShortcut 
-                -> Maybe [T3 Text Hash ObjectKey] 
-                -> ValidatorT IO (Located CaCerObject)
-                -> ValidatorT IO (Keyed (Validated CrlObject))             
-                -> ValidatorT IO PayloadsType 
+                    -> Maybe [T3 Text Hash ObjectKey] 
+                    -> ValidatorT IO (Located CaCerObject)
+                    -> ValidatorT IO (Keyed (Validated CrlObject))             
+                    -> ValidatorT IO PayloadsType 
     collectPayloads mftShortcut maybeChildren findFullCa findValidCrl = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
@@ -1117,18 +1196,23 @@ validateCaNoFetch
 
         validateTroubledChild caFull (Keyed validCrl _) childKey = do  
             -- It was an invalid child and nothing about it is cached, so 
-            -- we have to process full validation for it
-            roTxT database (\tx db -> getLocatedByKey tx db childKey) >>= \case            
-                Nothing -> internalError appContext 
-                                [i|Internal error, can't find a troubled child by its key #{childKey}.|]
-                Just childObject -> do 
-                    T2 payloads _ <- validateChildObject caFull (Keyed childObject childKey) validCrl
-                    pure $! payloads
+            -- we have to process full validation for it           
+            db <- liftIO $ readTVarIO database
+            roAppTx db $ \tx -> do
+                increment $ topDownCounters ^. #readParsed
+                childObject <- getParsedObject tx db childKey $ do 
+                                    increment $ topDownCounters ^. #readOriginal
+                                    getLocatedOriginalUnknownType tx db childKey $                                       
+                                        internalError appContext 
+                                            [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+                    
+                T2 payloads _ <- validateChildObject caFull childObject validCrl
+                pure $! payloads
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey
             let emptyPayloads = mempty :: Payloads (Set Vrp)
-            pps <- readPublicationPoints repositoryProcessing            
+            pps <- readPublicationPoints repositoryProcessing
             case child of 
                 CaChild caShortcut _ -> do      
                     let validateCaShortcut = validateCaNoFetch appContext topDownContext (CaShort caShortcut)              
@@ -1243,22 +1327,82 @@ manifestDiff mftShortcut newMftChidlren =
                 newMftChidlren
 
 
-getFullCa :: Storage s => AppContext s -> Ca -> ValidatorT IO (Located CaCerObject)
-getFullCa appContext@AppContext {..} ca = 
+getLocatedOriginal :: Storage s => Tx s mode -> DB s -> ObjectKey -> RpkiObjectType         
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+getLocatedOriginal tx db key type_ ifNotFound =
+    getLocatedOriginal' tx db key (Just type_) ifNotFound
+
+getLocatedOriginalUnknownType :: Storage s => Tx s mode -> DB s -> ObjectKey                                           
+                                -> ValidatorT IO (Keyed (Located RpkiObject))
+                                -> ValidatorT IO (Keyed (Located RpkiObject))
+getLocatedOriginalUnknownType tx db key ifNotFound =
+    getLocatedOriginal' tx db key Nothing ifNotFound
+
+getLocatedOriginal' :: Storage s =>                    
+                    Tx s mode                    
+                    -> DB s
+                    -> ObjectKey           
+                    -> Maybe RpkiObjectType         
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+getLocatedOriginal' tx db key type_ ifNotFound = do
+    getOriginalBlob tx db key >>= \case 
+        Nothing                    -> ifNotFound
+        Just (ObjectOriginal blob) -> do 
+            case type_  of 
+                Nothing -> 
+                    getObjectMeta tx db key >>= \case            
+                        Nothing               -> ifNotFound
+                        Just (ObjectMeta _ t) -> parse blob t
+                Just t -> 
+                    parse blob t
+  where                    
+    parse blob t = do
+        ro <- vFocusOn ObjectFocus key $ 
+                    vHoist $ readObjectOfType t blob
+        getLocationsByKey tx db key >>= \case                                             
+            Nothing        -> ifNotFound
+            Just locations -> pure $ Keyed (Located locations ro) key
+
+getParsedObject :: Storage s =>
+                    Tx s mode
+                    -> DB s
+                    -> ObjectKey
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObject))
+getParsedObject tx db key ifNotFound = do
+    getLocatedByKey tx db key >>= \case 
+        Just ro -> pure $ Keyed ro key
+        Nothing -> ifNotFound
+
+
+getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located CaCerObject)
+getFullCa appContext@AppContext {..} topDownContext ca = 
     case ca of     
-        CaFull c  -> pure c            
+        CaFull c -> pure c            
         CaShort CaShortcut {..} -> do   
-            z <- roTxT database $ \tx db -> getLocatedByKey tx db key
-            case z of 
-                Just (Located loc (CerRO c)) -> pure $! Located loc c
-                _ -> internalError appContext [i|Internal error, can't find a CA by its key #{key}.|]
+            db <- liftIO $ readTVarIO database
+            roAppTx db $ \tx -> do 
+                increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
+                z <- getParsedObject tx db key $ do
+                        increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
+                        getLocatedOriginal tx db key CER $ 
+                            internalError appContext 
+                                [i|Internal error, can't find a CA by its key #{key}.|]            
+                case z of 
+                    Keyed (Located locations (CerRO ca_)) _ -> pure $ Located locations ca_
+                    _ -> internalError appContext 
+                            [i|Internal error, wrong type of the CA found by its key #{key}.|]            
     
+
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
-getCrlByKey appContext@AppContext {..} crlKey = do    
+getCrlByKey appContext@AppContext {..} crlKey = do        
     z <- roTxT database $ \tx db -> getObjectByKey tx db crlKey
     case z of 
         Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
         _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
+     
     
 internalError :: AppContext s -> Text -> ValidatorT IO a
 internalError AppContext {..} message = do     
@@ -1311,6 +1455,7 @@ makeMftShortcut key
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
+    manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1324,7 +1469,7 @@ makeMftShortcut key
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected
--- a loop in manifest references.
+-- a loop in references.
 vUniqueFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m () -> ValidatorT m r
 vUniqueFocusOn c a f nonUniqueError = do
     Scopes { validationScope = Scope vs } <- vHoist $ withCurrentScope $ \scopes _ -> scopes
@@ -1374,41 +1519,47 @@ reportCounters AppContext {..} TopDownCounters {..} = do
     originalRoaN <- readIORef originalRoa
     originalAspaN <- readIORef originalAspa    
 
+    readOriginalN <- readIORef readOriginal
+    readParsedN <- readIORef readParsed    
+
     logDebug logger $ [i|Counters: originalCaN = #{originalCaN}, shortcutCaN = #{shortcutCaN}, |] <> 
                       [i|originalMftN = #{originalMftN}, shortcutMftN = #{shortcutMftN}, |] <>
                       [i|originalCrlN = #{originalCrlN}, shortcutCrlN = #{shortcutCrlN}, |] <>
                       [i|newChildrenN = #{newChildrenN}, overlappingChildrenN = #{overlappingChildrenN}, |] <>
                       [i|updateMftMetaN = #{updateMftMetaN}, updateMftChildrenN = #{updateMftChildrenN}, |] <>
-                      [i|shortcutRoaN = #{shortcutRoaN}, , originalRoaN = #{originalRoaN}, |] <>
+                      [i|shortcutRoaN = #{shortcutRoaN}, originalRoaN = #{originalRoaN}, |] <>
                       [i|shortcutAspaN = #{shortcutAspaN}, originalAspaN = #{originalAspaN}, |] <>
-                      [i|shortcutTroubledN = #{shortcutTroubledN}|]
+                      [i|shortcutTroubledN = #{shortcutTroubledN}, |] <>
+                      [i|readOriginalN = #{readOriginalN}, readParsedN = #{readParsedN}.|]
                       
 
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let raw = Raw $ toStorable $ Compressed MftShortcutMeta {..}
+        let !raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let !raw = Raw $ toStorable $ Compressed MftShortcutChildren {..}
+        -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
+        -- that creates the 
+        let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)                
     
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $   
-    readQueueChunked shortcutQueue 2000 $ \mftShortcuts -> 
+    readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
                 UpdateMftShortcut aki s         -> saveMftShorcutMeta tx db aki s                    
                 UpdateMftShortcutChildren aki s -> saveMftShorcutChildren tx db aki s
                  
 
-data MftShortcutOp = UpdateMftShortcut AKI (Raw (Compressed MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI (Raw (Compressed MftShortcutChildren))            
+data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed MftShortcutMeta))
+                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed MftShortcutChildren))            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 
@@ -1416,18 +1567,7 @@ data MftShortcutOp = UpdateMftShortcut AKI (Raw (Compressed MftShortcutMeta))
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
 markAsRead :: TopDownContext -> ObjectKey -> ValidatorT IO ()
-markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = do 
-    -- vks <- liftIO $ readTVarIO visitedKeys
-    -- when (k `Set.member` vks) $
-    --     -- We have already visited this object before, so 
-    --     -- there're some circular references createed by the object.
-    --     -- 
-    --     -- NOTE: Limit cycle detection only to manifests
-    --     -- to minimise the false positives where the same object
-    --     -- is referenced from multiple manifests and we are treating 
-    --     -- it as a cycle. It has happened im the past.
-    --     vError $ CircularReference $ KeyIdentity k
-
+markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = 
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
 
 markAsReadByHash :: Storage s => 

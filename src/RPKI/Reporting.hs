@@ -86,7 +86,10 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |
-                        NoCRLExists AKI |
+                        NoCRLExists AKI Hash |
+                        ManifestEntryDoesn'tExist Hash Text |
+                        ManifestEntryHasWrongFileType Hash Text RpkiObjectType |                        
+                        ManifestNumberDecreased { oldMftNumber :: Serial, newMftNumber :: Serial } |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
                         CRL_AKI_DifferentFromCertSKI SKI AKI |
@@ -97,8 +100,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         RevokedResourceCertificate |
                         ObjectValidityIsInTheFuture { before :: Instant, after :: Instant } |
                         ObjectIsExpired { before :: Instant, after :: Instant } |
-                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
-                        ManifestEntryDoesn'tExist Hash Text |
+                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |                        
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         ResourceSetMustBeInherit |
@@ -166,7 +168,7 @@ data RrdpError = BrokenXml Text |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType Text | 
+                RrdpUnsupportedObjectType Text | 
                 RrdpDownloadTimeout Int64 | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
@@ -176,6 +178,7 @@ data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |         
                     RsyncDownloadTimeout Int64 | 
+                    RsyncUnsupportedObjectType Text | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

@@ -9,6 +9,8 @@
 module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
+import qualified Data.Text       as Text
+import qualified Data.Map.Strict as Map
 
 import Control.DeepSeq
 import Codec.Compression.LZ4
@@ -31,23 +33,15 @@ newtype SValue = SValue { unSValue :: Storable }
 newtype SKey = SKey { unSKey :: Storable }
     deriving stock (Eq, Ord, Show)    
 
-data StorableUnit a e = 
-    SObject {-# UNPACK #-} (StorableObject a) 
-  | SError e
-
 data StorableObject a = StorableObject {
         object   :: a, 
         storable :: Storable 
     }
     deriving stock (Show, Eq, Generic)
 
-
-newtype Raw a = Raw { unRaw :: Storable }
+newtype Verbatim a = Verbatim { unVerbatim :: Storable }
     deriving stock (Show, Eq, Generic)
-
--- data WannaStore a = OriginalWS a 
---                   | StorableWS Storable
---     deriving stock (Show, Eq, Generic)                  
+              
 
 toStorableObject :: AsStorable a => a -> StorableObject a
 toStorableObject a = StorableObject a (force (toStorable a))
@@ -69,9 +63,9 @@ instance {-# OVERLAPPING #-} AsStorable Storable where
     toStorable = id
     fromStorable = id
 
-instance {-# OVERLAPPING #-} AsStorable (Raw a) where
-    toStorable   = unRaw
-    fromStorable = Raw
+instance {-# OVERLAPPING #-} AsStorable (Verbatim a) where
+    toStorable   = unVerbatim
+    fromStorable = Verbatim
 
 instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
     toStorable = Storable . serialise_
@@ -88,8 +82,8 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
         Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
 
-restoreFromRaw :: AsStorable a => Raw a -> a
-restoreFromRaw = fromStorable . unRaw
+restoreFromRaw :: AsStorable a => Verbatim a -> a
+restoreFromRaw = fromStorable . unVerbatim
 
 data SStats = SStats {
         statSize          :: Size,
@@ -111,12 +105,5 @@ instance Semigroup SStats where
             statMaxValueBytes = statMaxValueBytes ss1 `max` statMaxValueBytes ss2
         }
 
-incrementStats :: SStats -> SKey -> SValue -> SStats
-incrementStats stat (SKey (Storable k)) (SValue (Storable v)) = 
-    SStats { 
-        statSize = statSize stat + 1, 
-        statKeyBytes = statKeyBytes stat + fromIntegral (BS.length k),
-        statValueBytes = statValueBytes stat + fromIntegral (BS.length v),
-        statMaxKeyBytes = statMaxKeyBytes stat `max` fromIntegral (BS.length k),
-        statMaxValueBytes = statMaxValueBytes stat `max` fromIntegral (BS.length v)
-    }  
+newtype StorageStats = StorageStats (Map.Map Text.Text SStats)
+    deriving stock (Show, Eq, Generic)    

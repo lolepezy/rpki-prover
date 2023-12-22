@@ -65,7 +65,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 23
+currentDatabaseVersion = 24
 
 -- Some constant keys
 databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
@@ -104,7 +104,7 @@ instance Storage s => WithStorage s (DB s) where
 -- Important: 
 -- Locations of an object (URLs where the object was downloaded from) are stored
 -- in a separate pair of maps urlKeyToObjectKey and objectKeyToUrlKeys. 
--- That's why all the fiddling with locations in putObject, getLocatedByKey 
+-- That's why all the fiddling with locations in saveObject, getLocatedByKey 
 -- and deleteObject.
 -- 
 -- Also, since URLs are relativly long, there's a separate mapping between 
@@ -118,17 +118,18 @@ data RpkiObjectStore s = RpkiObjectStore {
         lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI ObjectKey)),    
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
-        objectInsertedBy   :: SMap "object-inserted-by" s ObjectKey WorldVersion,
+        objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
         validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
 
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
-        urlKeyToObjectKey  :: SMultiMap "uri-to-object-key" s UrlKey ObjectKey,
+        urlKeyToObjectKey  :: SMultiMap "uri-key-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
-        mftShortcuts       :: MftShortcutStore s        
+        mftShortcuts       :: MftShortcutStore s,
+        originals          :: SMap "object-original" s ObjectKey (Verbatim ObjectOriginal)
     } 
     deriving stock (Generic)
 
@@ -231,6 +232,7 @@ data MftShortcutMeta = MftShortcutMeta {
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
         serial         :: Serial,
+        manifestNumber :: Serial,
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -244,8 +246,8 @@ newtype MftShortcutChildren = MftShortcutChildren {
 
 
 data MftShortcutStore s = MftShortcutStore {
-        mftMetas :: SMap "mfts-shortcut-meta" s AKI (Raw (Compressed MftShortcutMeta)),
-        mftChildren :: SMap "mfts-shortcut-children" s AKI (Raw (Compressed MftShortcutChildren))
+        mftMetas :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
+        mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)
 
@@ -268,15 +270,17 @@ getKeyedByHash tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runM
             
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
-getByUri tx db@DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
+getByUri tx db uri = liftIO $ do
+    keys' <- getKeysByUri tx db uri
+    fmap catMaybes $ mapM (getLocatedByKey tx db) keys'
+
+getKeysByUri :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
+getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
     M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
-        Nothing -> pure []
-        Just uriKey ->         
-            fmap catMaybes $ 
-                MM.allForKey tx urlKeyToObjectKey uriKey >>=
-                mapM (getLocatedByKey tx db)
-
-
+        Nothing     -> pure []
+        Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
+                
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObject)
 getObjectByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $
@@ -307,12 +311,12 @@ getLocationsByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $ runM
                     $ mapM (M.get tx uriKeyToUri) uriKeys             
     pure $ Locations locations
 
-putObject :: (MonadIO m, Storage s) => 
+saveObject :: (MonadIO m, Storage s) => 
             Tx s 'RW 
-            -> RpkiObjectStore s 
+            -> DB s 
             -> StorableObject RpkiObject
             -> WorldVersion -> m ()
-putObject tx RpkiObjectStore {..} so@StorableObject {..} wv = liftIO $ do
+saveObject tx DB { objectStore = RpkiObjectStore {..} } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
@@ -320,7 +324,7 @@ putObject tx RpkiObjectStore {..} so@StorableObject {..} wv = liftIO $ do
         let objectKey = ObjectKey $ ArtificialKey k
         M.put tx hashToKey h objectKey
         M.put tx objects objectKey (Compressed so)
-        M.put tx objectInsertedBy objectKey wv
+        M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
         case object of
             CerRO c -> 
                 M.put tx certBySKI (getSKI c) objectKey
@@ -329,14 +333,56 @@ putObject tx RpkiObjectStore {..} so@StorableObject {..} wv = liftIO $ do
                     MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
             _ -> pure ()        
 
+saveOriginal :: (MonadIO m, Storage s) => 
+                Tx s 'RW 
+                -> DB s 
+                -> ObjectOriginal
+                -> Hash          
+                -> ObjectMeta  
+                -> m ()
+saveOriginal tx DB { objectStore = RpkiObjectStore {..} } (ObjectOriginal blob) hash objectMeta = liftIO $ do    
+    exists <- M.exists tx hashToKey hash    
+    unless exists $ do          
+        SequenceValue k <- nextValue tx keys
+        let key = ObjectKey $ ArtificialKey k
+        M.put tx hashToKey hash key
+        M.put tx originals key (Verbatim $ Storable blob)       
+        M.put tx objectMetas key objectMeta
+
+
+getOriginalBlob :: (MonadIO m, Storage s) => 
+                Tx s mode
+                -> DB s 
+                -> ObjectKey            
+                -> m (Maybe ObjectOriginal)
+getOriginalBlob tx DB { objectStore = RpkiObjectStore {..} } key = liftIO $ do    
+    fmap (ObjectOriginal . unStorable . unVerbatim) <$> M.get tx originals key
+
+getOriginalBlobByHash :: (MonadIO m, Storage s) => 
+                        Tx s mode
+                        -> DB s 
+                        -> Hash 
+                        -> m (Maybe ObjectOriginal)
+getOriginalBlobByHash tx db hash =     
+    getKeyByHash tx db hash >>= \case 
+        Nothing  -> pure Nothing
+        Just key -> getOriginalBlob tx db key    
+
+getObjectMeta :: (MonadIO m, Storage s) => 
+                Tx s mode
+                -> DB s 
+                -> ObjectKey            
+                -> m (Maybe ObjectMeta)
+getObjectMeta tx DB { objectStore = RpkiObjectStore {..} } key = 
+    liftIO $ M.get tx objectMetas key                
 
 linkObjectToUrl :: (MonadIO m, Storage s) => 
                 Tx s 'RW 
-                -> RpkiObjectStore s 
+                -> DB s 
                 -> RpkiURL
                 -> Hash
                 -> m ()
-linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do    
+linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..} } rpkiURL hash = liftIO $ do    
     let safeUrl = makeSafeUrl rpkiURL
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
         z <- M.get tx uriToUriKey safeUrl 
@@ -360,8 +406,9 @@ linkObjectToUrl tx RpkiObjectStore {..} rpkiURL hash = liftIO $ do
 
 
 hashExists :: (MonadIO m, Storage s) => 
-            Tx s mode -> RpkiObjectStore s -> Hash -> m Bool
-hashExists tx store h = liftIO $ M.exists tx (hashToKey store) h
+            Tx s mode -> DB s -> Hash -> m Bool
+hashExists tx DB { objectStore = RpkiObjectStore {..} } h = 
+    liftIO $ M.exists tx hashToKey h
 
 
 deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
@@ -369,7 +416,7 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
     ifJustM (M.get tx hashToKey h) $ \objectKey ->             
         ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
             M.delete tx objects objectKey
-            M.delete tx objectInsertedBy objectKey        
+            M.delete tx objectMetas objectKey        
             M.delete tx hashToKey h        
             case ro of 
                 CerRO c -> M.delete tx certBySKI (getSKI c)
@@ -424,19 +471,19 @@ getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do
     let MftShortcutStore {..} = mftShortcuts 
     runMaybeT $ do 
         mftMeta_ <- MaybeT $ M.get tx mftMetas aki
-        let MftShortcutMeta {..} = unCompressed $ restoreFromRaw mftMeta_
+        let MftShortcutMeta {..} = unCompressed $ restoreFromRaw $ mftMeta_
         mftChildren_ <- MaybeT $ M.get tx mftChildren aki
         let MftShortcutChildren {..} = unCompressed $ restoreFromRaw mftChildren_
         pure $! MftShortcut {..}
 
 saveMftShorcutMeta :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> DB s -> AKI -> Raw (Compressed MftShortcutMeta) -> m ()
+                    Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
 saveMftShorcutMeta tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
     aki raw = liftIO $ M.put tx mftMetas aki raw
 
 saveMftShorcutChildren :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> AKI -> Raw (Compressed MftShortcutChildren) -> m ()
+                        Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutChildren) -> m ()
 saveMftShorcutChildren tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
     aki raw = liftIO $ M.put tx mftChildren aki raw
@@ -485,15 +532,6 @@ getMftTimingMark mft = let
     m = getCMSContent $ cmsPayload mft 
     in MftTimingMark (thisTime m) (nextTime m)
 
-
-saveLatestValidMfts :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> Map AKI ObjectKey -> m ()
-saveLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} valids = liftIO $ do
-    z <- M.get tx lastValidMfts lastValidMftKey
-    let valids' = case z of 
-            Nothing              -> valids
-            Just (Compressed vs) -> Map.unionWith (\a _ -> a) valids vs
-    M.put tx lastValidMfts lastValidMftKey (Compressed valids')
 
 
 getLatestValidMfts :: (MonadIO m, Storage s) => 
@@ -649,8 +687,8 @@ deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
 
 updateRrdpMeta :: (MonadIO m, Storage s) =>
-                Tx s 'RW -> RepositoryStore s -> (SessionId, RrdpSerial) -> RrdpURL -> m ()
-updateRrdpMeta tx RepositoryStore {..} meta url = liftIO $ do
+                Tx s 'RW -> DB s -> (SessionId, RrdpSerial) -> RrdpURL -> m ()
+updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
     z <- M.get tx rrdpS url
     for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
 
@@ -802,8 +840,8 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         -- We want to preseve these objects in the cache even if they are 
         -- never used, they may still be used later. That may happens if
         -- a repository updates a manifest aftert updating its children.
-        recentlyInsertedObjectKeys <- M.fold tx objectInsertedBy 
-            (\allKeys key version -> 
+        recentlyInsertedObjectKeys <- M.fold tx objectMetas 
+            (\allKeys key (ObjectMeta version _) -> 
                 pure $! if tooOld version 
                     then allKeys 
                     else key `Set.insert` allKeys) mempty
@@ -901,71 +939,11 @@ getRtrPayloads tx db worldVersion =
     liftIO $ runMaybeT $ do 
             vrps <- MaybeT $ getVrps tx db worldVersion
             bgps <- MaybeT $ getBgps tx db worldVersion
-            pure $ mkRtrPayloads vrps bgps
-
-getTotalDbStats :: (MonadIO m, Storage s) => DB s -> m (DBStats, SStats)
-getTotalDbStats db = do 
-    dbStats <- getDbStats db        
-    pure (dbStats, totalStats dbStats)
-
--- Compute database stats
-getDbStats :: (MonadIO m, Storage s) => DB s -> m DBStats
-getDbStats db@DB {..} = liftIO $ roTx db $ \tx -> do 
-    taStats         <- let TAStore sm = taStore in M.stats tx sm
-    repositoryStats <- repositoryStats' tx
-    rpkiObjectStats <- rpkiObjectStats' tx
-    vResultStats    <- vResultStats' tx    
-    vrpStats        <- let VRPStore sm = vrpStore in M.stats tx sm
-    aspaStats       <- let AspaStore sm = aspaStore in M.stats tx sm
-    bgpStats        <- let BgpStore sm = bgpStore in M.stats tx sm
-    gbrStats        <- let GbrStore sm = gbrStore in M.stats tx sm
-    metricsStats    <- let MetricStore sm = metricStore in M.stats tx sm
-    versionStats    <- let VersionStore sm = versionStore in M.stats tx sm
-    sequenceStats   <- M.stats tx sequences
-    slurmStats      <- let SlurmStore sm = slurmStore in M.stats tx sm
-    pure DBStats {..}
-  where
-    rpkiObjectStats' tx = do 
-        let RpkiObjectStore {..} = objectStore
-        objectsStats  <- M.stats tx objects
-        mftByAKIStats <- MM.stats tx mftByAKI                                    
-        hashToKeyStats  <- M.stats tx hashToKey
-        lastValidMftsStats <- M.stats tx lastValidMfts
-
-        uriToUriKeyStat <- M.stats tx uriToUriKey
-        uriKeyToUriStat <- M.stats tx uriKeyToUri
-        uriKeyToObjectKeyStat <- MM.stats tx urlKeyToObjectKey
-        objectKeyToUrlKeysStat <- M.stats tx objectKeyToUrlKeys
-
-        objectInsertedByStats <- M.stats tx objectInsertedBy
-        validatedByVersionStats <- M.stats tx validatedByVersion
-        let MftShortcutStore {..} = mftShortcuts
-        mftMetasStats <- M.stats tx mftMetas
-        mftChildrenStats <- M.stats tx mftChildren
-        pure RpkiObjectStats {..}
-
-    repositoryStats' tx = 
-        let RepositoryStore {..} = repositoryStore
-        in RepositoryStats <$>
-            M.stats tx rrdpS <*>
-            M.stats tx rsyncS <*>            
-            M.stats tx forAsyncS
-
-    vResultStats' tx = 
-        let ValidationsStore results = validationsStore
-        in VResultStats <$> M.stats tx results
-   
-                       
--- | Return total amount of bytes taken by the data in the DB
--- 
-totalSpace :: DBStats -> Size
-totalSpace stats = 
-    let SStats {..} = totalStats stats
-    in statKeyBytes + statValueBytes
+            pure $ mkRtrPayloads vrps bgps                       
 
 -- Get all SStats and `<>` them
-totalStats :: DBStats -> SStats
-totalStats = foldOf (types @SStats)
+totalStats :: StorageStats -> SStats
+totalStats (StorageStats s) = mconcat $ Map.elems s
 
 emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
 emptyDBMaps tx DB {..} = liftIO $ 

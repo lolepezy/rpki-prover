@@ -93,6 +93,7 @@ httpServer appContext = genericServe HttpApi {
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
+        originals  = getOriginal appContext,
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext
@@ -319,8 +320,9 @@ getAllTALs AppContext {..} = do
 
 
 getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
-getStats appContext@AppContext {..} = liftIO $ do 
-    (dbStats, total) <- getTotalDbStats =<< readTVarIO database
+getStats appContext = liftIO $ do 
+    storageStats <- getStorageStats appContext
+    let total = totalStats storageStats    
     fileSize <- getCacheFsSize appContext
     let fileStats = DBFileStats {..}
     pure TotalDBStats {..}
@@ -378,6 +380,74 @@ getRpkiObject AppContext {..} uri hash =
                 "Only 'uri' or 'hash' must be provided, not both." }
   where
     locatedDto located = RObject $ located & #payload %~ objectToDto
+
+getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> Maybe Text           
+                -> m ObjectOriginal
+getOriginal AppContext {..} hash =
+    case hash of
+        Nothing ->
+            throwError $ err400 { errBody = "or 'hash' must be provided." }
+                        
+        Just hash' ->
+            case parseHash hash' of
+                Left _  -> throwError err400
+                Right h -> do
+                    z <- roTxT database $ \tx db -> getOriginalBlobByHash tx db h
+                    case z of 
+                        Nothing -> throwError err404
+                        Just b  -> pure b
+
+
+{- 
+getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> Maybe Text           
+                -> m ObjectOriginal
+getOriginal AppContext {..} hash =
+    case (uri, hash) of
+        (Nothing,  Nothing) ->
+            throwError $ err400 { errBody = "'uri' or 'hash' must be provided." }
+
+        (Just u, Nothing) ->
+            case parseRpkiURL u of
+                Left _ ->
+                    throwError $ err400 { errBody = "'uri' is not a valid object URL." }
+
+                Right rpkiUrl ->                     
+                    roTxT database $ \tx db -> 
+                        getKeysByUri tx db rpkiUrl >>= \case     
+                            []    -> pure [] 
+                            [key] -> (locatedDto <$>) <$> getObjectByKey tx db key
+
+                        getByUri tx db rpkiUrl >>= \case     
+                            [] -> do                                
+                                -- try TA certificates
+                                tas <- getTAs tx db                                 
+                                pure [ locatedDto (Located locations (CerRO taCert)) | 
+                                        (_, StorableTA {..}) <- tas, 
+                                        let locations = talCertLocations tal, 
+                                        oneOfLocations locations rpkiUrl ]                                
+                                
+                            os -> pure $ map locatedDto os
+                        
+        (Nothing, Just hash') ->
+            case parseHash hash' of
+                Left _  -> throwError err400
+                Right h -> do
+                    z <- roTxT database $ \tx db -> getOriginalBlobByHash tx db h
+                    case z of 
+                        Nothing -> throwError err404
+                        Just b  -> pure b
+
+        (Just _, Just _) ->
+            throwError $ err400 { errBody =
+                "Only 'uri' or 'hash' must be provided, not both." }                        
+  where
+    locatedDto located = RObject $ located & #payload %~ objectToDto  
+-}
+
 
 
 getSystem :: Storage s =>  AppContext s -> IO SystemDto

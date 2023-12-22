@@ -205,11 +205,8 @@ $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
 $(deriveToJSON defaultOptions ''SStats)
-$(deriveToJSON defaultOptions ''RpkiObjectStats)
-$(deriveToJSON defaultOptions ''VResultStats)
-$(deriveToJSON defaultOptions ''RepositoryStats)
-$(deriveToJSON defaultOptions ''DBStats)
 $(deriveToJSON defaultOptions ''DBFileStats)
+$(deriveToJSON defaultOptions ''StorageStats)
 $(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''RawMetric)
@@ -327,7 +324,7 @@ $(deriveToJSON defaultOptions ''X509.RevokedCertificate)
 $(deriveToJSON defaultOptions ''X509.CRL)
 
 $(deriveToJSON defaultOptions ''Aspa)
-$(deriveToJSON defaultOptions ''RSC)
+$(deriveToJSON defaultOptions ''Rsc)
 $(deriveToJSON defaultOptions ''Vrp)
 $(deriveToJSON defaultOptions ''Manifest)
 $(deriveToJSON defaultOptions ''CertificateWithSignature)
@@ -425,6 +422,7 @@ instance ToJSON InitError
 instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
+instance ToJSON RpkiObjectType
 instance ToJSON ValidationError
 instance ToJSON ObjectIdentity
 instance ToJSON StorageError

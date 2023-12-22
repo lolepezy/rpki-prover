@@ -11,8 +11,12 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.GBR,
     module RPKI.Parse.Internal.RSC,
     readObject,
+    readObjectOfType,
     supportedExtension,
-    isSupportedExtension
+    isSupportedExtension,
+    rpkiObjectType,
+    urlObjectType,
+    textObjectType
 )
 where
 
@@ -21,6 +25,7 @@ import           Data.Char                        (toLower)
 import qualified Data.List                        as List
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
+import           Data.Maybe
 
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -36,6 +41,19 @@ import           RPKI.Parse.Internal.SignedObject
 
 import           RPKI.Util (fmtGen)
 
+
+rpkiObjectType :: (Eq s, IsString s) => s -> Maybe RpkiObjectType
+rpkiObjectType s = 
+    case s of 
+        "cer" -> Just CER
+        "mft" -> Just MFT 
+        "crl" -> Just CRL 
+        "roa" -> Just ROA 
+        "gbr" -> Just GBR
+        "sig" -> Just RSC 
+        "asa" -> Just ASPA
+        _      -> Nothing
+
 -- | 
 supportedExtension :: String -> Bool
 supportedExtension filename = 
@@ -44,17 +62,27 @@ supportedExtension filename =
         _         -> False
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
-isSupportedExtension s = s `elem` 
-    ["cer", "mft", "crl", "roa", "gbr", "sig", "asa"]
+isSupportedExtension = isJust . rpkiObjectType
+
+urlObjectType :: RpkiURL -> Maybe RpkiObjectType
+urlObjectType (getURL -> URI u) = textObjectType u
+
+textObjectType :: Text.Text -> Maybe RpkiObjectType
+textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
 readObject :: RpkiURL -> BS.ByteString -> PureValidatorT RpkiObject
-readObject objectURL content = do 
-    let URI u = getURL objectURL
-    let ext = map toLower $ Text.unpack $ Text.drop (Text.length u - 4) u
-    case ext of
-        ".cer" -> do 
+readObject objectURL content =     
+    case urlObjectType objectURL of 
+        Just type_ -> readObjectOfType type_ content
+        Nothing    -> pureError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
+
+
+readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT RpkiObject        
+readObjectOfType objectType content = 
+    case objectType of 
+        CER -> do 
             (rc, certType, rfc, ski, aki, hash) <- parseResourceCertificate content
             case certType of 
                 CACert -> do 
@@ -66,14 +94,12 @@ readObject objectURL content = do
                 EECert -> 
                     pureError $ parseErr "Cannot have EE certificate as a separate object."
 
-        ".mft" -> parse_ parseMft MftRO content
-        ".roa" -> parse_ parseRoa RoaRO content                    
-        ".crl" -> parse_ parseCrl CrlRO content            
-        ".gbr" -> parse_ parseGbr GbrRO content            
-        ".sig" -> parse_ parseRsc RscRO content            
-        ".asa" -> parse_ parseAspa AspaRO content            
-        _      -> pureError $ parseErr $ "Unknown object type: " <> fmtGen u
-        where
-            parse_ parse constructor bs = 
-                constructor <$> parse bs
-                
+        MFT  -> parse_ parseMft MftRO content
+        ROA  -> parse_ parseRoa RoaRO content
+        CRL  -> parse_ parseCrl CrlRO content            
+        GBR  -> parse_ parseGbr GbrRO content            
+        RSC  -> parse_ parseRsc RscRO content            
+        ASPA -> parse_ parseAspa AspaRO content     
+  where
+    parse_ parse constructor bs = 
+        constructor <$> parse bs        

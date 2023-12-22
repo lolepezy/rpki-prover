@@ -210,7 +210,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
-    dbStats <- fmap DB.totalStats $ DB.getDbStats =<< readTVarIO database
+    dbStats <- fmap DB.totalStats $ lmdbGetStats appContext
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
@@ -312,3 +312,10 @@ cleanupReaders AppContext {..} = do
     env <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     native <- atomically $ getNativeEnv env
     cleanReadersTable native
+
+
+lmdbGetStats :: AppContext LmdbStorage -> IO StorageStats
+lmdbGetStats AppContext {..} = do 
+    lmdbEnv   <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    nativeEnv <- atomically $ getNativeEnv lmdbEnv
+    getEnvStats nativeEnv

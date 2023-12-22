@@ -9,7 +9,6 @@ module RPKI.AppMonad where
 import           Control.Lens
 
 import           Control.Exception.Lifted
-import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader

@@ -53,18 +53,11 @@ toRsyncMessage = \case
     RsyncProcessError errorCode e ->
         [i|Rsync client returned code #{errorCode}, error = #{e}.|]
 
-    FileReadError e ->
-        [i|Can't read local file created by rsync client #{e}.|]
-
-    RsyncRunningError e ->
-        [i|Error running rsync client #{e}.|]
-
-    RsyncDownloadTimeout t ->
-        [i|Could not update repository in #{t}s.|]
-
-    UnknownRsyncProblem e ->
-        [i|Unknown problem with rsync #{e}.|]
-
+    FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
+    RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
+    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}s.|]
+    RsyncUnsupportedObjectType url -> [i|Unsupported object type #{url}.|]             
+    UnknownRsyncProblem e          -> [i|Unknown problem with rsync #{e}.|]
 
 toRrdpMessage :: RrdpError -> Text
 toRrdpMessage = \case
@@ -150,7 +143,7 @@ toRrdpMessage = \case
     ObjectExistsWhenReplacing url hash -> 
         [i|Cannot replace object with url #{url}: object with hash #{hash} already exists.|]        
 
-    UnsupportedObjectType url -> 
+    RrdpUnsupportedObjectType url -> 
         [i|Unsupported object type #{url}.|]        
         
     RrdpDownloadTimeout t -> 
@@ -230,8 +223,17 @@ toValidationMessage = \case
       NonUniqueManifestEntries nonUniqueEntries -> 
             [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
 
-      NoCRLExists aki -> 
-            [i|No CRL exists with AKI #{aki} for CA.|]
+      NoCRLExists aki hash -> 
+            [i|No CRL exists with AKI #{aki} and hash #{hash} for CA.|]
+
+      ManifestEntryDoesn'tExist hash filename -> 
+          [i|Manifest entry #{filename} with hash #{hash} not found.|]
+
+      ManifestEntryHasWrongFileType hash filename type_ ->         
+        [i|Manifest entry #{filename} with hash #{hash} points to an object that has type #{type_}.|]
+
+      ManifestNumberDecreased {..} ->
+        [i|Manifest number #{newMftNumber} is smaller then the previous #{oldMftNumber}, will use previous manifest.|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
@@ -265,9 +267,6 @@ toValidationMessage = \case
 
       AKIIsNotEqualsToParentSKI childAKI parentSKI ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
-
-      ManifestEntryDoesn'tExist hash filename -> 
-          [i|Manifest entry #{filename} with hash #{hash} not found.|]
 
       OverclaimedResources resources -> 
           [i|Certificate (or EE) claims resources #{resources} not present on parent certificate.|]

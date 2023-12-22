@@ -40,16 +40,15 @@ forAttribute :: Monad m =>
                 RrdpError ->
                 (BS.ByteString -> ExceptT RrdpError m v) ->
                 ExceptT RrdpError m v
-forAttribute as name err f = case List.lookup name as of
-    Nothing -> throwE err
-    Just v  -> f v    
+forAttribute as name err f = 
+    maybe (throwE err) f (List.lookup name as)
 
 
 valuesOrError :: STRef s (Maybe v) -> RrdpError -> ExceptT RrdpError (ST s) v
 valuesOrError v e =
     (lift . readSTRef) v >>= \case
         Nothing -> throwE e
-        Just s  -> (lift . pure) s
+        Just s  -> lift $ pure s
      
 parseInteger :: BS.ByteString -> Maybe Integer
 parseInteger bs = readMaybe $ convert bs

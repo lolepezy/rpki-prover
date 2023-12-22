@@ -53,8 +53,3 @@ all tx (SMultiMap _ s) = reverse <$> S.foldMu tx s f []
   where
     f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z
 
-stats :: Tx s m -> SMultiMap name s k v -> IO SStats
-stats tx (SMultiMap _ s) = S.foldMu tx s f mempty
-  where
-    f stat skey svalue = pure $! incrementStats stat skey svalue
-

@@ -50,6 +50,7 @@ import           RPKI.Reporting
 
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
+import           RPKI.Store.Types hiding (object)
 import           RPKI.RTR.Types
 import           RPKI.Time
 import           RPKI.Util (mkHash)
@@ -294,6 +295,7 @@ data TalDto = TalDto {
     deriving stock (Eq, Show, Generic)
 
 data ManualCVS = ManualCVS
+data ObjectBlob = ObjectBlob
 
 newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
     deriving stock (Eq, Show, Generic)
@@ -301,10 +303,19 @@ newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
 instance Accept ManualCVS where
     contentType _ = "text" // "csv"
 
+instance Accept ObjectBlob where
+    contentType _ = "application" // "octet-stream"
+
 instance MimeRender ManualCVS RawCSV where
     mimeRender _ = unRawCSV    
 
+instance MimeRender ObjectBlob ObjectOriginal where
+    mimeRender _ (ObjectOriginal b) = LBS.fromStrict b
+
 instance ToSchema RawCSV where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance ToSchema ObjectOriginal where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON RObject

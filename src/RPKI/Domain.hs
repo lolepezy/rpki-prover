@@ -157,6 +157,9 @@ class WithRFC a where
 class WithSerial a where
     getSerial :: a -> Serial
 
+class WithRpkiObjectType a where
+    getRpkiObjectType :: a -> RpkiObjectType
+
 instance WithURL URI where
     getURL = id
 
@@ -287,7 +290,7 @@ data CMSBasedObject a = CMSBasedObject {
 type MftObject = CMSBasedObject Manifest
 type RoaObject = CMSBasedObject [Vrp]
 type GbrObject = CMSBasedObject Gbr
-type RscObject = CMSBasedObject RSC
+type RscObject = CMSBasedObject Rsc
 type AspaObject = CMSBasedObject Aspa
 
     
@@ -302,6 +305,9 @@ data RpkiObject = CerRO CaCerObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | BGPSec | RSC
+    deriving (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary
 
 instance WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
@@ -418,6 +424,18 @@ instance WithHash RpkiObject where
     getHash (AspaRO c) = getHash c
     getHash (BgpRO c) = getHash c
 
+instance WithRpkiObjectType RpkiObject where
+    getRpkiObjectType = \case 
+        CerRO _ -> CER
+        MftRO _ -> MFT
+        RoaRO _ -> ROA
+        GbrRO _ -> GBR
+        CrlRO _ -> CRL
+        RscRO _ -> RSC
+        AspaRO _ -> ASPA
+        BgpRO _ -> BGPSec
+        
+
 data Located a = Located { 
         locations :: Locations,        
         payload   :: a
@@ -447,7 +465,11 @@ instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) 
 instance WithRFC a => WithRFC (Located a) where    
     getRFC (Located _ o) = getRFC o
 
+instance WithRpkiObjectType a => WithRpkiObjectType (Located a) where    
+    getRpkiObjectType (Located _ o) = getRpkiObjectType o
+
 instance OfCertType c t => OfCertType (Located c) t
+
 
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
@@ -499,7 +521,7 @@ data Gbr = Gbr BSS.ShortByteString
     deriving anyclass TheBinary
 
 
-data RSC = RSC {        
+data Rsc = Rsc {        
         rscResources    :: PrefixesAndAsns,        
         checkList       :: [T2 (Maybe Text) Hash],
         digestAlgorithm :: DigestAlgorithmIdentifier
