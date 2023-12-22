@@ -43,7 +43,7 @@ data MftEntry = MftEntry {
 
 
 data CrlShortcut = CrlShortcut {
-        key         :: ObjectKey,
+        key            :: ObjectKey,
         notValidBefore :: Instant,
         notValidAfter  :: Instant        
     }
