@@ -39,8 +39,6 @@ import           Data.Monoid.Generic
 import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
-import           Data.Sequence                    (Seq)
-import qualified Data.Sequence                    as Seq
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
@@ -149,12 +147,8 @@ data TopDownResult = TopDownResult {
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
-
-type PayloadsType = Seq (Payloads (Set Vrp))
-
 fromValidations :: ValidationState -> TopDownResult
 fromValidations = TopDownResult mempty
-
 
 newTopDownContext :: MonadIO m =>
                     TaName
@@ -568,7 +562,7 @@ validateCaNoFetch
                     pure $! do                      
                         markAsRead topDownContext (mft ^. typed)                
                         caFull <- getFullCa appContext topDownContext ca
-                        manifestFullValidation caFull mft Nothing childrenAki                                   
+                        void $ manifestFullValidation caFull mft Nothing childrenAki                                   
                         oneMoreMft >> oneMoreCrl                                                    
 
 
@@ -1023,7 +1017,6 @@ validateCaNoFetch
             -> Validated CrlObject
             -> ValidatorT IO (Maybe (Text -> MftEntry))
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) validCrl = do        
-        let emptyPayloads = mempty :: Payloads (Set Vrp)
         let childFocus = vFocusOn LocationFocus (getURL $ pickLocation locations)
         case childRo of
             CerRO childCert -> do
@@ -1054,8 +1047,8 @@ validateCaNoFetch
 
                 embedState validationState
                 case r of 
-                    Left _        -> pure $! Just $! makeTroubledChild childKey
-                    Right payload -> do 
+                    Left _  -> pure $! Just $! makeTroubledChild childKey
+                    Right _ -> do 
                         case getPublicationPointsFromCertObject childCert of 
                             -- It's not going to happen?
                             Left e     -> vError e
@@ -1098,7 +1091,6 @@ validateCaNoFetch
                     allowRevoked $ do
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
                         oneMoreBgp
-                        let payload = emptyPayloads & #bgpCerts .~ Set.singleton bgpPayload                                            
                         shortcut <- vHoist $ shortcutIfNoIssues childKey 
                                             (makeBgpSecShortcut childKey validaBgpCert bgpPayload)    
                         liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (bgpPayload :)
