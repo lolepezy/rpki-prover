@@ -771,7 +771,7 @@ validateCaNoFetch
                     -> AKI
                     -> ValidatorT IO (Keyed (Validated CrlObject))
     findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
-        T2 _ crlHash <-
+        MftPair _ crlHash <-
             case findCrlOnMft mft of
                 []    -> vError $ NoCRLOnMFT aki 
                 [crl] -> pure crl
@@ -917,10 +917,10 @@ validateCaNoFetch
         when (null mftChildren) $
             vError ZeroManifestEntries        
 
-        let nonCrlChildren = filter (\(T2 _ hash') -> crlHash /= hash') mftChildren
+        let nonCrlChildren = filter (\(MftPair _ hash') -> crlHash /= hash') mftChildren
 
         -- Make sure all the entries are unique
-        let entryMap = Map.fromListWith (<>) $ map (\(T2 f h) -> (h, [f])) nonCrlChildren
+        let entryMap = Map.fromListWith (<>) $ map (\(MftPair f h) -> (h, [f])) nonCrlChildren
         let nonUniqueEntries = Map.filter longerThanOne entryMap
 
         -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
@@ -930,7 +930,7 @@ validateCaNoFetch
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
         db <- liftIO $ readTVarIO database
-        forM nonCrlChildren $ \(T2 fileName hash) -> do
+        forM nonCrlChildren $ \(MftPair fileName hash) -> do
                 k <- roAppTx db $ \tx -> getKeyByHash tx db hash            
                 case k of 
                     Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
@@ -1548,7 +1548,9 @@ updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
+        -- let !raw = (Verbatim $ Storable "")        
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
+        pure ()
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
@@ -1556,7 +1558,9 @@ updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
         -- that creates the 
         let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw)                
+        -- let !raw = (Verbatim $ Storable "")        
+        atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw) 
+        pure ()
     
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 

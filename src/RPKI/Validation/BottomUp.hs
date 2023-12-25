@@ -18,7 +18,6 @@ import           Control.Lens
 import qualified Data.Map.Strict                  as Map
 
 import           Data.String.Interpolate.IsString
-import           Data.Tuple.Strict
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -97,7 +96,7 @@ validateBottomUp
         
         validateOnMft mft o = do             
             let mftChildren = mftEntries $ getCMSContent $ mft ^. #cmsPayload
-            case filter (\(T2 _ h) -> h == getHash o) mftChildren of 
+            case filter (\(MftPair _ h) -> h == getHash o) mftChildren of 
                 [] -> appError $ ValidationE ObjectNotOnManifest
                 _  -> pure ()            
 
@@ -168,7 +167,8 @@ validateBottomUp
             vFocusOn ObjectFocus (keyedMft ^. #key) $ do
                 validateObjectLocations locatedMft
                 validateMftLocation locatedMft certificate
-                T2 _ crlHash <- case findCrlOnMft mft of 
+                MftPair _ crlHash <- 
+                        case findCrlOnMft mft of 
                             []    -> vError $ NoCRLOnMFT childrenAki
                             [crl] -> pure crl
                             crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls

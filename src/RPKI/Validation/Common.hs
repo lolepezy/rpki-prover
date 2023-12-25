@@ -146,8 +146,8 @@ loadValidManifests db logger validManifests = liftIO $ do
 
 
 -- TODO Is there a more reliable way to find it?
-findCrlOnMft :: MftObject -> [T2 Text.Text Hash]
-findCrlOnMft mft = filter (\(T2 name _) -> ".crl" `Text.isSuffixOf` name) $
+findCrlOnMft :: MftObject -> [MftPair]
+findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $
     mftEntries $ getCMSContent $ cmsPayload mft
 
 

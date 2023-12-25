@@ -156,6 +156,7 @@ instance ToSchema Gbr where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema Rsc
 instance ToSchema Aspa
+instance ToSchema MftPair
 instance ToSchema Manifest
 instance ToSchema CertificateWithSignature  where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)

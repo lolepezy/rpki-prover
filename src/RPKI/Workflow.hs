@@ -442,6 +442,9 @@ runWorkflow appContext@AppContext {..} tals = do
         let arguments = 
                 [ worderIdS workerId ] <>
                 rtsArguments [ 
+                    "-p", 
+                    "-hT",
+                    "-l",
                     rtsN maxCpuAvailable, 
                     rtsA "24m", 
                     rtsAL "128m", 
