@@ -100,6 +100,7 @@ readObjectOfType objectType content =
         GBR  -> parse_ parseGbr GbrRO content            
         RSC  -> parse_ parseRsc RscRO content            
         ASPA -> parse_ parseAspa AspaRO content     
+        t    -> pureError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"
   where
     parse_ parse constructor bs = 
         constructor <$> parse bs        

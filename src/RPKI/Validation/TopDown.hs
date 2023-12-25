@@ -1547,19 +1547,14 @@ updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
-        -- let !raw = (Verbatim $ Storable "")        
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
-        pure ()
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
-        -- that creates the 
-        let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}
-        -- let !raw = (Verbatim $ Storable "")        
+        let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}        
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw) 
-        pure ()
     
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 
