@@ -333,7 +333,7 @@ toValidationMessage = \case
 
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 
-                    map (\(T2 t h) -> t <> Text.pack (":" <> show h))
+                    map (\(MftPair t h) -> t <> Text.pack (":" <> show h))
 
     fmtBrokenMftEntries = mconcat . 
                     List.intersperse "," . 

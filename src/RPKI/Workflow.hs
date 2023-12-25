@@ -439,13 +439,19 @@ runWorkflow appContext@AppContext {..} tals = do
 
         let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
 
+        -- TODO make it a runtime thing, config?
+        -- let profilingFlags = [ "-p", "-hT", "-l" ]
+        let profilingFlags = [ ]
+
         let arguments = 
                 [ worderIdS workerId ] <>
-                rtsArguments [ 
-                    rtsN maxCpuAvailable, 
-                    rtsA "24m", 
-                    rtsAL "128m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) ]
+                rtsArguments ( 
+                    profilingFlags <> [ 
+                        rtsN maxCpuAvailable, 
+                        rtsA "24m", 
+                        rtsAL "128m", 
+                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) 
+                    ])
         
         r <- runValidatorT 
                 (newScopes "validator") $ 

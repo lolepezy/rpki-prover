@@ -73,12 +73,12 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
     scopes <- askScopes
 
     wr@WorkerResult {..} <- runWorker
-                            logger
-                            config
-                            workerId 
-                            (RrdpFetchParams scopes repository worldVersion)                        
-                            (Timebox $ fetchConfig ^. #rrdpTimeout)
-                            arguments  
+                                logger
+                                config
+                                workerId 
+                                (RrdpFetchParams scopes repository worldVersion)                        
+                                (Timebox $ fetchConfig ^. #rrdpTimeout)
+                                arguments  
         
     let RrdpFetchResult z = payload
     logWorkerDone logger workerId wr

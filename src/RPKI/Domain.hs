@@ -493,12 +493,19 @@ data Vrp = Vrp
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+data MftPair = MftPair {
+        fileName :: Text,
+        hash     :: Hash
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
 data Manifest = Manifest {
         mftNumber   :: {-# UNPACK #-} Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: {-# UNPACK #-} Instant, 
         nextTime    :: {-# UNPACK #-} Instant, 
-        mftEntries  :: [T2 Text Hash]
+        mftEntries  :: [MftPair]
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -712,7 +719,7 @@ data TA = TA {
 data Payloads a = Payloads {
         vrps     :: a,
         aspas    :: Set.Set Aspa,
-        gbrs     :: Set.Set (Hash, Gbr),
+        gbrs     :: Set.Set (T2 Hash Gbr),
         bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)

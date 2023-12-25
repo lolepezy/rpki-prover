@@ -181,7 +181,7 @@ objectToDto = \case
 
     manifestDto m = let
             mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
-            entries = map (\(T2 f h) -> (f, h)) mftEntries
+            entries = map (\(MftPair f h) -> (f, h)) mftEntries
         in
             ManifestDto {
                 fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
