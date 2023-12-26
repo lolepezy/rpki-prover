@@ -21,6 +21,7 @@ import           Servant.Server.Generic
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
+import           Data.Foldable
 import           Data.Ord
 import           Data.List                        (sortBy)
 import           Data.Maybe                       (maybeToList, fromMaybe)
@@ -31,6 +32,7 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
+import           Data.Tuple.Strict
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -69,7 +71,7 @@ httpServer appContext = genericServe HttpApi {
     apiServer = genericServer API {
         vrpsJson = getVRPValidated appContext,
         vrpsCsv = getVRPValidatedRaw appContext,
-        -- vrpsCsvExt = getRoasValidatedRaw appContext,
+        vrpsCsvExt = getRoasValidatedRaw appContext,
 
         vrpsCsvFiltered  = getVRPSlurmedRaw appContext,
         vrpsJsonFiltered = getVRPSlurmed appContext,
@@ -125,15 +127,15 @@ httpServer appContext = genericServe HttpApi {
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
 getVRPValidated appContext version =
-    getVRPs appContext version 
-        (fmap (^. #vrps) . readTVar . (^. #validated)) 
+    getValuesByVersion appContext version 
+        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #validated)) 
         getVrps toVrpDtos
 
 getVRPSlurmed :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
 getVRPSlurmed appContext version =
-    getVRPs appContext version 
-        (fmap (^. #vrps) . readTVar . (^. #filtered)) 
+    getValuesByVersion appContext version 
+        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         getVrps toVrpDtos 
 
 getVRPValidatedRaw :: (MonadIO m, Storage s, MonadError ServerError m)
@@ -150,49 +152,76 @@ getVRPsUniqueRaw :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m RawCSV
 getVRPsUniqueRaw appContext version = 
     vrpSetToCSV <$> 
-        getVRPs appContext version 
-        (fmap (^. #vrps) . readTVar . (^. #filtered)) 
+        getValuesByVersion appContext version 
+        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         getVrps toVrpSet
 
 getVRPsUnique :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m [VrpMinimalDto]
 getVRPsUnique appContext version = 
-    getVRPs appContext version 
-        (fmap (^. #vrps) . readTVar . (^. #filtered)) 
+    getValuesByVersion appContext version 
+        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         getVrps toVrpMinimalDtos
 
 
-getVRPs :: (MonadIO m, Storage s, MonadError ServerError m)
-        => AppContext s
-        -> Maybe Text
-        -> (AppState -> STM v)   
-        -> (Tx s 'RO -> DB s -> WorldVersion -> Maybe v)          
-        -> (Maybe v -> a)                   
-        -> m a
-getVRPs AppContext {..} version readFromState readForVersion convert = do
+getRoasValidatedRaw :: (MonadIO m, Storage s, MonadError ServerError m)
+                    => AppContext s -> Maybe Text -> m RawCSV
+getRoasValidatedRaw appContext@AppContext {..} version =     
+    getValuesByVersion appContext version  
+        (\_ -> pure Nothing)
+        getRoaDtos (vrpExtDtosToCSV . fromMaybe [])
+  where
+    -- getRoaDtos :: tx -> db -> WorldVersion -> IO (Maybe [VrpExtDto])
+    getRoaDtos tx db version = do  
+        getRoas tx db version >>= \case  
+            Nothing       -> pure Nothing     
+            Just (Roas r) -> 
+                fmap (Just . mconcat . mconcat) $ do 
+                    forM (MonoidalMap.toList r) $ \(taName, r1) -> do 
+                        forM (MonoidalMap.toList r1) $ \(roaKey, vrps) -> do                
+                            z <- getLocationsByKey tx db roaKey >>= \case 
+                                    Nothing   -> pure Nothing
+                                    Just locs -> pure $ Just $ toText $ pickLocation locs
+                            pure $! case z of   
+                                Nothing  -> []
+                                Just uri -> [ VrpExtDto {..} | v <- 
+                                                Set.toList vrps, let vrp = toVrpDto v taName ]
+                            
+
+asMaybe :: (Eq a, Monoid a) => a -> Maybe a
+asMaybe a = if mempty == a then Nothing else Just a
+
+getValuesByVersion :: (MonadIO m, Storage s, MonadError ServerError m)
+                    => AppContext s
+                    -> Maybe Text
+                    -> (AppState -> STM (Maybe v))   
+                    -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe v))
+                    -> (Maybe v -> a)                   
+                    -> m a
+getValuesByVersion AppContext {..} version readFromState readForVersion convertToResult = do
     case version of
-        Nothing -> liftIO $ convert <$> getLatest
+        Nothing -> liftIO $ convertToResult <$> getLatest
         Just v  ->
             case parseWorldVersion v of
                 Left e            -> throwError $ err400 { errBody = [i|'version' is not valid #{v}, error: #{e}|] }
-                Right worlVersion -> convert <$> getByVersion worlVersion
+                Right worlVersion -> convertToResult <$> getByVersion worlVersion
   where
     getLatest = do
-        values <- atomically $ readFromState appState
-        if values == mempty
-            then 
+        atomically (readFromState appState) >>= \case   
+            Nothing -> 
                 roTxT database $ \tx db -> 
                     getLastValidationVersion db tx >>= \case 
                         Nothing            -> pure Nothing
                         Just latestVersion -> readForVersion tx db latestVersion                    
-            else
+            Just values -> 
                 pure $ Just values
 
     getByVersion worldVersion = do        
         versions <- roTxT database allVersions        
         case filter ((worldVersion == ) . fst) versions of
             [] -> throwError $ err404 { errBody = [i|Version #{worldVersion} doesn't exist.|] }
-            _  -> roTxT database $ \tx db -> readForVersion tx db worldVersion
+            _  -> roTxT database $ \tx db -> 
+                    readForVersion tx db worldVersion
 
 
 getASPAs :: Storage s => AppContext s -> IO [AspaDto]

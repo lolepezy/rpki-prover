@@ -106,6 +106,12 @@ data VrpMinimalDto = VrpMinimalDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data VrpExtDto = VrpExtDto {
+        uri :: Text,
+        vrp :: VrpDto        
+    } 
+    deriving stock (Eq, Show, Generic)
+
 data AspaDto = AspaDto {
         customer  :: ASN,
         providers :: [ASN]        
