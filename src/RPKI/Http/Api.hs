@@ -36,6 +36,9 @@ data API api = API {
         vrpsCsv  :: api :- "vrps.csv"  :> QueryParam "version" Text 
                                        :> Get '[ManualCVS] RawCSV,
 
+        -- vrpsCsvExt :: api :- "vrps.csvext"  :> QueryParam "version" Text 
+        --                                    :> Get '[ManualCVS] RawCSV,
+
         vrpsJson :: api :- "vrps" :> QueryParam "version" Text 
                                   :> Get '[JSON] [VrpDto],
 

@@ -18,7 +18,8 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
-import           Data.Maybe                  (fromMaybe, listToMaybe)
+import           Data.Hourglass
+import           Data.Maybe                  (fromMaybe)
 import           Data.Monoid
 
 import           Data.Text                   as Text
@@ -112,7 +113,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertificatePathTooDeep Locations Int |
                         TreeIsTooBig Locations Int |
                         TooManyRepositories Locations Int |
-                        ValidationTimeout Int |
+                        ValidationTimeout Seconds |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |

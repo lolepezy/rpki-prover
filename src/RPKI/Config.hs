@@ -109,6 +109,10 @@ data ValidationConfig = ValidationConfig {
         rrdpRepositoryRefreshInterval  :: Seconds,
         rsyncRepositoryRefreshInterval :: Seconds,
 
+        -- Do not retry to fetch a repository that failed 
+        -- less than this many seconds ago
+        minimalRepositoryRetryInterval :: Seconds,
+
         -- Maximum time for top-down validation for one TA
         topDownTimeout                 :: Seconds,
         
@@ -214,6 +218,7 @@ defaultConfig = Config {
         revalidationInterval           = Seconds $ 13 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
+        minimalRepositoryRetryInterval = Seconds $ 10,    
         topDownTimeout                 = Seconds $ 60 * 60,    
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,

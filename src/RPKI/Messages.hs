@@ -15,11 +15,10 @@ import qualified Data.Text                   as Text
 import qualified Data.List                   as List
 import qualified Data.List.NonEmpty          as NonEmpty
 
+import           Data.Hourglass
 import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
-
 import           Data.String.Interpolate.IsString
-import           Data.Tuple.Strict
 
 import           Data.ASN1.Types (OID)
 
@@ -297,7 +296,7 @@ toValidationMessage = \case
       TooManyRepositories locations maxTaRepositories ->          
           [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
 
-      ValidationTimeout maxDuration -> 
+      ValidationTimeout (Seconds maxDuration) -> 
           [i|Validation did not finish within #{maxDuration}s and was interrupted.|]
 
       ManifestLocationMismatch filename locations -> 
