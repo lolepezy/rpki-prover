@@ -27,6 +27,7 @@ import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
+import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
@@ -706,6 +707,12 @@ newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
+newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (Set Vrp)) }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+    deriving Semigroup via GenericSemigroup Roas
+    deriving Monoid    via GenericMonoid Roas
+
 data TA = TA {
         taName        :: TaName, 
         taCertificate :: Maybe ResourceCertificate,
@@ -868,6 +875,9 @@ uniqueVrpCount (Vrps vrps) = Set.size $ mconcat $ MonoidalMap.elems vrps
 
 newVrps :: TaName -> Set Vrp -> Vrps
 newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
+
+newRoas :: TaName -> MonoidalMap ObjectKey (Set.Set Vrp) -> Roas
+newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
 
 allVrps :: Vrps -> [Set Vrp] 
 allVrps (Vrps vrps) = MonoidalMap.elems vrps          

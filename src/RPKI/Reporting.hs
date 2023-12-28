@@ -18,7 +18,8 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
-import           Data.Maybe                  (fromMaybe, listToMaybe)
+import           Data.Hourglass
+import           Data.Maybe                  (fromMaybe)
 import           Data.Monoid
 
 import           Data.Text                   as Text
@@ -30,14 +31,13 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
+import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
-
-import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 
 import           RPKI.Domain
 import           RPKI.RRDP.Types
@@ -112,7 +112,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertificatePathTooDeep Locations Int |
                         TreeIsTooBig Locations Int |
                         TooManyRepositories Locations Int |
-                        ValidationTimeout Int |
+                        ValidationTimeout Seconds |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |

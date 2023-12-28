@@ -8,13 +8,10 @@ module RPKI.RRDP.Http where
 
 import Control.Exception.Lifted
 import Control.Lens
-import Control.Monad.Except
 
 import Conduit
 import Data.Conduit.Internal (zipSinks)
-
 import Data.Generics.Product.Typed
-
 import Data.IORef.Lifted
 
 import qualified Data.ByteString as BS

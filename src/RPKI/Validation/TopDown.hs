@@ -74,7 +74,7 @@ import           RPKI.Validation.Common
 
 
 data PayloadBuilder = PayloadBuilder {
-        vrps     :: TVar [Vrp],
+        vrps     :: TVar [T2 [Vrp] ObjectKey],        
         aspas    :: TVar [Aspa],
         gbrs     :: TVar [T2 Hash Gbr],
         bgpCerts :: TVar [BGPSecPayload]
@@ -141,6 +141,7 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
 
 data TopDownResult = TopDownResult {
         payloads           :: Payloads Vrps,
+        roas               :: Roas,
         topDownValidations :: ValidationState
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -148,7 +149,7 @@ data TopDownResult = TopDownResult {
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations = TopDownResult mempty
+fromValidations = TopDownResult mempty mempty
 
 newTopDownContext :: MonadIO m =>
                     TaName
@@ -299,13 +300,24 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                 validateFromTAL
                 (do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
-                    appError $ ValidationE $ ValidationTimeout $ secondsToInt maxDuration)
+                    appError $ ValidationE $ ValidationTimeout maxDuration)    
 
-    let payloads = case r of
-                    Left _  -> mempty
-                    Right p -> p & #vrps %~ newVrps taName
+    case r of
+        Left _                    -> pure $ TopDownResult mempty mempty vs       
+        Right (topDownContext, _) -> atomically $ do     
+            let builder = topDownContext ^. #payloadBuilder
+            vrps     <- readTVar $ builder ^. #vrps 
+            aspas    <- fmap Set.fromList $ readTVar $ builder ^. #aspas 
+            gbrs     <- fmap Set.fromList $ readTVar $ builder ^. #gbrs 
+            bgpCerts <- fmap Set.fromList $ readTVar $ builder ^. #bgpCerts    
 
-    pure $! TopDownResult payloads vs
+            let payloads = Payloads {..}        
+            let payloads' = payloads & #vrps .~ 
+                                newVrps taName (Set.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
+            let roas = newRoas taName $ MonoidalMap.fromList $ 
+                        map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
+            pure $ TopDownResult payloads' roas vs
+
   where
     taName = getTaName tal
     taContext = newScopes' TAFocus $ unTaName taName
@@ -316,8 +328,9 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations                 
                 topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
-                validateFromTACert appContext topDownContext repos taCert
+                (topDownContext,) <$> validateFromTACert appContext topDownContext repos taCert
 
+        
 
 data TACertStatus = Existing | Updated
 
@@ -369,7 +382,7 @@ validateFromTACert :: Storage s =>
                     TopDownContext ->
                     PublicationPointAccess ->
                     Located CaCerObject ->
-                    ValidatorT IO (Payloads (Set Vrp))
+                    ValidatorT IO ()
 validateFromTACert
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
@@ -390,14 +403,6 @@ validateFromTACert
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
         (validateCa appContext topDownContext taCert)
-
-    liftIO $ atomically $ do     
-        let builder = topDownContext ^. #payloadBuilder
-        vrps     <- fmap Set.fromList $ readTVar $ builder ^. #vrps 
-        aspas    <- fmap Set.fromList $ readTVar $ builder ^. #aspas 
-        gbrs     <- fmap Set.fromList $ readTVar $ builder ^. #gbrs 
-        bgpCerts <- fmap Set.fromList $ readTVar $ builder ^. #bgpCerts 
-        pure $! Payloads {..}
 
 
 validateCa :: Storage s =>
@@ -1071,7 +1076,7 @@ validateCaNoFetch
                         increment $ topDownCounters ^. #originalRoa                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
                                             (makeRoaShortcut childKey validRoa vrpList)
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (vrpList <>)
+                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (T2 vrpList childKey :)
                         pure $! newShortcut shortcut                        
 
             AspaRO aspa -> 
@@ -1160,8 +1165,9 @@ validateCaNoFetch
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
                 vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
 
-            -- For children that are invalid we'll have to fall back to full validation, 
-            -- for that we beed the parent CA and a valid CRL.
+            -- For children that are problematic we'll have to fall back 
+            -- to full validation, for that we beed the parent CA and a valid CRL.
+            -- Construct the validation function for such problematic children
             troubledValidation <-
                     case [ () | (_, MftEntry { child = TroubledChild _} ) <- Map.toList nonCrlEntries ] of 
                         [] ->                         
@@ -1180,7 +1186,7 @@ validateCaNoFetch
                         Nothing -> Map.toList nonCrlEntries
                         Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
 
-            -- Gather all PPAs from all Ca on the MftShortcut and fetch all of them beforehand to avoid
+            -- Gather all PPAs from all CAs on the MftShortcut and fetch all of them beforehand to avoid
             -- a lot of STM transaction restarts in `fetchPPWithFallback`                
             caCount <- prefetchRepositories filteredChildren            
 
@@ -1225,7 +1231,7 @@ validateCaNoFetch
             pps <- readPublicationPoints repositoryProcessing
             case child of 
                 CaChild caShortcut _ -> do      
-                    let validateCaShortcut = validateCaNoFetch appContext topDownContext (CaShort caShortcut)              
+                    let validateCaShortcut = validateCaNoLimitChecks appContext topDownContext (CaShort caShortcut)              
                     case filterPPAccess config (caShortcut ^. #ppas) of 
                         Nothing          -> validateCaShortcut
                         Just filteredPpa -> 
@@ -1239,8 +1245,8 @@ validateCaNoFetch
                         validateLocationForShortcut key
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
-                        increment $ topDownCounters ^. #shortcutRoa              
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (vrps <>)                         
+                        increment $ topDownCounters ^. #shortcutRoa                                      
+                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (T2 vrps childKey :)
                     
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
@@ -1274,34 +1280,34 @@ validateCaNoFetch
 
             -- Do all the necessary filtering based on fetch config and 
             -- sync(quick) and async(slow) repository statuses.
-            pps <- readPublicationPoints repositoryProcessing
-            let allSyncPpas =
-                    foldr (\ppa syncPpas ->
-                        case filterPPAccess config ppa of 
-                            Nothing          -> syncPpas
-                            Just filteredPpa -> 
-                                let (quickPPs, _) = onlyForSyncFetch pps filteredPpa
-                                in case quickPPs of 
-                                    Nothing       -> syncPpas
-                                    Just quickPpa -> quickPpa : syncPpas)
-                        mempty 
-                        allPpas
+            -- pps <- readPublicationPoints repositoryProcessing
+            -- let allSyncPpas =
+            --         foldr (\ppa syncPpas ->
+            --             case filterPPAccess config ppa of 
+            --                 Nothing          -> syncPpas
+            --                 Just filteredPpa -> 
+            --                     let (quickPPs, _) = onlyForSyncFetch pps filteredPpa
+            --                     in case quickPPs of 
+            --                         Nothing       -> syncPpas
+            --                         Just quickPpa -> quickPpa : syncPpas)
+            --             mempty 
+            --             allPpas
 
-            let uniquePpas = getFetchablePPAs pps allSyncPpas            
+            -- let uniquePpas = getFetchablePPAs pps allSyncPpas            
 
-            scopes <- askScopes
-            let fetchConfig = syncFetchConfig config
-            z <- liftIO $ pooledForConcurrently uniquePpas $ \ppa -> 
-                    fmap (ppa,) $ runValidatorT scopes $                     
-                        fetchPPWithFallback appContext fetchConfig repositoryProcessing worldVersion ppa
+            -- scopes <- askScopes
+            -- let fetchConfig = syncFetchConfig config
+            -- z <- liftIO $ pooledForConcurrently uniquePpas $ \ppa -> 
+            --         fmap (ppa,) $ runValidatorT scopes $                     
+            --             fetchPPWithFallback appContext fetchConfig repositoryProcessing worldVersion ppa
 
-            ppsAfterFetch <- readPublicationPoints repositoryProcessing
-            forM_ z $ \(ppa, (r, vs)) -> do 
-                embedState vs
-                for_ r $ \fetches -> do 
-                    let (_, slowRepos) = onlyForSyncFetch ppsAfterFetch ppa
-                    markForAsyncFetch repositoryProcessing 
-                            $ filterForAsyncFetch ppa fetches slowRepos                   
+            -- ppsAfterFetch <- readPublicationPoints repositoryProcessing
+            -- forM_ z $ \(ppa, (r, vs)) -> do 
+            --     embedState vs
+            --     for_ r $ \fetches -> do 
+            --         let (_, slowRepos) = onlyForSyncFetch ppsAfterFetch ppa
+            --         markForAsyncFetch repositoryProcessing 
+            --                 $ filterForAsyncFetch ppa fetches slowRepos                   
 
             pure $! length allPpas
 

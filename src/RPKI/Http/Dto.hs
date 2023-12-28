@@ -46,6 +46,9 @@ toVrpDtos = \case
                     (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
                     Vrp a p len  <- Set.toList vrpSet ]
 
+toVrpDto :: Vrp -> TaName -> VrpDto
+toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
+
 toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
 toVrpSet = maybe mempty uniqVrps
 
@@ -114,6 +117,26 @@ vrpDtosToCSV vrpDtos =
             str (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
+
+vrpExtDtosToCSV :: [VrpExtDto] -> RawCSV
+vrpExtDtosToCSV vrpDtos =
+    rawCSV
+        (str "URI,ASN,IP Prefix,Max Length,Trust Anchor\n")
+        (mconcat $ map toBS vrpDtos)
+  where
+    toBS VrpExtDto {        
+            vrp = VrpDto {
+                asn = ASN as,
+                maxLength = PrefixLength ml,
+                ..
+            },
+            ..
+        } = str (Text.unpack uri) <> ch ',' <>
+            str "AS" <> str (show as) <> ch ',' <>
+            str (prefixStr prefix) <> ch ',' <>
+            str (show ml) <> ch ',' <>
+            str (convert ta) <> ch '\n'
+
 
 vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
 vrpSetToCSV vrpDtos =

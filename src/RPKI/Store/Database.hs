@@ -30,7 +30,6 @@ import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
-import           Data.Generics.Product.Types
 import           GHC.Generics
 import           Text.Read
 
@@ -166,8 +165,9 @@ instance Storage s => WithStorage s (MetricStore s) where
 
 
 -- | VRP store
-newtype VRPStore s = VRPStore {    
-        vrps :: SMap "vrps" s WorldVersion (Compressed Vrps)
+data VRPStore s = VRPStore {    
+        vrps :: SMap "vrps" s WorldVersion (Compressed Vrps),
+        roas :: SMap "roas" s WorldVersion (Compressed Roas)
     }
     deriving stock (Generic)
 
@@ -190,7 +190,7 @@ newtype BgpStore s = BgpStore {
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (VRPStore s) where
-    storage (VRPStore s) = storage s
+    storage (VRPStore s _) = storage s
 
 
 -- Version store
@@ -579,11 +579,15 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
 
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
-getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
+getVrps tx DB { vrpStore = VRPStore m _ } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
+
+getRoas :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe Roas)
+getRoas tx DB { vrpStore = VRPStore _ m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
 deleteVRPs :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVRPs tx DB { vrpStore = VRPStore vrpMap } wv = liftIO $ M.delete tx vrpMap wv
+deleteVRPs tx DB { vrpStore = VRPStore vrpMap _ } wv = liftIO $ M.delete tx vrpMap wv
 
 getAspas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Aspa))
@@ -615,8 +619,13 @@ saveGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion =
 
 saveVrps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
-saveVrps tx DB { vrpStore = VRPStore vrpMap } vrps worldVersion = 
+saveVrps tx DB { vrpStore = VRPStore vrpMap _ } vrps worldVersion = 
     liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
+
+saveRoas :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Roas -> WorldVersion -> m ()
+saveRoas tx DB { vrpStore = VRPStore _ roaMap } roas worldVersion = 
+    liftIO $ M.put tx roaMap worldVersion (Compressed roas)
 
 saveBgps :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Set.Set BGPSecPayload -> WorldVersion -> m ()
@@ -930,9 +939,9 @@ getLatestX :: (Storage s, Monoid b) =>
             -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
             -> IO b
 getLatestX tx db f =      
-        getLastValidationVersion db tx >>= \case         
-            Nothing      -> pure mempty
-            Just version -> fromMaybe mempty <$> f tx db version    
+    getLastValidationVersion db tx >>= \case         
+        Nothing      -> pure mempty
+        Just version -> fromMaybe mempty <$> f tx db version    
 
 
 getRtrPayloads :: (MonadIO m, Storage s) => Tx s 'RO -> DB s -> WorldVersion -> m (Maybe RtrPayloads)

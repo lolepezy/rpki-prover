@@ -253,7 +253,7 @@ fetchPPWithFallback
         checkSlow condition = 
             if condition 
                 then Slow fetchTime
-                else Quick fetchTime        
+                else Quick fetchTime       
 
 
 -- Fetch one individual repository. 
@@ -344,7 +344,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
         -- TODO This is an interesting question and needs some 
         -- It maybe should be 
         -- FailedAt time   -> tooLongAgo time
-        FailedAt _      -> True
+        FailedAt time   -> not $ closeEnoughMoments time now minimalRepositoryRetryInterval
   where
     tooLongAgo momendTnThePast = 
         not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
