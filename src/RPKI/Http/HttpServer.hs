@@ -164,26 +164,26 @@ getVRPsUnique appContext version =
 
 getRoasValidatedRaw :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m RawCSV
-getRoasValidatedRaw appContext@AppContext {..} version =     
+getRoasValidatedRaw appContext version =     
     getValuesByVersion appContext version  
         (\_ -> pure Nothing)
         getRoaDtos (vrpExtDtosToCSV . fromMaybe [])
   where
-    -- getRoaDtos :: tx -> db -> WorldVersion -> IO (Maybe [VrpExtDto])
     getRoaDtos tx db version_ = do  
         getRoas tx db version_ >>= \case  
             Nothing       -> pure Nothing     
             Just (Roas r) -> 
-                fmap (Just . mconcat . mconcat) $ do 
-                    forM (MonoidalMap.toList r) $ \(taName, r1) -> do 
-                        forM (MonoidalMap.toList r1) $ \(roaKey, vrps) -> do                
-                            z <- getLocationsByKey tx db roaKey >>= \case 
-                                    Nothing   -> pure Nothing
-                                    Just locs -> pure $ Just $ toText $ pickLocation locs
-                            pure $! case z of   
-                                Nothing  -> []
-                                Just uri -> [ VrpExtDto {..} | v <- 
-                                                Set.toList vrps, let vrp = toVrpDto v taName ]
+                fmap (Just . mconcat . mconcat) $ 
+                    forM (MonoidalMap.toList r) $ \(taName, r1) -> 
+                        forM (MonoidalMap.toList r1) $ \(roaKey, vrps) ->                             
+                            getLocationsByKey tx db roaKey >>= \case 
+                                Nothing   -> pure []
+                                Just locs -> 
+                                    pure $! [ VrpExtDto { 
+                                                    uri = toText $ pickLocation locs,
+                                                    vrp = toVrpDto vrp taName
+                                                } | vrp <- Set.toList vrps ] 
+                                        
                             
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
