@@ -30,7 +30,6 @@ import qualified Data.Map.Strict          as Map
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
-import           Data.Generics.Product.Types
 import           GHC.Generics
 import           Text.Read
 

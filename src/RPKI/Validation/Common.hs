@@ -26,7 +26,6 @@ import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
-import           Data.Tuple.Strict
 
 import           RPKI.AppContext
 import           RPKI.AppMonad

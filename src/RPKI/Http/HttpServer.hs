@@ -21,7 +21,6 @@ import           Servant.Server.Generic
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
-import           Data.Foldable
 import           Data.Ord
 import           Data.List                        (sortBy)
 import           Data.Maybe                       (maybeToList, fromMaybe)
@@ -32,7 +31,6 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
-import           Data.Tuple.Strict
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -172,8 +170,8 @@ getRoasValidatedRaw appContext@AppContext {..} version =
         getRoaDtos (vrpExtDtosToCSV . fromMaybe [])
   where
     -- getRoaDtos :: tx -> db -> WorldVersion -> IO (Maybe [VrpExtDto])
-    getRoaDtos tx db version = do  
-        getRoas tx db version >>= \case  
+    getRoaDtos tx db version_ = do  
+        getRoas tx db version_ >>= \case  
             Nothing       -> pure Nothing     
             Just (Roas r) -> 
                 fmap (Just . mconcat . mconcat) $ do 
@@ -187,7 +185,6 @@ getRoasValidatedRaw appContext@AppContext {..} version =
                                 Just uri -> [ VrpExtDto {..} | v <- 
                                                 Set.toList vrps, let vrp = toVrpDto v taName ]
                             
-
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
 

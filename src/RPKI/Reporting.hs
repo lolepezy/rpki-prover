@@ -31,14 +31,13 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
+import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
 import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
-
-import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 
 import           RPKI.Domain
 import           RPKI.RRDP.Types
