@@ -74,19 +74,19 @@ import           RPKI.Validation.Common
 
 
 data PayloadBuilder = PayloadBuilder {
-        vrps     :: TVar [T2 [Vrp] ObjectKey],        
-        aspas    :: TVar [Aspa],
-        gbrs     :: TVar [T2 Hash Gbr],
-        bgpCerts :: TVar [BGPSecPayload]
+        vrps     :: IORef [T2 [Vrp] ObjectKey],        
+        aspas    :: IORef [Aspa],
+        gbrs     :: IORef [T2 Hash Gbr],
+        bgpCerts :: IORef [BGPSecPayload]
     }
-    deriving stock (Generic)    
+    deriving stock (Generic)        
 
-newPayloadBuilder :: STM PayloadBuilder 
+newPayloadBuilder :: IO PayloadBuilder 
 newPayloadBuilder = PayloadBuilder <$> 
-            newTVar mempty <*>
-            newTVar mempty <*>
-            newTVar mempty <*>
-            newTVar mempty
+            newIORef mempty <*>
+            newIORef mempty <*>
+            newIORef mempty <*>
+            newIORef mempty
     
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
@@ -157,13 +157,14 @@ newTopDownContext :: MonadIO m =>
                     -> AllTasTopDownContext
                     -> m TopDownContext
 newTopDownContext taName certificate allTas = 
-    liftIO $ atomically $ do
-        let verifiedResources = Just $ createVerifiedResources certificate
-        let currentPathDepth = 0
-        startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
-        interruptedByLimit      <- newTVar CanProceed
-        payloadBuilder          <- newPayloadBuilder
-        pure $! TopDownContext {..}
+    liftIO $ do 
+        payloadBuilder <- newPayloadBuilder
+        atomically $ do
+            let verifiedResources = Just $ createVerifiedResources certificate
+            let currentPathDepth = 0
+            startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
+            interruptedByLimit      <- newTVar CanProceed            
+            pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
                         WorldVersion
@@ -304,12 +305,12 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
     case r of
         Left _                    -> pure $ TopDownResult mempty mempty vs       
-        Right (topDownContext, _) -> atomically $ do     
+        Right (topDownContext, _) -> do     
             let builder = topDownContext ^. #payloadBuilder
-            vrps     <- readTVar $ builder ^. #vrps 
-            aspas    <- fmap Set.fromList $ readTVar $ builder ^. #aspas 
-            gbrs     <- fmap Set.fromList $ readTVar $ builder ^. #gbrs 
-            bgpCerts <- fmap Set.fromList $ readTVar $ builder ^. #bgpCerts    
+            vrps     <- readIORef $ builder ^. #vrps 
+            aspas    <- fmap Set.fromList $ readIORef $ builder ^. #aspas 
+            gbrs     <- fmap Set.fromList $ readIORef $ builder ^. #gbrs 
+            bgpCerts <- fmap Set.fromList $ readIORef $ builder ^. #bgpCerts    
 
             let payloads = Payloads {..}        
             let payloads' = payloads & #vrps .~ 
@@ -1055,7 +1056,7 @@ validateCaNoFetch
                 embedState validationState
                 case r of 
                     Left _  -> pure $! Just $! makeTroubledChild childKey fileName
-                    Right _ -> do 
+                    Right _  -> do 
                         case getPublicationPointsFromCertObject childCert of 
                             -- It's not going to happen?
                             Left e     -> vError e
@@ -1075,8 +1076,8 @@ validateCaNoFetch
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         increment $ topDownCounters ^. #originalRoa                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
-                                            (makeRoaShortcut childKey validRoa vrpList)
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (T2 vrpList childKey :)
+                                            (makeRoaShortcut childKey validRoa vrpList)                        
+                        rememberPayloads typed (T2 vrpList childKey :)
                         pure $! newShortcut shortcut                        
 
             AspaRO aspa -> 
@@ -1088,8 +1089,8 @@ validateCaNoFetch
                         let aspaPayload = getCMSContent $ cmsPayload aspa                        
                         increment $ topDownCounters ^. #originalAspa
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName
-                                            (makeAspaShortcut childKey validAspa aspaPayload)
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (aspaPayload :)
+                                            (makeAspaShortcut childKey validAspa aspaPayload)                        
+                        rememberPayloads typed (aspaPayload :)    
                         pure $! newShortcut shortcut
 
             BgpRO bgpCert ->
@@ -1100,7 +1101,8 @@ validateCaNoFetch
                         oneMoreBgp
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName
                                             (makeBgpSecShortcut childKey validaBgpCert bgpPayload)    
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (bgpPayload :)
+                        
+                        rememberPayloads typed (bgpPayload :)
                         pure $! newShortcut shortcut
 
             GbrRO gbr ->                 
@@ -1113,7 +1115,7 @@ validateCaNoFetch
                         let gbrPayload = T2 (getHash gbr) gbr'                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName
                                             (makeGbrShortcut childKey validGbr gbrPayload)
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (gbrPayload :)
+                        rememberPayloads typed (gbrPayload :)                        
                         pure $! newShortcut shortcut       
 
             -- Any new type of object should be added here, otherwise
@@ -1201,13 +1203,13 @@ validateCaNoFetch
             let threads = min 
                     (caCount `div` caPerThread + (length children - caCount) `div` eePerThread)
                     (fromIntegral $ config ^. #parallelism . #cpuParallelism)                        
-
-            scopes <- askScopes
+            
             let forAllChidlren = 
                     if threads <= 1
                         then forM 
                         else pooledForConcurrentlyN threads
 
+            scopes <- askScopes
             z <- liftIO $ forAllChidlren children $ runValidatorT scopes . f
             embedState $! mconcat $ map snd z                 
 
@@ -1245,8 +1247,8 @@ validateCaNoFetch
                         validateLocationForShortcut key
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
-                        increment $ topDownCounters ^. #shortcutRoa                                      
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (T2 vrps childKey :)
+                        increment $ topDownCounters ^. #shortcutRoa
+                        rememberPayloads typed (T2 vrps childKey :)
                     
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
@@ -1254,21 +1256,21 @@ validateCaNoFetch
                         validateLocationForShortcut key
                         oneMoreAspa
                         increment $ topDownCounters ^. #shortcutAspa                        
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (aspa :)
+                        rememberPayloads typed (aspa :)                        
 
                 BgpSecChild b@BgpSecShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
                         vHoist $ validateObjectValidityPeriod b now
                         validateLocationForShortcut key
-                        oneMoreBgp                        
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (bgpSec :)
+                        oneMoreBgp                
+                        rememberPayloads typed (bgpSec :)
 
                 GbrChild g@GbrShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
                         vHoist $ validateObjectValidityPeriod g now         
                         validateLocationForShortcut key
-                        oneMoreGbr                                           
-                        liftIO $ atomically $ modifyTVar' (topDownContext ^. #payloadBuilder . typed) $! (gbr :)
+                        oneMoreGbr                 
+                        rememberPayloads typed (gbr :)
 
                 TroubledChild childKey_ -> do
                     increment $ topDownCounters ^. #shortcutTroubled
@@ -1311,6 +1313,12 @@ validateCaNoFetch
 
             pure $! length allPpas
 
+    -- TODO This is pretty bad, it's easy to forget to do it
+    rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
+    rememberPayloads lens_ f = do
+        let builder = topDownContext ^. #payloadBuilder . lens_
+        liftIO $ atomicModifyIORef' builder $ \b -> (f b, ())
+
 
 -- Calculate difference bentween a manifest shortcut 
 -- and the list of children of the new manifest object.
@@ -1332,7 +1340,8 @@ manifestDiff mftShortcut newMftChidlren =
                     
     deletedEntries = 
         -- If we delete everything from mftShortcut.nonCrlEntries that is present in 
-        -- newMftChidlren, we only have the entries that are not present on the new manifest
+        -- newMftChidlren, we only have the entries that are not present on the new manifest,
+        -- i.e. the deleted ones.
         foldr (\(T3 fileName _ key_) entries -> 
                 case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of 
                     Nothing -> entries
