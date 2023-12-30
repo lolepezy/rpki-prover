@@ -528,22 +528,20 @@ validateCaNoFetch
     ca = do 
     
     case ca of 
-        CaFull c -> 
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
-                increment $ topDownCounters ^. #originalCa             
-                markAsReadByHash appContext topDownContext (getHash c)                         
-                validateObjectLocations c
-                vHoist $ validateObjectValidityPeriod c now
-                oneMoreCert
-                join $! nextAction $ toAKI $ getSKI c
-        CaShort c -> 
-            vFocusOn ObjectFocus (c ^. #key) $ do 
-                increment $ topDownCounters ^. #shortcutCa 
-                markAsRead topDownContext (c ^. #key) 
-                validateLocationForShortcut (c ^. #key)
-                vHoist $ validateObjectValidityPeriod c now
-                oneMoreCert
-                join $! nextAction $ toAKI (c ^. #ski)
+        CaFull c -> do
+            increment $ topDownCounters ^. #originalCa             
+            markAsReadByHash appContext topDownContext (getHash c)                         
+            validateObjectLocations c
+            vHoist $ validateObjectValidityPeriod c now
+            oneMoreCert
+            join $! nextAction $ toAKI $ getSKI c
+        CaShort c -> do 
+            increment $ topDownCounters ^. #shortcutCa 
+            markAsRead topDownContext (c ^. #key) 
+            validateLocationForShortcut (c ^. #key)
+            vHoist $ validateObjectValidityPeriod c now
+            oneMoreCert
+            join $! nextAction $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
 
@@ -852,7 +850,7 @@ validateCaNoFetch
     
     allOrNothingMftChildrenResults fullCa nonCrlChildren validCrl = do
         scopes <- askScopes
-        liftIO $ pooledForConcurrently
+        liftIO $ parallelChildrenProcessing
             nonCrlChildren
             $ \(T3 filename hash' key) -> do 
                 (z, vs) <- runValidatorT scopes $ do
@@ -867,7 +865,7 @@ validateCaNoFetch
     
     independentMftChildrenResults fullCa nonCrlChildren validCrl = do
         scopes <- askScopes
-        liftIO $ pooledForConcurrently
+        liftIO $ parallelChildrenProcessing
             nonCrlChildren
             $ \(T3 filename hash key) -> do
                 (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash
@@ -890,6 +888,19 @@ validateCaNoFetch
                                 Left e              -> InvalidChild e vs' key filename
                                 Right childShortcut -> Valid vs' childShortcut key filename
     
+    parallelChildrenProcessing nonCrlChildren f = do 
+        let itemsPerThread = 20
+        let threads = min 
+                    (length nonCrlChildren `div` itemsPerThread)
+                    (fromIntegral $ config ^. #parallelism . #cpuParallelism)
+
+        let forAllChidlren = 
+                if threads <= 1
+                    then forM 
+                    else pooledForConcurrentlyN threads        
+
+        forAllChidlren nonCrlChildren f 
+
     gatherMftEntryResults :: [ManifestValidity AppError ValidationState] 
                           -> ValidatorT IO [T2 ObjectKey (Maybe MftEntry)]
     gatherMftEntryResults =        
@@ -1025,7 +1036,7 @@ validateCaNoFetch
             -> Validated CrlObject
             -> ValidatorT IO (Maybe MftEntry)
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do        
-        let childFocus = vFocusOn LocationFocus (getURL $ pickLocation locations)
+        let focusOnChild = vFocusOn LocationFocus (getURL $ pickLocation locations)
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
@@ -1035,23 +1046,23 @@ validateCaNoFetch
                     otherwise an error in child validation would interrupt validation of the parent with
                     ExceptT's exception logic.
                 -}
-                (r, validationState) <- liftIO $ runValidatorT parentScope $ do        
-                    childVerifiedResources <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                (r, validationState) <- liftIO $ runValidatorT parentScope $       
+                    vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                         -- Check that AIA of the child points to the correct location of the parent
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                         --                             
                         vHoist $ validateAIA @_ @_ @'CACert childCert fullCa
 
-                        vHoist $ do
-                            Validated validCert <- validateResourceCert @_ @_ @'CACert
-                                                    now childCert fullCa validCrl
-                            validateResources verifiedResources childCert validCert
+                        childVerifiedResources <- vHoist $ do
+                                Validated validCert <- validateResourceCert @_ @_ @'CACert
+                                                            now childCert fullCa validCrl
+                                validateResources verifiedResources childCert validCert
 
-                    let childTopDownContext = topDownContext
-                            & #verifiedResources ?~ childVerifiedResources
-                            & #currentPathDepth %~ (+ 1)
+                        let childTopDownContext = topDownContext
+                                & #verifiedResources ?~ childVerifiedResources
+                                & #currentPathDepth %~ (+ 1)
 
-                    validateCa appContext childTopDownContext (Located locations childCert)
+                        validateCa appContext childTopDownContext (Located locations childCert)
 
                 embedState validationState
                 case r of 
@@ -1067,7 +1078,7 @@ validateCaNoFetch
                                                         (makeCaShortcut childKey (Validated childCert) ppas)
                                 pure $! newShortcut shortcut
             RoaRO roa -> 
-                childFocus $ do
+                focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validRoa <- vHoist $ validateRoa now roa fullCa validCrl verifiedResources
@@ -1081,7 +1092,7 @@ validateCaNoFetch
                         pure $! newShortcut shortcut                        
 
             AspaRO aspa -> 
-                childFocus $ do
+                focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validAspa <- vHoist $ validateAspa now aspa fullCa validCrl verifiedResources
@@ -1094,7 +1105,7 @@ validateCaNoFetch
                         pure $! newShortcut shortcut
 
             BgpRO bgpCert ->
-                childFocus $ do
+                focusOnChild $ do
                     validateObjectLocations child
                     allowRevoked $ do
                         (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa validCrl
@@ -1106,7 +1117,7 @@ validateCaNoFetch
                         pure $! newShortcut shortcut
 
             GbrRO gbr ->                 
-                childFocus $ do
+                focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
@@ -1162,46 +1173,49 @@ validateCaNoFetch
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
+        -- Filter children that we actually want to go through here
+        let filteredChildren = 
+                case maybeChildren of 
+                    Nothing -> Map.toList nonCrlEntries
+                    Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
+
+        let T3 caCount troubledCount totalCount = 
+                foldr (\(_, MftEntry {..}) (T3 cas troubled total) -> 
+                        case child of 
+                            CaChild {}       -> T3 (cas + 1) troubled       (total + 1)
+                            TroubledChild {} -> T3 cas       (troubled + 1) (total + 1)
+                            _                -> T3 cas       troubled       (total + 1)
+                    ) (T3 0 0 0 :: T3 Int Int Int) filteredChildren
+
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
             vHoist $ validateObjectValidityPeriod mftShortcut now
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
-                vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
+                vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now    
 
             -- For children that are problematic we'll have to fall back 
             -- to full validation, for that we beed the parent CA and a valid CRL.
             -- Construct the validation function for such problematic children
             troubledValidation <-
-                    case [ () | (_, MftEntry { child = TroubledChild _} ) <- Map.toList nonCrlEntries ] of 
-                        [] ->                         
-                            pure $! \_ _ -> 
+                    case troubledCount of 
+                        0 -> pure $! \_ _ -> 
                                 -- Should never happen, there are no troubled children
                                 errorOnTroubledChild
                         _  -> do 
                             caFull   <- findFullCa
                             validCrl <- findValidCrl
                             pure $! \childKey fileName -> 
-                                    validateTroubledChild caFull fileName validCrl childKey
+                                    validateTroubledChild caFull fileName validCrl childKey                        
 
-            -- Filter children that we actually want to go through here
-            let filteredChildren = 
-                    case maybeChildren of 
-                        Nothing -> Map.toList nonCrlEntries
-                        Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
-
-            -- Gather all PPAs from all CAs on the MftShortcut and fetch all of them beforehand to avoid
-            -- a lot of STM transaction restarts in `fetchPPWithFallback`                
-            caCount <- prefetchRepositories filteredChildren            
-
-            collectResultsInParallel caCount filteredChildren (getChildPayloads troubledValidation)
+            collectResultsInParallel caCount totalCount filteredChildren (getChildPayloads troubledValidation)
 
       where
-        collectResultsInParallel caCount children f = do 
+        collectResultsInParallel caCount totalCount children f = do 
             -- Pick up some good parallelism to avoid too many threads, 
             -- but also process big manifests quicker
             let caPerThread = 50            
             let eePerThread = 500
             let threads = min 
-                    (caCount `div` caPerThread + (length children - caCount) `div` eePerThread)
+                    (caCount `div` caPerThread + (totalCount - caCount) `div` eePerThread)
                     (fromIntegral $ config ^. #parallelism . #cpuParallelism)                        
             
             let forAllChidlren = 
@@ -1230,18 +1244,12 @@ validateCaNoFetch
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey            
-            pps <- readPublicationPoints repositoryProcessing
             case child of 
-                CaChild caShortcut _ -> do      
-                    let validateCaShortcut = validateCaNoLimitChecks appContext topDownContext (CaShort caShortcut)              
-                    case filterPPAccess config (caShortcut ^. #ppas) of 
-                        Nothing          -> validateCaShortcut
-                        Just filteredPpa -> 
-                            case getPrimaryRepositoryFromPP pps filteredPpa of 
-                                Nothing         -> validateCaShortcut
-                                Just primaryUrl -> metricFocusOn PPFocus primaryUrl validateCaShortcut
+                CaChild caShortcut _ -> 
+                    vFocusOn ObjectFocus childKey $ 
+                        validateCaNoLimitChecks appContext topDownContext (CaShort caShortcut)
                         
-                RoaChild r@RoaShortcut {..} _ -> 
+                RoaChild r@RoaShortcut {..} _ -> do
                     vFocusOn ObjectFocus childKey $ do 
                         vHoist $ validateObjectValidityPeriod r now
                         validateLocationForShortcut key
@@ -1276,42 +1284,6 @@ validateCaNoFetch
                     increment $ topDownCounters ^. #shortcutTroubled
                     troubledValidation childKey_ fileName
 
-
-        prefetchRepositories children = do 
-            let allPpas = [ ppas | (_, MftEntry { child = CaChild CaShortcut {..} _}) <- children ]
-
-            -- Do all the necessary filtering based on fetch config and 
-            -- sync(quick) and async(slow) repository statuses.
-            -- pps <- readPublicationPoints repositoryProcessing
-            -- let allSyncPpas =
-            --         foldr (\ppa syncPpas ->
-            --             case filterPPAccess config ppa of 
-            --                 Nothing          -> syncPpas
-            --                 Just filteredPpa -> 
-            --                     let (quickPPs, _) = onlyForSyncFetch pps filteredPpa
-            --                     in case quickPPs of 
-            --                         Nothing       -> syncPpas
-            --                         Just quickPpa -> quickPpa : syncPpas)
-            --             mempty 
-            --             allPpas
-
-            -- let uniquePpas = getFetchablePPAs pps allSyncPpas            
-
-            -- scopes <- askScopes
-            -- let fetchConfig = syncFetchConfig config
-            -- z <- liftIO $ pooledForConcurrently uniquePpas $ \ppa -> 
-            --         fmap (ppa,) $ runValidatorT scopes $                     
-            --             fetchPPWithFallback appContext fetchConfig repositoryProcessing worldVersion ppa
-
-            -- ppsAfterFetch <- readPublicationPoints repositoryProcessing
-            -- forM_ z $ \(ppa, (r, vs)) -> do 
-            --     embedState vs
-            --     for_ r $ \fetches -> do 
-            --         let (_, slowRepos) = onlyForSyncFetch ppsAfterFetch ppa
-            --         markForAsyncFetch repositoryProcessing 
-            --                 $ filterForAsyncFetch ppa fetches slowRepos                   
-
-            pure $! length allPpas
 
     -- TODO This is pretty bad, it's easy to forget to do it
     rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
