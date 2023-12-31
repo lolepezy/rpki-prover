@@ -10,6 +10,7 @@
 
 module RPKI.Reporting where
     
+import           Control.DeepSeq    
 import           Control.Exception.Lifted
 import           Control.Lens
 
@@ -48,7 +49,7 @@ import           RPKI.Store.Base.Serialisation
 
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnknownObjectAsTACert |
@@ -61,7 +62,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NoValidatedVersion |
                         ParentCertificateNotFound |
                         ObjectNotOnManifest |
-                        UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
+                        UnsupportedHashAlgorithm Text |
                         NotFoundOnChecklist Hash Text |
                         ChecklistFileNameMismatch Hash Text Text |
                         TACertAKIIsNotEmpty URI |
@@ -127,7 +128,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
     
 data RrdpError = BrokenXml Text | 
                 BrokenSerial Text |
@@ -172,7 +173,7 @@ data RrdpError = BrokenXml Text |
                 RrdpDownloadTimeout Int64 | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
@@ -181,32 +182,32 @@ data RsyncError = RsyncProcessError Int Text |
                     RsyncUnsupportedObjectType Text | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data StorageError = StorageError Text |
                     DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 newtype TALError = TALError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 newtype InitError = InitError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data InternalError = WorkerTimeout Text 
                    | WorkerOutOfMemory Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data SlurmError = SlurmFileError Text Text |
                   SlurmParseError Text Text |
                   SlurmValidationError Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 
@@ -219,15 +220,15 @@ data AppError = ParseE (ParseError Text) |
                 InternalE InternalError |
                 UnspecifiedE Text Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 newtype VWarning = VWarning AppError
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data VIssue = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
@@ -236,7 +237,7 @@ instance Exception AppException
 
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
     deriving newtype Monoid
 
 instance Semigroup Validations where
@@ -252,15 +253,15 @@ data Focus = TAFocus Text
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass (NFData, TheBinary)
 
 newtype Scope (t :: ScopeKind) = Scope (NonEmpty Focus)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
 
 data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    
 
 type VScope      = Scope 'Validation    
 type MetricScope = Scope 'Metric
@@ -337,7 +338,7 @@ class Monoid metric => MetricC metric where
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)   
+    deriving anyclass (NFData, TheBinary)
     deriving newtype (Num)
     deriving Semigroup via Sum Count
     deriving Monoid via Sum Count
@@ -347,7 +348,7 @@ instance Show Count where
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass (TheBinary, NFData)        
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200
@@ -357,7 +358,7 @@ instance Semigroup HttpStatus where
 
 data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving anyclass (TheBinary, NFData)        
 
 instance Monoid RrdpSource where
     mempty = RrdpNoUpdate
@@ -370,7 +371,7 @@ instance Semigroup RrdpSource where
 
 data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving anyclass (TheBinary, NFData)        
 
 instance Monoid FetchFreshness where
     mempty = UpToDate
@@ -389,7 +390,7 @@ data RrdpMetric = RrdpMetric {
         fetchFreshness  :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
     deriving Semigroup via GenericSemigroup RrdpMetric   
     deriving Monoid    via GenericMonoid RrdpMetric
 
@@ -399,7 +400,7 @@ data RsyncMetric = RsyncMetric {
         fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
     deriving Semigroup via GenericSemigroup RsyncMetric   
     deriving Monoid    via GenericMonoid RsyncMetric
 
@@ -417,7 +418,7 @@ data ValidationMetric = ValidationMetric {
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
     deriving Semigroup via GenericSemigroup ValidationMetric   
     deriving Monoid    via GenericMonoid ValidationMetric
 
@@ -432,7 +433,7 @@ instance MetricC ValidationMetric where
 
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass (NFData, TheBinary)
     deriving newtype Monoid    
     deriving newtype Semigroup
 
@@ -441,7 +442,7 @@ data VrpCounts = VrpCounts {
         perTaUnique :: MonoidalMap TaName Count
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
@@ -452,7 +453,7 @@ data RawMetric = RawMetric {
         vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
     deriving Semigroup via GenericSemigroup RawMetric   
     deriving Monoid    via GenericMonoid RawMetric
 
@@ -461,7 +462,7 @@ data RawMetric = RawMetric {
 
 data Trace = WorkerTimeoutTrace                   
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass (TheBinary, NFData)
 
 data ValidationState = ValidationState {
         validations   :: Validations,
@@ -469,7 +470,7 @@ data ValidationState = ValidationState {
         traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (NFData, TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 

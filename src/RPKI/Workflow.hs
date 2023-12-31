@@ -255,7 +255,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 atomically (writeTVar asyncFetchIsRunning True)
                 logInfo logger [i|Running asynchronous fetch.|]            
                 fetchVersion <- createWorldVersion     
-                (_, TimeMs elapsed) <- timedMS $ do 
+                (_, TimeMs elapsed) <- timedMS $! do 
                     validations <- runFetches appContext
                     db <- readTVarIO database
                     rwTx db $ \tx -> do
@@ -351,7 +351,7 @@ runWorkflow appContext@AppContext {..} tals = do
         -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
         deletedAnything <- readTVarIO deletedAnythingFromDb
         if deletedAnything then do 
-            (_, elapsed) <- timedMS $ runMaintenance appContext
+            (_, elapsed) <- timedMS $! runMaintenance appContext
             logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
         else 
             logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
@@ -489,8 +489,11 @@ runValidation :: Storage s =>
 runValidation appContext@AppContext {..} worldVersion tals = do       
     db <- readTVarIO database
 
-    TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
+    !TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
                 validateMutlipleTAs appContext worldVersion tals
+
+    -- !TopDownResult {..} <- mconcat <$> validateMutlipleTAs appContext worldVersion tals
+    -- let !TopDownResult {..} = addUniqueVRPCount z
 
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <-
@@ -504,22 +507,26 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                         logError logger [i|Failed to read SLURM files: #{e}|]
                         pure (vs, Nothing)
                     Right slurm ->
-                        pure (vs, Just slurm)
+                        pure (vs, Just slurm)    
 
     -- Save all the results into LMDB
-    let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    (_, elapsed) <- timedMS $ rwTx db $ \tx -> do
-        saveValidations tx db worldVersion (updatedValidation ^. typed)
+    let !updatedValidation = slurmValidations <> topDownValidations ^. typed
+
+    (_, elapsed) <- timedMS $! rwTx db $ \tx -> do
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
+        saveValidations tx db worldVersion (updatedValidation ^. typed)
         saveVrps tx db (payloads ^. typed) worldVersion
         saveRoas tx db roas worldVersion
         saveAspas tx db (payloads ^. typed) worldVersion
         saveGbrs tx db (payloads ^. typed) worldVersion
-        saveBgps tx db (payloads ^. typed) worldVersion
+        saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
         completeWorldVersion tx db worldVersion
+        
+    -- threadDelay 60_000_000            
+    
 
-    logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]    
+    logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]        
 
     pure (updatedValidation, maybeSlurm)
 
@@ -558,7 +565,7 @@ loadStoredAppState AppContext {..} = do
                     pure Nothing
 
                 | otherwise -> do
-                    (payloads, elapsed) <- timedMS $ do                                            
+                    (payloads, elapsed) <- timedMS $! do                                            
                         slurm    <- slurmForVersion tx db lastVersion
                         payloads <- getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> 

@@ -81,7 +81,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
         let rsc = getCMSContent $ parsedRsc ^. #cmsPayload
         let digest = rsc ^. #digestAlgorithm
         case findHashFunc digest of 
-            Nothing       -> appError $ ValidationE $ UnsupportedHashAlgorithm digest
+            Nothing       -> appError $ ValidationE $ UnsupportedHashAlgorithm $ fmtGen digest
             Just hashFunc -> do 
                 actualFiles <- fileMap hashFunc
                 let checkList = Map.fromList $ map (\(T2 t h) -> (h, t)) $ rsc ^. #checkList
