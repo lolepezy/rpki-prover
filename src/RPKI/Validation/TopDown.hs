@@ -105,7 +105,6 @@ data TopDownContext = TopDownContext {
 data AllTasTopDownContext = AllTasTopDownContext {
         now                  :: Now,
         worldVersion         :: WorldVersion,
-        validManifests       :: TVar ValidManifests,        
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
@@ -175,8 +174,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
     let now = Now $ versionToMoment worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
-        visitedKeys    <- newTVar mempty
-        validManifests <- newTVar makeValidManifests        
+        visitedKeys      <- newTVar mempty
         shortcutsCreated <- newTVar []        
         pure $! AllTasTopDownContext {..}
 
@@ -648,8 +646,8 @@ validateCaNoFetch
                                             combineShortcutAndNewMft
                                                 `catchError`
                                                 (\e -> do 
-                                                    appWarn e
-                                                    logDebug logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
+                                                    vFocusOn ObjectFocus mftKey $ appWarn e
+                                                    logWarn logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
                                                     useShortcutOnly)                                            
                     pure $! do 
                         markAsRead topDownContext mftShortKey
@@ -659,7 +657,7 @@ validateCaNoFetch
     -- Proceed with full validation for children mentioned in the full manifest 
     -- and children mentioned in the manifest shortcut. Create a diff between them,
     -- run full validation only for new children and create a new manifest shortcut
-    -- with updated set children.
+    -- with updated set of children.
     manifestFullValidation :: 
                     Located CaCerObject
                     -> Keyed (Located MftObject) 
@@ -701,18 +699,28 @@ validateCaNoFetch
             bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
             
             forM_ mftShortcut $ \mftShort -> do          
-                -- manifest number must increase 
-                -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
-                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
-                when (mftNumber <= mftShort ^. #manifestNumber) $
-                    vError $ ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
-
                 -- If CRL has changed, we have to recheck if children are not revoked. 
                 -- If will be checked by full validation for newChildren but it needs 
                 -- to be explicitly checked for overlappingChildren                
                 when (crlKey /= mftShort ^. #crlShortcut . #key) $ do     
                     increment $ topDownCounters ^. #originalCrl                         
                     checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
+
+                -- manifest number must increase 
+                -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
+                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
+                when (mftNumber <= mftShort ^. #manifestNumber) $ do 
+                    -- Here we have to do a bit of hackery: 
+                    -- * Calling vError will interrupt this function and call for fall-back to 
+                    --   the "latest valid manifest" which is the shortcut
+                    -- * But the shortcut may have expired already and there will no be any options left,
+                    --   so we need to be careful and just emit a warning
+                    -- 
+                    let (beforeMft, afterMft) = getValidityPeriod mftShort
+                    let issue = ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
+                    if beforeMft < unNow now && unNow now > afterMft
+                        then vError issue
+                        else vWarn issue
 
             -- Mark all manifest entries as read to avoid the situation
             -- when some of the children are garbage-collected from the cache 

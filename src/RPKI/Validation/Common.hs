@@ -42,18 +42,6 @@ import           RPKI.Time
 import           RPKI.Util                        (fmtLocations)
 
 
-data ValidManifests'State = FillingUp | FetchingFromDB | Merged 
-    deriving stock (Generic)
-
-data ValidManifests = ValidManifests {
-        state  :: ValidManifests'State,
-        valids :: Map AKI ObjectKey
-    }
-    deriving stock (Generic)
-
-makeValidManifests :: ValidManifests 
-makeValidManifests = ValidManifests FillingUp mempty
-
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources certificate = 
     VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
@@ -77,72 +65,6 @@ validateMftFileName filename =
         _somethingElse -> 
             vError $ BadFileNameOnMFT filename 
                         "Filename doesn't have exactly one DOT"      
-
--- 
--- Reusable piece for the cases when a "fetch" has failed so we are falling 
--- back to a latest valid cached manifest for this CA
--- https://datatracker.ietf.org/doc/html/rfc9286#section-6.6
--- 
--- This function doesn't make much sense by itself, it's just a complex chunk 
--- of code reusable by both TopDown and BottomUp.
--- 
-tryLatestValidCachedManifest :: (MonadIO m, Storage s, WithHash mft) =>
-        AppContext s
-    -> (Keyed (Located MftObject) -> AKI -> Locations -> ValidatorT m b)
-    -> Maybe mft
-    -> TVar ValidManifests
-    -> AKI
-    -> Locations
-    -> AppError
-    -> ValidatorT m b
-tryLatestValidCachedManifest AppContext{..} useManifest latestMft validManifests childrenAki certLocations e = do
-    db <- liftIO $ readTVarIO database    
-    validMfts <- loadValidManifests db logger validManifests        
-    case Map.lookup childrenAki validMfts of
-        Nothing   -> throwError e
-        Just key -> do                        
-            z <- liftIO $ roTx db $ \tx -> getLocatedByKey tx db key
-            latestValidMft <- case z of 
-                                Just (Located loc (MftRO mft)) -> pure $ Located loc mft
-                                _                              -> throwError e                
-            let mftLoc = fmtLocations $ getLocations latestValidMft            
-            case latestMft of 
-                Nothing -> do 
-                    appWarn e      
-                    logWarn logger [i|Failed to process manifest #{mftLoc}: #{e}, will try previous valid version.|]
-                    useManifest (Keyed latestValidMft key) childrenAki certLocations                                
-                Just latestMft'
-                    | getHash latestMft' == getHash latestValidMft
-                        -- it doesn't make sense to try the same manifest again
-                        -- just re-trow the error
-                        -> throwError e
-                    | otherwise -> do 
-                        appWarn e                                    
-                        logWarn logger $ [i|Failed to process latest manifest #{mftLoc}: #{e},|] <> 
-                                         [i|] fetch is invalid, will try latest valid one from previous fetch(es).|]
-                        useManifest (Keyed latestValidMft key) childrenAki certLocations
-
-
-loadValidManifests :: (MonadIO m, Storage s) => 
-                        DB s -> AppLogger -> TVar ValidManifests -> m (Map AKI ObjectKey) 
-loadValidManifests db logger validManifests = liftIO $ do 
-    join $ atomically $ do 
-        vm <- readTVar validManifests
-        case vm ^. #state of 
-            FetchingFromDB  -> retry
-            Merged          -> pure $ pure $ vm ^. #valids
-            FillingUp       -> do 
-                writeTVar validManifests $ vm & #state .~ FetchingFromDB
-                pure $ do 
-                    (z, elapsed) <- timedMS $ do 
-                        validMfts <- roTx db $ \tx -> getLatestValidMfts tx db
-                        atomically $ do                                             
-                            let valids = Map.unionWith (\a _ -> a) (vm ^. #valids) validMfts
-                            writeTVar validManifests $ ValidManifests Merged valids
-                            pure valids
-                    logInfo logger [i|Loaded latest valid manifests from the cache in #{elapsed}ms.|]
-                    pure z
-
 
 -- TODO Is there a more reliable way to find it?
 findCrlOnMft :: MftObject -> [MftPair]
