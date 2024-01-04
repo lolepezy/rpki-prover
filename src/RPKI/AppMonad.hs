@@ -190,7 +190,7 @@ updateMetric :: forall metric m .
                 (Monad m, MetricC metric) => 
                 (metric -> metric) -> ValidatorT m ()
 updateMetric f = vHoist $ do 
-    mp <- asks (^. typed)
+    mp <- asks (^. typed)    
     modify' (& typed . metricLens %~ updateMetricInMap mp f)    
 
 timedMetric :: forall m metric r . 

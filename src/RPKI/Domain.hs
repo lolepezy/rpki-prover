@@ -209,7 +209,7 @@ newtype SessionId = SessionId Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newtype Serial = Serial Integer 
+newtype Serial = Serial Integer     
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -750,17 +750,17 @@ newtype UrlKey = UrlKey ArtificialKey
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 
 data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 
 -- Small utility functions that don't have anywhere else to go

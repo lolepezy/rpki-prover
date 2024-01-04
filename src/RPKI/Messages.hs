@@ -288,14 +288,14 @@ toValidationMessage = \case
       CircularReference hash ->
           [i|Object with hash #{hash} creates reference cycle.|]
 
-      CertificatePathTooDeep locations maxDepth ->
-          [i|The CA tree reached maximum depth of #{maxDepth} at #{locations}.|]
+      CertificatePathTooDeep maxDepth ->
+          [i|The CA tree reached maximum depth of #{maxDepth}.|]
 
-      TreeIsTooBig locations maxTreeSize ->          
-          [i|The number of object in CA tree reached maximum of #{maxTreeSize} at #{locations}.|]
+      TreeIsTooBig maxTreeSize ->          
+          [i|The number of object in CA tree reached maximum of #{maxTreeSize}.|]
 
-      TooManyRepositories locations maxTaRepositories ->          
-          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
+      TooManyRepositories maxTaRepositories ->          
+          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories}.|]
 
       ValidationTimeout (Seconds maxDuration) -> 
           [i|Validation did not finish within #{maxDuration}s and was interrupted.|]

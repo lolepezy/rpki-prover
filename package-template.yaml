@@ -136,7 +136,7 @@ executables:
     - -Wall    
     - -rtsopts
     - -funbox-strict-fields
-    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T --disable-delayed-os-memory-return"'
+    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"'
     dependencies:
     - rpki-prover  
 

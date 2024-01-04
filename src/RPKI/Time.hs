@@ -21,7 +21,7 @@ import           RPKI.Orphans.Store
 
 newtype Instant = Instant DateTime
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass TheBinary    
+    deriving anyclass TheBinary
 
 instance Show Instant where
     show (Instant d) = timePrint ISO8601_DateAndTime d
@@ -32,14 +32,14 @@ newtype Now = Now { unNow :: Instant }
 
 newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary
     deriving newtype (Num)
     deriving Semigroup via Sum TimeMs
     deriving Monoid via Sum TimeMs
 
 newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary
     deriving newtype (Num)
     deriving Semigroup via Sum CPUTime
     deriving Monoid via Sum CPUTime
@@ -56,7 +56,7 @@ thisInstant = Now . Instant <$> liftIO dateCurrent
 getCpuTime :: MonadIO m => m CPUTime
 getCpuTime = do 
     picos <- liftIO getCPUTime
-    pure $ CPUTime $ picos `div` 1000_000_000
+    pure $! CPUTime $ picos `div` 1000_000_000
 
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
@@ -64,12 +64,12 @@ timed action = do
     !z <- action
     Now (Instant end) <- thisInstant
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
-    pure (z, s * nanosPerSecond + ns)
+    pure $! (z, s * nanosPerSecond + ns)
 
 timedMS :: MonadIO m => m a -> m (a, TimeMs)
 timedMS action = do 
     (!z, ns) <- timed action   
-    pure (z, fromIntegral $! ns `div` microsecondsPerSecond)
+    pure $! (z, fromIntegral $! ns `div` microsecondsPerSecond)
 
 -- cpuTime :: 
 
