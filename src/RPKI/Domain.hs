@@ -12,8 +12,6 @@
 
 module RPKI.Domain where
 
-import           Control.DeepSeq
-
 import           Data.Int                 (Int64)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
@@ -85,48 +83,48 @@ data CertType = CACert | EECert | BGPCert
 
 newtype Hash = Hash BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 data RsyncHost = RsyncHost RsyncHostName (Maybe RsyncPort)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 newtype RsyncHostName = RsyncHostName { unRsyncHostName :: Text }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 newtype RsyncPort = RsyncPort { unRsyncPort :: Int }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving newtype Monoid    
     deriving newtype Semigroup
     deriving anyclass Hashable
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 newtype RrdpURL = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving  (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving anyclass Hashable
 
 class WithValidityPeriod a where
@@ -197,23 +195,23 @@ toText = unURI . getURL
 
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype SKI  = SKI { unSKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype AKI  = AKI { unAKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype SessionId = SessionId Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype Serial = Serial Integer     
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype Version = Version Integer 
     deriving stock (Show, Eq, Ord, Generic)
@@ -221,7 +219,7 @@ newtype Version = Version Integer
 
 newtype Locations = Locations { unLocations :: NESet RpkiURL } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
     deriving newtype (Semigroup)
 
 instance Show Serial where
@@ -312,7 +310,7 @@ data RpkiObject = CerRO CaCerObject
 
 data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | BGPSec | RSC
     deriving (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 instance WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
@@ -496,14 +494,14 @@ data Vrp = Vrp
         !IpPrefix 
         {-# UNPACK #-} !PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data MftPair = MftPair {
         fileName :: Text,
         hash     :: Hash
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data Manifest = Manifest {
         mftNumber   :: Serial, 
@@ -530,7 +528,7 @@ data SignCRL = SignCRL {
 
 data Gbr = Gbr BSS.ShortByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 
 data Rsc = Rsc {        
@@ -547,7 +545,7 @@ data Aspa = Aspa {
         providers :: Set ASN
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data BGPSecPayload = BGPSecPayload {
         bgpSecSki  :: SKI,
@@ -556,7 +554,7 @@ data BGPSecPayload = BGPSecPayload {
         -- TODO Possible store the hash of the original BGP certificate?
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 
 data CertificateWithSignature = CertificateWithSignature {
@@ -686,11 +684,11 @@ data Attribute = ContentTypeAttr ContentType
 -- Subject Public Key Info
 newtype SPKI = SPKI { unSPKI :: EncodedBase64 }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype EncodedBase64 = EncodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
     deriving newtype (Monoid, Semigroup)
 
 newtype DecodedBase64 = DecodedBase64 BS.ByteString
@@ -700,20 +698,20 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
 
 newtype TaName = TaName { unTaName :: Text }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 instance Show TaName where
     show = show . unTaName
 
 newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
 newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (Set Vrp)) }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup Roas
     deriving Monoid    via GenericMonoid Roas
 
@@ -734,7 +732,7 @@ data Payloads a = Payloads {
         bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup (Payloads a)
     deriving Monoid    via GenericMonoid (Payloads a)
 
@@ -752,17 +750,17 @@ newtype UrlKey = UrlKey ArtificialKey
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
 
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
 
 
 data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
 
 
 -- Small utility functions that don't have anywhere else to go

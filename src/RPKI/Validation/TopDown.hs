@@ -25,7 +25,6 @@ import           Control.Monad
 import           Control.Monad.Reader
 
 import           Control.Lens hiding (children)
-import           Control.DeepSeq
 
 import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
@@ -146,8 +145,7 @@ data TopDownResult = TopDownResult {
         roas               :: Roas,
         topDownValidations :: ValidationState
     }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass NFData 
+    deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
@@ -281,7 +279,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
                     validateTA appContext tal worldVersion allTas
             logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
-            pure $! force r
+            pure r
 
         -- Get validations for all the fetches that happened during this top-down traversal
         fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
@@ -1295,7 +1293,7 @@ validateCaNoFetch
 
 
     -- TODO This is pretty bad, it's easy to forget to do it
-    rememberPayloads :: forall m a . (MonadIO m, NFData a) => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
+    rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
     rememberPayloads lens_ f = do
         pure ()
         let builder = topDownContext ^. #payloadBuilder . lens_        
@@ -1494,15 +1492,14 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
                               AppContext s -> AllTasTopDownContext -> m ()
 applyValidationSideEffects
     appContext@AppContext {..}
-    AllTasTopDownContext {..} = liftIO $ do
-        pure ()
-    -- (visitedSize, elapsed) <- timedMS $ do
-    --     vks <- atomically $ readTVar visitedKeys            
-    --     rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
-    --     pure $! Set.size vks
+    AllTasTopDownContext {..} = liftIO $ do        
+    (visitedSize, elapsed) <- timedMS $ do
+        vks <- atomically $ readTVar visitedKeys            
+        rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
+        pure $! Set.size vks
     
-    -- liftIO $ reportCounters appContext topDownCounters        
-    -- logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
+    liftIO $ reportCounters appContext topDownCounters        
+    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
 reportCounters :: AppContext s -> TopDownCounters -> IO ()
@@ -1604,12 +1601,10 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payloads Vrps)) => s -> s
 addUniqueVRPCount !s = let
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
-        !totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
-        !perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)   
+        totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
+        perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)   
     in s & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique
-                
-
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 

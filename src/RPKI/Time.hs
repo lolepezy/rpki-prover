@@ -5,7 +5,6 @@
 
 module RPKI.Time where
 
-import           Control.DeepSeq
 import           Data.Int
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
@@ -22,7 +21,7 @@ import           RPKI.Orphans.Store
 
 newtype Instant = Instant DateTime
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 instance Show Instant where
     show (Instant d) = timePrint ISO8601_DateAndTime d
@@ -33,14 +32,14 @@ newtype Now = Now { unNow :: Instant }
 
 newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving newtype (Num)
     deriving Semigroup via Sum TimeMs
     deriving Monoid via Sum TimeMs
 
 newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (NFData, TheBinary)
+    deriving anyclass TheBinary
     deriving newtype (Num)
     deriving Semigroup via Sum CPUTime
     deriving Monoid via Sum CPUTime

@@ -11,12 +11,10 @@ module RPKI.Resources.Types where
 
 import Prelude hiding (subtract)
 
-import           Data.Store
-import           Control.DeepSeq
-
 import qualified Data.ByteString                       as BS
 
 import           Data.Kind
+import           Data.Store
 import           Data.Vector                           (Vector)
 import           Data.Word                             (Word8, Word32)
 import           GHC.Generics
@@ -36,29 +34,29 @@ data AddrFamily = Ipv4F | Ipv6F
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype ASN = ASN Word32
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (NFData, TheBinary)  
+    deriving anyclass TheBinary
     deriving newtype Enum
 
 newtype PrefixLength = PrefixLength Word8
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data AsResource = AS ASN
                 | ASRange ASN ASN
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 
 class WithSetOps p where
@@ -83,7 +81,7 @@ data ValidationRFC = StrictRFC | ReconsideredRFC
 
 data RSet r = RS r | Inherit
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data IpResourceSet = IpResourceSet
         (RSet (IntervalSet Ipv4Prefix))
@@ -97,7 +95,7 @@ newtype IpResources = IpResources IpResourceSet
 
 newtype AsResources = AsResources (RSet (IntervalSet AsResource))
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 data AllResources = AllResources 
         (RSet (IntervalSet Ipv4Prefix))
@@ -111,7 +109,7 @@ data PrefixesAndAsns = PrefixesAndAsns
         (IntervalSet Ipv6Prefix)
         (IntervalSet AsResource)
     deriving stock (Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 newtype Nested a = Nested a
     deriving stock (Show, Eq, Ord, Generic) 
@@ -130,7 +128,7 @@ class (WithSetOps p, Eq p, Eq (Point p), Ord (Point p)) => Interval p where
 -- | Representation of the resource set
 newtype IntervalSet a = IntervalSet (Vector a) 
     deriving stock (Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass TheBinary
 
 
 -- Store instances
@@ -151,11 +149,3 @@ instance Show PrefixesAndAsns where
 
 instance Show a => Show (IntervalSet a) where
     show (IntervalSet is) = show is        
-
-
-deriving anyclass instance NFData (V4.IpBlock Canonical)
-deriving anyclass instance NFData V4.IpAddress
-deriving anyclass instance NFData V4.IpNetMask
-deriving anyclass instance NFData (V6.IpBlock Canonical)
-deriving anyclass instance NFData V6.IpAddress
-deriving anyclass instance NFData V6.IpNetMask

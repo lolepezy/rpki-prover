@@ -213,7 +213,7 @@ timedMetric' _ f v = do
     ((r, vs), elapsed) <- appLift $ timedMS $ runValidatorT vp v          
     embedState vs
     updateMetric (f elapsed)
-    vHoist $! fromValue r
+    vHoist $ fromValue r
             
 
 recover :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
@@ -221,7 +221,7 @@ recover tryF finallyF =
     tryIt `catchError` catchIt
   where
     tryIt = do  
-        !z <- tryF 
+        z <- tryF 
         finallyF
         pure z
     catchIt e = do
