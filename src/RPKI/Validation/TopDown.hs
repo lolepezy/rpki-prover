@@ -7,7 +7,6 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE DeriveAnyClass             #-}
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
