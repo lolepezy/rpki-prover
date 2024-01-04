@@ -232,7 +232,8 @@ toValidationMessage = \case
         [i|Manifest entry #{filename} with hash #{hash} points to an object that has type #{type_}.|]
 
       ManifestNumberDecreased {..} ->
-        [i|Manifest number #{newMftNumber} is smaller then the previous #{oldMftNumber}, will use previous manifest.|]
+        [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
+        [i|will use previous manifest if it exists and is valid.|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
@@ -259,10 +260,10 @@ toValidationMessage = \case
           [i|Object's EE certificate is revoked.|]
 
       ObjectValidityIsInTheFuture {..} -> 
-          [i|Certificate's 'not valid before' time #{before} is in the future.|]
+          [i|Object's 'not valid before' time #{before} is in the future.|]
 
       ObjectIsExpired {..} ->
-          [i|Certificate is expired, its 'not valid after' time #{after} is in the past.|]
+          [i|Object is expired, its 'not valid after' time #{after} is in the past.|]
 
       AKIIsNotEqualsToParentSKI childAKI parentSKI ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
@@ -287,14 +288,14 @@ toValidationMessage = \case
       CircularReference hash ->
           [i|Object with hash #{hash} creates reference cycle.|]
 
-      CertificatePathTooDeep locations maxDepth ->
-          [i|The CA tree reached maximum depth of #{maxDepth} at #{locations}.|]
+      CertificatePathTooDeep maxDepth ->
+          [i|The CA tree reached maximum depth of #{maxDepth}.|]
 
-      TreeIsTooBig locations maxTreeSize ->          
-          [i|The number of object in CA tree reached maximum of #{maxTreeSize} at #{locations}.|]
+      TreeIsTooBig maxTreeSize ->          
+          [i|The number of object in CA tree reached maximum of #{maxTreeSize}.|]
 
-      TooManyRepositories locations maxTaRepositories ->          
-          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
+      TooManyRepositories maxTaRepositories ->          
+          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories}.|]
 
       ValidationTimeout (Seconds maxDuration) -> 
           [i|Validation did not finish within #{maxDuration}s and was interrupted.|]

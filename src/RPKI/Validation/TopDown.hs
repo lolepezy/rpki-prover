@@ -108,7 +108,6 @@ data TopDownContext = TopDownContext {
 data AllTasTopDownContext = AllTasTopDownContext {
         now                  :: Now,
         worldVersion         :: WorldVersion,
-        validManifests       :: TVar ValidManifests,        
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
@@ -179,8 +178,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
     let now = Now $ versionToMoment worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
-        visitedKeys    <- newTVar mempty
-        validManifests <- newTVar makeValidManifests        
+        visitedKeys      <- newTVar mempty
         shortcutsCreated <- newTVar []        
         pure $! AllTasTopDownContext {..}
 
@@ -407,13 +405,13 @@ validateFromTACert
     -- Do the tree descend, gather validation results and VRPs                
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
-        (validateCa appContext topDownContext taCert)
+        (validateCa appContext topDownContext (CaFull taCert))
 
 
 validateCa :: Storage s =>
             AppContext s ->
             TopDownContext ->
-            Located CaCerObject ->
+            Ca ->
             ValidatorT IO ()
 validateCa 
     appContext@AppContext {..}
@@ -429,20 +427,20 @@ validateCa
     let treeDepthLimit = (
             pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
             do
-                logError logger [i|Interrupting validation on #{fmtLocations $ getLocations ca}, maximum tree depth is reached.|]
-                vError $ CertificatePathTooDeep
-                            (getLocations ca)
-                            (validationConfig ^. #maxCertificatePathDepth)
+                locations <- getCaLocations appContext ca
+                for_ locations $ \loc -> 
+                    logError logger [i|Interrupting validation on #{fmtLocations loc}, maximum tree depth is reached.|]
+                vError $ CertificatePathTooDeep $ validationConfig ^. #maxCertificatePathDepth
             )
 
     -- Check and report for the maximal number of objects in the tree
     let visitedObjectCountLimit = (
             (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedKeys,
             do
-                logError logger [i|Interrupting validation on #{fmtLocations $ getLocations ca}, maximum total object number in the tree is reached.|]
-                vError $ TreeIsTooBig
-                            (getLocations ca)
-                            (validationConfig ^. #maxTotalTreeSize)
+                locations <- getCaLocations appContext ca
+                for_ locations $ \loc -> 
+                    logError logger [i|Interrupting validation on #{fmtLocations loc}, maximum total object number in the tree is reached.|]
+                vError $ TreeIsTooBig $ validationConfig ^. #maxTotalTreeSize
             )
 
     -- Check and report for the maximal increase in the repository number
@@ -451,10 +449,10 @@ validateCa
                 pps <- readTVar $ repositoryProcessing ^. #publicationPoints
                 pure $! repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
             do
-                logError logger [i|Interrupting validation on #{fmtLocations $ getLocations ca}, maximum total new repository count is reached.|]
-                vError $ TooManyRepositories
-                            (getLocations ca)
-                            (validationConfig ^. #maxTaRepositories)
+                locations <- getCaLocations appContext ca
+                for_ locations $ \loc -> 
+                    logError logger [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count is reached.|]
+                vError $ TooManyRepositories $ validationConfig ^. #maxTaRepositories
             )                
 
     -- This is to make sure that the error of hitting a limit
@@ -469,7 +467,7 @@ validateCa
     checkAndReport treeDepthLimit
         $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
-        $ validateCaNoLimitChecks appContext topDownContext (CaFull ca)
+        $ validateCaNoLimitChecks appContext topDownContext ca
 
 
 validateCaNoLimitChecks :: Storage s =>
@@ -595,9 +593,9 @@ validateCaNoFetch
                 Just mftShortcut -> do
                     let mftShortKey = mftShortcut ^. #key
                     increment $ topDownCounters ^. #shortcutMft
-                    -- logDebug logger [i|Found shortcut for AKI #{childrenAki}|]
                     -- Find the key of the latest real manifest
-                    action <- findLatestMftKeyByAKI tx db childrenAki >>= \case 
+                    action <- 
+                        findLatestMftKeyByAKI tx db childrenAki >>= \case 
                             Nothing -> pure $! do                                             
                                 -- That is really weird and should normally never happen. 
                                 -- Do not interrupt validation here, but complain in the log
@@ -652,8 +650,8 @@ validateCaNoFetch
                                             combineShortcutAndNewMft
                                                 `catchError`
                                                 (\e -> do 
-                                                    appWarn e
-                                                    logDebug logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
+                                                    vFocusOn ObjectFocus mftKey $ appWarn e
+                                                    logWarn logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
                                                     useShortcutOnly)                                            
                     pure $! do 
                         markAsRead topDownContext mftShortKey
@@ -663,7 +661,7 @@ validateCaNoFetch
     -- Proceed with full validation for children mentioned in the full manifest 
     -- and children mentioned in the manifest shortcut. Create a diff between them,
     -- run full validation only for new children and create a new manifest shortcut
-    -- with updated set children.
+    -- with updated set of children.
     manifestFullValidation :: 
                     Located CaCerObject
                     -> Keyed (Located MftObject) 
@@ -705,18 +703,28 @@ validateCaNoFetch
             bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
             
             forM_ mftShortcut $ \mftShort -> do          
-                -- manifest number must increase 
-                -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
-                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
-                when (mftNumber <= mftShort ^. #manifestNumber) $
-                    vError $ ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
-
                 -- If CRL has changed, we have to recheck if children are not revoked. 
                 -- If will be checked by full validation for newChildren but it needs 
                 -- to be explicitly checked for overlappingChildren                
                 when (crlKey /= mftShort ^. #crlShortcut . #key) $ do     
                     increment $ topDownCounters ^. #originalCrl                         
                     checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
+
+                -- manifest number must increase 
+                -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
+                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
+                when (mftNumber <= mftShort ^. #manifestNumber) $ do 
+                    -- Here we have to do a bit of hackery: 
+                    -- * Calling vError will interrupt this function and call for fall-back to 
+                    --   the "latest valid manifest" which is the shortcut
+                    -- * But the shortcut may have expired already and there will no be any options left,
+                    --   so we need to be careful and just emit a warning
+                    -- 
+                    let (beforeMft, afterMft) = getValidityPeriod mftShort
+                    let issue = ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
+                    if beforeMft < unNow now && unNow now > afterMft
+                        then vError issue
+                        else vWarn issue
 
             -- Mark all manifest entries as read to avoid the situation
             -- when some of the children are garbage-collected from the cache 
@@ -1066,7 +1074,7 @@ validateCaNoFetch
                                 & #verifiedResources ?~ childVerifiedResources
                                 & #currentPathDepth %~ (+ 1)
 
-                        validateCa appContext childTopDownContext (Located locations childCert)
+                        validateCa appContext childTopDownContext (CaFull (Located locations childCert))
 
                 embedState validationState
                 case r of 
@@ -1135,9 +1143,10 @@ validateCaNoFetch
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
-            _somethingElse -> do
-                logWarn logger [i|Unsupported type of object: #{locations}.|]                
-                pure $! newShortcut (makeTroubledChild childKey fileName)
+            _somethingElse -> 
+                focusOnChild $ do
+                    logWarn logger [i|Unsupported type of object: #{locations}.|]                
+                    pure $! newShortcut (makeTroubledChild childKey fileName)
 
         where
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
@@ -1153,9 +1162,9 @@ validateCaNoFetch
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
 
-    -- Don't create shortcuts with warnings in their scope, 
-    -- otherwise warnings will be reported only once for the 
-    -- original and never for shortcuts.
+    -- Don't create shortcuts for objects with warnings in their scope, 
+    -- otherwise warnings will be reported only once for the original 
+    -- and never for shortcuts.
     shortcutIfNoIssues key fileName makeShortcut = do 
         issues <- thisScopeIssues
         pure $! if Set.null issues 
@@ -1173,13 +1182,13 @@ validateCaNoFetch
                                 -> ValidatorT IO (Located CaCerObject)
                                 -> ValidatorT IO (Keyed (Validated CrlObject))             
                                 -> ValidatorT IO ()
-    collectPayloadsFromShortcuts mftShortcut maybeChildren findFullCa findValidCrl = do      
+    collectPayloadsFromShortcuts mftShortcut childrenToCheck findFullCa findValidCrl = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
         -- Filter children that we actually want to go through here
         let filteredChildren = 
-                case maybeChildren of 
+                case childrenToCheck of 
                     Nothing -> Map.toList nonCrlEntries
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
 
@@ -1248,13 +1257,12 @@ validateCaNoFetch
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey            
-            case child of 
-                CaChild caShortcut _ -> 
-                    vFocusOn ObjectFocus childKey $ 
-                        validateCaNoLimitChecks appContext topDownContext (CaShort caShortcut)
+            vFocusOn ObjectFocus childKey $ 
+                case child of 
+                    CaChild caShortcut _ ->                     
+                        validateCa appContext topDownContext (CaShort caShortcut)
                         
-                RoaChild r@RoaShortcut {..} _ -> do
-                    vFocusOn ObjectFocus childKey $ do 
+                    RoaChild r@RoaShortcut {..} _ -> do                    
                         vHoist $ validateObjectValidityPeriod r now
                         validateLocationForShortcut key
                         oneMoreRoa
@@ -1262,38 +1270,36 @@ validateCaNoFetch
                         increment $ topDownCounters ^. #shortcutRoa
                         rememberPayloads typed (T2 vrps childKey :)
                     
-                AspaChild a@AspaShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do 
+                    AspaChild a@AspaShortcut {..} _ -> do 
                         vHoist $ validateObjectValidityPeriod a now
                         validateLocationForShortcut key
                         oneMoreAspa
                         increment $ topDownCounters ^. #shortcutAspa                        
                         rememberPayloads typed (aspa :)                        
 
-                BgpSecChild b@BgpSecShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do 
+                    BgpSecChild b@BgpSecShortcut {..} _ -> do 
                         vHoist $ validateObjectValidityPeriod b now
                         validateLocationForShortcut key
                         oneMoreBgp                
                         rememberPayloads typed (bgpSec :)
 
-                GbrChild g@GbrShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do 
+                    GbrChild g@GbrShortcut {..} _ -> do 
                         vHoist $ validateObjectValidityPeriod g now         
                         validateLocationForShortcut key
                         oneMoreGbr                 
                         rememberPayloads typed (gbr :)
 
-                TroubledChild childKey_ -> do
-                    increment $ topDownCounters ^. #shortcutTroubled
-                    troubledValidation childKey_ fileName
+                    TroubledChild childKey_ -> do
+                        increment $ topDownCounters ^. #shortcutTroubled
+                        troubledValidation childKey_ fileName
 
 
     -- TODO This is pretty bad, it's easy to forget to do it
-    rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
+    rememberPayloads :: forall m a . (MonadIO m, NFData a) => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
     rememberPayloads lens_ f = do
-        let builder = topDownContext ^. #payloadBuilder . lens_
-        liftIO $ atomicModifyIORef' builder $ \b -> (f b, ())
+        pure ()
+        let builder = topDownContext ^. #payloadBuilder . lens_        
+        liftIO $! atomicModifyIORef' builder $ \b -> let !z = f b in (z, ())
 
 
 -- Calculate difference bentween a manifest shortcut 
@@ -1489,13 +1495,14 @@ applyValidationSideEffects :: (MonadIO m, Storage s) =>
 applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do
-    (visitedSize, elapsed) <- timedMS $ do
-        vks <- atomically $ readTVar visitedKeys            
-        rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
-        pure $! Set.size vks
+        pure ()
+    -- (visitedSize, elapsed) <- timedMS $ do
+    --     vks <- atomically $ readTVar visitedKeys            
+    --     rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
+    --     pure $! Set.size vks
     
-    liftIO $ reportCounters appContext topDownCounters        
-    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
+    -- liftIO $ reportCounters appContext topDownCounters        
+    -- logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
 reportCounters :: AppContext s -> TopDownCounters -> IO ()
@@ -1608,6 +1615,13 @@ extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 
     CaShort (CaShortcut {..}) -> Right ppas 
     CaFull c                  -> getPublicationPointsFromCertObject $ c ^. #payload
+
+getCaLocations :: Storage s => AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
+getCaLocations AppContext {..} = \case 
+    CaShort (CaShortcut {..}) -> 
+        roTxT database $ \tx db -> getLocationsByKey tx db key
+    CaFull c -> 
+        pure $! Just $ getLocations c
 
 
 data ManifestValidity e v = InvalidEntry e v 

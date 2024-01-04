@@ -210,7 +210,7 @@ timedMetric' :: forall m metric r .
             -> ValidatorT m r
 timedMetric' _ f v = do
     vp <- askScopes
-    ((!r, !vs), elapsed) <- appLift $! timedMS $! runValidatorT vp v          
+    ((r, vs), elapsed) <- appLift $ timedMS $ runValidatorT vp v          
     embedState vs
     updateMetric (f elapsed)
     vHoist $! fromValue r

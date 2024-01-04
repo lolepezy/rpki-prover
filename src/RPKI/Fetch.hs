@@ -27,7 +27,6 @@ import           Data.String.Interpolate.IsString
 import qualified Data.Set                    as Set
 import qualified StmContainers.Map           as StmMap
 import qualified ListT                       as ListT
-import           Data.Maybe                  (catMaybes)
 
 import           Time.Types
 

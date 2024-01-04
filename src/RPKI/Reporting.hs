@@ -110,9 +110,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertificateDoesntHaveSIA | 
                         AIANotSameAsParentLocation Text Locations | 
                         CircularReference ObjectIdentity |
-                        CertificatePathTooDeep Locations Int |
-                        TreeIsTooBig Locations Int |
-                        TooManyRepositories Locations Int |
+                        CertificatePathTooDeep Int |
+                        TreeIsTooBig Int |
+                        TooManyRepositories Int |
                         ValidationTimeout Seconds |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 

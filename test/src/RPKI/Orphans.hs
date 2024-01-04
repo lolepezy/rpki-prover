@@ -586,6 +586,10 @@ instance Arbitrary ObjectIdentity where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary MftPair where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary (ParseError Text.Text) where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -675,6 +679,10 @@ instance Arbitrary ValidationMetric where
 
 instance Arbitrary TaName where
     arbitrary = TaName <$> arbitrary
+    shrink = genericShrink
+
+instance Arbitrary RpkiObjectType where
+    arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where

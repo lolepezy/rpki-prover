@@ -211,8 +211,8 @@ newtype SessionId = SessionId Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype Serial = Serial Integer 
-    deriving stock (Show, Eq, Ord, Generic)
+newtype Serial = Serial Integer     
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 newtype Version = Version Integer 
@@ -223,6 +223,9 @@ newtype Locations = Locations { unLocations :: NESet RpkiURL }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving newtype (Semigroup)
+
+instance Show Serial where
+    show (Serial u) = show u
 
 instance Show URI where
     show (URI u) = show u
@@ -503,7 +506,7 @@ data MftPair = MftPair {
     deriving anyclass (TheBinary, NFData)
 
 data Manifest = Manifest {
-        mftNumber   :: {-# UNPACK #-} Serial, 
+        mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: {-# UNPACK #-} Instant, 
         nextTime    :: {-# UNPACK #-} Instant, 
