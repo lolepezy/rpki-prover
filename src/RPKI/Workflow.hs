@@ -307,22 +307,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure (mempty, mempty)
                     Just rtrPayloads -> do                 
                         slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
-                        pure (rtrPayloads, slurmedPayloads)                        
-
---         processTALs = do
---             (topDownState, maybeSlurm) <- runValidation appContext worldVersion tals                                        
---             logDebug logger [i|Validation result: 
--- #{formatValidations (topDownState ^. typed)}.|]
---             updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
-            
---             roTxT database (\tx db -> getRtrPayloads tx db worldVersion) >>= \case                         
---                 Nothing -> do 
---                     logError logger [i|Something weird happened, could not re-read VRPs.|]
---                     pure (mempty, mempty)
---                 Just rtrPayloads -> do                 
---                     slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
---                     pure (rtrPayloads, slurmedPayloads)                        
-
+                        pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
