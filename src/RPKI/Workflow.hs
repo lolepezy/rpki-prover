@@ -255,8 +255,8 @@ runWorkflow appContext@AppContext {..} tals = do
                 atomically (writeTVar asyncFetchIsRunning True)
                 logInfo logger [i|Running asynchronous fetch.|]            
                 fetchVersion <- createWorldVersion     
-                (_, TimeMs elapsed) <- timedMS $! do 
-                    validations <- runFetches appContext
+                (_, TimeMs elapsed) <- timedMS $ do 
+                    validations <- runAsyncFetches appContext
                     db <- readTVarIO database
                     rwTx db $ \tx -> do
                         saveValidations tx db fetchVersion (validations ^. typed)
@@ -267,9 +267,8 @@ runWorkflow appContext@AppContext {..} tals = do
 
     doValidateTAs WorkflowShared {..} worldVersion= do
         logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
-        db <- readTVarIO database
         executeOrDie
-            (processTALs db)
+            processTALs
             (\(rtrPayloads, slurmedPayloads) elapsed -> do 
                 let vrps = rtrPayloads ^. #vrps
                 let slurmedVrps = slurmedPayloads ^. #vrps
@@ -277,12 +276,12 @@ runWorkflow appContext@AppContext {..} tals = do
                     [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
                     [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
       where
-        processTALs db = do
+        processTALs = do
             ((z, workerVS), workerId) <- runValidationWorker worldVersion                    
             case z of 
                 Left e -> do 
                     logError logger [i|Validator process failed: #{e}.|]
-                    rwTx db $ \tx -> do
+                    rwTxT database $ \tx db -> do
                         saveValidations tx db worldVersion (workerVS ^. typed)
                         saveMetrics tx db worldVersion (workerVS ^. typed)
                         completeWorldVersion tx db worldVersion                            
@@ -302,13 +301,27 @@ runWorkflow appContext@AppContext {..} tals = do
                     reReadAndUpdatePayloads maybeSlurm
           where
             reReadAndUpdatePayloads maybeSlurm = do 
-                roTx db (\tx -> getRtrPayloads tx db worldVersion) >>= \case                         
+                roTxT database (\tx db -> getRtrPayloads tx db worldVersion) >>= \case                         
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
                     Just rtrPayloads -> do                 
                         slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
                         pure (rtrPayloads, slurmedPayloads)                        
+
+--         processTALs = do
+--             (topDownState, maybeSlurm) <- runValidation appContext worldVersion tals                                        
+--             logDebug logger [i|Validation result: 
+-- #{formatValidations (topDownState ^. typed)}.|]
+--             updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
+            
+--             roTxT database (\tx db -> getRtrPayloads tx db worldVersion) >>= \case                         
+--                 Nothing -> do 
+--                     logError logger [i|Something weird happened, could not re-read VRPs.|]
+--                     pure (mempty, mempty)
+--                 Just rtrPayloads -> do                 
+--                     slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
+--                     pure (rtrPayloads, slurmedPayloads)                        
 
                           
     -- Delete objects in the store that were read by top-down validation 
@@ -351,7 +364,7 @@ runWorkflow appContext@AppContext {..} tals = do
         -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
         deletedAnything <- readTVarIO deletedAnythingFromDb
         if deletedAnything then do 
-            (_, elapsed) <- timedMS $! runMaintenance appContext
+            (_, elapsed) <- timedMS $ runMaintenance appContext
             logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
         else 
             logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
@@ -486,14 +499,10 @@ runValidation :: Storage s =>
             -> WorldVersion
             -> [TAL]
             -> IO (ValidationState, Maybe Slurm)
-runValidation appContext@AppContext {..} worldVersion tals = do       
-    db <- readTVarIO database
+runValidation appContext@AppContext {..} worldVersion tals = do           
 
-    !TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
+    TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
                 validateMutlipleTAs appContext worldVersion tals
-
-    -- !TopDownResult {..} <- mconcat <$> validateMutlipleTAs appContext worldVersion tals
-    -- let !TopDownResult {..} = addUniqueVRPCount z
 
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <-
@@ -507,12 +516,12 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                         logError logger [i|Failed to read SLURM files: #{e}|]
                         pure (vs, Nothing)
                     Right slurm ->
-                        pure (vs, Just slurm)    
+                        pure (vs, Just slurm)        
 
     -- Save all the results into LMDB
     let !updatedValidation = slurmValidations <> topDownValidations ^. typed
 
-    (_, elapsed) <- timedMS $! rwTx db $ \tx -> do
+    (_, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
         saveVrps tx db (payloads ^. typed) worldVersion
@@ -521,10 +530,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
-        completeWorldVersion tx db worldVersion
-        
-    -- threadDelay 60_000_000            
-    
+        completeWorldVersion tx db worldVersion            
 
     logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]        
 
@@ -565,7 +571,7 @@ loadStoredAppState AppContext {..} = do
                     pure Nothing
 
                 | otherwise -> do
-                    (payloads, elapsed) <- timedMS $! do                                            
+                    (payloads, elapsed) <- timedMS $ do                                            
                         slurm    <- slurmForVersion tx db lastVersion
                         payloads <- getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> 
@@ -585,13 +591,15 @@ loadStoredAppState AppContext {..} = do
     - Try to refetch these repositories
     - 
 -}
-runFetches :: Storage s => AppContext s -> IO ValidationState
-runFetches appContext@AppContext {..} = do         
+runAsyncFetches :: Storage s => AppContext s -> IO ValidationState
+runAsyncFetches appContext@AppContext {..} = do         
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
         -- We only care about the repositories that are slow 
         let slowURLs = Map.fromList $ findSpeedProblems pps
+
+        -- TODO Filter out URLs according to the fetching options
 
         --  and mentioned on some certificates during the last validation.        
         let problematicPPAs = 

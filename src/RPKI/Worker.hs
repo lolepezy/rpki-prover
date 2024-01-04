@@ -198,7 +198,7 @@ writeWorkerOutput :: TheBinary a => a -> IO ()
 writeWorkerOutput = LBS.hPut stdout . LBS.fromStrict . serialise_
 
 rtsArguments :: [String] -> [String]
-rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
+rtsArguments args = [ "+RTS" ] <> defaultRTS <> args <> [ "-RTS" ]
 
 rtsMaxMemory, rtsA, rtsAL :: String -> String
 rtsMaxMemory m = "-M" <> m
@@ -210,6 +210,9 @@ rtsN n = "-N" <> show n
 
 rtsMemValue :: Int -> String
 rtsMemValue mb = show mb <> "m"
+
+defaultRTS :: [String]
+defaultRTS = [ "-I0" ]
 
 exitParentDied, exitTimeout, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
 exitParentDied  = ExitFailure 11
