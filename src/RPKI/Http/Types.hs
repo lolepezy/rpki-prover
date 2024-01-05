@@ -441,7 +441,7 @@ instance ToJSON MetricsDto
 instance ToJSON RrdpURL
 instance ToJSON FetchStatus
 instance ToJSON ETag
-instance ToJSON Speed
+instance ToJSON FetchType
 instance ToJSON RrdpRepository
 instance ToJSON RsyncNodeInfo
 instance ToJSON PublicationPointDto
@@ -451,7 +451,7 @@ instance ToSchema FetchStatus where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema Speed where
+instance ToSchema FetchType where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RrdpRepository
 instance ToSchema RsyncNodeInfo

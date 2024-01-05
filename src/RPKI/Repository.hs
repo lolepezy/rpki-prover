@@ -54,17 +54,16 @@ instance Semigroup FetchEverSucceeded where
     _           <> _           = AtLeastOnce    
 
    
-data Speed = Unknown 
-            | Quick Instant 
-            | Slow Instant
+data FetchType = Unknown 
+               | ForSyncFetch Instant 
+               | ForAsyncFetch Instant
     deriving stock (Show, Eq, Generic)    
     deriving anyclass TheBinary
-    deriving Semigroup via Max Speed
+    deriving Semigroup via Max FetchType
 
-data FetchStatus
-  = Pending
-  | FetchedAt Instant
-  | FailedAt Instant  
+data FetchStatus = Pending
+                 | FetchedAt Instant
+                 | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
     deriving anyclass TheBinary
     deriving Semigroup via Max FetchStatus
@@ -74,11 +73,11 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
     deriving anyclass TheBinary
 
 data RrdpRepository = RrdpRepository {
-        uri         :: RrdpURL,
-        rrdpMeta    :: Maybe (SessionId, RrdpSerial),
-        eTag        :: Maybe ETag,
-        status      :: FetchStatus,
-        speed       :: Speed
+        uri      :: RrdpURL,
+        rrdpMeta :: Maybe (SessionId, RrdpSerial),
+        eTag     :: Maybe ETag,
+        status   :: FetchStatus,
+        fetchType    :: FetchType
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -102,7 +101,7 @@ data Repository = RrdpR RrdpRepository |
 data RsyncRepository = RsyncRepository {
         repoPP      :: RsyncPublicationPoint,
         status      :: FetchStatus,
-        speed       :: Speed
+        fetchType       :: FetchType
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -182,15 +181,15 @@ instance Ord FetchStatus where
 instance Monoid FetchStatus where    
     mempty = Pending
     
-instance Monoid Speed where    
+instance Monoid FetchType where    
     mempty = Unknown
 
-instance Ord Speed where
+instance Ord FetchType where
     compare = comparing time
       where             
         time Unknown   = Nothing
-        time (Quick t) = Just t
-        time (Slow t)  = Just t
+        time (ForSyncFetch t) = Just t
+        time (ForAsyncFetch t)  = Just t
 
 instance Semigroup EverSucceededMap where
     EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
@@ -202,14 +201,14 @@ getFetchStatus :: Repository -> FetchStatus
 getFetchStatus (RrdpR r)  = r ^. #status
 getFetchStatus (RsyncR r) = r ^. #status
 
-getSpeed :: Repository -> Speed
-getSpeed (RrdpR r)  = r ^. #speed
-getSpeed (RsyncR r) = r ^. #speed
+getFetchType :: Repository -> FetchType
+getFetchType (RrdpR r)  = r ^. #fetchType
+getFetchType (RsyncR r) = r ^. #fetchType
 
-isSlow :: Speed -> Bool
-isSlow = \case    
-    Slow _ -> True
-    _      -> False
+isForAsync :: FetchType -> Bool
+isForAsync = \case    
+    ForAsyncFetch _ -> True
+    _               -> False
 
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty
@@ -243,7 +242,7 @@ mkRrdp u = RrdpRepository {
         rrdpMeta = Nothing,
         eTag     = Nothing,
         status   = Pending,
-        speed    = Unknown 
+        fetchType    = Unknown 
     }
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
@@ -374,7 +373,7 @@ changeSet
 
 
 -- Update statuses of the repositories and last successful fetch times for them
-updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus, Speed) -> PublicationPoints
+updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus, FetchType) -> PublicationPoints
 updateStatuses 
     (PublicationPoints rrdps rsyncs slowRequested) newStatuses = 
         PublicationPoints 
@@ -387,7 +386,7 @@ updateStatuses
         foldRepos 
             (RrdpR r@RrdpRepository {..}, newStatus, newSpeed) 
             (rrdps', rsyncs') = 
-                ((uri, r & #status .~ newStatus & #speed .~ newSpeed) : rrdps', rsyncs')
+                ((uri, r & #status .~ newStatus & #fetchType .~ newSpeed) : rrdps', rsyncs')
 
         foldRepos 
             (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _ _), newStatus, newSpeed) 
@@ -420,20 +419,20 @@ findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) =
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
-        | (u, r) <- Map.toList rrdps, isSlow $ r ^. #speed ]
+        | (u, r) <- Map.toList rrdps, isForAsync $ r ^. #fetchType ]
 
     rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u info)
-        | (u, info) <- flattenRsyncTree rsyncTree, isSlow $ info ^. #speed ]
+        | (u, info) <- flattenRsyncTree rsyncTree, isForAsync $ info ^. #fetchType ]
         where 
             rsyncRepo u info = RsyncR $ RsyncRepository { 
                 repoPP = RsyncPublicationPoint u,
                 status = info ^. #fetchStatus,
-                speed  = info ^. #speed
+                fetchType  = info ^. #fetchType
             }    
 
 data RsyncNodeInfo = RsyncNodeInfo {
         fetchStatus :: FetchStatus,
-        speed       :: Speed
+        fetchType       :: FetchType
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -456,13 +455,13 @@ data RsyncNode a = Leaf a
 newRsyncTree :: RsyncTree
 newRsyncTree = RsyncTree Map.empty
 
-toRsyncTree :: RsyncURL -> FetchStatus -> Speed -> RsyncTree -> RsyncTree 
-toRsyncTree (RsyncURL host path) fetchStatus speed (RsyncTree byHost) = 
+toRsyncTree :: RsyncURL -> FetchStatus -> FetchType -> RsyncTree -> RsyncTree 
+toRsyncTree (RsyncURL host path) fetchStatus fetchType (RsyncTree byHost) = 
     RsyncTree $ Map.alter (Just . maybe 
         (buildRsyncTree path nodeInfo) 
         (pathToRsyncTree path nodeInfo)) host byHost    
   where
-    nodeInfo = RsyncNodeInfo fetchStatus speed
+    nodeInfo = RsyncNodeInfo fetchStatus fetchType
 
 pathToRsyncTree :: [RsyncPathChunk] -> RsyncNodeInfo -> RsyncNodeNormal -> RsyncNodeNormal
 

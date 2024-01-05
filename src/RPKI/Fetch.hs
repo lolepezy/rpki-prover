@@ -187,12 +187,12 @@ fetchPPWithFallback
     -- 
     -- A fetcher can proceed if either
     --   - there's a free slot in the semaphore
-    --   - we are waiting for more than N seconds
+    --   - we are waiting a free slot for more than N seconds
     --
     -- In practice that means hanging timning out fetchers cannot 
     -- block the pool for too long and new fetchers will get through anyway.
     -- Fetching processes hanging on a connection don't take resources, 
-    -- so it's safe to run new ones, without overloading the system.
+    -- so it's safe to run new ones without overloading the system.
     -- 
     fetchPP parentScope repo = do 
         let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
@@ -200,20 +200,20 @@ fetchPPWithFallback
             let rpkiUrl = getRpkiURL repo
             let launchFetch = async $ do               
                     let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
-                    Now fetchTime <- thisInstant
+                    Now fetchMonent <- thisInstant
                     ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
                                                     $ fetchRepository appContext fetchConfig worldVersion repo                                
                     atomically $ do
                         StmMap.delete rpkiUrl individualFetchRuns
 
                         let (newRepo, newStatus) = case r of                             
-                                Left _      -> (repo, FailedAt fetchTime)
-                                Right repo' -> (repo', FetchedAt fetchTime)
+                                Left _      -> (repo, FailedAt fetchMonent)
+                                Right repo' -> (repo', FetchedAt fetchMonent)
 
-                        let speed = deriveSpeed repo validations duratioMs fetchTime
+                        let fetchType = deriveSpeed repo validations  duratioMs newStatus fetchMonent
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
-                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
+                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, fetchType)]
                     pure (r, validations)        
 
             bracketOnError 
@@ -235,24 +235,29 @@ fetchPPWithFallback
         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
         pure (needsFetching', repo)
 
-    deriveSpeed repo validations (TimeMs duratioMs) fetchTime = let                
+    deriveSpeed repo validations (TimeMs duratioMs) newStatus fetchMoment =
+        -- If there fetch timed out then it's definitely for async fetch
+        -- otherwise, check how long did it take to download
+        if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
+            then ForAsyncFetch fetchMoment
+            else 
+                case (getFetchType repo, newStatus) of                     
+                    -- If the repository is currenly marked as ForAsyncFetch
+                    -- it needs to succeed to get back to the ForSyncFetch category
+                    (ForAsyncFetch _, FailedAt _) -> ForAsyncFetch fetchMoment
+                    _                             -> speedByTiming        
+      where
         Seconds rrdpSlowSec  = fetchConfig ^. #rrdpSlowThreshold
-        Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold
+        Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold        
         speedByTiming = 
             case repo of
                 RrdpR _  -> checkSlow $ duratioMs > 1000 * rrdpSlowSec
                 RsyncR _ -> checkSlow $ duratioMs > 1000 * rsyncSlowSec
 
-        -- If there fetch timed out then it's definitely slow
-        -- otherwise, check how long did it take to download
-        in if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
-            then Slow fetchTime
-            else speedByTiming        
-      where
         checkSlow condition = 
             if condition 
-                then Slow fetchTime
-                else Quick fetchTime       
+                then ForAsyncFetch fetchMoment
+                else ForSyncFetch fetchMoment       
 
 
 -- Fetch one individual repository. 
@@ -430,7 +435,7 @@ onlyForSyncFetch pps ppAccess = let
     checkSlow pp = 
         case repositoryFromPP (mergePP pp pps) (getRpkiURL pp) of 
             Nothing -> (False, Nothing)
-            Just r  -> (isSlow $ getSpeed r, Just r)                        
+            Just r  -> (isForAsync $ getFetchType r, Just r)                        
 
 
 filterForAsyncFetch :: PublicationPointAccess -> [FetchResult] -> [Repository] -> [Repository]

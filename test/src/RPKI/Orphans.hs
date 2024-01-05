@@ -531,7 +531,7 @@ instance Arbitrary ETag where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary Speed where
+instance Arbitrary FetchType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

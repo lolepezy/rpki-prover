@@ -211,6 +211,7 @@ rtsN n = "-N" <> show n
 rtsMemValue :: Int -> String
 rtsMemValue mb = show mb <> "m"
 
+-- Don't do idle GC, it only spins the CPU without any purpose
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 

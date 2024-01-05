@@ -71,7 +71,7 @@ prop_rsync_tree_commutative =
 
 prop_rsync_tree_update :: QC.Property
 prop_rsync_tree_update =
-    QC.forAll arbitrary $ \(newStatus :: FetchStatus, newSpeed :: Speed) ->
+    QC.forAll arbitrary $ \(newStatus :: FetchStatus, newSpeed :: FetchType) ->
         QC.forAll (replicateM 100 generateRsyncUrl) $ \urls ->
             QC.forAll (QC.sublistOf urls) $ \toUpdate -> let
                 tree = convertToRepos urls Pending
