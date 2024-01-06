@@ -33,6 +33,8 @@ import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.String.Interpolate.IsString
 
+import           Text.Read                        (readMaybe)
+
 import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
@@ -382,13 +384,14 @@ getRpkiObject :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> Maybe Text
                 -> Maybe Text
+                -> Maybe Text
                 -> m [RObject]
-getRpkiObject AppContext {..} uri hash =
-    case (uri, hash) of
-        (Nothing,  Nothing) ->
-            throwError $ err400 { errBody = "'uri' or 'hash' must be provided." }
+getRpkiObject AppContext {..} uri hash key =
+    case (uri, hash, key) of
+        (Nothing,  Nothing, Nothing) ->
+            throwError $ err400 { errBody = "'uri', 'hash' or 'key' must be provided." }
 
-        (Just u, Nothing) ->
+        (Just u, Nothing, Nothing) ->
             case parseRpkiURL u of
                 Left _ ->
                     throwError $ err400 { errBody = "'uri' is not a valid object URL." }
@@ -406,16 +409,24 @@ getRpkiObject AppContext {..} uri hash =
                                 
                             os -> pure $ map locatedDto os
                         
-        (Nothing, Just hash') ->
+        (Nothing, Just hash', Nothing) ->
             case parseHash hash' of
                 Left _  -> throwError err400
                 Right h -> 
                     roTxT database $ \tx db ->
                         (locatedDto <$>) . maybeToList <$> getByHash tx db h
 
-        (Just _, Just _) ->
+        (Nothing, Nothing, Just key') ->
+            case readMaybe (convert key') of
+                Nothing -> 
+                    throwError err400 { errBody = convert $ "Could not parse integer key " <> key' } 
+                Just (k :: Integer) -> do 
+                    let kk = ObjectKey $ ArtificialKey $ fromIntegral k
+                    roTxT database $ \tx db ->
+                        (locatedDto <$>) . maybeToList <$> getLocatedByKey tx db kk
+        _ ->
             throwError $ err400 { errBody =
-                "Only 'uri' or 'hash' must be provided, not both." }
+                "Only one of 'uri', 'hash' or 'key' must be provided." }
   where
     locatedDto located = RObject $ located & #payload %~ objectToDto
 

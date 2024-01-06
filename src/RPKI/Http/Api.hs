@@ -81,6 +81,7 @@ data API api = API {
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                       :> QueryParam "hash" Text 
+                                      :> QueryParam "key" Text 
                                       :> Get '[JSON] [RObject],
 
         originals :: api :- "original" :> QueryParam "hash" Text 
