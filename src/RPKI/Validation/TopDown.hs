@@ -1209,7 +1209,7 @@ validateCaNoFetch
                     case troubledCount of 
                         0 -> pure $! \_ _ -> 
                                 -- Should never happen, there are no troubled children
-                                errorOnTroubledChild
+                                internalError appContext [i|Impossible happened!|]
                         _  -> do 
                             caFull   <- findFullCa
                             validCrl <- findValidCrl
@@ -1235,9 +1235,7 @@ validateCaNoFetch
 
             scopes <- askScopes
             z <- liftIO $ forAllChidlren children $ runValidatorT scopes . f
-            embedState $! mconcat $ map snd z                 
-
-        errorOnTroubledChild = internalError appContext [i|Impossible happened!|]
+            embedState $ mconcat $ map snd z                 
 
         validateTroubledChild caFull fileName (Keyed validCrl _) childKey = do  
             -- It was an invalid child and nothing about it is cached, so 
@@ -1253,42 +1251,45 @@ validateCaNoFetch
                 void $ validateChildObject caFull childObject fileName validCrl
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
-            markAsRead topDownContext childKey            
-            vFocusOn ObjectFocus childKey $ 
-                case child of 
-                    CaChild caShortcut _ ->                     
-                        validateCa appContext topDownContext (CaShort caShortcut)
+            markAsRead topDownContext childKey                         
+            case child of 
+                CaChild caShortcut _ ->                     
+                    validateCa appContext topDownContext (CaShort caShortcut)
                         
-                    RoaChild r@RoaShortcut {..} _ -> do                    
+                RoaChild r@RoaShortcut {..} _ -> 
+                    vFocusOn ObjectFocus childKey $ do                    
                         vHoist $ validateObjectValidityPeriod r now
                         validateLocationForShortcut key
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa
                         rememberPayloads typed (T2 vrps childKey :)
-                    
-                    AspaChild a@AspaShortcut {..} _ -> do 
+                
+                AspaChild a@AspaShortcut {..} _ -> 
+                    vFocusOn ObjectFocus childKey $ do 
                         vHoist $ validateObjectValidityPeriod a now
                         validateLocationForShortcut key
                         oneMoreAspa
                         increment $ topDownCounters ^. #shortcutAspa                        
                         rememberPayloads typed (aspa :)                        
 
-                    BgpSecChild b@BgpSecShortcut {..} _ -> do 
+                BgpSecChild b@BgpSecShortcut {..} _ -> 
+                    vFocusOn ObjectFocus childKey $ do 
                         vHoist $ validateObjectValidityPeriod b now
                         validateLocationForShortcut key
                         oneMoreBgp                
                         rememberPayloads typed (bgpSec :)
 
-                    GbrChild g@GbrShortcut {..} _ -> do 
+                GbrChild g@GbrShortcut {..} _ -> 
+                    vFocusOn ObjectFocus childKey $ do 
                         vHoist $ validateObjectValidityPeriod g now         
                         validateLocationForShortcut key
                         oneMoreGbr                 
                         rememberPayloads typed (gbr :)
 
-                    TroubledChild childKey_ -> do
-                        increment $ topDownCounters ^. #shortcutTroubled
-                        troubledValidation childKey_ fileName
+                TroubledChild childKey_ -> do
+                    increment $ topDownCounters ^. #shortcutTroubled
+                    troubledValidation childKey_ fileName
 
 
     -- TODO This is pretty bad, it's easy to forget to do it
@@ -1377,7 +1378,7 @@ getParsedObject :: Storage s =>
                     -> ValidatorT IO (Keyed (Located RpkiObject))
 getParsedObject tx db key ifNotFound = do
     getLocatedByKey tx db key >>= \case 
-        Just ro -> pure $!  Keyed ro key
+        Just ro -> pure $! Keyed ro key
         Nothing -> ifNotFound
 
 
