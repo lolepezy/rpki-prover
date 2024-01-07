@@ -994,7 +994,7 @@ validateCaNoFetch
                                     vError $ ManifestEntryDoesn'tExist hash' filename
 
         -- The type of the object that is deserialised doesn't correspond 
-        -- file extension on the manifest
+        -- to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
         when (Just realObjectType /= objectType) $ 
             vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType

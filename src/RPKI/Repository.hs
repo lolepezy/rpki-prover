@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
+{-# LANGUAGE MultiWayIf                 #-}
 
 module RPKI.Repository where
 
@@ -25,6 +26,7 @@ import qualified Data.Map.Strict             as Map
 import           Data.Hashable
 import qualified Data.Set                    as Set
 import           Data.Monoid.Generic
+import           Data.Hourglass
 
 import qualified StmContainers.Map           as StmMap
 
@@ -73,11 +75,11 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
     deriving anyclass TheBinary
 
 data RrdpRepository = RrdpRepository {
-        uri      :: RrdpURL,
-        rrdpMeta :: Maybe (SessionId, RrdpSerial),
-        eTag     :: Maybe ETag,
-        status   :: FetchStatus,
-        fetchType    :: FetchType
+        uri       :: RrdpURL,
+        rrdpMeta  :: Maybe (SessionId, RrdpSerial),
+        eTag      :: Maybe ETag,
+        status    :: FetchStatus,
+        fetchType :: FetchType
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -101,7 +103,7 @@ data Repository = RrdpR RrdpRepository |
 data RsyncRepository = RsyncRepository {
         repoPP      :: RsyncPublicationPoint,
         status      :: FetchStatus,
-        fetchType       :: FetchType
+        fetchType   :: FetchType
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -117,12 +119,17 @@ data PublicationPoints = PublicationPoints {
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
-newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
-    deriving newtype (Monoid)
 
-newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
+data RepositoryMeta = RepositoryMeta {
+        status            :: FetchStatus,
+        fetchType         :: FetchType,
+        lastFetchDuration :: TimeMs,
+        lastTimeout       :: Seconds
+    } 
+    deriving stock (Show, Eq, Ord, Generic)   
+    deriving anyclass TheBinary
+
+newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving newtype (Monoid)
@@ -189,10 +196,7 @@ instance Ord FetchType where
       where             
         time Unknown   = Nothing
         time (ForSyncFetch t) = Just t
-        time (ForAsyncFetch t)  = Just t
-
-instance Semigroup EverSucceededMap where
-    EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
+        time (ForAsyncFetch t)  = Just t  
 
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
@@ -273,13 +277,6 @@ mergeRrdp r@RrdpRepository {..} pps =
             Just existing 
                 | r == existing -> rrdps 
                 | otherwise     -> Map.insert uri (r <> existing) rrdps                        
-
-
-succeededFromStatus :: RpkiURL -> FetchStatus -> EverSucceededMap -> EverSucceededMap
-succeededFromStatus u (FetchedAt _) lastSucceded = 
-    lastSucceded <> EverSucceededMap (Map.singleton u AtLeastOnce)
-succeededFromStatus _ _ lastSucceded = lastSucceded
-
 
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
 mergePP (RrdpPP r) = mergeRrdp r

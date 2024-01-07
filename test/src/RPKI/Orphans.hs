@@ -539,10 +539,6 @@ instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary EverSucceededMap where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary FetchEverSucceeded  where
     arbitrary = genericArbitrary
     shrink = genericShrink

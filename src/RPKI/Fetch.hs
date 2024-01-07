@@ -189,10 +189,11 @@ fetchPPWithFallback
     --   - there's a free slot in the semaphore
     --   - we are waiting a free slot for more than N seconds
     --
-    -- In practice that means hanging timning out fetchers cannot 
+    -- In practice that means hanging timing out fetchers cannot 
     -- block the pool for too long and new fetchers will get through anyway.
     -- Fetching processes hanging on a connection don't take resources, 
-    -- so it's safe to run new ones without overloading the system.
+    -- so it's safer to risk overloading the system with a lot of processes
+    -- that blocking fetch entirely.
     -- 
     fetchPP parentScope repo = do 
         let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
@@ -210,7 +211,7 @@ fetchPPWithFallback
                                 Left _      -> (repo, FailedAt fetchMonent)
                                 Right repo' -> (repo', FetchedAt fetchMonent)
 
-                        let fetchType = deriveSpeed repo validations  duratioMs newStatus fetchMonent
+                        let fetchType = deriveSpeed repo validations duratioMs newStatus fetchMonent
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
                                 updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, fetchType)]
@@ -282,11 +283,14 @@ fetchRepository
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
   where
     repoURL = getRpkiURL repo    
+    -- Give the process some time to kill itself, 
+    -- before trying to kill it from here
+    timeToKillItself = Seconds 5
     
     fetchRsyncRepository r = do 
         let Seconds maxDuration = fetchConfig ^. #rsyncTimeout
         timeoutVT 
-            (1_000_000 * fromIntegral maxDuration)                 
+            (fetchConfig ^. #rsyncTimeout + timeToKillItself)                 
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
@@ -301,7 +305,7 @@ fetchRepository
     fetchRrdpRepository r = do 
         let Seconds maxDuration = fetchConfig ^. #rrdpTimeout
         timeoutVT 
-            (1_000_000 * fromIntegral maxDuration)           
+            (fetchConfig ^. #rrdpTimeout + timeToKillItself)
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
@@ -312,6 +316,16 @@ fetchRepository
                 logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
                 trace WorkerTimeoutTrace
                 appError $ RrdpE $ RrdpDownloadTimeout maxDuration)                
+
+    deriveTimeout absoluteMaxDuration RepositoryMeta {..} = let             
+            previousSeconds = Seconds 1 + Seconds (unTimeMs lastFetchDuration `div` 1000)
+            heuristicalNextTimeout = 
+                if | previousSeconds < Seconds 5  -> Seconds 10
+                   | previousSeconds < Seconds 10 -> Seconds 20
+                   | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
+                   | otherwise                    -> previousSeconds + Seconds 60             
+        in min absoluteMaxDuration heuristicalNextTimeout
+
 
 
 -- | Fetch TA certificate based on TAL location(s)

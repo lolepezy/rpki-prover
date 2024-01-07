@@ -104,7 +104,7 @@ data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
         initialParentId :: ProcessID,
-        workerTimeout    :: Timebox
+        workerTimeout   :: Timebox
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
