@@ -263,7 +263,7 @@ data MetricsDto = MetricsDto {
 
 data PublicationPointDto = PublicationPointDto {
         rrdp  :: [(RrdpURL, RrdpRepository)],
-        rsync :: [(RsyncURL, RsyncNodeInfo)]        
+        rsync :: [(RsyncURL, RepositoryMeta)]        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -443,7 +443,7 @@ instance ToJSON FetchStatus
 instance ToJSON ETag
 instance ToJSON FetchType
 instance ToJSON RrdpRepository
-instance ToJSON RsyncNodeInfo
+instance ToJSON RepositoryMeta
 instance ToJSON PublicationPointDto
 
 instance ToSchema MetricsDto
@@ -454,7 +454,7 @@ instance ToSchema ETag where
 instance ToSchema FetchType where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RrdpRepository
-instance ToSchema RsyncNodeInfo
+instance ToSchema RepositoryMeta
 instance ToSchema PublicationPointDto
 
 instance ToJSONKey (DtoScope s) where 

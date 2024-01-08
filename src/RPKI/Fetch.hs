@@ -211,10 +211,11 @@ fetchPPWithFallback
                                 Left _      -> (repo, FailedAt fetchMonent)
                                 Right repo' -> (repo', FetchedAt fetchMonent)
 
-                        let fetchType = deriveSpeed repo validations duratioMs newStatus fetchMonent
+                        let newMeta = deriveNewMeta fetchConfig newRepo validations duratioMs newStatus fetchMonent
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
-                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, fetchType)]
+                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newMeta)]
+
                     pure (r, validations)        
 
             bracketOnError 
@@ -236,18 +237,26 @@ fetchPPWithFallback
         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
         pure (needsFetching', repo)
 
-    deriveSpeed repo validations (TimeMs duratioMs) newStatus fetchMoment =
+
+deriveNewMeta fetchConfig repo validations duration@(TimeMs duratioMs) status fetchMoment = 
+    RepositoryMeta {..}
+  where    
+    lastFetchDuration = Just duration
+
+    fetchType =
+        -- If there fetch timed out then it's definitely for async fetch
+
         -- If there fetch timed out then it's definitely for async fetch
         -- otherwise, check how long did it take to download
         if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
             then ForAsyncFetch fetchMoment
             else 
-                case (getFetchType repo, newStatus) of                     
+                case (getFetchType repo, status) of                     
                     -- If the repository is currenly marked as ForAsyncFetch
                     -- it needs to succeed to get back to the ForSyncFetch category
                     (ForAsyncFetch _, FailedAt _) -> ForAsyncFetch fetchMoment
                     _                             -> speedByTiming        
-      where
+        where
         Seconds rrdpSlowSec  = fetchConfig ^. #rrdpSlowThreshold
         Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold        
         speedByTiming = 
@@ -259,6 +268,20 @@ fetchPPWithFallback
             if condition 
                 then ForAsyncFetch fetchMoment
                 else ForSyncFetch fetchMoment       
+
+
+deriveNextTimeout :: Seconds -> RepositoryMeta -> Seconds
+deriveNextTimeout absoluteMaxDuration RepositoryMeta {..} = 
+    case lastFetchDuration of
+        Nothing       -> absoluteMaxDuration
+        Just duration -> let
+                previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
+                heuristicalNextTimeout = 
+                    if | previousSeconds < Seconds 5  -> Seconds 10
+                       | previousSeconds < Seconds 10 -> Seconds 20
+                       | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
+                       | otherwise                    -> previousSeconds + Seconds 60             
+            in min absoluteMaxDuration heuristicalNextTimeout
 
 
 -- Fetch one individual repository. 
@@ -288,9 +311,10 @@ fetchRepository
     timeToKillItself = Seconds 5
     
     fetchRsyncRepository r = do 
-        let Seconds maxDuration = fetchConfig ^. #rsyncTimeout
+        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
+        let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT 
-            (fetchConfig ^. #rsyncTimeout + timeToKillItself)                 
+            totalTimeout
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
@@ -298,14 +322,14 @@ fetchRepository
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
                 trace WorkerTimeoutTrace
-                appError $ RsyncE $ RsyncDownloadTimeout maxDuration)        
+                appError $ RsyncE $ RsyncDownloadTimeout totalTimeout)        
     
     fetchRrdpRepository r = do 
-        let Seconds maxDuration = fetchConfig ^. #rrdpTimeout
-        timeoutVT 
-            (fetchConfig ^. #rrdpTimeout + timeToKillItself)
+        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
+        let totalTimeout = fetcherTimeout + timeToKillItself
+        timeoutVT totalTimeout
             (do
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
@@ -313,18 +337,9 @@ fetchRepository
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
                 trace WorkerTimeoutTrace
-                appError $ RrdpE $ RrdpDownloadTimeout maxDuration)                
-
-    deriveTimeout absoluteMaxDuration RepositoryMeta {..} = let             
-            previousSeconds = Seconds 1 + Seconds (unTimeMs lastFetchDuration `div` 1000)
-            heuristicalNextTimeout = 
-                if | previousSeconds < Seconds 5  -> Seconds 10
-                   | previousSeconds < Seconds 10 -> Seconds 20
-                   | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
-                   | otherwise                    -> previousSeconds + Seconds 60             
-        in min absoluteMaxDuration heuristicalNextTimeout
+                appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)                
 
 
 
@@ -337,18 +352,18 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
     go (u : uris) = fetchTaCert `catchError` goToNext 
       where 
-        goToNext e = do            
-            let message = [i|Failed to fetch #{getURL u}: #{e}|]
-            logError logger message
-            validatorWarning $ VWarning e
-            go uris
-
         fetchTaCert = do                     
             logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext fetchConfig rrdpU
             pure (u, ro)
+
+        goToNext e = do            
+            let message = [i|Failed to fetch #{getURL u}: #{e}|]
+            logError logger message
+            validatorWarning $ VWarning e
+            go uris            
 
 
 

@@ -54,7 +54,7 @@ toRsyncMessage = \case
 
     FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
     RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
-    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}s.|]
+    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}.|]
     RsyncUnsupportedObjectType url -> [i|Unsupported object type #{url}.|]             
     UnknownRsyncProblem e          -> [i|Unknown problem with rsync #{e}.|]
 
@@ -146,7 +146,7 @@ toRrdpMessage = \case
         [i|Unsupported object type #{url}.|]        
         
     RrdpDownloadTimeout t -> 
-        [i|Could not update repository in #{t}s.|]        
+        [i|Could not update repository in #{t}.|]        
 
     UnknownRrdpProblem e -> 
         [i|Unknown problem with RRDP: #{e}.|]  

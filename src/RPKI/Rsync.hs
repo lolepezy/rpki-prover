@@ -154,7 +154,7 @@ updateObjectForRsyncRepository
     appContext@AppContext{..} 
     fetchConfig
     worldVersion
-    repo@(RsyncRepository (RsyncPublicationPoint uri) _ _) = 
+    repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
