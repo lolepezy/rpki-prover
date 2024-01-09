@@ -251,12 +251,10 @@ deriveNewMeta fetchConfig repo validations duration@(TimeMs duratioMs) status fe
         if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
             then ForAsyncFetch fetchMoment
             else 
-                case (getFetchType repo, status) of                     
-                    -- If the repository is currenly marked as ForAsyncFetch
-                    -- it needs to succeed to get back to the ForSyncFetch category
-                    (ForAsyncFetch _, FailedAt _) -> ForAsyncFetch fetchMoment
-                    _                             -> speedByTiming        
-        where
+                case status of                                         
+                    FailedAt _ -> ForAsyncFetch fetchMoment
+                    _          -> speedByTiming        
+      where
         Seconds rrdpSlowSec  = fetchConfig ^. #rrdpSlowThreshold
         Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold        
         speedByTiming = 
@@ -316,9 +314,10 @@ fetchRepository
         timeoutVT 
             totalTimeout
             (do
+                let fetchConfig' = fetchConfig & #rsyncTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (runRsyncFetchWorker appContext fetchConfig worldVersion r)
+                                    (runRsyncFetchWorker appContext fetchConfig' worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
@@ -331,9 +330,10 @@ fetchRepository
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
+                let fetchConfig' = fetchConfig & #rrdpTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (runRrdpFetchWorker appContext fetchConfig worldVersion r)
+                                    (runRrdpFetchWorker appContext fetchConfig' worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
@@ -497,9 +497,9 @@ syncFetchConfig :: Config -> FetchConfig
 syncFetchConfig config = let 
         rsyncTimeout = config ^. typed @RsyncConf . #rsyncTimeout
         rrdpTimeout  = config ^. typed @RrdpConf . #rrdpTimeout
-        rsyncSlowThreshold = rsyncTimeout
-        rrdpSlowThreshold = rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 60 
+        rsyncSlowThreshold = min rsyncTimeout (Seconds 60)
+        rrdpSlowThreshold = min rrdpTimeout (Seconds 60)
+        fetchLaunchWaitDuration = Seconds 30 
     in FetchConfig {..}
 
 asyncFetchConfig :: Config -> FetchConfig
@@ -508,7 +508,7 @@ asyncFetchConfig config = let
         rrdpTimeout  = config ^. typed @RrdpConf . #asyncRrdpTimeout
         rsyncSlowThreshold = config ^. typed @RsyncConf . #rsyncTimeout
         rrdpSlowThreshold = config ^. typed @RrdpConf . #rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 120 
+        fetchLaunchWaitDuration = Seconds 60 
     in FetchConfig {..}
 
 
