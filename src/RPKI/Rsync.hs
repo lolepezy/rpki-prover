@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE QuasiQuotes       #-}
@@ -7,11 +6,12 @@
 
 module RPKI.Rsync where
     
-import           Control.Lens                     ((%~), (&), (^.))
+import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 
+import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
@@ -53,9 +53,6 @@ import           System.Exit
 import           System.IO
 import           System.FilePath
 import           System.Process.Typed
-
-import           System.Mem                       (performGC)
-import Control.Concurrent.Async
 
 import qualified Streaming.Prelude                as S
 
@@ -168,11 +165,8 @@ updateObjectForRsyncRepository
                 readProcess rsync
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
-            ExitSuccess -> do 
-                -- Try to deallocate all the bytestrings created by mmaps right after they are used, 
-                -- they will hold too much files open.            
-                loadRsyncRepository appContext worldVersion uri destination db
-                            `finally` liftIO performGC            
+            ExitSuccess -> do                 
+                loadRsyncRepository appContext worldVersion uri destination db                             
                 pure repo
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
