@@ -68,7 +68,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     -- First check that there's some validated data
     lastVersion <- liftIO $ roTx db $ getLastValidationVersion db    
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
-    
+
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
     parsedRsc <- vHoist $ parseRsc bs    
 
@@ -115,8 +115,6 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                             pure [(f, hash)] 
                         else 
                             pure []
-
-                    
 
     findHashFunc (DigestAlgorithmIdentifier oid) = 
         case () of 
