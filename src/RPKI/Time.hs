@@ -122,10 +122,6 @@ instantDateFormat (Instant d) = timePrint format d
 secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
 
--- Heuristical "how many sceonds I can derive from it", i.e. 
--- < 1 second is still 1 second
-toSecondsRound (TimeMs ms) = Seconds $ ms `div` 1000
-
 cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
 cpuTimePerSecond (CPUTime t) from to = let
     Seconds duration = instantDiff to from
