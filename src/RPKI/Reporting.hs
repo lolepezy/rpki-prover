@@ -90,6 +90,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ManifestEntryDoesn'tExist Hash Text |
                         ManifestEntryHasWrongFileType Hash Text RpkiObjectType |                        
                         ManifestNumberDecreased { oldMftNumber :: Serial, newMftNumber :: Serial } |
+                        -- This is a bit of a special error to indicate that the 
+                        -- "fallback to the last valid MFT" happened
+                        MftFallback AppError |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
                         CRL_AKI_DifferentFromCertSKI SKI AKI |
@@ -125,7 +128,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
-                        BGPCertBrokenASNs
+                        BGPCertBrokenASNs                         
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     
@@ -217,7 +220,7 @@ data AppError = ParseE (ParseError Text) |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
-                UnspecifiedE Text Text
+                UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
