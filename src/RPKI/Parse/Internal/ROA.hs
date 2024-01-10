@@ -28,7 +28,7 @@ import qualified RPKI.Util                  as U
 parseRoa :: BS.ByteString -> PureValidatorT RoaObject
 parseRoa bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs  
-    signedRoa <- fromEither $ first (parseErr . U.fmtGen) 
+    signedRoa <- fromEither $ first (parseErr . U.convert) 
                     $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas') asns
     hash' <- getMetaFromSigned signedRoa bs
     pure $ newCMSObject hash' (CMS signedRoa)
