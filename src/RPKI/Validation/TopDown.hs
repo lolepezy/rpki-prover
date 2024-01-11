@@ -609,7 +609,6 @@ validateCaNoFetch
 
                             Just mftKey 
                                 | mftShortKey == mftKey -> do
-                                    -- logDebug logger [i|Option 1|]            
                                     -- Nothing has changed, the real manifest is the 
                                     -- same as the shortcut, so use the shortcut
                                     let crlKey = mftShortcut ^. #crlShortcut . #key
@@ -647,7 +646,7 @@ validateCaNoFetch
                                             combineShortcutAndNewMft
                                                 `catchError`
                                                 (\e -> do 
-                                                    vFocusOn ObjectFocus mftKey $ appWarn e
+                                                    vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
                                                     logWarn logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
                                                     useShortcutOnly)                                            
                     pure $! do 
@@ -994,7 +993,7 @@ validateCaNoFetch
                                     vError $ ManifestEntryDoesn'tExist hash' filename
 
         -- The type of the object that is deserialised doesn't correspond 
-        -- file extension on the manifest
+        -- to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
         when (Just realObjectType /= objectType) $ 
             vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType

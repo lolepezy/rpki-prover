@@ -187,12 +187,13 @@ fetchPPWithFallback
     -- 
     -- A fetcher can proceed if either
     --   - there's a free slot in the semaphore
-    --   - we are waiting for more than N seconds
+    --   - we are waiting a free slot for more than N seconds
     --
-    -- In practice that means hanging timning out fetchers cannot 
+    -- In practice that means hanging timing out fetchers cannot 
     -- block the pool for too long and new fetchers will get through anyway.
     -- Fetching processes hanging on a connection don't take resources, 
-    -- so it's safe to run new ones, without overloading the system.
+    -- so it's safer to risk overloading the system with a lot of processes
+    -- that blocking fetch entirely.
     -- 
     fetchPP parentScope repo = do 
         let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
@@ -200,20 +201,21 @@ fetchPPWithFallback
             let rpkiUrl = getRpkiURL repo
             let launchFetch = async $ do               
                     let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
-                    Now fetchTime <- thisInstant
+                    Now fetchMonent <- thisInstant
                     ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
                                                     $ fetchRepository appContext fetchConfig worldVersion repo                                
                     atomically $ do
                         StmMap.delete rpkiUrl individualFetchRuns
 
                         let (newRepo, newStatus) = case r of                             
-                                Left _      -> (repo, FailedAt fetchTime)
-                                Right repo' -> (repo', FetchedAt fetchTime)
+                                Left _      -> (repo, FailedAt fetchMonent)
+                                Right repo' -> (repo', FetchedAt fetchMonent)
 
-                        let speed = deriveSpeed repo validations duratioMs fetchTime
+                        let newMeta = deriveNewMeta fetchConfig newRepo validations duratioMs newStatus fetchMonent
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
-                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newStatus, speed)]
+                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newMeta)]
+
                     pure (r, validations)        
 
             bracketOnError 
@@ -235,24 +237,47 @@ fetchPPWithFallback
         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
         pure (needsFetching', repo)
 
-    deriveSpeed repo validations (TimeMs duratioMs) fetchTime = let                
+
+deriveNewMeta fetchConfig repo validations duration@(TimeMs duratioMs) status fetchMoment = 
+    RepositoryMeta {..}
+  where    
+    lastFetchDuration = Just duration
+
+    fetchType =
+        -- If there fetch timed out then it's definitely for async fetch
+        -- otherwise, check how long did it take to download
+        if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
+            then ForAsyncFetch fetchMoment
+            else 
+                case status of                                         
+                    FailedAt _ -> ForAsyncFetch fetchMoment
+                    _          -> speedByTiming        
+      where
         Seconds rrdpSlowSec  = fetchConfig ^. #rrdpSlowThreshold
-        Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold
+        Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold        
         speedByTiming = 
             case repo of
                 RrdpR _  -> checkSlow $ duratioMs > 1000 * rrdpSlowSec
                 RsyncR _ -> checkSlow $ duratioMs > 1000 * rsyncSlowSec
 
-        -- If there fetch timed out then it's definitely slow
-        -- otherwise, check how long did it take to download
-        in if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
-            then Slow fetchTime
-            else speedByTiming        
-      where
         checkSlow condition = 
             if condition 
-                then Slow fetchTime
-                else Quick fetchTime       
+                then ForAsyncFetch fetchMoment
+                else ForSyncFetch fetchMoment       
+
+
+deriveNextTimeout :: Seconds -> RepositoryMeta -> Seconds
+deriveNextTimeout absoluteMaxDuration RepositoryMeta {..} = 
+    case lastFetchDuration of
+        Nothing       -> absoluteMaxDuration
+        Just duration -> let
+                previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
+                heuristicalNextTimeout = 
+                    if | previousSeconds < Seconds 5  -> Seconds 10
+                       | previousSeconds < Seconds 10 -> Seconds 20
+                       | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
+                       | otherwise                    -> previousSeconds + Seconds 60             
+            in min absoluteMaxDuration heuristicalNextTimeout
 
 
 -- Fetch one individual repository. 
@@ -277,36 +302,43 @@ fetchRepository
             RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
   where
     repoURL = getRpkiURL repo    
+    -- Give the process some time to kill itself, 
+    -- before trying to kill it from here
+    timeToKillItself = Seconds 5
     
     fetchRsyncRepository r = do 
-        let Seconds maxDuration = fetchConfig ^. #rsyncTimeout
+        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
+        let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT 
-            (1_000_000 * fromIntegral maxDuration)                 
+            totalTimeout
             (do
+                let fetchConfig' = fetchConfig & #rsyncTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (runRsyncFetchWorker appContext fetchConfig worldVersion r)
+                                    (runRsyncFetchWorker appContext fetchConfig' worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
                 trace WorkerTimeoutTrace
-                appError $ RsyncE $ RsyncDownloadTimeout maxDuration)        
+                appError $ RsyncE $ RsyncDownloadTimeout totalTimeout)        
     
     fetchRrdpRepository r = do 
-        let Seconds maxDuration = fetchConfig ^. #rrdpTimeout
-        timeoutVT 
-            (1_000_000 * fromIntegral maxDuration)           
+        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
+        let totalTimeout = fetcherTimeout + timeToKillItself
+        timeoutVT totalTimeout
             (do
+                let fetchConfig' = fetchConfig & #rrdpTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (runRrdpFetchWorker appContext fetchConfig worldVersion r)
+                                    (runRrdpFetchWorker appContext fetchConfig' worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{maxDuration}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
                 trace WorkerTimeoutTrace
-                appError $ RrdpE $ RrdpDownloadTimeout maxDuration)                
+                appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)                
+
 
 
 -- | Fetch TA certificate based on TAL location(s)
@@ -318,18 +350,18 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
     go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
     go (u : uris) = fetchTaCert `catchError` goToNext 
       where 
-        goToNext e = do            
-            let message = [i|Failed to fetch #{getURL u}: #{e}|]
-            logError logger message
-            validatorWarning $ VWarning e
-            go uris
-
         fetchTaCert = do                     
             logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
                 RrdpU rrdpU   -> fetchRpkiObject appContext fetchConfig rrdpU
             pure (u, ro)
+
+        goToNext e = do            
+            let message = [i|Failed to fetch #{getURL u}: #{e}|]
+            logError logger message
+            validatorWarning $ VWarning e
+            go uris            
 
 
 
@@ -430,7 +462,7 @@ onlyForSyncFetch pps ppAccess = let
     checkSlow pp = 
         case repositoryFromPP (mergePP pp pps) (getRpkiURL pp) of 
             Nothing -> (False, Nothing)
-            Just r  -> (isSlow $ getSpeed r, Just r)                        
+            Just r  -> (isForAsync $ getFetchType r, Just r)                        
 
 
 filterForAsyncFetch :: PublicationPointAccess -> [FetchResult] -> [Repository] -> [Repository]
@@ -463,18 +495,19 @@ syncFetchConfig :: Config -> FetchConfig
 syncFetchConfig config = let 
         rsyncTimeout = config ^. typed @RsyncConf . #rsyncTimeout
         rrdpTimeout  = config ^. typed @RrdpConf . #rrdpTimeout
-        rsyncSlowThreshold = rsyncTimeout
-        rrdpSlowThreshold = rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 60 
+        rsyncSlowThreshold = slowThreshold rsyncTimeout
+        rrdpSlowThreshold = slowThreshold rrdpTimeout
+        fetchLaunchWaitDuration = Seconds 30 
     in FetchConfig {..}
 
 asyncFetchConfig :: Config -> FetchConfig
 asyncFetchConfig config = let 
         rsyncTimeout = config ^. typed @RsyncConf . #asyncRsyncTimeout
         rrdpTimeout  = config ^. typed @RrdpConf . #asyncRrdpTimeout
-        rsyncSlowThreshold = config ^. typed @RsyncConf . #rsyncTimeout
-        rrdpSlowThreshold = config ^. typed @RrdpConf . #rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 120 
+        rsyncSlowThreshold = slowThreshold rsyncTimeout
+        rrdpSlowThreshold = slowThreshold rrdpTimeout
+        fetchLaunchWaitDuration = Seconds 60 
     in FetchConfig {..}
 
-
+slowThreshold :: Seconds -> Seconds
+slowThreshold t = min t (Seconds 60)

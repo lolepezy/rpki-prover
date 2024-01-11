@@ -31,7 +31,7 @@ import qualified RPKI.Util as U
 parseAspa :: BS.ByteString -> PureValidatorT AspaObject
 parseAspa bs = do    
     asns       <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs    
-    signedAspa <- fromEither $ first (parseErr . U.fmtGen) $ 
+    signedAspa <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseAspa') asns
     hash' <- getMetaFromSigned signedAspa bs
     pure $ newCMSObject hash' (CMS signedAspa)

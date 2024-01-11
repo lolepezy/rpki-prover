@@ -12,7 +12,6 @@ module RPKI.Validation.BottomUp where
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Control.Monad.Except
 import           Control.Lens
 
 import qualified Data.Map.Strict                  as Map
@@ -43,7 +42,7 @@ validateBottomUp :: Storage s =>
                 -> Now
                 -> ValidatorT IO (Validated RpkiObject, [Located CaCerObject])
 validateBottomUp 
-    appContext@AppContext{..}
+    AppContext{..}
     object 
     now = do 
     db <- liftIO $ readTVarIO database    
@@ -150,8 +149,7 @@ validateBottomUp
            but the difference is that we don't do any descent down the tree
            and don't track visited object or metrics.
          -}
-        let childrenAki   = toAKI $ getSKI certificate
-        let certLocations = getLocations certificate                
+        let childrenAki = toAKI $ getSKI certificate
         maybeMft <- liftIO $ roTx db $ \tx -> findLatestMftByAKI tx db childrenAki        
         case maybeMft of 
             Nothing -> 
@@ -159,8 +157,8 @@ validateBottomUp
             Just keyedMft -> do
                 -- TODO Decide what to do with nested scopes (we go bottom up, 
                 -- so nesting doesn't work the same way).                            
-                let locatedMft@(Located mftLocation mft) = keyedMft ^. #object            
-                vFocusOn ObjectFocus (keyedMft ^. #key) $ do
+                let locatedMft@(Located mftLocation mft) = keyedMft ^. #object    
+                vFocusOn LocationFocus (getURL $ pickLocation mftLocation) $ do                
                     validateObjectLocations locatedMft
                     validateMftLocation locatedMft certificate
                     MftPair _ crlHash <- 

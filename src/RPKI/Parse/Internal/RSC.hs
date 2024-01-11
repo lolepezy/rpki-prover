@@ -32,7 +32,7 @@ import qualified RPKI.Util                  as U
 parseRsc :: BS.ByteString -> PureValidatorT RscObject
 parseRsc bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs      
-    signedRsc <- fromEither $ first (parseErr . U.fmtGen) $ 
+    signedRsc <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseRsc') asns
     hash' <- getMetaFromSigned signedRsc bs
     pure $ newCMSObject hash' (CMS signedRsc)

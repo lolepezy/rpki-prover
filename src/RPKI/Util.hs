@@ -107,22 +107,20 @@ toNatural i | i > 0     = Just (fromIntegral i :: Natural)
 isRsyncURI, isRrdpURI, isHttpsURI, isHttpURI :: URI -> Bool
 isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
 isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u 
-isHttpURI (URI u) = "http://" `Text.isPrefixOf` u
+isHttpURI (URI u)  = "http://" `Text.isPrefixOf` u
 isRrdpURI u = isHttpURI u || isHttpsURI u
 
 isParentOf :: WithURL u => u -> u -> Bool
-isParentOf p c = pt `Text.isPrefixOf` ct
-    where
-        URI pt = getURL p
-        URI ct = getURL c
+isParentOf (getURL -> URI parent) (getURL -> URI child) = 
+    parent `Text.isPrefixOf` child
 
 parseRpkiURL :: Text -> Either Text RpkiURL
 parseRpkiURL t
     | isRrdpURI u  = Right $ RrdpU $ RrdpURL u
     | isRsyncURI u = RsyncU <$> parseRsyncURL t            
     | otherwise = Left $ "Unknown URL type: " <> t
-    where
-        u = URI t
+  where
+    u = URI t
 
 parseRsyncURL :: Text -> Either Text RsyncURL
 parseRsyncURL t = 

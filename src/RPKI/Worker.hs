@@ -96,7 +96,7 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-newtype Timebox = Timebox Seconds
+newtype Timebox = Timebox { unTimebox :: Seconds }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -104,7 +104,7 @@ data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
         initialParentId :: ProcessID,
-        workerTimeout    :: Timebox
+        workerTimeout   :: Timebox
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -211,6 +211,7 @@ rtsN n = "-N" <> show n
 rtsMemValue :: Int -> String
 rtsMemValue mb = show mb <> "m"
 
+-- Don't do idle GC, it only spins the CPU without any purpose
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
@@ -245,7 +246,7 @@ runWorker logger config workerId params timeout extraCli = do
             setStdout byteStringOutput $
                 proc executableToRun $ [ "--worker" ] <> extraCli
 
-    logDebug logger [i|Running worker: #{trimmed worker}|]        
+    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{unTimebox timeout}.|]        
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,

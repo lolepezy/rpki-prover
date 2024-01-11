@@ -572,7 +572,7 @@ loadStoredAppState AppContext {..} = do
 {- 
     Run periodic fetches for slow repositories asychronously to the validation process.
 
-    - Periodically check if there're repositories that don't have speed `Quick`
+    - Periodically check if there're repositories that don't have fetchType `ForSyncFetch`
     - Try to refetch these repositories
     - 
 -}

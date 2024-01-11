@@ -54,7 +54,7 @@ toRsyncMessage = \case
 
     FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
     RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
-    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}s.|]
+    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}.|]
     RsyncUnsupportedObjectType url -> [i|Unsupported object type #{url}.|]             
     UnknownRsyncProblem e          -> [i|Unknown problem with rsync #{e}.|]
 
@@ -146,7 +146,7 @@ toRrdpMessage = \case
         [i|Unsupported object type #{url}.|]        
         
     RrdpDownloadTimeout t -> 
-        [i|Could not update repository in #{t}s.|]        
+        [i|Could not update repository in #{t}.|]        
 
     UnknownRrdpProblem e -> 
         [i|Unknown problem with RRDP: #{e}.|]  
@@ -234,6 +234,9 @@ toValidationMessage = \case
       ManifestNumberDecreased {..} ->
         [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
         [i|will use previous manifest if it exists and is valid.|]
+
+      MftFallback e -> 
+        [i|Fallback to the last valid manifest happened, with the error: #{toMessage e}|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
