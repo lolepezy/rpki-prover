@@ -1,6 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.RepositorySpec where
 
@@ -86,18 +87,18 @@ prop_rsync_tree_update =
                                 []   -> original
                                 s :_ -> s)) 
                         toUpdate allShorter
-                updatedTree = foldr (\u t -> toRsyncTree u newStatus newSpeed t) tree sameOrShorter
+                updatedTree = foldr (\u t -> toRsyncTree u (newMeta newStatus newSpeed) t) tree sameOrShorter
                 sameOrLonger = filter (\(RsyncURL h p) -> 
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
                 in all (\url -> 
                     fmap snd (infoInRsyncTree url updatedTree) == 
-                        Just (RsyncNodeInfo newStatus newSpeed)) sameOrLonger
-
+                        Just (newMeta newStatus newSpeed)) sameOrLonger
+    
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncTree
 convertToRepos urls status = 
-    foldr (\u t -> toRsyncTree u status Unknown t) newRsyncTree urls  
+    foldr (\u t -> toRsyncTree u (newMeta status Unknown) t) newRsyncTree urls  
 
 
 generateRsyncUrl :: Gen RsyncURL
@@ -112,3 +113,8 @@ generateRsyncUrl = do
     let rsyncHost = RsyncHost (RsyncHostName host) Nothing
     let path = map (RsyncPathChunk . convert) pathLevels
     pure $ RsyncURL rsyncHost path
+
+
+newMeta status fetchType = let  
+    lastFetchDuration = Nothing
+    in RepositoryMeta {..}
