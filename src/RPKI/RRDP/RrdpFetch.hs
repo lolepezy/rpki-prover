@@ -361,7 +361,7 @@ saveSnapshot
     liftIO $ setCpuCount maxCpuAvailable
     let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
 
-    db <- liftIO $ readTVarIO $ appContext ^. #database    
+    db <- liftIO $ readTVarIO database    
     (Snapshot _ sessionId serial snapshotItems) <- vHoist $         
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
@@ -373,15 +373,21 @@ saveSnapshot
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-    let savingTx f = 
-            rwAppTx db $ \tx ->
-                f tx >> DB.updateRrdpMeta tx db (sessionId, serial) repoUri 
-
-    txFoldPipeline 
+    txFoldPipelineBatch 
             cpuParallelism
+            10000    
             (S.mapM (newStorable db) $ S.each snapshotItems)
-            savingTx
-            (saveStorable db)            
+            (rwAppTx db)
+            (saveStorable db)           
+
+    -- txFoldPipeline
+    --         cpuParallelism
+    --         (S.mapM (newStorable db) $ S.each snapshotItems)
+    --         (rwAppTx db)
+    --         (saveStorable db)       
+
+    rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (sessionId, serial) repoUri      
+
   where        
 
     newStorable db (SnapshotPublish uri encodedb64) =             
