@@ -22,8 +22,11 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (SessionId "whatever", RrdpSerial 50),
-                        status = Pending,
-                        fetchType = Unknown,
+                        meta = RepositoryMeta {
+                                status = Pending,
+                                fetchType = Unknown,
+                                lastFetchDuration = Nothing
+                            },
                         eTag = Nothing
                     }
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
@@ -38,8 +41,11 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
-                        status = Pending,
-                        fetchType = Unknown,
+                        meta = RepositoryMeta {
+                                status = Pending,
+                                fetchType = Unknown,
+                                lastFetchDuration = Nothing
+                            },
                         eTag = Nothing
                     }                        
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
@@ -55,8 +61,11 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
-                        status = Pending,
-                        fetchType = Unknown,
+                        meta = RepositoryMeta {
+                                status = Pending,
+                                fetchType = Unknown,
+                                lastFetchDuration = Nothing
+                            },
                         eTag = Nothing
                     }
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
@@ -73,8 +82,11 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
-                        status = Pending,
-                        fetchType = Unknown,
+                        meta = RepositoryMeta {
+                                status = Pending,
+                                fetchType = Unknown,
+                                lastFetchDuration = Nothing
+                            },
                         eTag = Nothing
                     }                    
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
@@ -91,8 +103,11 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
         let repo = RrdpRepository { 
                         uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
                         rrdpMeta = Just (sessionId, serial),
-                        status = Pending,
-                        fetchType = Unknown,
+                        meta = RepositoryMeta {
+                                status = Pending,
+                                fetchType = Unknown,
+                                lastFetchDuration = Nothing
+                            },
                         eTag = Nothing
                     } 
         let (nextStep, _) = runPureValidator (newScopes "test") $ 

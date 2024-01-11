@@ -550,12 +550,12 @@ instance Arbitrary RsyncTree where
 instance Arbitrary RsyncNodeNormal where
     arbitrary = genericArbitrary
     shrink = genericShrink
-    
-instance Arbitrary Trace where
+
+instance Arbitrary RepositoryMeta where
     arbitrary = genericArbitrary
     shrink = genericShrink
-
-instance Arbitrary RsyncNodeInfo where
+    
+instance Arbitrary Trace where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

@@ -429,15 +429,7 @@ findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) =
             <- flattenRsyncTree rsyncTree, isForAsync fetchType ]
       where 
         rsyncRepo (RsyncPublicationPoint -> repoPP) meta = RsyncR $ RsyncRepository {..}
-                
 
--- newtype RsyncNodeInfo = RsyncNodeInfo {
---         meta :: RepositoryMeta
---     }
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass TheBinary
---     deriving Semigroup via GenericSemigroup RsyncNodeInfo   
---     deriving Monoid    via GenericMonoid RsyncNodeInfo
 
 type RsyncNodeNormal = RsyncNode RepositoryMeta
 
