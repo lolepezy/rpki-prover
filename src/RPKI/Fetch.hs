@@ -245,8 +245,6 @@ deriveNewMeta fetchConfig repo validations duration@(TimeMs duratioMs) status fe
 
     fetchType =
         -- If there fetch timed out then it's definitely for async fetch
-
-        -- If there fetch timed out then it's definitely for async fetch
         -- otherwise, check how long did it take to download
         if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
             then ForAsyncFetch fetchMoment
