@@ -417,8 +417,8 @@ filterPPAccess Config {..} ppAccess =
         RsyncPP _ -> rsyncConf ^. #enabled        
 
 
-findSpeedProblems :: PublicationPoints -> [(RpkiURL, Repository)]
-findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
+findRepositoriesForAsyncFetch :: PublicationPoints -> [(RpkiURL, Repository)]
+findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
