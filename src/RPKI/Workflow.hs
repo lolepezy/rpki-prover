@@ -430,16 +430,16 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Workers for functionality running in separate processes.
     --     
     runValidationWorker worldVersion = do 
-        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
-        let workerId = WorkerId $ "validation:" <> talsStr
+        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals                    
+            workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
 
-        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+            maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
 
-        -- TODO make it a runtime thing, config?
-        -- let profilingFlags = [ "-p", "-hT", "-l" ]
-        let profilingFlags = [ ]
+            -- TODO make it a runtime thing, config?
+            -- let profilingFlags = [ "-p", "-hT", "-l" ]
+            profilingFlags = [ ]
 
-        let arguments = 
+            arguments = 
                 [ worderIdS workerId ] <>
                 rtsArguments ( 
                     profilingFlags <> [ 
@@ -451,14 +451,15 @@ runWorkflow appContext@AppContext {..} tals = do
         
         r <- runValidatorT 
                 (newScopes "validator") $ 
-                    runWorker logger config workerId 
+                    runWorker logger config 
+                        workerId 
                         (ValidationParams worldVersion tals)                        
                         (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                         arguments                                        
         pure (r, workerId)
 
     runCleapUpWorker worldVersion = do             
-        let workerId = WorkerId "cache-clean-up"
+        let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
         let arguments = 
                 [ worderIdS workerId ] <>
@@ -470,7 +471,8 @@ runWorkflow appContext@AppContext {..} tals = do
         
         r <- runValidatorT             
                 (newScopes "cache-clean-up") $ 
-                    runWorker logger config workerId 
+                    runWorker logger config
+                        workerId 
                         (CacheCleanupParams worldVersion)
                         (Timebox 300)
                         arguments                                                                    

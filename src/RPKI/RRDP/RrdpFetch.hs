@@ -60,7 +60,8 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RrdpFetchParams'.
-    let workerId = WorkerId $ "rrdp-fetch:" <> unURI (getURL $ repository ^. #uri)
+    let (URI u) = getURL repository
+    let workerId = WorkerId [i|version:#{worldVersion}:rrdp-fetch:#{u}|]
 
     let arguments = 
             [ worderIdS workerId ] <>

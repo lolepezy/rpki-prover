@@ -474,11 +474,10 @@ filterForAsyncFetch ppAccess fetches slowRepos =
                 $ NonEmpty.toList $ unPublicationPointAccess ppAccess
         ) slowRepos 
   where            
-    thereIsASuccessfulFetch url = not $ null $ filter (
+    thereIsASuccessfulFetch url = not $ null $ flip filter fetches $ 
         \case 
             FetchSuccess r _ -> getRpkiURL r == url
-            FetchFailure _ _ -> False
-        ) fetches
+            FetchFailure _ _ -> False        
 
 resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
 resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
