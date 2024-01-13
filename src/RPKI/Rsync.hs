@@ -84,11 +84,12 @@ runRsyncFetchWorker :: AppContext s
                     -> WorldVersion
                     -> RsyncRepository             
                     -> ValidatorT IO RsyncRepository
-runRsyncFetchWorker AppContext {..} fetchConfig worldVersion rsyncRepo = do
+runRsyncFetchWorker AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RsyncFetchResult'.
-    let workerId = WorkerId $ "rsync-fetch:" <> unURI (getURL rsyncRepo)
+    let (URI u) = getURL repository
+    let workerId = WorkerId [i|version:#{worldVersion}:rsync-fetch:#{u}|]    
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
     let arguments = 
@@ -104,7 +105,7 @@ runRsyncFetchWorker AppContext {..} fetchConfig worldVersion rsyncRepo = do
                                 logger
                                 config
                                 workerId 
-                                (RsyncFetchParams vp fetchConfig rsyncRepo worldVersion)                        
+                                (RsyncFetchParams vp fetchConfig repository worldVersion)                        
                                 (Timebox $ fetchConfig ^. #rsyncTimeout)
                                 arguments                        
     let RsyncFetchResult z = payload        

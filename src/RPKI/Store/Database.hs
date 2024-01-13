@@ -581,13 +581,18 @@ getVrps :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
 getVrps tx DB { vrpStore = VRPStore m _ } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
+deleteVRPs :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteVRPs tx DB { vrpStore = VRPStore vrpMap _ } wv = liftIO $ M.delete tx vrpMap wv
+
 getRoas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Roas)
 getRoas tx DB { vrpStore = VRPStore _ m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
-deleteVRPs :: (MonadIO m, Storage s) => 
+
+deleteRoas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVRPs tx DB { vrpStore = VRPStore vrpMap _ } wv = liftIO $ M.delete tx vrpMap wv
+deleteRoas tx DB { vrpStore = VRPStore _ r } wv = liftIO $ M.delete tx r wv
 
 getAspas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Aspa))
@@ -691,8 +696,6 @@ slurmForVersion tx DB { slurmStore = SlurmStore s } wv =
 
 deleteSlurms :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
-
-
 
 
 
@@ -898,6 +901,7 @@ deletePayloads tx db worldVersion = do
     deleteGbrs tx db worldVersion            
     deleteBgps tx db worldVersion            
     deleteVRPs tx db worldVersion            
+    deleteRoas tx db worldVersion            
     deleteMetrics tx db worldVersion
     deleteSlurms tx db worldVersion
 

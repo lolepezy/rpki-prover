@@ -33,8 +33,6 @@ import           System.Exit
 import           System.Directory
 import           System.FilePath                  ((</>))
 
-import           UnliftIO.Async                   (pooledForConcurrently)
-
 import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -432,16 +430,16 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Workers for functionality running in separate processes.
     --     
     runValidationWorker worldVersion = do 
-        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals
-        let workerId = WorkerId $ "validation:" <> talsStr
+        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals                    
+            workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
 
-        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+            maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
 
-        -- TODO make it a runtime thing, config?
-        -- let profilingFlags = [ "-p", "-hT", "-l" ]
-        let profilingFlags = [ ]
+            -- TODO make it a runtime thing, config?
+            -- let profilingFlags = [ "-p", "-hT", "-l" ]
+            profilingFlags = [ ]
 
-        let arguments = 
+            arguments = 
                 [ worderIdS workerId ] <>
                 rtsArguments ( 
                     profilingFlags <> [ 
@@ -453,14 +451,15 @@ runWorkflow appContext@AppContext {..} tals = do
         
         r <- runValidatorT 
                 (newScopes "validator") $ 
-                    runWorker logger config workerId 
+                    runWorker logger config 
+                        workerId 
                         (ValidationParams worldVersion tals)                        
                         (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                         arguments                                        
         pure (r, workerId)
 
     runCleapUpWorker worldVersion = do             
-        let workerId = WorkerId "cache-clean-up"
+        let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
         let arguments = 
                 [ worderIdS workerId ] <>
@@ -472,7 +471,8 @@ runWorkflow appContext@AppContext {..} tals = do
         
         r <- runValidatorT             
                 (newScopes "cache-clean-up") $ 
-                    runWorker logger config workerId 
+                    runWorker logger config
+                        workerId 
                         (CacheCleanupParams worldVersion)
                         (Timebox 300)
                         arguments                                                                    
@@ -574,35 +574,36 @@ loadStoredAppState AppContext {..} = do
 
     - Periodically check if there're repositories that don't have fetchType `ForSyncFetch`
     - Try to refetch these repositories
-    - 
+    - Repositories that were successful and fast enought get back `ForSyncFetch` fetch type.
 -}
 runAsyncFetches :: Storage s => AppContext s -> IO ValidationState
 runAsyncFetches appContext@AppContext {..} = do         
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
-        pps <- readTVarIO $ repositoryProcessing ^. #publicationPoints
+        pps <- readPublicationPoints repositoryProcessing      
         -- We only care about the repositories that are slow 
-        let slowURLs = Map.fromList $ findSpeedProblems pps
+        let slowURLs = Map.fromList $ findRepositoriesForAsyncFetch pps        
 
-        -- TODO Filter out URLs according to the fetching options
+        -- And mentioned on some certificates during the last validation.        
+        let problematicPPAs = let 
+                toPpa []   = Nothing
+                toPpa urls = fmap PublicationPointAccess 
+                                    $ NE.nonEmpty 
+                                    $ map repositoryToPP
+                                    $ catMaybes
+                                    $ map (\u -> Map.lookup u slowURLs) urls                 
+                
+                -- Also use only the ones filtered by config options 
+                in catMaybes $ map (filterPPAccess config) $ 
+                   catMaybes $ map toPpa $ toList $ pps ^. #slowRequested
 
-        --  and mentioned on some certificates during the last validation.        
-        let problematicPPAs = 
-                catMaybes $ flip map (toList $ pps ^. #slowRequested) $ \case 
-                    []   -> Nothing
-                    urls -> fmap PublicationPointAccess 
-                                $ NE.nonEmpty 
-                                $ map repositoryToPP
-                                $ catMaybes
-                                $ map (\u -> Map.lookup u slowURLs) urls 
-        
         unless (null problematicPPAs) $ do                         
             let ppaToText (PublicationPointAccess ppas) = 
                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
             let reposText = Text.intercalate ", " $ map ppaToText problematicPPAs
             logInfo logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
 
-        void $ pooledForConcurrently problematicPPAs $ \ppAccess -> do             
+        void $ forConcurrently problematicPPAs $ \ppAccess -> do             
             worldVersion <- newWorldVersion            
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
