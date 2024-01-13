@@ -10,36 +10,22 @@
 
 module RPKI.Validation.Common where
 
-import           Control.Concurrent.STM
 import           Control.Monad
-import           Control.Monad.Except
-import           Control.Monad.IO.Class
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
-import           GHC.Generics (Generic)
 
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Set                         as Set
-import           Data.Map.Strict                  (Map)
-import qualified Data.Map.Strict                  as Map
-import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 
-import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
-import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
-import           RPKI.Store.Types
-import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
-import           RPKI.Time
-import           RPKI.Util                        (fmtLocations)
 
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns

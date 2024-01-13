@@ -474,12 +474,12 @@ buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs
 
 infoInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
 infoInRsyncTree (RsyncURL host path) (RsyncTree t) = 
-    fetchStatus' path [] =<< Map.lookup host t
+    meta' path [] =<< Map.lookup host t
   where    
-    fetchStatus' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
-    fetchStatus' [] _  SubTree {} = Nothing
-    fetchStatus' (u: us) realPath SubTree {..} = 
-        Map.lookup u rsyncChildren >>= fetchStatus' us (realPath <> [u])
+    meta' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
+    meta' [] _  SubTree {} = Nothing
+    meta' (u: us) realPath SubTree {..} = 
+        Map.lookup u rsyncChildren >>= meta' us (realPath <> [u])
 
 flattenRsyncTree :: RsyncTree -> [(RsyncURL, RepositoryMeta)]
 flattenRsyncTree (RsyncTree t) = 

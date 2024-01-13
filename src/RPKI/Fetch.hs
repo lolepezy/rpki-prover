@@ -306,6 +306,22 @@ fetchRepository
     -- before trying to kill it from here
     timeToKillItself = Seconds 5
     
+    fetchRrdpRepository r = do 
+        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
+        let totalTimeout = fetcherTimeout + timeToKillItself
+        timeoutVT totalTimeout
+            (do
+                let fetchConfig' = fetchConfig & #rrdpTimeout .~ fetcherTimeout
+                (z, elapsed) <- timedMS $ fromTryM 
+                                    (RrdpE . UnknownRrdpProblem . fmtEx) 
+                                    (runRrdpFetchWorker appContext fetchConfig' worldVersion r)
+                logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+                pure z)            
+            (do 
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
+                trace WorkerTimeoutTrace
+                appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
+
     fetchRsyncRepository r = do 
         let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
         let totalTimeout = fetcherTimeout + timeToKillItself
@@ -322,23 +338,7 @@ fetchRepository
                 logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
                 trace WorkerTimeoutTrace
                 appError $ RsyncE $ RsyncDownloadTimeout totalTimeout)        
-    
-    fetchRrdpRepository r = do 
-        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
-        let totalTimeout = fetcherTimeout + timeToKillItself
-        timeoutVT totalTimeout
-            (do
-                let fetchConfig' = fetchConfig & #rrdpTimeout .~ fetcherTimeout
-                (z, elapsed) <- timedMS $ fromTryM 
-                                    (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (runRrdpFetchWorker appContext fetchConfig' worldVersion r)
-                logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
-                pure z)            
-            (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
-                trace WorkerTimeoutTrace
-                appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)                
-
+          
 
 
 -- | Fetch TA certificate based on TAL location(s)
