@@ -363,7 +363,7 @@ saveSnapshot
     let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
 
     db <- liftIO $ readTVarIO database    
-    (Snapshot _ sessionId serial snapshotItems) <- vHoist $         
+    Snapshot _ sessionId serial snapshotItems <- vHoist $         
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
     let notificationSessionId = notification ^. typed @SessionId
