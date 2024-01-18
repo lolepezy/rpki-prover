@@ -11,7 +11,6 @@ import           Control.Monad
 
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Base64               as B64
-import qualified Data.ByteString.Short                as BSS
 import qualified Data.List                            as List
 import qualified Data.Text                            as Text
 
@@ -20,7 +19,6 @@ import qualified Data.Set.NonEmpty                    as NESet
 
 import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
-import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Instances.ByteString
 import           Test.QuickCheck.Instances.Text
 import           Test.QuickCheck.Instances.Vector
@@ -690,7 +688,7 @@ instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
 
 generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b
 generateMap constructor = do 
-    size :: Int <- choose (0, 10)
+    size <- choose (0, 10)
     validations <- replicateM size arbitrary
     pure $ constructor $ Map.fromList validations
 
