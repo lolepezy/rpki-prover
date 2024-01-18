@@ -173,6 +173,7 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
+    - -Wall        
     - -with-rtsopts=-N
     - -O2  
     dependencies:
