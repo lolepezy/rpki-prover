@@ -24,7 +24,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
-import           Data.Monoid.Generic
 
 import qualified StmContainers.Map           as StmMap
 
@@ -154,6 +153,7 @@ data FetchTask a = Stub
     deriving stock (Eq, Ord, Generic)                    
 
 data RepositoryProcessing = RepositoryProcessing {
+        fetchRuns              :: StmMap.Map RpkiURL (FetchTask FetchResult),
         individualFetchRuns    :: StmMap.Map RpkiURL (FetchTask (Either AppError Repository, ValidationState)),
         indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
         ppSeqFetchRuns         :: StmMap.Map [RpkiURL] (FetchTask [FetchResult]),
@@ -227,6 +227,7 @@ newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
         StmMap.new <*> 
         StmMap.new <*>          
+        StmMap.new <*>                  
         StmMap.new <*>                  
         newTVar newPPs <*>
         newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  

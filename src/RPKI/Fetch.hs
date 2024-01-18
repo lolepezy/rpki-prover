@@ -21,6 +21,7 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Except
 
+import           Data.List.NonEmpty          (NonEmpty(..))
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
@@ -79,7 +80,7 @@ fetchPPWithFallback
         frs <- liftIO $ fetchOnce parentScope ppAccess        
         setValidationStateOfFetches repositoryProcessing frs            
   where
-    runForKey runs key = StmMap.lookup key runs            
+    runForKey runs key = StmMap.lookup key runs
 
     -- Use "run only once" logic for the whole list of PPs
     fetchOnce parentScope ppAccess' =          
@@ -116,9 +117,10 @@ fetchPPWithFallback
     fetchWithFallback parentScope [pp] = do 
         ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS $ fetchPPOnce parentScope pp                
         let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed     
+        logDebug logger [i|fetch result #{r}|]
         pure $ case r of
-            Left _     -> [FetchFailure repoUrl validations']
-            Right repo -> [FetchSuccess repo validations']        
+            Left _     -> [FetchFailure repoUrl validations']                
+            Right repo -> [FetchSuccess repo validations']
       where
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT.
@@ -214,7 +216,7 @@ fetchPPWithFallback
                         let newMeta = deriveNewMeta fetchConfig newRepo validations duratioMs newStatus fetchMonent
 
                         modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
-                                updateStatuses (pps ^. typed @PublicationPoints) [(newRepo, newMeta)]
+                                updateStatuses (pps ^. typed) [(newRepo, newMeta)]
 
                     pure (r, validations)        
 
@@ -236,6 +238,126 @@ fetchPPWithFallback
         let Just repo = repositoryFromPP (mergePP pp pps) (getRpkiURL pp)
         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
         pure (needsFetching', repo)
+
+
+fetchOnePp :: (MonadIO m, Storage s) => 
+                AppContext s       
+            -> FetchConfig                  
+            -> RepositoryProcessing
+            -> WorldVersion
+            -> PublicationPoint  
+            -> ValidatorT m FetchResult
+fetchOnePp appContext@AppContext {..}     
+    fetchConfig
+    repositoryProcessing@RepositoryProcessing {..}
+    worldVersion
+    pp = do 
+        parentScope <- askScopes        
+        fetchResult <- liftIO $ fetchOnce parentScope
+        setFetchValidationState repositoryProcessing fetchResult
+        pure fetchResult
+  where
+
+    fetchOnce parentScope = 
+        join $ atomically $ do      
+            ppsKey <- ppSeqKey 
+            StmMap.lookup ppsKey fetchRuns >>= \case            
+                Just Stub         -> retry
+                Just (Fetching a) -> pure $ wait a
+                Nothing -> do                                         
+                    StmMap.insert Stub ppsKey individualFetchRuns
+                    pure $ bracketOnError 
+                            (async $ evaluate =<< fetchPPOnce parentScope)
+                            (stopAndDrop fetchRuns ppsKey) 
+                            (rememberAndWait fetchRuns ppsKey)
+
+    ppSeqKey :: STM RpkiURL
+    ppSeqKey = do         
+        case pp of
+            RrdpPP _  -> pure $ getRpkiURL pp
+            RsyncPP _ -> do  
+                pps <- readTVar publicationPoints
+                pure $ getRpkiURL $ getFetchablePP pps pp                
+
+    --     
+    fetchPPOnce parentScope = do 
+        ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS doFetch      
+        let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed       
+        pure $ case r of
+            Left _     -> FetchFailure repoUrl validations'                
+            Right repo -> FetchSuccess repo validations'      
+      where        
+        doFetch = do 
+            fetchMonent <- thisInstant
+            (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
+                (repoNeedAFetch, repo) <- needsAFetch pp fetchMonent
+                let rpkiUrl = getRpkiURL repo
+                pure $ if repoNeedAFetch then 
+                    (rpkiUrl, AttemptedFetch, fetchPP parentScope repo fetchMonent)                
+                else
+                    (rpkiUrl, UpToDate, pure (Right repo, mempty))                
+
+            f <- fetchIO
+            pure (rpkiUrl, fetchFreshness, f)
+
+        -- This is hacky but basically setting the "fetched/up-to-date" metric
+        -- without ValidatorT/PureValidatorT.
+        updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
+                realFreshness = either (const FailedToFetch) (const fetchFreshness) r
+                repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
+                rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoScope ^. typed) f
+                rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoScope ^. typed) f
+                -- this is also a hack to make sure time is updated if the fetch has failed 
+                -- and we probably don't have time at all if the worker timed out                                       
+                updateTime t = if t == mempty then elapsed else t
+            in case repoUrl of 
+                RrdpU _ -> let 
+                        updatedFreshness = rrdpMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                    in case r of 
+                        Left _  -> rrdpMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Right _ -> updatedFreshness
+                RsyncU _ -> let 
+                        updatedFreshness = rsyncMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                    in case r of 
+                        Left _  -> rsyncMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Right _ -> updatedFreshness           
+      
+
+    fetchPP parentScope repo (Now fetchMonent) = do 
+        let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
+        withSemaphoreAndTimeout fetchSemaphore intervalMicroSeconds $ do         
+            let rpkiUrl = getRpkiURL repo                    
+            let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
+            
+            ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
+                                            $ fetchRepository appContext fetchConfig worldVersion repo
+            atomically $ do
+                let (newRepo, newStatus) = case r of                             
+                        Left _      -> (repo, FailedAt fetchMonent)
+                        Right repo' -> (repo', FetchedAt fetchMonent)
+
+                let newMeta = deriveNewMeta fetchConfig newRepo validations duratioMs newStatus fetchMonent
+
+                modifyTVar' (repositoryProcessing ^. #publicationPoints) $ \pps -> 
+                        updateStatuses (pps ^. typed) [(newRepo, newMeta)]
+
+            pure (r, validations)
+
+    stopAndDrop stubs key asyncR = liftIO $ do         
+        cancel asyncR
+        atomically $ StmMap.delete key stubs        
+
+    rememberAndWait stubs key asyncR = liftIO $ do 
+        atomically $ StmMap.insert (Fetching asyncR) key stubs
+        wait asyncR
+
+    needsAFetch pp now' = do 
+        pps <- readTVar publicationPoints        
+        let Just repo = repositoryFromPP (mergePP pp pps) (getRpkiURL pp)
+        let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
+        pure (needsFetching', repo)
+
+
 
 
 deriveNewMeta fetchConfig repo validations duration@(TimeMs duratioMs) status fetchMoment = 
@@ -392,13 +514,17 @@ validationStateOfFetches repositoryProcessing = liftIO $
 
 setValidationStateOfFetches :: MonadIO m => RepositoryProcessing -> [FetchResult] -> m [FetchResult] 
 setValidationStateOfFetches repositoryProcessing frs = liftIO $ do    
-    forM_ frs $ \fr -> do 
-        let (u, vs) = case fr of
-                FetchFailure r vs'    -> (r, vs')
-                FetchSuccess repo vs' -> (getRpkiURL repo, vs')
-            
-        atomically $ StmMap.insert vs u (repositoryProcessing ^. #indivudualFetchResults)                   
+    forM_ frs $ setFetchValidationState repositoryProcessing
     pure frs
+
+setFetchValidationState :: MonadIO m => RepositoryProcessing -> FetchResult -> m ()
+setFetchValidationState repositoryProcessing fr = liftIO $ do        
+    let (u, vs) = case fr of
+            FetchFailure r vs'    -> (r, vs')
+            FetchSuccess repo vs' -> (getRpkiURL repo, vs')
+        
+    atomically $ StmMap.insert vs u (repositoryProcessing ^. #indivudualFetchResults)
+    
 
 cancelFetchTasks :: RepositoryProcessing -> IO ()    
 cancelFetchTasks RepositoryProcessing {..} = do 
@@ -424,20 +550,26 @@ getPrimaryRepositoryFromPP pps ppAccess =
     in getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
 
 
+onlyFirstPpa :: PublicationPointAccess -> PublicationPointAccess 
+onlyFirstPpa ppa = let 
+    firstOne = NonEmpty.head $ unPublicationPointAccess ppa
+    in PublicationPointAccess $ firstOne :| [] 
+
 getFetchablePPA :: PublicationPoints 
                 -> PublicationPointAccess
                 -> PublicationPointAccess
 getFetchablePPA pps ppa = 
     PublicationPointAccess 
-        $ NonEmpty.map ppToFetchablePP                         
+        $ NonEmpty.map (getFetchablePP pps)
         $ unPublicationPointAccess ppa
-  where
-    ppToFetchablePP = \case 
-        r@(RrdpPP _) -> r
-        r@(RsyncPP rpp@(RsyncPublicationPoint rsyncUrl)) -> 
-            case rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl of 
-                Nothing   -> r
-                Just repo -> RsyncPP $ repo ^. #repoPP            
+
+getFetchablePP :: PublicationPoints -> PublicationPoint -> PublicationPoint
+getFetchablePP pps = \case 
+    r@(RrdpPP _) -> r
+    r@(RsyncPP rpp@(RsyncPublicationPoint rsyncUrl)) -> 
+        case rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl of 
+            Nothing   -> r
+            Just repo -> RsyncPP $ repo ^. #repoPP            
 
 
 getFetchablePPAs :: PublicationPoints 

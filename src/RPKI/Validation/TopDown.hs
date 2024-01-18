@@ -233,7 +233,7 @@ withRepositoriesProcessing AppContext {..} f =
         (newRepositoryProcessingIO config)
         cancelFetchTasks
         $ \rp -> do 
-            db <- readTVarIO database        
+            db <- readTVarIO database
 
             mapException (AppException . storageError) $ do
                 pps <- roTx db $ \tx -> getPublicationPoints tx db
@@ -315,7 +315,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             let payloads' = payloads & #vrps .~ 
                                 newVrps taName (Set.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
             let roas = newRoas taName $ MonoidalMap.fromList $ 
-                        map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
+                            map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
             pure $ TopDownResult payloads' roas vs
 
   where
@@ -328,7 +328,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations                 
                 topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
-                (topDownContext,) <$> validateFromTACert appContext topDownContext repos taCert
+                (topDownContext, ) <$> validateFromTACert appContext topDownContext repos taCert
 
         
 
@@ -495,9 +495,14 @@ validateCaNoLimitChecks
                             markForAsyncFetch repositoryProcessing slowRepos                                
                             validateThisCertAndGoDown
 
-                        Just quickPPAccess -> do                                     
-                            fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
-                                            repositoryProcessing worldVersion quickPPAccess
+                        Just quickPPAccess -> do  
+                            -- In sync mode fetch only the first PP
+                            -- we don't want any fall-back in the sync mode
+                            fetches <- fetchPPWithFallback appContext 
+                                            (syncFetchConfig config) 
+                                            repositoryProcessing 
+                                            worldVersion 
+                                            (onlyFirstPpa quickPPAccess)
                             -- Based on 
                             --   * which repository(-ries) were mentioned on the certificate
                             --   * which ones succeded, 
@@ -528,7 +533,7 @@ validateCaNoFetch
     
     case ca of 
         CaFull c -> do
-            increment $ topDownCounters ^. #originalCa             
+            increment $ topDownCounters ^. #originalCa
             markAsReadByHash appContext topDownContext (getHash c)                         
             validateObjectLocations c
             vHoist $ validateObjectValidityPeriod c now
