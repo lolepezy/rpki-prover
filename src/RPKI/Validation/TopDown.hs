@@ -487,22 +487,20 @@ validateCaNoLimitChecks
                 Just filteredPPAccess -> do
                     -- Skip repositories that are marked as "slow"          
                     pps <- readPublicationPoints repositoryProcessing      
-                    let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess
-                    case quickPPs of 
+                    let (syncPp, slowRepos) = onlyForSyncFetch1 pps filteredPPAccess
+                    case syncPp of 
                         Nothing -> do 
                             -- Even though we are skipping the repository we still need to remember
                             -- that it was mentioned as a publication point on a certificate                                    
                             markForAsyncFetch repositoryProcessing slowRepos                                
                             validateThisCertAndGoDown
 
-                        Just quickPPAccess -> do  
+                        Just quickPp -> do  
+                            logDebug logger [i|quickPp = #{quickPp}|]
                             -- In sync mode fetch only the first PP
                             -- we don't want any fall-back in the sync mode
-                            fetches <- fetchPPWithFallback appContext 
-                                            (syncFetchConfig config) 
-                                            repositoryProcessing 
-                                            worldVersion 
-                                            (onlyFirstPpa quickPPAccess)
+                            fetchResult <- fetchOnePp appContext (syncFetchConfig config) 
+                                                repositoryProcessing worldVersion quickPp
                             -- Based on 
                             --   * which repository(-ries) were mentioned on the certificate
                             --   * which ones succeded, 
@@ -510,8 +508,7 @@ validateCaNoLimitChecks
                             -- derive which repository(-ies) should be picked up 
                             -- for async fetching later.
                             ppsAfterFetch <- readPublicationPoints repositoryProcessing
-                            markForAsyncFetch repositoryProcessing 
-                                $ filterForAsyncFetch (getFetchablePPA ppsAfterFetch filteredPPAccess) fetches slowRepos
+                            markForAsyncFetch repositoryProcessing $ filterForAsyncFetch1 fetchResult slowRepos
 
                             -- primaryUrl is used for set the focus to the publication point                            
                             case getPrimaryRepositoryFromPP ppsAfterFetch filteredPPAccess of

@@ -22,7 +22,6 @@ import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Instances.ByteString
 import           Test.QuickCheck.Instances.Text
 import           Test.QuickCheck.Instances.Vector
-import           Test.QuickCheck.Monadic
 
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
@@ -30,10 +29,6 @@ import           Data.Bits
 import           Data.Word
 import           Data.X509                            as X509
 import           Data.Tuple.Strict
-
-import           HaskellWorks.Data.Network.Ip.Ipv4    as V4
-import           HaskellWorks.Data.Network.Ip.Ipv6    as V6
-import           HaskellWorks.Data.Network.Ip.Range
 
 import           RPKI.Orphans.Generics
 import           RPKI.Domain
@@ -43,7 +38,6 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
 import           RPKI.Reporting
-import           RPKI.RTR.RtrState
 
 import           Time.Types
 
@@ -537,10 +531,6 @@ instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary FetchEverSucceeded  where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary RsyncTree where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -688,8 +678,8 @@ instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
 
 generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b
 generateMap constructor = do 
-    size <- choose (0, 10)
-    validations <- replicateM size arbitrary
+    size_ <- choose (0, 10)
+    validations <- replicateM size_ arbitrary
     pure $ constructor $ Map.fromList validations
 
 instance Arbitrary TimeMs where

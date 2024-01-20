@@ -21,10 +21,10 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Except
 
-import           Data.List.NonEmpty          (NonEmpty(..))
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
+import           Data.Maybe                  (listToMaybe)
 import qualified Data.Set                    as Set
 import qualified StmContainers.Map           as StmMap
 import qualified ListT                       as ListT
@@ -290,7 +290,7 @@ fetchOnePp appContext@AppContext {..}
         doFetch = do 
             fetchMonent <- thisInstant
             (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
-                (repoNeedAFetch, repo) <- needsAFetch pp fetchMonent
+                (repoNeedAFetch, repo) <- needsAFetch fetchMonent
                 let rpkiUrl = getRpkiURL repo
                 pure $ if repoNeedAFetch then 
                     (rpkiUrl, AttemptedFetch, fetchPP parentScope repo fetchMonent)                
@@ -351,7 +351,7 @@ fetchOnePp appContext@AppContext {..}
         atomically $ StmMap.insert (Fetching asyncR) key stubs
         wait asyncR
 
-    needsAFetch pp now' = do 
+    needsAFetch now' = do 
         pps <- readTVar publicationPoints        
         let Just repo = repositoryFromPP (mergePP pp pps) (getRpkiURL pp)
         let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
@@ -505,6 +505,7 @@ needsFetching r status ValidationConfig {..} (Now now) =
         interval (RrdpU _)  = rrdpRepositoryRefreshInterval
         interval (RsyncU _) = rsyncRepositoryRefreshInterval          
 
+
 validationStateOfFetches :: MonadIO m => RepositoryProcessing -> m ValidationState 
 validationStateOfFetches repositoryProcessing = liftIO $ 
     atomically $ 
@@ -550,11 +551,6 @@ getPrimaryRepositoryFromPP pps ppAccess =
     in getRpkiURL <$> repositoryFromPP (mergePP primary pps) (getRpkiURL primary)    
 
 
-onlyFirstPpa :: PublicationPointAccess -> PublicationPointAccess 
-onlyFirstPpa ppa = let 
-    firstOne = NonEmpty.head $ unPublicationPointAccess ppa
-    in PublicationPointAccess $ firstOne :| [] 
-
 getFetchablePPA :: PublicationPoints 
                 -> PublicationPointAccess
                 -> PublicationPointAccess
@@ -596,6 +592,24 @@ onlyForSyncFetch pps ppAccess = let
             Nothing -> (False, Nothing)
             Just r  -> (isForAsync $ getFetchType r, Just r)                        
 
+onlyForSyncFetch1 :: PublicationPoints 
+            -> PublicationPointAccess 
+            -> (Maybe PublicationPoint, [Repository])
+onlyForSyncFetch1 pps ppAccess = let
+        
+    ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
+
+    slowFilteredOut = [ r  | (isSlowRepo, Just r) <- map checkSlow ppaList, isSlowRepo ]
+    quickOnes       = [ pp | (pp, (isSlowRepo, _)) <- map (\pp -> (pp, checkSlow pp)) ppaList, not isSlowRepo ]
+    
+    in (listToMaybe quickOnes, slowFilteredOut)
+
+  where   
+    checkSlow pp = 
+        case repositoryFromPP (mergePP pp pps) (getRpkiURL pp) of 
+            Nothing -> (False, Nothing)
+            Just r  -> (isForAsync $ getFetchType r, Just r)                        
+
 
 filterForAsyncFetch :: PublicationPointAccess -> [FetchResult] -> [Repository] -> [Repository]
 filterForAsyncFetch ppAccess fetches slowRepos = 
@@ -611,12 +625,22 @@ filterForAsyncFetch ppAccess fetches slowRepos =
             FetchSuccess r _ -> getRpkiURL r == url
             FetchFailure _ _ -> False        
 
+filterForAsyncFetch1 :: FetchResult -> [Repository] -> [Repository]
+filterForAsyncFetch1 fetchResult slowRepos = 
+    case fetchResult of 
+        FetchFailure _ _                 -> slowRepos
+        FetchSuccess (getRpkiURL -> u) _ -> 
+            filter ((/= u) . getRpkiURL) slowRepos
+
 resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
 resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
     modifyTVar' publicationPoints (& #slowRequested .~ mempty)
 
 markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
-markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ do 
+markForAsyncFetch rp repos = liftIO $ atomically $ markForAsyncFetchSTM rp repos
+
+markForAsyncFetchSTM ::  RepositoryProcessing -> [Repository] -> STM ()
+markForAsyncFetchSTM RepositoryProcessing {..} repos =
     unless (null repos) $
         modifyTVar' publicationPoints
             (& #slowRequested %~ (Set.insert (map getRpkiURL repos)))

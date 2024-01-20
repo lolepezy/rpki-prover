@@ -40,18 +40,6 @@ import           RPKI.Parallel
 import           RPKI.Util
 import           RPKI.Store.Base.Serialisation
 
-
-data FetchEverSucceeded = Never | AtLeastOnce
-    deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass TheBinary        
-
-instance Monoid FetchEverSucceeded where
-    mempty = Never
-
-instance Semigroup FetchEverSucceeded where
-    Never       <> Never       = Never
-    _           <> _           = AtLeastOnce    
-
    
 data FetchType = Unknown 
                | ForSyncFetch Instant 
