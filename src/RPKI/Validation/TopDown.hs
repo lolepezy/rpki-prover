@@ -394,11 +394,6 @@ validateFromTACert
                     (repositoryProcessing ^. #publicationPoints)
                     (\pubPoints -> foldr mergePP pubPoints $ unPublicationPointAccess filteredRepos)
 
-        -- ignore return result here, because all the fetching statuses will be
-        -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext (syncFetchConfig config) 
-                repositoryProcessing worldVersion filteredRepos        
-
     -- Do the tree descend, gather validation results and VRPs                
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
@@ -496,7 +491,10 @@ validateCaNoLimitChecks
                             validateThisCertAndGoDown
 
                         Just quickPp -> do  
-                            logDebug logger [i|quickPp = #{quickPp}|]
+                            case quickPp of 
+                                RsyncPP _ -> logDebug logger [i|quickPp = #{quickPp}, ca = #{ca}|]
+                                _  -> pure ()
+
                             -- In sync mode fetch only the first PP
                             -- we don't want any fall-back in the sync mode
                             fetchResult <- fetchOnePp appContext (syncFetchConfig config) 
