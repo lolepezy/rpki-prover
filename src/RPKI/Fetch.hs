@@ -242,7 +242,7 @@ fetchPPWithFallback
 
 
 fetchSync :: (MonadIO m, Storage s) => 
-                AppContext s                       
+            AppContext s                       
         -> RepositoryProcessing
         -> WorldVersion
         -> PublicationPointAccess  
@@ -291,14 +291,13 @@ fetchSync appContext@AppContext {..}
                                 case repositoryFromPP pps pp of 
                                     Nothing   -> pps_
                                     Just repo -> let 
-                                        newMeta = getMeta repo & #fetchType .~ ForAsyncFetch fetchMoment
-                                        in updateMeta (pps_ ^. typed) [(repo, newMeta)]
+                                        newMeta_ = getMeta repo & #fetchType .~ ForAsyncFetch fetchMoment
+                                        in updateMeta (pps_ ^. typed) [(repo, newMeta_)]
                             )
                         currentPps
                         (unPublicationPointAccess ppa)
             _ -> pure ()
                                                 
-
 
 fetchOnePp :: (MonadIO m, Storage s) => 
                 AppContext s       
@@ -694,9 +693,8 @@ filterForAsyncFetch ppAccess fetches slowRepos =
 filterForAsyncFetch1 :: FetchResult -> [Repository] -> [Repository]
 filterForAsyncFetch1 fetchResult slowRepos = 
     case fetchResult of 
-        FetchFailure _ _                 -> slowRepos
-        FetchSuccess (getRpkiURL -> u) _ -> 
-            filter ((/= u) . getRpkiURL) slowRepos
+        FetchFailure _ _ -> slowRepos
+        FetchSuccess _ _ -> []            
 
 resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
 resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
