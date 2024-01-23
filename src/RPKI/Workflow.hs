@@ -578,6 +578,7 @@ loadStoredAppState AppContext {..} = do
 -}
 runAsyncFetches :: Storage s => AppContext s -> IO ValidationState
 runAsyncFetches appContext@AppContext {..} = do         
+    worldVersion <- newWorldVersion
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readPublicationPoints repositoryProcessing      
@@ -601,10 +602,9 @@ runAsyncFetches appContext@AppContext {..} = do
             let ppaToText (PublicationPointAccess ppas) = 
                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
             let reposText = Text.intercalate ", " $ map ppaToText problematicPPAs
-            logInfo logger [i|Will try to asynchronously fetch these repositories: #{reposText}|]
+            logInfo logger [i|Asynchronou fetch, version #{worldVersion}, repositories: #{reposText}|]
 
-        void $ forConcurrently problematicPPAs $ \ppAccess -> do             
-            worldVersion <- newWorldVersion            
+        void $ forConcurrently problematicPPAs $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchPPWithFallback appContext (asyncFetchConfig config) 
