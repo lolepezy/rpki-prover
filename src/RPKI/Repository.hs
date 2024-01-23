@@ -194,14 +194,16 @@ instance Ord FetchType where
 
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
-    
+
 getFetchStatus :: Repository -> FetchStatus
-getFetchStatus (RrdpR r)  = r ^. #meta . #status
-getFetchStatus (RsyncR r) = r ^. #meta . #status
+getFetchStatus r = getMeta r ^. #status
 
 getFetchType :: Repository -> FetchType
-getFetchType (RrdpR r)  = r ^. #meta . #fetchType
-getFetchType (RsyncR r) = r ^. #meta . #fetchType
+getFetchType r = getMeta r ^. #fetchType
+
+getMeta :: Repository -> RepositoryMeta
+getMeta (RrdpR r)   = r ^. #meta
+getMeta (RsyncR r)  = r ^. #meta
 
 isForAsync :: FetchType -> Bool
 isForAsync = \case    
@@ -247,15 +249,18 @@ rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository PublicationPoints { rrdps = RrdpMap rrdps } u = Map.lookup u rrdps        
 
 rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
-rsyncRepository PublicationPoints {..} u = 
-    (\(u', meta) -> RsyncRepository (RsyncPublicationPoint u') meta)
-                    <$> infoInRsyncTree u rsyncs    
+rsyncRepository PublicationPoints {..} rsyncUrl = 
+    (\(u, meta) -> RsyncRepository (RsyncPublicationPoint u) meta)
+                    <$> lookupRsyncTree rsyncUrl rsyncs    
 
-repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
-repositoryFromPP pps rpkiUrl = 
-    case rpkiUrl of
-        RrdpU u  -> RrdpR <$> rrdpRepository pps u
-        RsyncU u -> RsyncR <$> rsyncRepository pps u      
+repositoryFromPP :: PublicationPoints -> PublicationPoint -> Maybe Repository                    
+repositoryFromPP pps pp = 
+    case getRpkiURL pp of
+        RrdpU u  -> RrdpR <$> rrdpRepository merged u
+        RsyncU u -> RsyncR <$> rsyncRepository merged u
+  where 
+    merged = mergePP pp pps        
+    
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
@@ -364,16 +369,16 @@ changeSet
 
 
 -- Update statuses of the repositories and last successful fetch times for them
-updateStatuses :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
-updateStatuses 
-    (PublicationPoints rrdps rsyncs slowRequested) newStatuses = 
+updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
+updateMeta 
+    (PublicationPoints rrdps rsyncs slowRequested) newMetas = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdps_))
             rsyncs_ 
             slowRequested
     where
         (rrdps_, rsyncs_) = 
-            foldr foldRepos ([], rsyncs) newStatuses
+            foldr foldRepos ([], rsyncs) newMetas
 
         foldRepos 
             (RrdpR r@RrdpRepository {..}, newMeta) 
@@ -461,8 +466,8 @@ buildRsyncTree :: [RsyncPathChunk] -> RepositoryMeta -> RsyncNodeNormal
 buildRsyncTree [] fs      = Leaf fs
 buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs    
 
-infoInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
-infoInRsyncTree (RsyncURL host path) (RsyncTree t) = 
+lookupRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
+lookupRsyncTree (RsyncURL host path) (RsyncTree t) = 
     meta' path [] =<< Map.lookup host t
   where    
     meta' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)

@@ -88,7 +88,7 @@ prop_rsync_tree_update =
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
                 in all (\url -> 
-                    fmap snd (infoInRsyncTree url updatedTree) == 
+                    fmap snd (lookupRsyncTree url updatedTree) == 
                         Just (newMeta newStatus newSpeed)) sameOrLonger
     
 

@@ -479,39 +479,17 @@ validateCaNoLimitChecks
                     -- Both rrdp and rsync (and whatever else in the future?) are
                     -- disabled, don't fetch at all.
                     validateThisCertAndGoDown
-                Just filteredPPAccess -> do
-                    -- Skip repositories that are marked as "slow"          
-                    pps <- readPublicationPoints repositoryProcessing      
-                    let (syncPp, slowRepos) = onlyForSyncFetch1 pps filteredPPAccess
-                    case syncPp of 
-                        Nothing -> do 
-                            -- Even though we are skipping the repository we still need to remember
-                            -- that it was mentioned as a publication point on a certificate                                    
-                            markForAsyncFetch repositoryProcessing slowRepos                                
+                    
+                Just filteredPpa -> do
+                    r <- fetchSync appContext repositoryProcessing worldVersion filteredPpa
+                    case r of 
+                        Nothing -> 
+                            -- Nothing has been fetched
                             validateThisCertAndGoDown
-
-                        Just quickPp -> do  
-                            case quickPp of 
-                                RsyncPP _ -> logDebug logger [i|quickPp = #{quickPp}, ca = #{ca}|]
-                                _  -> pure ()
-
-                            -- In sync mode fetch only the first PP
-                            -- we don't want any fall-back in the sync mode
-                            fetchResult <- fetchOnePp appContext (syncFetchConfig config) 
-                                                repositoryProcessing worldVersion quickPp
-                            -- Based on 
-                            --   * which repository(-ries) were mentioned on the certificate
-                            --   * which ones succeded, 
-                            --   * which were skipped because they are slow,
-                            -- derive which repository(-ies) should be picked up 
-                            -- for async fetching later.
-                            ppsAfterFetch <- readPublicationPoints repositoryProcessing
-                            markForAsyncFetch repositoryProcessing $ filterForAsyncFetch1 fetchResult slowRepos
-
-                            -- primaryUrl is used for set the focus to the publication point                            
-                            case getPrimaryRepositoryFromPP ppsAfterFetch filteredPPAccess of
-                                Nothing         -> validateThisCertAndGoDown                                            
-                                Just primaryUrl -> metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
+                        Just _  -> do     
+                            pps <- readPublicationPoints repositoryProcessing      
+                            let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
+                            metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
   where
     validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
 
