@@ -548,8 +548,8 @@ data CLIOptions wrapped = CLIOptions {
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     verifySignature :: wrapped ::: Bool <?>
-        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++
-        "of validated RPKI objects and VRPs to exist and be poulateds. So executeVerifier can (and should) run next to " +++
+        ("Work as a one-off RSC signature file verifier, not as a server. To work as a verifier it needs the cache " +++
+        "of validated RPKI objects and VRPs to exist and be populateds. So verifier can (and should) run next to " +++
         "the running daemon instance of rpki-prover"),
 
     signatureFile :: wrapped ::: Maybe FilePath <?> ("Path to the RSC signature file."),
