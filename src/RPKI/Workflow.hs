@@ -596,7 +596,7 @@ runAsyncFetches appContext@AppContext {..} = do
                 
                 -- Also use only the ones filtered by config options 
                 in catMaybes $ map (filterPPAccess config) $ 
-                   catMaybes $ map toPpa $ toList $ pps ^. #slowRequested
+                   catMaybes $ map toPpa $ toList $ pps ^. #usedForAsync
 
         unless (null problematicPPAs) $ do                         
             let ppaToText (PublicationPointAccess ppas) = 

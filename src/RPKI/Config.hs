@@ -41,7 +41,7 @@ data FetchConfig = FetchConfig {
         rsyncSlowThreshold :: Seconds,
         rrdpTimeout        :: Seconds,
         rrdpSlowThreshold  :: Seconds,
-        fetchLaunchWaitDuration  :: Seconds
+        fetchLaunchWaitDuration :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

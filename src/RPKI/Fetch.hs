@@ -252,7 +252,7 @@ fetchSync appContext@AppContext {..}
     worldVersion
     ppa = do 
         pps <- readPublicationPoints repositoryProcessing      
-        let (syncPp, asyncRepos) = onlyForSyncFetch1 pps ppa
+        let (syncPp, asyncRepos) = onlyForSyncFetch pps ppa
         case syncPp of 
             Nothing -> do 
                 markForAsyncFetch repositoryProcessing asyncRepos     
@@ -272,7 +272,7 @@ fetchSync appContext@AppContext {..}
                 -- derive which repository(-ies) should be picked up 
                 -- for async fetching later.
                 markForAsyncFetch repositoryProcessing 
-                    $ filterForAsyncFetch1 fetchResult asyncRepos                
+                    $ filterForAsyncFetch fetchResult asyncRepos                
             
                 pure $ Just fetchResult
   where
@@ -678,29 +678,12 @@ getFetchablePPAs :: PublicationPoints
                 -> [PublicationPointAccess]
 getFetchablePPAs pps ppas = 
     Set.toList $ Set.fromList $ map (getFetchablePPA pps) ppas
+                      
 
 onlyForSyncFetch :: PublicationPoints 
-            -> PublicationPointAccess 
-            -> (Maybe PublicationPointAccess, [Repository])
+                -> PublicationPointAccess 
+                -> (Maybe PublicationPoint, [Repository])
 onlyForSyncFetch pps ppAccess = let
-        
-    ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
-
-    slowFilteredOut = [ r  | (isSlowRepo, Just r) <- map checkSlow ppaList, isSlowRepo ]
-    quickOnes       = [ pp | (pp, (isSlowRepo, _)) <- map (\pp -> (pp, checkSlow pp)) ppaList, not isSlowRepo ]
-
-    in (PublicationPointAccess <$> NonEmpty.nonEmpty quickOnes, slowFilteredOut)
-
-  where   
-    checkSlow pp = 
-        case repositoryFromPP pps pp of 
-            Nothing -> (False, Nothing)
-            Just r  -> (isForAsync $ getFetchType r, Just r)                        
-
-onlyForSyncFetch1 :: PublicationPoints 
-            -> PublicationPointAccess 
-            -> (Maybe PublicationPoint, [Repository])
-onlyForSyncFetch1 pps ppAccess = let
         
     ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
 
@@ -715,30 +698,15 @@ onlyForSyncFetch1 pps ppAccess = let
             Nothing -> (False, Nothing)
             Just r  -> (isForAsync $ getFetchType r, Just r)                        
 
-
-filterForAsyncFetch :: PublicationPointAccess -> [FetchResult] -> [Repository] -> [Repository]
-filterForAsyncFetch ppAccess fetches slowRepos = 
-    filter (\(getRpkiURL -> slowUrl) -> 
-            null $ filter thereIsASuccessfulFetch 
-                $ takeWhile (/= slowUrl) 
-                $ map getRpkiURL 
-                $ NonEmpty.toList $ unPublicationPointAccess ppAccess
-        ) slowRepos 
-  where            
-    thereIsASuccessfulFetch url = not $ null $ flip filter fetches $ 
-        \case 
-            FetchSuccess r _ -> getRpkiURL r == url
-            FetchFailure _ _ -> False        
-
-filterForAsyncFetch1 :: FetchResult -> [Repository] -> [Repository]
-filterForAsyncFetch1 fetchResult slowRepos = 
+filterForAsyncFetch :: FetchResult -> [Repository] -> [Repository]
+filterForAsyncFetch fetchResult slowRepos = 
     case fetchResult of 
         FetchFailure _ _ -> slowRepos
         FetchSuccess _ _ -> []            
 
 resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
 resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
-    modifyTVar' publicationPoints (& #slowRequested .~ mempty)
+    modifyTVar' publicationPoints (& #usedForAsync .~ mempty)
 
 markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
 markForAsyncFetch rp repos = liftIO $ atomically $ markForAsyncFetchSTM rp repos
@@ -747,7 +715,7 @@ markForAsyncFetchSTM ::  RepositoryProcessing -> [Repository] -> STM ()
 markForAsyncFetchSTM RepositoryProcessing {..} repos =
     unless (null repos) $
         modifyTVar' publicationPoints
-            (& #slowRequested %~ (Set.insert (map getRpkiURL repos)))
+            (& #usedForAsync %~ (Set.insert (map getRpkiURL repos)))
 
 
 syncFetchConfig :: Config -> FetchConfig

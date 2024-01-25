@@ -98,7 +98,7 @@ data PublicationPoints = PublicationPoints {
         -- publication points on certificats during the last validation.
         -- In other words, slow and timing out repository URLs we care about 
         -- and want to keep up-to-date in the local cache.
-        slowRequested :: Set.Set [RpkiURL]
+        usedForAsync :: Set.Set [RpkiURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
@@ -372,11 +372,11 @@ changeSet
 -- Update statuses of the repositories and last successful fetch times for them
 updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
 updateMeta 
-    (PublicationPoints rrdps rsyncs slowRequested) newMetas = 
+    (PublicationPoints rrdps rsyncs usedForAsync) newMetas = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdps_))
             rsyncs_ 
-            slowRequested
+            usedForAsync
     where
         (rrdps_, rsyncs_) = 
             foldr foldRepos ([], rsyncs) newMetas
