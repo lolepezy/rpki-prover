@@ -73,6 +73,15 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass TheBinary
    
+{-   
+    NOTE: This is an over-generalised version of publication point list, since the current
+    RFC prescribes to only fallback from RRDP to rsync publication point, i.e. real instances 
+    of this type will always consist of 1 or 2 elements.
+    
+    However, generic implementation is just simpler to implement (See Fetch.hs module). 
+    Whether this generic fetching procedure will be ever useful for fetching from more 
+    than one RRDP links -- no idea.
+-}   
 newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }

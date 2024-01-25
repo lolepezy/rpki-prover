@@ -607,8 +607,7 @@ runAsyncFetches appContext@AppContext {..} = do
         void $ forConcurrently problematicPPAs $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                    fetchPPWithFallback appContext (asyncFetchConfig config) 
-                        repositoryProcessing worldVersion ppAccess
+                    fetchAsync appContext repositoryProcessing worldVersion ppAccess
             
         validationStateOfFetches repositoryProcessing   
   where    
