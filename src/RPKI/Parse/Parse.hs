@@ -70,7 +70,7 @@ urlObjectType (getURL -> URI u) = textObjectType u
 textObjectType :: Text.Text -> Maybe RpkiObjectType
 textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
 
--- | Parse object from a bytesting containing ASN1 representaton
+-- | Parse object from a bytesting containing ASN1 representatond
 -- | Decide which parser to use based on the object's filename
 readObject :: RpkiURL -> BS.ByteString -> PureValidatorT RpkiObject
 readObject objectURL content =     

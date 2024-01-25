@@ -209,15 +209,12 @@ fetchOnePp
                             (async $ evaluate =<< fetchPPOnce parentScope)
                             (stopAndDrop fetchRuns ppsKey) 
                             (rememberAndWait fetchRuns ppsKey)
-
-    ppSeqKey :: STM RpkiURL
     ppSeqKey = do         
         case pp of
             RrdpPP _  -> pure $ getRpkiURL pp
             RsyncPP _ -> do  
                 pps <- readTVar publicationPoints
                 pure $ getRpkiURL $ getFetchablePP pps pp                
-
     
     fetchPPOnce parentScope = do 
         ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS doFetch      
@@ -265,7 +262,7 @@ fetchOnePp
     -- 
     -- A fetcher can proceed if either
     --   - there's a free slot in the semaphore
-    --   - we are waiting a free slot for more than N seconds
+    --   - we are waiting for a free slot for more than N seconds
     --
     -- In practice that means hanging timing out fetchers cannot 
     -- block the pool for too long and new fetchers will get through anyway.
