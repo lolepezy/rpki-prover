@@ -236,7 +236,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #validationConfig . #manifestProcessing .~
                         (if strictManifestValidation then RFC6486_Strict else RFC9286)
                 & #validationConfig . #validationAlgorithm .~
-                        (if incrementalValidation then Incremental else FullEveryIteration)
+                        (if noIncrementalValidation then FullEveryIteration else Incremental)
                 & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
                 & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
@@ -678,8 +678,9 @@ data CLIOptions wrapped = CLIOptions {
     maxValidationMemory :: wrapped ::: Maybe Int <?>
         "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
 
-    incrementalValidation :: wrapped ::: Bool <?>
-        "Use incremental validation algorithm (default is false)."    
+    noIncrementalValidation :: wrapped ::: Bool <?>
+        ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
+         "so default for this option is false).")    
 
 } deriving (Generic)
 
