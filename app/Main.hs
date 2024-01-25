@@ -236,7 +236,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & #validationConfig . #manifestProcessing .~
                         (if strictManifestValidation then RFC6486_Strict else RFC9286)
                 & #validationConfig . #validationAlgorithm .~
-                        (if incrementalValidation then Incremental else FullEveryIteration)
+                        (if noIncrementalValidation then FullEveryIteration else Incremental)
                 & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
                 & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
                 & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
@@ -548,8 +548,8 @@ data CLIOptions wrapped = CLIOptions {
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     verifySignature :: wrapped ::: Bool <?>
-        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++
-        "of validated RPKI objects and VRPs to exist and be poulateds. So executeVerifier can (and should) run next to " +++
+        ("Work as a one-off RSC signature file verifier, not as a server. To work as a verifier it needs the cache " +++
+        "of validated RPKI objects and VRPs to exist and be populateds. So verifier can (and should) run next to " +++
         "the running daemon instance of rpki-prover"),
 
     signatureFile :: wrapped ::: Maybe FilePath <?> ("Path to the RSC signature file."),
@@ -561,7 +561,9 @@ data CLIOptions wrapped = CLIOptions {
         ("Files to be verified using and RSC signaure file, may be multiple files."),
 
     cpuCount :: wrapped ::: Maybe Natural <?>
-        "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",
+        ("CPU number available to the program (default is 2). Note that higher CPU counts result in bigger " +++ 
+        "memory allocations. It is also recommended to set real CPU core number rather than the (hyper-)thread " +++ 
+        "number, since using the latter does not give much benefit and actually may cause performance degradation."),
 
     resetCache :: wrapped ::: Bool <?>
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
@@ -580,28 +582,28 @@ data CLIOptions wrapped = CLIOptions {
          "(validation results, metrics, VRPs, etc.) with it."),
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        ("Period of time after which an RRDP repository must be updated, "
-       +++ "in seconds (default is 120 seconds)"),
+        ("Period of time after which an RRDP repository must be updated, " +++ 
+         "in seconds (default is 120 seconds)"),
 
     rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        ("Period of time after which an rsync repository must be updated, "
-       +++ "in seconds (default is 11 minutes, i.e. 660 seconds)"),
+        ("Period of time after which an rsync repository must be updated, " +++ 
+         "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not " +++ 
+         "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for RRDP repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted."),
 
     asyncRsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
         ("Path to rsync client executable. By default rsync client is expected to be in the $PATH."),
@@ -610,9 +612,9 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that "
-       +++ "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. "
-       +++ "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " +++ 
+         "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. " +++ 
+         "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
 
     withRtr :: wrapped ::: Bool <?>
         "Start RTR server (default is false)",
@@ -627,7 +629,7 @@ data CLIOptions wrapped = CLIOptions {
         "Path to a file used for RTR log (default is stdout, together with general output).",
 
     logLevel :: wrapped ::: Maybe String <?>
-        "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
+        "Log level, may be 'error', 'warn', 'info' or 'debug' (case-insensitive). Default is 'info'.",
 
     strictManifestValidation :: wrapped ::: Bool <?>
         ("Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/" +++ 
@@ -678,8 +680,9 @@ data CLIOptions wrapped = CLIOptions {
     maxValidationMemory :: wrapped ::: Maybe Int <?>
         "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
 
-    incrementalValidation :: wrapped ::: Bool <?>
-        "Use incremental validation algorithm (default is false)."    
+    noIncrementalValidation :: wrapped ::: Bool <?>
+        ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
+         "so default for this option is false).")    
 
 } deriving (Generic)
 
