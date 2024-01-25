@@ -151,9 +151,7 @@ data FetchTask a = Stub
 
 data RepositoryProcessing = RepositoryProcessing {
         fetchRuns              :: StmMap.Map RpkiURL (FetchTask FetchResult),
-        individualFetchRuns    :: StmMap.Map RpkiURL (FetchTask (Either AppError Repository, ValidationState)),
         indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
-        ppSeqFetchRuns         :: StmMap.Map [RpkiURL] (FetchTask [FetchResult]),
         publicationPoints      :: TVar PublicationPoints,
         fetchSemaphore         :: Semaphore
     }
@@ -225,10 +223,8 @@ newPPs = PublicationPoints mempty newRsyncTree mempty
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
-        StmMap.new <*> 
-        StmMap.new <*>          
-        StmMap.new <*>                  
-        StmMap.new <*>                  
+        StmMap.new <*>               
+        StmMap.new <*>
         newTVar newPPs <*>
         newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
 

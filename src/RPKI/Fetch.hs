@@ -204,7 +204,7 @@ fetchOnePp
                 Just Stub         -> retry
                 Just (Fetching a) -> pure $ wait a
                 Nothing -> do                                         
-                    StmMap.insert Stub ppsKey individualFetchRuns
+                    StmMap.insert Stub ppsKey fetchRuns
                     pure $ bracketOnError 
                             (async $ evaluate =<< fetchPPOnce parentScope)
                             (stopAndDrop fetchRuns ppsKey) 
@@ -463,11 +463,6 @@ validationStateOfFetches repositoryProcessing = liftIO $
             ListT.toList $ StmMap.listT $ 
                 repositoryProcessing ^. #indivudualFetchResults    
 
-setValidationStateOfFetches :: MonadIO m => RepositoryProcessing -> [FetchResult] -> m [FetchResult] 
-setValidationStateOfFetches repositoryProcessing frs = liftIO $ do    
-    forM_ frs $ setFetchValidationState repositoryProcessing
-    pure frs
-
 setFetchValidationState :: MonadIO m => RepositoryProcessing -> FetchResult -> m ()
 setFetchValidationState repositoryProcessing fr = liftIO $ do        
     let (u, vs) = case fr of
@@ -479,13 +474,8 @@ setFetchValidationState repositoryProcessing fr = liftIO $ do
 
 cancelFetchTasks :: RepositoryProcessing -> IO ()    
 cancelFetchTasks RepositoryProcessing {..} = do 
-    (ifr, ppSeqFr) <- atomically $ (,) <$>
-                        (ListT.toList $ StmMap.listT individualFetchRuns) <*>
-                        (ListT.toList $ StmMap.listT ppSeqFetchRuns)        
-    
-    mapM_ cancel [ a | (_, Fetching a) <- ifr ]
-    mapM_ cancel [ a | (_, Fetching a) <- ppSeqFr ]
-
+    fetches <- atomically $ ListT.toList $ StmMap.listT fetchRuns     
+    mapM_ cancel [ a | (_, Fetching a) <- fetches ]    
 
 readPublicationPoints :: MonadIO m => 
                         RepositoryProcessing                         
@@ -517,14 +507,6 @@ getFetchablePP pps = \case
             Nothing   -> r
             Just repo -> RsyncPP $ repo ^. #repoPP            
 
-
-getFetchablePPAs :: PublicationPoints 
-                -> [PublicationPointAccess] 
-                -> [PublicationPointAccess]
-getFetchablePPAs pps ppas = 
-    Set.toList $ Set.fromList $ map (getFetchablePPA pps) ppas
-                      
-
 onlyForSyncFetch :: PublicationPoints 
                 -> PublicationPointAccess 
                 -> (Maybe PublicationPoint, [Repository])
@@ -554,10 +536,7 @@ resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do
     modifyTVar' publicationPoints (& #usedForAsync .~ mempty)
 
 markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
-markForAsyncFetch rp repos = liftIO $ atomically $ markForAsyncFetchSTM rp repos
-
-markForAsyncFetchSTM ::  RepositoryProcessing -> [Repository] -> STM ()
-markForAsyncFetchSTM RepositoryProcessing {..} repos =
+markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ 
     unless (null repos) $
         modifyTVar' publicationPoints
             (& #usedForAsync %~ (Set.insert (map getRpkiURL repos)))
