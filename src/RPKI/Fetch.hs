@@ -156,7 +156,7 @@ fetchPPWithFallback
                 (nextOneNeedAFetch, _) <- atomically $ needsAFetch nextOne now'
                 logWarn logger $ if nextOneNeedAFetch
                     then [i|Failed to fetch #{getURL $ getRpkiURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL nextOne}.|]
-                    else [i|Failed to fetch #{getURL $ getRpkiURL pp}, next one (#{getURL $ getRpkiURL nextOne}) is up-to-date.|]                
+                    else [i|Failed to fetch #{getURL $ getRpkiURL pp}, next one (#{getURL $ getRpkiURL nextOne}) is up-to-date.|]
 
                 nextFetch <- fetchWithFallback parentScope pps'
                 pure $ fetch <> nextFetch
@@ -299,6 +299,48 @@ fetchSync appContext@AppContext {..}
             _ -> pure ()
                                                 
 
+fetchAsync :: (MonadIO m, Storage s) => 
+                    AppContext s       
+                -> RepositoryProcessing
+                -> WorldVersion
+                -> PublicationPointAccess  
+                -> ValidatorT m [FetchResult]
+fetchAsync   
+    appContext@AppContext {..}                  
+    repositoryProcessing
+    worldVersion
+    ppa
+    = do 
+        let ppaList = NonEmpty.toList $ unPublicationPointAccess ppa
+        go ppaList        
+  where
+    go [] = pure []
+    go (pp : rest) = do     
+        fetchResult <- fetchOnePp appContext (asyncFetchConfig config) 
+                            repositoryProcessing worldVersion pp (\_ -> pure ())
+        case fetchResult of     
+            FetchFailure _ _ -> do 
+                -- try the next one
+                case rest of 
+                    []            -> pure []
+                    (ppNext : _ ) -> do     
+                        now' <- thisInstant
+                        pps <- readPublicationPoints repositoryProcessing
+                        case repositoryFromPP pps pp of     
+                            Nothing -> do
+                                logError logger [i|Internal error: #{pp} doesn't have corresponding repository.|]
+                                pure []
+                            Just repo -> do     
+                                let nextOneNeedAFetch = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'                                
+                                logWarn logger $ if nextOneNeedAFetch
+                                    then [i|Failed to fetch #{getURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL ppNext}.|]
+                                    else [i|Failed to fetch #{getURL pp}, next one (#{getURL $ getRpkiURL ppNext}) is up-to-date.|]
+                                go rest
+
+            _ -> pure [fetchResult]
+        
+
+
 fetchOnePp :: (MonadIO m, Storage s) => 
                 AppContext s       
             -> FetchConfig                  
@@ -307,7 +349,8 @@ fetchOnePp :: (MonadIO m, Storage s) =>
             -> PublicationPoint  
             -> (RepositoryMeta -> STM ())
             -> ValidatorT m FetchResult
-fetchOnePp appContext@AppContext {..}     
+fetchOnePp 
+    appContext@AppContext {..}     
     fetchConfig
     repositoryProcessing@RepositoryProcessing {..}
     worldVersion
@@ -559,9 +602,6 @@ needsFetching r status ValidationConfig {..} (Now now) =
     case status of
         Pending         -> True
         FetchedAt time  -> tooLongAgo time
-        -- TODO This is an interesting question and needs some 
-        -- It maybe should be 
-        -- FailedAt time   -> tooLongAgo time
         FailedAt time   -> not $ closeEnoughMoments time now minimalRepositoryRetryInterval
   where
     tooLongAgo momendTnThePast = 

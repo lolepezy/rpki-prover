@@ -160,7 +160,7 @@ class WithSerial a where
 class WithRpkiObjectType a where
     getRpkiObjectType :: a -> RpkiObjectType
 
-instance WithURL URI where
+instance {-# OVERLAPPING #-} WithURL URI where
     getURL = id
 
 instance Show RpkiURL where
@@ -173,22 +173,25 @@ instance Show RsyncURL where
 instance Show RsyncPort where
     show = show . unRsyncPort
   
-instance WithURL RsyncURL where
+instance {-# OVERLAPPING #-} WithURL RsyncURL where
     getURL (RsyncURL (RsyncHost (RsyncHostName host) port) path) = 
         URI $ "rsync://" <> 
                 host <>          
                 maybe "" (\p -> ":" <> Text.pack (show p)) port <>
                 mconcat (map (\(RsyncPathChunk p) -> "/" <> p) path)
 
-instance WithURL RrdpURL where
+instance {-# OVERLAPPING #-} WithURL RrdpURL where
     getURL (RrdpURL u) = u
 
-instance WithURL RpkiURL where
+instance {-# OVERLAPPING #-} WithURL RpkiURL where
     getURL (RsyncU u) = getURL u
     getURL (RrdpU u) = getURL u    
 
-instance WithRpkiURL RpkiURL where
+instance {-# OVERLAPPING #-} WithRpkiURL RpkiURL where
     getRpkiURL = id
+
+instance {-# OVERLAPPING #-} WithRpkiURL u => WithURL u where
+    getURL = getURL . getRpkiURL 
 
 toText :: RpkiURL -> Text
 toText = unURI . getURL 

@@ -158,9 +158,10 @@ instance WithRpkiURL Repository where
     getRpkiURL (RrdpR RrdpRepository {..}) = RrdpU uri
     getRpkiURL (RsyncR RsyncRepository { repoPP = RsyncPublicationPoint {..} }) = RsyncU uri
 
-instance WithURL RrdpRepository where
+instance {-# OVERLAPPING #-} WithURL RrdpRepository where
     getURL RrdpRepository { uri = RrdpURL u } = u
-instance WithURL RsyncRepository where
+
+instance {-# OVERLAPPING #-} WithURL RsyncRepository where
     getURL RsyncRepository { repoPP = RsyncPublicationPoint {..} } = getURL uri
     
 
