@@ -615,12 +615,14 @@ runAsyncFetches appContext@AppContext {..} = do
     -- If a repository was never fetched, it goes to the end of the list
     sortPpas asyncRepos ppas = map fst 
             $ List.sortOn promisingFirst
-            $ map (\ppa -> let 
-                    primary = NE.head $ unPublicationPointAccess ppa
-                in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)) ppas
-
-    promisingFirst (_, repo) = fmap duration repo
+            $ map withRepo ppas    
       where
+        promisingFirst (_, repo) = fmap duration repo
+
+        withRepo ppa = let 
+                primary = NE.head $ unPublicationPointAccess ppa
+            in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)
+
         duration r = 
             fromMaybe (TimeMs 1000_000_000) $ (getMeta r) ^. #lastFetchDuration
 
