@@ -103,10 +103,12 @@ data RsyncRepository = RsyncRepository {
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
         rsyncs :: RsyncTree,        
-        -- Set of _slow_ URL that were requested to fetch as a result of fetching 
-        -- publication points on certificats during the last validation.
-        -- In other words, slow and timing out repository URLs we care about 
-        -- and want to keep up-to-date in the local cache.
+        -- Set of for-async-fetch URLs that were requested to fetch as a 
+        -- result of finding publication points on certificats during the 
+        -- last validation.
+        -- 
+        -- In other words, failed and timing out repository URLs we care about
+        -- and will fetch asynchronously
         usedForAsync :: Set.Set [RpkiURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)   
