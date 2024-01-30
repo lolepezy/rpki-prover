@@ -604,20 +604,21 @@ runAsyncFetches appContext@AppContext {..} = do
             let reposText = Text.intercalate ", " $ map ppaToText problematicPpas
             logInfo logger [i|Asynchronous fetch, version #{worldVersion}, repositories: #{reposText}|]
 
-        -- Sort them by the last fetch time, the fastest first
-        let sortedPpas = map fst 
-                        $ List.sortOn promisingFirst
-                        $ map (\ppa -> let 
-                                primary = NE.head $ unPublicationPointAccess ppa
-                            in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)) problematicPpas
-
-        void $ forConcurrently sortedPpas $ \ppAccess -> do                         
+        void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchAsync appContext repositoryProcessing worldVersion ppAccess
             
         validationStateOfFetches repositoryProcessing   
   where    
+    -- Sort them by the last fetch time, the fastest first. 
+    -- If a repository was never fetched, it goes to the end of the list
+    sortPpas asyncRepos ppas = map fst 
+            $ List.sortOn promisingFirst
+            $ map (\ppa -> let 
+                    primary = NE.head $ unPublicationPointAccess ppa
+                in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)) ppas
+
     promisingFirst (_, repo) = fmap duration repo
       where
         duration r = 
