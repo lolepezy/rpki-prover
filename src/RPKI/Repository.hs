@@ -357,22 +357,27 @@ data ChangeSet = ChangeSet
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld)  _ ) 
+    (PublicationPoints (RrdpMap rrdpDb) (RsyncTree rsyncDb)  _ ) 
     (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) requestNew) = 
     ChangeSet 
-        (putNewRrdps <> removeOldRrdps) 
+        (mergedRrdp <> newRrdp <> rrdpToDelete) 
         (putNewRsyncs <> removeOldRsyncs)        
         (Put requestNew)
     where
-        -- TODO Don't generate removes if there's a PUT for the same URL
-        rrdpOldSet = Set.fromList $ Map.elems rrdpOld
-        rrdpNewSet = Set.fromList $ Map.elems rrdpNew
-        putNewRrdps    = map Put    $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew        
-        removeOldRrdps = map Remove $ filter (not . (`Set.member` rrdpNewSet)) $ Map.elems rrdpOld
+        rrdps' = map (\(u, new) -> (new, Map.lookup u rrdpDb)) $ Map.toList rrdpNew
 
-        rsyncOldList = Map.toList rsyncOld
+        newRrdp  = map Put [ new | (new, Nothing) <- rrdps' ]
+
+        -- We trust RRDP meta from the DB more -- it has been updated by the 
+        -- delta/snapshot fetchers in the same transactions as the data
+        mergedRrdp = map Put [ new { rrdpMeta = dbRrdpMeta } | 
+                                (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
+
+        rrdpToDelete = map Remove [ r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
+
+        rsyncOldList = Map.toList rsyncDb
         rsyncNewList = Map.toList rsyncNew
-        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
+        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncDb == Just p)) rsyncNewList        
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
 
