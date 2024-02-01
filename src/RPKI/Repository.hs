@@ -173,7 +173,7 @@ instance {-# OVERLAPPING #-} WithURL RrdpRepository where
 instance {-# OVERLAPPING #-} WithURL RsyncRepository where
     getURL RsyncRepository { repoPP = RsyncPublicationPoint {..} } = getURL uri
     
-
+-- TODO This is shady and I don't remember why is it like this
 instance Semigroup RrdpRepository where
     r1 <> r2 = 
         if r1 ^. #meta . #status >= r2 ^. #meta . #status
