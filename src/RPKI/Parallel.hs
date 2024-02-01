@@ -93,6 +93,42 @@ txFoldPipeline parallelism stream withTx consume =
             for_ a $ \a' -> consume tx a' >> go tx
 
 
+txFoldPipelineBatch :: forall m q tx . (MonadBaseControl IO m, MonadIO m) =>
+                    Natural ->
+                    Natural ->
+                    Stream (Of q) (ValidatorTCurried m) () ->                    
+                    (forall z . (tx -> ValidatorT m z) -> ValidatorT m z) -> -- ^ transaction in which all consumerers are wrapped
+                    (tx -> q -> ValidatorT m ()) ->           -- ^ consumer, called for every item of the traversed argument            
+                    ValidatorT m ()
+txFoldPipelineBatch parallelism batchSize stream withTx consume =
+    snd <$> bracketChanClosable
+                (atLeastOne parallelism)
+                writeAll 
+                readAll 
+                (\_ -> pure ())
+  where
+    writeAll queue = 
+        S.mapM_ 
+            (liftIO . atomically . writeCQueue queue) 
+            stream
+        
+    readAll queue = spinTx 
+      where
+        spinTx = do 
+            reachedBatchSize <- withTx $ go 0
+            when reachedBatchSize spinTx
+
+        go n tx
+            | n >= batchSize = pure True
+            | otherwise = do                
+                a <- liftIO $ atomically $ readCQueue queue
+                case a of                   
+                    Nothing -> pure False    
+                    Just a' -> do 
+                        consume tx a'
+                        go (n + 1) tx
+                
+
 -- 
 -- | Create two threads and queue between then. Calls
 -- 'produce' in one thread and 'consume' in the other thread,
@@ -100,11 +136,11 @@ txFoldPipeline parallelism stream withTx consume =
 -- the whole thing is interrupted with an exception.
 --    
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
-                Natural ->
-                (ClosableQueue t -> m b) ->
-                (ClosableQueue t -> m c) ->
-                (t -> m w) ->
-                m (b, c)
+                        Natural ->
+                        (ClosableQueue t -> m b) ->
+                        (ClosableQueue t -> m c) ->
+                        (t -> m w) ->
+                        m (b, c)
 bracketChanClosable size produce consume kill = do     
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue

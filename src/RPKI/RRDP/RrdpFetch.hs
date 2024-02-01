@@ -362,7 +362,7 @@ saveSnapshot
     liftIO $ setCpuCount maxCpuAvailable
     let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
 
-    db <- liftIO $ readTVarIO $ appContext ^. #database    
+    db <- liftIO $ readTVarIO database    
     (Snapshot _ sessionId serial snapshotItems) <- vHoist $         
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
@@ -374,15 +374,22 @@ saveSnapshot
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
-    let savingTx f = 
-            rwAppTx db $ \tx ->
-                f tx >> DB.updateRrdpMeta tx db (sessionId, serial) repoUri 
-
-    txFoldPipeline 
+    -- Save objects in batches since
+    -- 1) It's not crucial to save the whole snapshot in one transaction, 
+    --    it's an idempotent operation and can be restarted 
+    -- 2) It's better to not block the DB for too long if snapshot is very big.
+    --    Other fetcher processes can be killed by timeout waiting on the DB
+    --    rather that waiting on download
+    -- 
+    txFoldPipelineBatch 
             cpuParallelism
+            10000    
             (S.mapM (newStorable db) $ S.each snapshotItems)
-            savingTx
-            (saveStorable db)            
+            (rwAppTx db)
+            (saveStorable db)           
+
+    rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (sessionId, serial) repoUri      
+
   where        
 
     newStorable db (SnapshotPublish uri encodedb64) =             
