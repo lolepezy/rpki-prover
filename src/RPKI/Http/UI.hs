@@ -377,17 +377,6 @@ objectLink url =
     H.a ! A.href (textValue ("/api/object?uri=" <> url)) $ toHtml url
 
 
--- focusLink :: Focus -> Html
--- focusLink = \case 
---     TAFocus txt         -> toHtml txt
---     ObjectFocus txt     -> objectLink txt
---     PPFocus uri         -> directLink $ unURI $ getURL uri
---     RepositoryFocus uri -> directLink $ unURI $ getURL uri
---     TextFocus txt       -> toHtml txt
---   where
---     directLink url = 
---         H.a ! A.href (textValue url) $ toHtml url
-
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
     case index `mod` 2 of 
