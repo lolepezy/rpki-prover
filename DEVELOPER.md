@@ -17,14 +17,14 @@
 https://github.com/commercialhaskell/stack/issues/1406 and nobody gives a crap. That's why there is `package-template.yaml` that is being transformed to `package.yaml` depending on what kind of binary we want to build, normal or static. This can be fixed by moving to Cabal somewhere in the future.
 
 So
-- Full build is done by the `./build-static.sh` script, it should normally take 30-40 minutes on an average computer.
+- Full build is done by the `./build-local.sh` script, it should normally take 30-40 minutes on an average computer.
 - Tests can be run using `./run-tests.sh`.
 - The command for using `ghcid` is 
 
-    ```ghcid --command="stack repl rpki-prover:lib rpki-prover:rpki-prover --stack-yaml=stack-9.6.yaml"``` 
+    ```ghcid --command="stack repl rpki-prover:lib rpki-prover:rpki-prover"``` 
 or 
 
-     ```ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test" --stack-yaml=stack-9.6.yaml```  for the set of modules including tests.
+     ```ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test"```  for the set of modules including tests.
 
 - For local docker image build use 
 

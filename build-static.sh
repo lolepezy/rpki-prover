@@ -5,4 +5,4 @@ docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 cat package-template.yaml | sed 's/#1//g' > package.yaml 
 
 stack install --docker --docker-image "rpki-prover-builder" \
-    --no-nix rpki-prover:rpki-prover-static --stack-yaml=stack-8.10.yaml
+    --no-nix rpki-prover:rpki-prover-static --stack-yaml=stack.yaml
