@@ -330,7 +330,6 @@ fetchOnePp
 
 
 
-
 deriveNewMeta config fetchConfig repo validations rrdpStats 
               duration@(TimeMs duratioMs) status fetchMoment = 
     RepositoryMeta {..}
@@ -338,6 +337,14 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
     lastFetchDuration = Just duration
 
     refreshInterval = let 
+        -- For RRDP: 
+        --   * Increase refresh interval if we know that are no updates
+        --   * Decrease refresh interval if there are more that 1 delta in the update
+        --   * Keep the same if there's exacty one delta            
+        --   * Do not decrease further than 1 minute and don't increase for more than 10 minutes
+        -- 
+        -- For rsync keep refresh interval the same.
+        --   
         defaultRefreshInterval = 
             case repo of
                 RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
@@ -365,10 +372,9 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                         Just RrdpFetchStat {..} -> 
                             case action of 
                                 NothingToFetch _ -> trimInterval $ increaseInterval ri 
-                                FetchDeltas {..} -> 
-                                    if moreThanOne sortedDeltas 
-                                        then trimInterval $ decreateInterval ri 
-                                        else ri                                    
+                                FetchDeltas {..} 
+                                    | moreThanOne sortedDeltas -> trimInterval $ decreateInterval ri 
+                                    | otherwise                -> ri                                    
                                 FetchSnapshot _ _ -> ri                    
 
     fetchType =
