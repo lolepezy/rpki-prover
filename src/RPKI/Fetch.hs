@@ -351,9 +351,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                 RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
         trimInterval interval = 
-            if | interval < Seconds 60  -> Seconds 60
-               | interval > Seconds 600 -> Seconds 600
-               | otherwise              -> interval
+            max (Seconds 60) (min (Seconds 600) interval)            
 
         increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10
         decreateInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
