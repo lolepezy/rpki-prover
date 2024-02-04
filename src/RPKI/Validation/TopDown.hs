@@ -233,7 +233,7 @@ withRepositoriesProcessing AppContext {..} f =
         (newRepositoryProcessingIO config)
         cancelFetchTasks
         $ \rp -> do 
-            db <- readTVarIO database        
+            db <- readTVarIO database
 
             mapException (AppException . storageError) $ do
                 pps <- roTx db $ \tx -> getPublicationPoints tx db
@@ -315,7 +315,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             let payloads' = payloads & #vrps .~ 
                                 newVrps taName (Set.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
             let roas = newRoas taName $ MonoidalMap.fromList $ 
-                        map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
+                            map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
             pure $ TopDownResult payloads' roas vs
 
   where
@@ -328,7 +328,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                 ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations                 
                 topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
-                (topDownContext,) <$> validateFromTACert appContext topDownContext repos taCert
+                (topDownContext, ) <$> validateFromTACert appContext topDownContext repos taCert
 
         
 
@@ -393,11 +393,6 @@ validateFromTACert
         liftIO $ atomically $ modifyTVar'
                     (repositoryProcessing ^. #publicationPoints)
                     (\pubPoints -> foldr mergePP pubPoints $ unPublicationPointAccess filteredRepos)
-
-        -- ignore return result here, because all the fetching statuses will be
-        -- handled afterwards by getting them from `repositoryProcessing` 
-        void $ fetchPPWithFallback appContext (syncFetchConfig config) 
-                repositoryProcessing worldVersion filteredRepos        
 
     -- Do the tree descend, gather validation results and VRPs                
     fromTryM
@@ -484,34 +479,17 @@ validateCaNoLimitChecks
                     -- Both rrdp and rsync (and whatever else in the future?) are
                     -- disabled, don't fetch at all.
                     validateThisCertAndGoDown
-                Just filteredPPAccess -> do
-                    -- Skip repositories that are marked as "slow"          
-                    pps <- readPublicationPoints repositoryProcessing      
-                    let (quickPPs, slowRepos) = onlyForSyncFetch pps filteredPPAccess
-                    case quickPPs of 
-                        Nothing -> do 
-                            -- Even though we are skipping the repository we still need to remember
-                            -- that it was mentioned as a publication point on a certificate                                    
-                            markForAsyncFetch repositoryProcessing slowRepos                                
+                    
+                Just filteredPpa -> do
+                    r <- fetchSync appContext repositoryProcessing worldVersion filteredPpa
+                    case r of 
+                        Nothing -> 
+                            -- Nothing has been fetched
                             validateThisCertAndGoDown
-
-                        Just quickPPAccess -> do                                     
-                            fetches <- fetchPPWithFallback appContext (syncFetchConfig config) 
-                                            repositoryProcessing worldVersion quickPPAccess
-                            -- Based on 
-                            --   * which repository(-ries) were mentioned on the certificate
-                            --   * which ones succeded, 
-                            --   * which were skipped because they are slow,
-                            -- derive which repository(-ies) should be picked up 
-                            -- for async fetching later.
-                            ppsAfterFetch <- readPublicationPoints repositoryProcessing
-                            markForAsyncFetch repositoryProcessing 
-                                $ filterForAsyncFetch (getFetchablePPA ppsAfterFetch filteredPPAccess) fetches slowRepos
-
-                            -- primaryUrl is used for set the focus to the publication point                            
-                            case getPrimaryRepositoryFromPP ppsAfterFetch filteredPPAccess of
-                                Nothing         -> validateThisCertAndGoDown                                            
-                                Just primaryUrl -> metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
+                        Just _  -> do     
+                            pps <- readPublicationPoints repositoryProcessing      
+                            let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
+                            metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
   where
     validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
 
@@ -528,7 +506,7 @@ validateCaNoFetch
     
     case ca of 
         CaFull c -> do
-            increment $ topDownCounters ^. #originalCa             
+            increment $ topDownCounters ^. #originalCa
             markAsReadByHash appContext topDownContext (getHash c)                         
             validateObjectLocations c
             vHoist $ validateObjectValidityPeriod c now

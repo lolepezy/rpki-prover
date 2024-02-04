@@ -7,15 +7,11 @@ module RPKI.RepositorySpec where
 
 import Control.Monad (replicateM)
 
-import Data.ByteString.Short (toShort)
-import Data.Maybe (maybeToList, catMaybes)
+import Data.Maybe (catMaybes)
 import Data.List (sort, isPrefixOf, sortOn)
-
-import           GHC.Generics
 
 import           Test.Tasty
 import           Test.QuickCheck.Arbitrary.Generic
-import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           Test.QuickCheck.Gen
@@ -38,7 +34,8 @@ repositoryGroup = testGroup "PublicationPoints" [
     
         QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
         QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
-        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap
+        QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
+        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap        
     ]
 
 isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
@@ -92,7 +89,7 @@ prop_rsync_tree_update =
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
                 in all (\url -> 
-                    fmap snd (infoInRsyncTree url updatedTree) == 
+                    fmap snd (lookupRsyncTree url updatedTree) == 
                         Just (newMeta newStatus newSpeed)) sameOrLonger
     
 
@@ -115,6 +112,7 @@ generateRsyncUrl = do
     pure $ RsyncURL rsyncHost path
 
 
+newMeta :: FetchStatus -> FetchType -> RepositoryMeta
 newMeta status fetchType = let  
     lastFetchDuration = Nothing
     in RepositoryMeta {..}

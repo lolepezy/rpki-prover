@@ -24,7 +24,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
-import           Data.Monoid.Generic
 
 import qualified StmContainers.Map           as StmMap
 
@@ -40,18 +39,6 @@ import           RPKI.TAL
 import           RPKI.Parallel
 import           RPKI.Util
 import           RPKI.Store.Base.Serialisation
-
-
-data FetchEverSucceeded = Never | AtLeastOnce
-    deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass TheBinary        
-
-instance Monoid FetchEverSucceeded where
-    mempty = Never
-
-instance Semigroup FetchEverSucceeded where
-    Never       <> Never       = Never
-    _           <> _           = AtLeastOnce    
 
    
 data FetchType = Unknown 
@@ -86,6 +73,15 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass TheBinary
    
+{-   
+    NOTE: This is an over-generalised version of publication point list, since the current
+    RFC prescribes to only fallback from RRDP to rsync publication point, i.e. real instances 
+    of this type will always consist of 1 or 2 elements.
+    
+    However, generic implementation is just simpler to implement (See Fetch.hs module). 
+    Whether this generic fetching procedure will be ever useful for fetching from more 
+    than one RRDP links -- no idea.
+-}   
 newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }
@@ -107,11 +103,13 @@ data RsyncRepository = RsyncRepository {
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
         rsyncs :: RsyncTree,        
-        -- Set of _slow_ URL that were requested to fetch as a result of fetching 
-        -- publication points on certificats during the last validation.
-        -- In other words, slow and timing out repository URLs we care about 
-        -- and want to keep up-to-date in the local cache.
-        slowRequested :: Set.Set [RpkiURL]
+        -- Set of for-async-fetch URLs that were requested to fetch as a 
+        -- result of finding publication points on certificats during the 
+        -- last validation.
+        -- 
+        -- In other words, failed and timing out repository URLs we care about
+        -- and will fetch asynchronously
+        usedForAsync :: Set.Set [RpkiURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
@@ -154,9 +152,8 @@ data FetchTask a = Stub
     deriving stock (Eq, Ord, Generic)                    
 
 data RepositoryProcessing = RepositoryProcessing {
-        individualFetchRuns    :: StmMap.Map RpkiURL (FetchTask (Either AppError Repository, ValidationState)),
+        fetchRuns              :: StmMap.Map RpkiURL (FetchTask FetchResult),
         indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
-        ppSeqFetchRuns         :: StmMap.Map [RpkiURL] (FetchTask [FetchResult]),
         publicationPoints      :: TVar PublicationPoints,
         fetchSemaphore         :: Semaphore
     }
@@ -170,12 +167,13 @@ instance WithRpkiURL Repository where
     getRpkiURL (RrdpR RrdpRepository {..}) = RrdpU uri
     getRpkiURL (RsyncR RsyncRepository { repoPP = RsyncPublicationPoint {..} }) = RsyncU uri
 
-instance WithURL RrdpRepository where
+instance {-# OVERLAPPING #-} WithURL RrdpRepository where
     getURL RrdpRepository { uri = RrdpURL u } = u
-instance WithURL RsyncRepository where
+
+instance {-# OVERLAPPING #-} WithURL RsyncRepository where
     getURL RsyncRepository { repoPP = RsyncPublicationPoint {..} } = getURL uri
     
-
+-- TODO This is shady and I don't remember why is it like this
 instance Semigroup RrdpRepository where
     r1 <> r2 = 
         if r1 ^. #meta . #status >= r2 ^. #meta . #status
@@ -206,14 +204,16 @@ instance Ord FetchType where
 
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
-    
+
 getFetchStatus :: Repository -> FetchStatus
-getFetchStatus (RrdpR r)  = r ^. #meta . #status
-getFetchStatus (RsyncR r) = r ^. #meta . #status
+getFetchStatus r = getMeta r ^. #status
 
 getFetchType :: Repository -> FetchType
-getFetchType (RrdpR r)  = r ^. #meta . #fetchType
-getFetchType (RsyncR r) = r ^. #meta . #fetchType
+getFetchType r = getMeta r ^. #fetchType
+
+getMeta :: Repository -> RepositoryMeta
+getMeta (RrdpR r)   = r ^. #meta
+getMeta (RsyncR r)  = r ^. #meta
 
 isForAsync :: FetchType -> Bool
 isForAsync = \case    
@@ -225,9 +225,8 @@ newPPs = PublicationPoints mempty newRsyncTree mempty
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
-        StmMap.new <*> 
-        StmMap.new <*>          
-        StmMap.new <*>                  
+        StmMap.new <*>               
+        StmMap.new <*>
         newTVar newPPs <*>
         newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
 
@@ -258,15 +257,18 @@ rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository PublicationPoints { rrdps = RrdpMap rrdps } u = Map.lookup u rrdps        
 
 rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
-rsyncRepository PublicationPoints {..} u = 
-    (\(u', meta) -> RsyncRepository (RsyncPublicationPoint u') meta)
-                    <$> infoInRsyncTree u rsyncs    
+rsyncRepository PublicationPoints {..} rsyncUrl = 
+    (\(u, meta) -> RsyncRepository (RsyncPublicationPoint u) meta)
+                    <$> lookupRsyncTree rsyncUrl rsyncs    
 
-repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
-repositoryFromPP pps rpkiUrl = 
-    case rpkiUrl of
-        RrdpU u  -> RrdpR <$> rrdpRepository pps u
-        RsyncU u -> RsyncR <$> rsyncRepository pps u      
+repositoryFromPP :: PublicationPoints -> PublicationPoint -> Maybe Repository                    
+repositoryFromPP pps pp = 
+    case getRpkiURL pp of
+        RrdpU u  -> RrdpR <$> rrdpRepository merged u
+        RsyncU u -> RsyncR <$> rsyncRepository merged u
+  where 
+    merged = mergePP pp pps        
+    
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
@@ -355,36 +357,41 @@ data ChangeSet = ChangeSet
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld)  _ ) 
+    (PublicationPoints (RrdpMap rrdpDb) (RsyncTree rsyncDb)  _ ) 
     (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) requestNew) = 
     ChangeSet 
-        (putNewRrdps <> removeOldRrdps) 
+        (mergedRrdp <> newRrdp <> rrdpToDelete) 
         (putNewRsyncs <> removeOldRsyncs)        
         (Put requestNew)
     where
-        -- TODO Don't generate removes if there's a PUT for the same URL
-        rrdpOldSet = Set.fromList $ Map.elems rrdpOld
-        rrdpNewSet = Set.fromList $ Map.elems rrdpNew
-        putNewRrdps    = map Put    $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew        
-        removeOldRrdps = map Remove $ filter (not . (`Set.member` rrdpNewSet)) $ Map.elems rrdpOld
+        rrdps' = map (\(u, new) -> (new, Map.lookup u rrdpDb)) $ Map.toList rrdpNew
 
-        rsyncOldList = Map.toList rsyncOld
+        newRrdp  = map Put [ new | (new, Nothing) <- rrdps' ]
+
+        -- We trust RRDP meta from the DB more -- it has been updated by the 
+        -- delta/snapshot fetchers in the same transactions as the data
+        mergedRrdp = map Put [ new { rrdpMeta = dbRrdpMeta } | 
+                                (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
+
+        rrdpToDelete = map Remove [ r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
+
+        rsyncOldList = Map.toList rsyncDb
         rsyncNewList = Map.toList rsyncNew
-        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
+        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncDb == Just p)) rsyncNewList        
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
 
 -- Update statuses of the repositories and last successful fetch times for them
-updateStatuses :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
-updateStatuses 
-    (PublicationPoints rrdps rsyncs slowRequested) newStatuses = 
+updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
+updateMeta 
+    (PublicationPoints rrdps rsyncs usedForAsync) newMetas = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdps_))
             rsyncs_ 
-            slowRequested
+            usedForAsync
     where
         (rrdps_, rsyncs_) = 
-            foldr foldRepos ([], rsyncs) newStatuses
+            foldr foldRepos ([], rsyncs) newMetas
 
         foldRepos 
             (RrdpR r@RrdpRepository {..}, newMeta) 
@@ -472,8 +479,8 @@ buildRsyncTree :: [RsyncPathChunk] -> RepositoryMeta -> RsyncNodeNormal
 buildRsyncTree [] fs      = Leaf fs
 buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs    
 
-infoInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
-infoInRsyncTree (RsyncURL host path) (RsyncTree t) = 
+lookupRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
+lookupRsyncTree (RsyncURL host path) (RsyncTree t) = 
     meta' path [] =<< Map.lookup host t
   where    
     meta' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)

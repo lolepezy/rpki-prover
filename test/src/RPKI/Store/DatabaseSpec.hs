@@ -14,16 +14,13 @@ import           Control.Exception.Lifted
 
 import           Control.Lens                     ((.~), (%~), (&), (^.))
 import           Control.Monad
-import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
 
-import           Control.Monad.IO.Class
 import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
-import qualified Data.Set.NonEmpty                 as NESet
 import           Data.Maybe
 import           Data.Ord
 import           Data.Proxy
@@ -48,7 +45,6 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
-import qualified RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
@@ -106,7 +102,7 @@ txGroup = testGroup "App transaction test"
 shouldMergeObjectLocations :: Storage s => IO (DB s) -> HU.Assertion
 shouldMergeObjectLocations io = do 
     
-    db@DB {..} <- io
+    db <- io
     Now now <- thisInstant 
 
     [url1, url2, url3] :: [RpkiURL] <- take 3 . List.nub <$> replicateM 10 (QC.generate arbitrary)
@@ -158,7 +154,7 @@ shouldMergeObjectLocations io = do
 shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
 shouldCreateAndDeleteAllTheMaps io = do 
     
-    db@DB {..} <- io
+    db <- io
     Now now <- thisInstant 
 
     url :: RpkiURL <- QC.generate arbitrary    
@@ -179,7 +175,7 @@ shouldCreateAndDeleteAllTheMaps io = do
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromObjectStore io = do  
-    db@DB {..} <- io
+    db <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
@@ -326,13 +322,13 @@ generateRepositories = do
 rrdpSubMap :: PublicationPoints -> IO RrdpMap
 rrdpSubMap pps = do 
     let RrdpMap rrdpsM = rrdps pps
-    keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
-    pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
+    keys_ <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
+    pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys_) rrdpsM
 
 
 shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
-    ((_, env), DB {..}) <- io
+    ((_, env), _) <- io
 
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
@@ -376,7 +372,7 @@ shouldPreserveStateInAppTx io = do
         <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
-                rwAppTx storage' $ \tx -> do                             
+                void $ rwAppTx storage' $ \tx -> do                             
                     addedObject        
                     appWarn $ UnspecifiedE "Error1" "text 1"
                     inSubVScope "nested-1" $ 

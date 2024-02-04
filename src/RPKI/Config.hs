@@ -41,7 +41,7 @@ data FetchConfig = FetchConfig {
         rsyncSlowThreshold :: Seconds,
         rrdpTimeout        :: Seconds,
         rrdpSlowThreshold  :: Seconds,
-        fetchLaunchWaitDuration  :: Seconds
+        fetchLaunchWaitDuration :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -272,6 +272,7 @@ defaulPrefetchURLs = [
         "rsync://rpki-rps.arin.net/repository/",
         "rsync://rpki-repository.nic.ad.jp/ap/",
         "rsync://rsync.paas.rpki.ripe.net/repository/",
-        "rsync://rpki.sub.apnic.net/repository/"
+        "rsync://rpki.sub.apnic.net/repository/",
+        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/"
     ]    
     

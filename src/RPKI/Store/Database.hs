@@ -712,7 +712,7 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 ChangeSet ->
                 m ()
 applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges slowRequested) = liftIO $ do
+                  (ChangeSet rrdpChanges rsyncChanges usedForAsync) = liftIO $ do
     -- Do the Remove first and only then Put
     let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
 
@@ -724,7 +724,7 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
     for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
     for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
 
-    let (lastSPuts, _) = separate [slowRequested]    
+    let (lastSPuts, _) = separate [usedForAsync]    
     for_ lastSPuts $ \rr -> M.put tx forAsyncS forAsyncFetchKey (Compressed rr)
   where
     separate = foldr f ([], [])
