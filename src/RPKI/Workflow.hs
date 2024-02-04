@@ -18,10 +18,10 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
 
-import           Data.List
 import qualified Data.List.NonEmpty              as NE
 import           Data.Foldable                   (for_, toList)
 import qualified Data.Text                       as Text
+import qualified Data.List                       as List
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe, catMaybes)
@@ -430,7 +430,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Workers for functionality running in separate processes.
     --     
     runValidationWorker worldVersion = do 
-        let talsStr = Text.intercalate "," $ sort $ map (unTaName . getTaName) tals                    
+        let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) tals                    
             workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
 
             maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
@@ -583,34 +583,49 @@ runAsyncFetches appContext@AppContext {..} = do
 
         pps <- readPublicationPoints repositoryProcessing      
         -- We only care about the repositories that are slow 
-        let slowURLs = Map.fromList $ findRepositoriesForAsyncFetch pps        
+        let asyncRepos = Map.fromList $ findRepositoriesForAsyncFetch pps        
 
         -- And mentioned on some certificates during the last validation.        
-        let problematicPPAs = let 
+        let problematicPpas = let 
                 toPpa []   = Nothing
                 toPpa urls = fmap PublicationPointAccess 
-                                    $ NE.nonEmpty 
-                                    $ map repositoryToPP
-                                    $ catMaybes
-                                    $ map (\u -> Map.lookup u slowURLs) urls                 
+                                $ NE.nonEmpty 
+                                $ map repositoryToPP
+                                $ catMaybes
+                                $ map (\u -> Map.lookup u asyncRepos) urls                 
                 
                 -- Also use only the ones filtered by config options 
                 in catMaybes $ map (filterPPAccess config) $ 
                    catMaybes $ map toPpa $ toList $ pps ^. #usedForAsync
 
-        unless (null problematicPPAs) $ do                         
+        unless (null problematicPpas) $ do                         
             let ppaToText (PublicationPointAccess ppas) = 
                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
-            let reposText = Text.intercalate ", " $ map ppaToText problematicPPAs
-            logInfo logger [i|Asynchronou fetch, version #{worldVersion}, repositories: #{reposText}|]
+            let reposText = Text.intercalate ", " $ map ppaToText problematicPpas
+            logInfo logger [i|Asynchronous fetch, version #{worldVersion}, repositories: #{reposText}|]
 
-        void $ forConcurrently problematicPPAs $ \ppAccess -> do                         
+        void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchAsync appContext repositoryProcessing worldVersion ppAccess
             
         validationStateOfFetches repositoryProcessing   
   where    
+    -- Sort them by the last fetch time, the fastest first. 
+    -- If a repository was never fetched, it goes to the end of the list
+    sortPpas asyncRepos ppas = map fst 
+            $ List.sortOn promisingFirst
+            $ map withRepo ppas    
+      where
+        promisingFirst (_, repo) = fmap duration repo
+
+        withRepo ppa = let 
+                primary = NE.head $ unPublicationPointAccess ppa
+            in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)
+
+        duration r = 
+            fromMaybe (TimeMs 1000_000_000) $ (getMeta r) ^. #lastFetchDuration
+
     repositoryToPP = \case    
         RsyncR r -> RsyncPP $ r ^. #repoPP
         RrdpR r  -> RrdpPP r

@@ -60,7 +60,7 @@ import           RPKI.Parallel
     * mark all publication points in the list as ForAsyncFetch
     
   Essentially, to keep ForSyncFetch status a publication point needs to
-  reponse successfully and be fast.
+  response successfully and be fast.
 
   Fall-back is disabled in the sync mode, so if primary repoistory doesn't 
   respond, we skip all the fall-backs and mark them all as ForAsyncFetch.
@@ -75,7 +75,7 @@ fetchSync appContext@AppContext {..}
     repositoryProcessing@RepositoryProcessing {..}
     worldVersion
     ppa = do 
-        pps <- readPublicationPoints repositoryProcessing      
+        pps <- readPublicationPoints repositoryProcessing
         let (syncPp, asyncRepos) = onlyForSyncFetch pps ppa
         case syncPp of 
             Nothing -> do 
@@ -90,8 +90,15 @@ fetchSync appContext@AppContext {..}
                         repositoryProcessing worldVersion syncPp_ 
                         (newMetaCallback syncPp_ pps)
 
-                markForAsyncFetch repositoryProcessing 
-                    $ filterForAsyncFetch fetchResult asyncRepos                
+                case fetchResult of 
+                    FetchSuccess _ _ -> pure ()
+                    FetchFailure _ _ -> do 
+                        -- In case of failure mark ell repositories ForAsyncFetch
+                        ppsAfter <- readPublicationPoints repositoryProcessing
+                        let toMarkAsync = catMaybes 
+                                            $ map (repositoryFromPP ppsAfter) 
+                                            $ NonEmpty.toList $ unPublicationPointAccess ppa
+                        markForAsyncFetch repositoryProcessing toMarkAsync
             
                 pure $ Just fetchResult
   where
@@ -541,15 +548,6 @@ getPrimaryRepositoryUrl pps ppAccess =
     let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
     in maybe (getRpkiURL primary) getRpkiURL $ repositoryFromPP pps primary
 
-
-getFetchablePPA :: PublicationPoints 
-                -> PublicationPointAccess
-                -> PublicationPointAccess
-getFetchablePPA pps ppa = 
-    PublicationPointAccess 
-        $ NonEmpty.map (getFetchablePP pps)
-        $ unPublicationPointAccess ppa
-
 getFetchablePP :: PublicationPoints -> PublicationPoint -> PublicationPoint
 getFetchablePP pps = \case 
     r@(RrdpPP _) -> r
@@ -575,12 +573,6 @@ onlyForSyncFetch pps ppAccess = let
         case repositoryFromPP pps pp of 
             Nothing -> (False, Nothing)
             Just r  -> (isForAsync $ getFetchType r, Just r)                        
-
-filterForAsyncFetch :: FetchResult -> [Repository] -> [Repository]
-filterForAsyncFetch fetchResult slowRepos = 
-    case fetchResult of 
-        FetchFailure _ _ -> slowRepos
-        FetchSuccess _ _ -> []            
 
 resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
 resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
