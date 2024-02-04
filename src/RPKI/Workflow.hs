@@ -509,7 +509,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     (_, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
-        saveVrps tx db (payloads ^. typed) worldVersion
         saveRoas tx db roas worldVersion
         saveAspas tx db (payloads ^. typed) worldVersion
         saveGbrs tx db (payloads ^. typed) worldVersion
