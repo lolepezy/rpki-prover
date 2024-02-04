@@ -59,7 +59,7 @@ import           RPKI.Parallel
     * mark all publication points in the list as ForAsyncFetch
     
   Essentially, to keep ForSyncFetch status a publication point needs to
-  reponse successfully and be fast.
+  response successfully and be fast.
 
   Fall-back is disabled in the sync mode, so if primary repoistory doesn't 
   respond, we skip all the fall-backs and mark them all as ForAsyncFetch.
