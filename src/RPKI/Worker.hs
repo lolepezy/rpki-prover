@@ -39,6 +39,7 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Time
@@ -111,7 +112,7 @@ data WorkerInput = WorkerInput {
 
 
 newtype RrdpFetchResult = RrdpFetchResult 
-                            (Either AppError RrdpRepository, ValidationState)    
+                            (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

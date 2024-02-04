@@ -10,7 +10,6 @@ import           RPKI.Repository
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.RrdpFetch
-import           RPKI.RRDP.Http
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
@@ -25,14 +24,15 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         meta = RepositoryMeta {
                                 status = Pending,
                                 fetchType = Unknown,
-                                lastFetchDuration = Nothing
+                                lastFetchDuration = Nothing,
+                                refreshInterval = Nothing
                             },
                         eTag = Nothing
                     }
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
-                (Right $ UseSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+                (Right $ FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
                          "Resetting RRDP session from SessionId \"whatever\" to SessionId \"something else\""),
 
     HU.testCase "Should generate nothing when the session id and serial are the same" $ do
@@ -44,13 +44,14 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         meta = RepositoryMeta {
                                 status = Pending,
                                 fetchType = Unknown,
-                                lastFetchDuration = Nothing
+                                lastFetchDuration = Nothing,
+                                refreshInterval = Nothing
                             },
                         eTag = Nothing
                     }                        
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
-        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToDo "up-to-date, SessionId \"something\", serial 13"),
+        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToFetch "up-to-date, SessionId \"something\", serial 13"),
 
     HU.testCase "Should generate delta update when the session id is the same and serial is larger" $ do
         let sessionId = SessionId "something"
@@ -64,7 +65,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         meta = RepositoryMeta {
                                 status = Pending,
                                 fetchType = Unknown,
-                                lastFetchDuration = Nothing
+                                lastFetchDuration = Nothing,
+                                refreshInterval = Nothing
                             },
                         eTag = Nothing
                     }
@@ -73,7 +75,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right $ UseDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            (Right $ FetchDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
             "SessionId \"something\", deltas look good."),
 
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
@@ -85,7 +87,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         meta = RepositoryMeta {
                                 status = Pending,
                                 fetchType = Unknown,
-                                lastFetchDuration = Nothing
+                                lastFetchDuration = Nothing,
+                                refreshInterval = Nothing
                             },
                         eTag = Nothing
                     }                    
@@ -93,7 +96,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                                 rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 15)) {       
                                   deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
                                 }
-        HU.assertEqual "It's a bummer" nextStep (Right $ UseSnapshot 
+        HU.assertEqual "It's a bummer" nextStep (Right $ FetchSnapshot 
             (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
                          "SessionId \"something\", local serial 13 is too far behind remote 15."),
 
@@ -106,7 +109,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         meta = RepositoryMeta {
                                 status = Pending,
                                 fetchType = Unknown,
-                                lastFetchDuration = Nothing
+                                lastFetchDuration = Nothing,
+                                refreshInterval = Nothing
                             },
                         eTag = Nothing
                     } 
@@ -119,7 +123,7 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
                         ]
                     }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right (UseSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            (Right (FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
                 "SessionId \"something\", there are non-consecutive delta serials: [(13,18),(18,20)]."))
   ]
     

@@ -18,6 +18,7 @@ import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
 
+import           Data.Hourglass
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty          as NonEmpty
@@ -115,23 +116,27 @@ data PublicationPoints = PublicationPoints {
 data RepositoryMeta = RepositoryMeta {
         status            :: FetchStatus,
         fetchType         :: FetchType,
-        lastFetchDuration :: Maybe TimeMs
+        lastFetchDuration :: Maybe TimeMs,
+        refreshInterval   :: Maybe Seconds
     } 
     deriving stock (Show, Eq, Ord, Generic)   
     deriving anyclass TheBinary    
+
 
 instance Semigroup RepositoryMeta where
     rm1 <> rm2 = RepositoryMeta { 
         status    = rm1 ^. #status <> rm2 ^. #status,
         fetchType = rm1 ^. #fetchType <> rm2 ^. #fetchType,
-        lastFetchDuration = rm2 ^. #lastFetchDuration
+        lastFetchDuration = rm2 ^. #lastFetchDuration,
+        refreshInterval = rm2 ^. #refreshInterval
     }
 
 instance Monoid RepositoryMeta where
     mempty = RepositoryMeta { 
         status = mempty,
         fetchType = mempty,
-        lastFetchDuration = Nothing
+        lastFetchDuration = Nothing,
+        refreshInterval = Nothing
     }
 
 
@@ -433,6 +438,9 @@ findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree _) =
 
 type RsyncNodeNormal = RsyncNode RepositoryMeta
 
+-- Simple tree for representing rsync repositories grouped by host.
+-- Every RsyncNode corresponds to a path chunk in the rsync URL. 
+
 newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNodeNormal)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -485,7 +493,6 @@ flattenRsyncTree :: RsyncTree -> [(RsyncURL, RepositoryMeta)]
 flattenRsyncTree (RsyncTree t) = 
     mconcat $ map (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
   where    
-    flattenTree host (Leaf info) realPath  = [(RsyncURL host realPath, info)]
+    flattenTree host (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
     flattenTree host SubTree {..} realPath = 
-        mconcat $ map (\(p, n) -> flattenTree host n (realPath <> [p])) $ Map.toList rsyncChildren        
-  
+        mconcat $ map (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren        

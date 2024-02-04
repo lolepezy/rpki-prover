@@ -4,6 +4,8 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module RPKI.RRDP.RrdpFetch where
 
@@ -17,7 +19,6 @@ import           Data.Generics.Product.Typed
 
 import           Data.Foldable
 import           Data.Bifunctor                   (first)
-import           Data.Text                        (Text)
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
@@ -51,11 +52,12 @@ import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Util                        as U
 
 
+
 runRrdpFetchWorker :: AppContext s 
             -> FetchConfig
             -> WorldVersion
             -> RrdpRepository             
-            -> ValidatorT IO RrdpRepository
+            -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
 runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -96,8 +98,8 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
 updateObjectForRrdpRepository :: Storage s => 
                                 AppContext s 
                             -> WorldVersion 
-                            -> RrdpRepository 
-                            -> ValidatorT IO RrdpRepository
+                            -> RrdpRepository
+                            -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
 updateObjectForRrdpRepository appContext worldVersion repository =
     timedMetric (Proxy :: Proxy RrdpMetric) $ 
         downloadAndUpdateRRDP 
@@ -117,7 +119,7 @@ downloadAndUpdateRRDP :: AppContext s ->
                         RrdpRepository 
                         -> (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) 
                         -> (RrdpURL -> Notification -> RrdpSerial -> BS.ByteString -> ValidatorT IO ()) 
-                        -> ValidatorT IO RrdpRepository
+                        -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
 downloadAndUpdateRRDP 
         appContext@AppContext {..}
         repo@RrdpRepository { uri = repoUri, .. }
@@ -138,28 +140,31 @@ downloadAndUpdateRRDP
         logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
 
     case httpStatus of 
-        HttpStatus 304 -> bumpETag newETag $ do 
-            usedSource RrdpNoUpdate
-            logDebug logger [i|Nothing to update for #{repoUri} based on ETag comparison.|]
-            pure repo
+        HttpStatus 304 -> do 
+            repo' <- bumpETag newETag $ do 
+                usedSource RrdpNoUpdate                
+                pure repo
+            let message = [i|Nothing to update for #{repoUri} based on ETag comparison.|]
+            logDebug logger message
+            pure (repo', RrdpFetchStat $ NothingToFetch message)
 
         _ -> do 
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
             nextStep     <- vHoist $ rrdpNextStep repo notification
 
-            bumpETag newETag $ 
+            repo' <- bumpETag newETag $  
                 case nextStep of
-                    NothingToDo message -> do 
+                    NothingToFetch message -> do 
                         usedSource RrdpNoUpdate
                         logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
                         pure repo
 
-                    UseSnapshot snapshotInfo message -> do 
+                    FetchSnapshot snapshotInfo message -> do 
                         usedSource RrdpSnapshot
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
                         useSnapshot snapshotInfo notification                        
 
-                    UseDeltas sortedDeltas snapshotInfo message -> 
+                    FetchDeltas sortedDeltas snapshotInfo message -> 
                         (do 
                             usedSource RrdpDelta
                             logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
@@ -171,6 +176,8 @@ downloadAndUpdateRRDP
                             usedSource RrdpSnapshot
                             logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                             useSnapshot snapshotInfo notification)
+
+            pure (repo', RrdpFetchStat nextStep)                            
   where
     bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
 
@@ -268,60 +275,48 @@ downloadAndUpdateRRDP
         rrdpMeta' = Just (notification ^. typed @SessionId, maxDeltaSerial)            
 
 
-data NextStep
-  = UseSnapshot SnapshotInfo Text
-  | UseDeltas
-      { sortedDeltas :: [DeltaInfo]
-      , snapshotInfo :: SnapshotInfo
-      , message :: Text
-      }
-  | NothingToDo Text
-  deriving (Show, Eq, Ord, Generic)
-
-
-
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
-rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT NextStep
+rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT RrdpAction
 
 rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
-    pure $ UseSnapshot snapshotInfo "Unknown repository"
+    pure $ FetchSnapshot snapshotInfo "Unknown repository"
 
 rrdpNextStep RrdpRepository { rrdpMeta = Just (repoSessionId, repoSerial) } Notification{..} =
 
     if  | sessionId /= repoSessionId -> 
-            pure $ UseSnapshot snapshotInfo [i|Resetting RRDP session from #{repoSessionId} to #{sessionId}|]
+            pure $ FetchSnapshot snapshotInfo [i|Resetting RRDP session from #{repoSessionId} to #{sessionId}|]
 
         | repoSerial > serial -> do 
             appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is higher than the remote serial #{serial}.|]
+            pure $ NothingToFetch [i|#{repoSessionId}, local serial #{repoSerial} is higher than the remote serial #{serial}.|]
 
         | repoSerial == serial -> 
-            pure $ NothingToDo [i|up-to-date, #{repoSessionId}, serial #{repoSerial}|]
+            pure $ NothingToFetch [i|up-to-date, #{repoSessionId}, serial #{repoSerial}|]
     
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
-                ([], _) -> pure $ UseSnapshot snapshotInfo 
+                ([], _) -> pure $ FetchSnapshot snapshotInfo 
                                 [i|#{repoSessionId}, there is no deltas to use.|]
 
                 (_, []) | nextSerial repoSerial < deltaSerial (head sortedDeltas) ->
                             -- we are too far behind
-                            pure $ UseSnapshot snapshotInfo 
+                            pure $ FetchSnapshot snapshotInfo 
                                     [i|#{repoSessionId}, local serial #{repoSerial} is too far behind remote #{serial}.|]
 
                         -- too many deltas means huge overhead -- just use snapshot, 
                         -- it's more data but less chances of getting killed by timeout
                         | length chosenDeltas > 100 ->
-                            pure $ UseSnapshot snapshotInfo 
+                            pure $ FetchSnapshot snapshotInfo 
                                     [i|#{repoSessionId}, there are too many deltas: #{length chosenDeltas}.|]
 
                         | otherwise ->
-                            pure $ UseDeltas chosenDeltas snapshotInfo 
+                            pure $ FetchDeltas chosenDeltas snapshotInfo 
                                     [i|#{repoSessionId}, deltas look good.|]
 
                 (_, nc) -> do 
                     appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
-                    pure $ UseSnapshot snapshotInfo 
+                    pure $ FetchSnapshot snapshotInfo 
                             [i|#{repoSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
                 
     where

@@ -24,7 +24,7 @@ import           Control.Monad.Except
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
-import           Data.Maybe                  (listToMaybe)
+import           Data.Maybe                  
 import qualified Data.Set                    as Set
 import qualified StmContainers.Map           as StmMap
 import qualified ListT                       as ListT
@@ -39,6 +39,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
+import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Time
 import           RPKI.Util                       
@@ -156,7 +157,11 @@ fetchAsync
                             Just repo -> do 
                                 now' <- thisInstant
                                 -- CHeck this only for more meaningful logging    
-                                let nextOneNeedAFetch = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'                                
+                                let nextOneNeedAFetch = needsFetching pp 
+                                        ((getMeta repo) ^. #refreshInterval) 
+                                        (getFetchStatus repo) 
+                                        (config ^. #validationConfig) 
+                                        now'
                                 logWarn logger $ if nextOneNeedAFetch
                                     then [i|Failed to fetch #{getURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL ppNext}.|]
                                     else [i|Failed to fetch #{getURL pp}, next one (#{getURL $ getRpkiURL ppNext}) is up-to-date.|]
@@ -276,14 +281,15 @@ fetchOnePp
             let rpkiUrl = getRpkiURL repo                    
             let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
             
-            ((r, validations), duratioMs) <- timedMS $ runValidatorT repoScope 
+            ((r, validations), duratioMs) <- timedMS 
+                                            $ runValidatorT repoScope 
                                             $ fetchRepository appContext fetchConfig worldVersion repo
-            atomically $ do
-                let (newRepo, newStatus) = case r of                             
-                        Left _      -> (repo, FailedAt fetchMoment)
-                        Right repo' -> (repo', FetchedAt fetchMoment)
+            newMeta_ <- atomically $ do
+                let (newRepo, newStatus, rrdpStats) = case r of                             
+                        Left _               -> (repo, FailedAt fetchMoment, Nothing)
+                        Right (repo', stats) -> (repo', FetchedAt fetchMoment, stats)
 
-                let newMeta = deriveNewMeta fetchConfig newRepo validations duratioMs newStatus fetchMoment
+                let newMeta = deriveNewMeta config fetchConfig newRepo validations rrdpStats duratioMs newStatus fetchMoment
 
                 -- Call externally passed callback
                 newMeta' <- newMetaCallback newMeta fetchMoment
@@ -291,7 +297,10 @@ fetchOnePp
                 modifyTVar' publicationPoints $ \pps -> 
                         updateMeta (pps ^. typed) [(newRepo, newMeta')]
 
-            pure (r, validations)
+                pure newMeta'
+
+            logDebug logger [i|New meta for #{rpkiUrl}: #{newMeta_}|]
+            pure (fmap fst r, validations)
 
     stopAndDrop stubs key asyncR = liftIO $ do         
         cancel asyncR
@@ -304,16 +313,55 @@ fetchOnePp
     needsAFetch now' = do 
         pps <- readTVar publicationPoints        
         let Just repo = repositoryFromPP pps pp
-        let needsFetching' = needsFetching pp (getFetchStatus repo) (config ^. #validationConfig) now'
+        let needsFetching' = needsFetching pp 
+                ((getMeta repo) ^. #refreshInterval) 
+                (getFetchStatus repo) 
+                (config ^. #validationConfig) 
+                now'
         pure (needsFetching', repo)
 
 
 
 
-deriveNewMeta fetchConfig repo validations duration@(TimeMs duratioMs) status fetchMoment = 
+deriveNewMeta config fetchConfig repo validations rrdpStats 
+              duration@(TimeMs duratioMs) status fetchMoment = 
     RepositoryMeta {..}
   where    
     lastFetchDuration = Just duration
+
+    refreshInterval = let 
+        defaultRefreshInterval = 
+            case repo of
+                RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
+                RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+
+        trimInterval interval = 
+            if | interval < Seconds 60  -> Seconds 60
+               | interval > Seconds 600 -> Seconds 600
+               | otherwise              -> interval
+
+        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10
+        decreateInterval (Seconds s) = Seconds $ s - s `div` 10 - 1
+
+        moreThanOne = \case 
+            []     -> False
+            _ : [] -> False
+            _      -> True
+
+        in Just $ 
+            case (getMeta repo) ^. #refreshInterval of 
+                Nothing -> defaultRefreshInterval
+                Just ri -> 
+                    case rrdpStats of 
+                        Nothing                 -> defaultRefreshInterval
+                        Just RrdpFetchStat {..} -> 
+                            case action of 
+                                NothingToFetch _ -> trimInterval $ increaseInterval ri 
+                                FetchDeltas {..} -> 
+                                    if moreThanOne sortedDeltas 
+                                        then trimInterval $ decreateInterval ri 
+                                        else ri                                    
+                                FetchSnapshot _ _ -> ri                    
 
     fetchType =
         -- If there fetch timed out then it's definitely for async fetch
@@ -345,7 +393,7 @@ deriveNextTimeout absoluteMaxDuration RepositoryMeta {..} =
         Just duration -> let
                 previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
                 heuristicalNextTimeout = 
-                    if | previousSeconds < Seconds 5  -> Seconds 10
+                    if | previousSeconds < Seconds 3  -> Seconds 10
                        | previousSeconds < Seconds 10 -> Seconds 20
                        | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
                        | otherwise                    -> previousSeconds + Seconds 60             
@@ -362,7 +410,7 @@ fetchRepository :: (Storage s) =>
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 
-                -> ValidatorT IO Repository
+                -> ValidatorT IO (Repository, Maybe RrdpFetchStat)
 fetchRepository 
     appContext@AppContext {..}
     fetchConfig
@@ -370,8 +418,12 @@ fetchRepository
     repo = do
         logInfo logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
-            RsyncR r -> RsyncR <$> fetchRsyncRepository r
-            RrdpR r  -> RrdpR  <$> fetchRrdpRepository r
+            RsyncR r -> do 
+                r' <- fetchRsyncRepository r
+                pure (RsyncR r', Nothing)                
+            RrdpR r  -> do 
+                (r', stat) <- fetchRrdpRepository r
+                pure (RrdpR r', Just stat)                
   where
     repoURL = getRpkiURL repo    
     -- Give the process some time to kill itself, 
@@ -439,18 +491,20 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
 
 -- | Check if an URL need to be re-fetched, based on fetch status and current time.
 --
-needsFetching :: WithRpkiURL r => r -> FetchStatus -> ValidationConfig -> Now -> Bool
-needsFetching r status ValidationConfig {..} (Now now) = 
+needsFetching :: WithRpkiURL r => r -> Maybe Seconds -> FetchStatus -> ValidationConfig -> Now -> Bool
+needsFetching r fetchInterval status ValidationConfig {..} (Now now) = 
     case status of
         Pending         -> True
         FetchedAt time  -> tooLongAgo time
         FailedAt time   -> not $ closeEnoughMoments time now minimalRepositoryRetryInterval
   where
-    tooLongAgo momendTnThePast = 
+    tooLongAgo momendTnThePast =      
         not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
       where 
-        interval (RrdpU _)  = rrdpRepositoryRefreshInterval
-        interval (RsyncU _) = rsyncRepositoryRefreshInterval          
+        interval url = fromMaybe (defaultInterval url) fetchInterval            
+        defaultInterval (RrdpU _)  = rrdpRepositoryRefreshInterval
+        defaultInterval (RsyncU _) = rsyncRepositoryRefreshInterval          
+
 
 
 validationStateOfFetches :: MonadIO m => RepositoryProcessing -> m ValidationState 
