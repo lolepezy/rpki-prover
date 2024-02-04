@@ -374,18 +374,19 @@ saveSnapshot
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
 
+    -- Save objects in batches since
+    -- 1) It's not crucial to save the whole snapshot in one transaction, 
+    --    it's an idempotent operation and can be restarted 
+    -- 2) It's better to not block the DB for too long if snapshot is very big.
+    --    Other fetcher processes can be killed by timeout waiting on the DB
+    --    rather that waiting on download
+    -- 
     txFoldPipelineBatch 
             cpuParallelism
             10000    
             (S.mapM (newStorable db) $ S.each snapshotItems)
             (rwAppTx db)
             (saveStorable db)           
-
-    -- txFoldPipeline
-    --         cpuParallelism
-    --         (S.mapM (newStorable db) $ S.each snapshotItems)
-    --         (rwAppTx db)
-    --         (saveStorable db)       
 
     rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (sessionId, serial) repoUri      
 
