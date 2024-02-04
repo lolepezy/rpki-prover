@@ -353,7 +353,9 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
         trimInterval interval = 
             max (Seconds 60) (min (Seconds 600) interval)            
 
-        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10
+        -- Extra seconds are to increase or decrese even very small values
+        -- Increase by ~10% each time, decrease by ~30%
+        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
         decreateInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
 
         moreThanOne = \case 
