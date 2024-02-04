@@ -185,10 +185,9 @@ getRoasValidatedRaw appContext version =
                                                     uri = toText $ pickLocation locs,
                                                     vrp = toVrpDto vrp taName
                                                 } | vrp <- Set.toList vrps ] 
-                                        
-                            
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
+
 
 getValuesByVersion :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s

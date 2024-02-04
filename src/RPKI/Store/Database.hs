@@ -27,6 +27,7 @@ import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Hashable            as H
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
@@ -65,7 +66,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 28
+currentDatabaseVersion = 29
 
 -- Some constant keys
 databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
@@ -165,8 +166,7 @@ instance Storage s => WithStorage s (MetricStore s) where
 
 
 -- | VRP store
-data VRPStore s = VRPStore {    
-        vrps :: SMap "vrps" s WorldVersion (Compressed Vrps),
+newtype VRPStore s = VRPStore {    
         roas :: SMap "roas" s WorldVersion (Compressed Roas)
     }
     deriving stock (Generic)
@@ -190,7 +190,7 @@ newtype BgpStore s = BgpStore {
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (VRPStore s) where
-    storage (VRPStore s _) = storage s
+    storage (VRPStore s) = storage s
 
 
 -- Version store
@@ -579,20 +579,22 @@ deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv =
 
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
-getVrps tx DB { vrpStore = VRPStore m _ } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
-
-deleteVRPs :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVRPs tx DB { vrpStore = VRPStore vrpMap _ } wv = liftIO $ M.delete tx vrpMap wv
+getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ do
+    fmap (fmap unCompressed) (M.get tx m wv) >>= \case     
+        Nothing          -> pure Nothing
+        Just (Roas roas) -> do 
+            pure $ Just $ Vrps $ MonoidalMap.fromList 
+                $ map (\(ta, r) -> (ta, mconcat $ Map.elems $ MonoidalMap.getMonoidalMap r)) 
+                $ MonoidalMap.toList roas            
 
 getRoas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Roas)
-getRoas tx DB { vrpStore = VRPStore _ m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
+getRoas tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
 
 deleteRoas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteRoas tx DB { vrpStore = VRPStore _ r } wv = liftIO $ M.delete tx r wv
+deleteRoas tx DB { vrpStore = VRPStore r } wv = liftIO $ M.delete tx r wv
 
 getAspas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Aspa))
@@ -622,14 +624,9 @@ saveGbrs :: (MonadIO m, Storage s) =>
 saveGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed gbrs)
 
-saveVrps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Vrps -> WorldVersion -> m ()
-saveVrps tx DB { vrpStore = VRPStore vrpMap _ } vrps worldVersion = 
-    liftIO $ M.put tx vrpMap worldVersion (Compressed vrps)
-
 saveRoas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> Roas -> WorldVersion -> m ()
-saveRoas tx DB { vrpStore = VRPStore _ roaMap } roas worldVersion = 
+saveRoas tx DB { vrpStore = VRPStore roaMap } roas worldVersion = 
     liftIO $ M.put tx roaMap worldVersion (Compressed roas)
 
 saveBgps :: (MonadIO m, Storage s) => 
@@ -899,8 +896,7 @@ deletePayloads tx db worldVersion = do
     deleteValidations tx db worldVersion
     deleteAspas tx db worldVersion            
     deleteGbrs tx db worldVersion            
-    deleteBgps tx db worldVersion            
-    deleteVRPs tx db worldVersion            
+    deleteBgps tx db worldVersion                
     deleteRoas tx db worldVersion            
     deleteMetrics tx db worldVersion
     deleteSlurms tx db worldVersion
