@@ -32,8 +32,6 @@ import           Data.Maybe
 import           Data.Word                        (Word16)
 
 import           Data.String.Interpolate.IsString
-import           Numeric.Natural                  (Natural)
-
 import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp

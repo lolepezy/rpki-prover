@@ -296,7 +296,8 @@ fetchOnePp
                         Left _               -> (repo, FailedAt fetchMoment, Nothing)
                         Right (repo', stats) -> (repo', FetchedAt fetchMoment, stats)
 
-                let newMeta = deriveNewMeta config fetchConfig newRepo validations rrdpStats duratioMs newStatus fetchMoment
+                let newMeta = deriveNewMeta config fetchConfig newRepo validations 
+                                            rrdpStats duratioMs newStatus fetchMoment
 
                 -- Call externally passed callback
                 newMeta' <- newMetaCallback newMeta fetchMoment
