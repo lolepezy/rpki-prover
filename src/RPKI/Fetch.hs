@@ -341,7 +341,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                | otherwise              -> interval
 
         increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10
-        decreateInterval (Seconds s) = Seconds $ s - s `div` 10 - 1
+        decreateInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
 
         moreThanOne = \case 
             []     -> False
