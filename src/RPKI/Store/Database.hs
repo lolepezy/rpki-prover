@@ -29,6 +29,7 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Hashable            as H
+import           Data.Ord
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
 import           GHC.Generics
@@ -777,20 +778,12 @@ data CleanUpResult = CleanUpResult {
 -- Clean up older version payloads, e.g. VRPs, ASPAs, validation results, etc.
 -- 
 deleteOldPayloads :: (MonadIO m, Storage s) => 
-                    DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
-                    m Int
-deleteOldPayloads db tooOld = 
+                    DB s -> Int -> m Int
+deleteOldPayloads db numberToKeep = 
     mapException (AppException . storageError) <$> liftIO $ do
         rwTx db $ \tx -> do 
-            versions <- validationVersions tx db    
-            let toDelete = 
-                    case versions of            
-                        []       -> []                
-                        finished -> 
-                            -- delete all too old except for the last finished one    
-                            let lastFinished = List.maximum finished 
-                            in filter ( /= lastFinished) $ filter tooOld versions            
+            versions <- validationVersions tx db                                        
+            let toDelete = drop numberToKeep $ List.sortOn Down versions
             forM_ toDelete $ deletePayloads tx db        
             pure $! List.length toDelete
 

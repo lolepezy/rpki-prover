@@ -331,11 +331,10 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure $ Right payload                                       
 
     -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
-    cleanOldPayloads WorkflowShared {..} worldVersion _ = do
-        let now = versionToMoment worldVersion
+    cleanOldPayloads WorkflowShared {..} _ _ = do
         db <- readTVarIO database
         executeOrDie
-            (deleteOldPayloads db $ versionIsOld now (config ^. #oldVersionsLifetime))
+            (deleteOldPayloads db (config ^. #versionNumberToKeep))
             (\deleted elapsed -> do 
                 when (deleted > 0) $ do
                     atomically $ writeTVar deletedAnythingFromDb True
